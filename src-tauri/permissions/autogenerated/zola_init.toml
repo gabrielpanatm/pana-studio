@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-zola-init"
+description = "Enables the zola_init command without any pre-configured scope."
+commands.allow = ["zola_init"]
+
+[[permission]]
+identifier = "deny-zola-init"
+description = "Denies the zola_init command without any pre-configured scope."
+commands.deny = ["zola_init"]

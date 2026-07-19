@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-site-partial-structure"
+description = "Enables the create_site_partial_structure command without any pre-configured scope."
+commands.allow = ["create_site_partial_structure"]
+
+[[permission]]
+identifier = "deny-create-site-partial-structure"
+description = "Denies the create_site_partial_structure command without any pre-configured scope."
+commands.deny = ["create_site_partial_structure"]

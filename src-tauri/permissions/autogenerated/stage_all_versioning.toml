@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stage-all-versioning"
+description = "Enables the stage_all_versioning command without any pre-configured scope."
+commands.allow = ["stage_all_versioning"]
+
+[[permission]]
+identifier = "deny-stage-all-versioning"
+description = "Denies the stage_all_versioning command without any pre-configured scope."
+commands.deny = ["stage_all_versioning"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-zola-check"
+description = "Enables the zola_check command without any pre-configured scope."
+commands.allow = ["zola_check"]
+
+[[permission]]
+identifier = "deny-zola-check"
+description = "Denies the zola_check command without any pre-configured scope."
+commands.deny = ["zola_check"]

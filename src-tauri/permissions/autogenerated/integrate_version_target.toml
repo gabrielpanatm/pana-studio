@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-integrate-version-target"
+description = "Enables the integrate_version_target command without any pre-configured scope."
+commands.allow = ["integrate_version_target"]
+
+[[permission]]
+identifier = "deny-integrate-version-target"
+description = "Denies the integrate_version_target command without any pre-configured scope."
+commands.deny = ["integrate_version_target"]

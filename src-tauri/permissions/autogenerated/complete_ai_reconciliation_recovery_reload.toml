@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-complete-ai-reconciliation-recovery-reload"
+description = "Enables the complete_ai_reconciliation_recovery_reload command without any pre-configured scope."
+commands.allow = ["complete_ai_reconciliation_recovery_reload"]
+
+[[permission]]
+identifier = "deny-complete-ai-reconciliation-recovery-reload"
+description = "Denies the complete_ai_reconciliation_recovery_reload command without any pre-configured scope."
+commands.deny = ["complete_ai_reconciliation_recovery_reload"]

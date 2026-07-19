@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pană Studio",
+  "version": "0.1.0",
+  "identifier": "com.gabriel.panastudio",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1430",
+    "beforeBuildCommand": "npm run build",
+    "beforeBundleCommand": "scripts/patch-tauri-gtk-appimage-hook.sh",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Pană Studio",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 680,
+        "visible": true,
+        "backgroundColor": "#edf1ee"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "appimage",
+    "publisher": "Gabriel Pană",
+    "copyright": "Copyright © 2026 Gabriel Pană",
+    "license": "EUPL-1.2-or-later",
+    "licenseFile": "resources/licenses/PANA-STUDIO-EUPL-1.2.txt",
+    "category": "DeveloperTool",
+    "shortDescription": "Editor vizual desktop open-source pentru site-uri Zola.",
+    "longDescription": "Pană Studio combină preview-ul vizual cu editarea surselor HTML/Tera, SCSS, Markdown și JavaScript pentru proiecte Zola locale.",
+    "resources": [
+      "binaries/zola",
+      "resources/licenses",
+      "resources/project-template",
+      "resources/starters"
+    ],
+    "icon": [
+      "icons/icon.png",
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

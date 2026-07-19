@@ -1,0 +1,53 @@
+export type AppShortcutIntent = "none" | "preventNativeZoom" | "save" | "undo" | "redo";
+export type DeleteShortcutIntent = "none" | "deleteSelectedHtml";
+
+type DeleteShortcutState = {
+  centerView: string;
+  selectedElement: unknown;
+  settingsPanelOpen: boolean;
+};
+
+export function isAppTextEditingTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && Boolean(target.closest("input, textarea, select, [contenteditable='true'], .cm-editor"));
+}
+
+export function isMoodBoardCanvasTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest("[data-mood-board-canvas]"));
+}
+
+export function isManagedWorkspaceEditorTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement
+    && Boolean(target.closest(".cm-editor, .tiptap-markdown-editor"));
+}
+
+export function appShortcutIntent(event: KeyboardEvent): AppShortcutIntent {
+  const hasModifier = event.ctrlKey || event.metaKey;
+  if (!hasModifier || event.altKey) return "none";
+  const key = event.key.toLowerCase();
+
+  if (key === "+" || key === "=" || key === "-" || key === "_" || key === "0") {
+    return "preventNativeZoom";
+  }
+
+  if (key === "s") return "save";
+
+  if (key === "z") {
+    if (isManagedWorkspaceEditorTarget(event.target)) return event.shiftKey ? "redo" : "undo";
+    if (isAppTextEditingTarget(event.target)) return "none";
+    return event.shiftKey ? "redo" : "undo";
+  }
+
+  if (key === "y" && isManagedWorkspaceEditorTarget(event.target)) return "redo";
+
+  return "none";
+}
+
+export function deleteShortcutIntent(event: KeyboardEvent, state: DeleteShortcutState): DeleteShortcutIntent {
+  if (event.key !== "Delete" && event.key !== "Backspace") return "none";
+  if (event.ctrlKey || event.metaKey || event.altKey) return "none";
+  if (state.centerView === "canvas" || state.centerView === "site" || state.centerView === "kernel") return "none";
+  if (isMoodBoardCanvasTarget(event.target) || isAppTextEditingTarget(event.target)) return "none";
+  if (!state.selectedElement || state.settingsPanelOpen) return "none";
+  return "deleteSelectedHtml";
+}

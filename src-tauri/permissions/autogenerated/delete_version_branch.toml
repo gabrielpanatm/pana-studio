@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-version-branch"
+description = "Enables the delete_version_branch command without any pre-configured scope."
+commands.allow = ["delete_version_branch"]
+
+[[permission]]
+identifier = "deny-delete-version-branch"
+description = "Denies the delete_version_branch command without any pre-configured scope."
+commands.deny = ["delete_version_branch"]

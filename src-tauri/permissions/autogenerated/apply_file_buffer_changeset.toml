@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-file-buffer-changeset"
+description = "Enables the apply_file_buffer_changeset command without any pre-configured scope."
+commands.allow = ["apply_file_buffer_changeset"]
+
+[[permission]]
+identifier = "deny-apply-file-buffer-changeset"
+description = "Denies the apply_file_buffer_changeset command without any pre-configured scope."
+commands.deny = ["apply_file_buffer_changeset"]

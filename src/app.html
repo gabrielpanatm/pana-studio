@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ro" data-pana-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#111315" />
+    <script>
+      (() => {
+        try {
+          const stored = localStorage.getItem("pana-studio-ui-theme");
+          const theme = stored === "light" || stored === "dark" ? stored : "dark";
+          document.documentElement.dataset.panaTheme = theme;
+          document.documentElement.style.colorScheme = theme;
+          document.documentElement.style.background = theme === "light" ? "#edf1ee" : "#111315";
+          const themeMeta = document.querySelector('meta[name="theme-color"]');
+          themeMeta?.setAttribute("content", theme === "light" ? "#edf1ee" : "#111315");
+        } catch {
+          document.documentElement.dataset.panaTheme = "dark";
+        }
+      })();
+    </script>
+    <style>
+      :root {
+        --boot-bg: #111315;
+        --boot-surface: #171a1d;
+        --boot-border: #24282c;
+        --boot-text: #e7ede9;
+        --boot-muted: #8b9790;
+        --boot-brand: #1d7f6a;
+        --boot-brand-strong: #2faa8c;
+      }
+
+      html[data-pana-theme="light"] {
+        --boot-bg: #edf1ee;
+        --boot-surface: #ffffff;
+        --boot-border: #d8e0db;
+        --boot-text: #1d2521;
+        --boot-muted: #5f6c65;
+        --boot-brand: #1d7f6a;
+        --boot-brand-strong: #2faa8c;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        min-height: 100%;
+        overflow: hidden;
+        background: var(--boot-bg);
+      }
+
+      html[data-pana-theme="light"],
+      html[data-pana-theme="light"] body {
+        background: var(--boot-bg);
+      }
+
+      html[data-pana-theme="dark"],
+      html[data-pana-theme="dark"] body {
+        background: var(--boot-bg);
+      }
+
+      #pana-boot-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: grid;
+        place-items: center;
+        color: var(--boot-text);
+        background:
+          radial-gradient(circle at 18% 20%, color-mix(in srgb, var(--boot-brand) 13%, transparent), transparent 32%),
+          radial-gradient(circle at 84% 18%, color-mix(in srgb, var(--boot-brand-strong) 10%, transparent), transparent 34%),
+          var(--boot-bg);
+        transition: opacity 160ms ease, visibility 160ms ease;
+      }
+
+      #pana-boot-screen.is-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      .boot-card {
+        display: grid;
+        justify-items: center;
+        gap: 12px;
+        min-width: 260px;
+        padding: 24px 28px;
+        border: 1px solid var(--boot-border);
+        border-radius: 14px;
+        background: color-mix(in srgb, var(--boot-surface) 88%, transparent);
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.14);
+      }
+
+      .boot-title {
+        margin: 0;
+        font: 800 20px/1.2 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0;
+      }
+
+      .boot-subtitle {
+        margin: 0;
+        color: var(--boot-muted);
+        font: 500 12px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .boot-loader {
+        width: 140px;
+        height: 4px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--boot-brand) 18%, transparent);
+      }
+
+      .boot-loader::before {
+        content: "";
+        display: block;
+        width: 44%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, var(--boot-brand), var(--boot-brand-strong));
+        animation: pana-boot-slide 900ms ease-in-out infinite;
+      }
+
+      @keyframes pana-boot-slide {
+        0% { transform: translateX(-110%); }
+        55% { transform: translateX(90%); }
+        100% { transform: translateX(260%); }
+      }
+    </style>
+    <link rel="stylesheet" href="%sveltekit.assets%/app-shell.css" />
+    <title>Pană Studio</title>
+    %sveltekit.head%
+  </head>
+  <body data-sveltekit-preload-data="hover">
+    <div id="pana-boot-screen" aria-label="Pană Studio se încarcă">
+      <div class="boot-card">
+        <p class="boot-title">Pană Studio</p>
+        <p class="boot-subtitle">Se pregătește editorul vizual</p>
+        <div class="boot-loader" aria-hidden="true"></div>
+      </div>
+    </div>
+    <div style="display: contents">%sveltekit.body%</div>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-motion-timeline-step-timing"
+description = "Enables the apply_motion_timeline_step_timing command without any pre-configured scope."
+commands.allow = ["apply_motion_timeline_step_timing"]
+
+[[permission]]
+identifier = "deny-apply-motion-timeline-step-timing"
+description = "Denies the apply_motion_timeline_step_timing command without any pre-configured scope."
+commands.deny = ["apply_motion_timeline_step_timing"]

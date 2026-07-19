@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-kernel-project-transition-policy-matrix"
+description = "Enables the read_kernel_project_transition_policy_matrix command without any pre-configured scope."
+commands.allow = ["read_kernel_project_transition_policy_matrix"]
+
+[[permission]]
+identifier = "deny-read-kernel-project-transition-policy-matrix"
+description = "Denies the read_kernel_project_transition_policy_matrix command without any pre-configured scope."
+commands.deny = ["read_kernel_project_transition_policy_matrix"]

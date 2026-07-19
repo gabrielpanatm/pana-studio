@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-execute-preview-html-tag-intent"
+description = "Enables the execute_preview_html_tag_intent command without any pre-configured scope."
+commands.allow = ["execute_preview_html_tag_intent"]
+
+[[permission]]
+identifier = "deny-execute-preview-html-tag-intent"
+description = "Denies the execute_preview_html_tag_intent command without any pre-configured scope."
+commands.deny = ["execute_preview_html_tag_intent"]

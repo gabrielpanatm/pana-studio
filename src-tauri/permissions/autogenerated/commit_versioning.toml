@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-versioning"
+description = "Enables the commit_versioning command without any pre-configured scope."
+commands.allow = ["commit_versioning"]
+
+[[permission]]
+identifier = "deny-commit-versioning"
+description = "Denies the commit_versioning command without any pre-configured scope."
+commands.deny = ["commit_versioning"]

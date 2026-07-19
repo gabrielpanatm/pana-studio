@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-class-rules-at-viewport"
+description = "Enables the get_class_rules_at_viewport command without any pre-configured scope."
+commands.allow = ["get_class_rules_at_viewport"]
+
+[[permission]]
+identifier = "deny-get-class-rules-at-viewport"
+description = "Denies the get_class_rules_at_viewport command without any pre-configured scope."
+commands.deny = ["get_class_rules_at_viewport"]

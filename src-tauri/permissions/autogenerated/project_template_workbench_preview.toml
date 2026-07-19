@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-template-workbench-preview"
+description = "Enables the project_template_workbench_preview command without any pre-configured scope."
+commands.allow = ["project_template_workbench_preview"]
+
+[[permission]]
+identifier = "deny-project-template-workbench-preview"
+description = "Denies the project_template_workbench_preview command without any pre-configured scope."
+commands.deny = ["project_template_workbench_preview"]

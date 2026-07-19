@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-execute-project-transition-decision-retention"
+description = "Enables the execute_project_transition_decision_retention command without any pre-configured scope."
+commands.allow = ["execute_project_transition_decision_retention"]
+
+[[permission]]
+identifier = "deny-execute-project-transition-decision-retention"
+description = "Denies the execute_project_transition_decision_retention command without any pre-configured scope."
+commands.deny = ["execute_project_transition_decision_retention"]

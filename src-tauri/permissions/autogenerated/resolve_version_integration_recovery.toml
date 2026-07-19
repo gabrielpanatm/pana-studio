@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-version-integration-recovery"
+description = "Enables the resolve_version_integration_recovery command without any pre-configured scope."
+commands.allow = ["resolve_version_integration_recovery"]
+
+[[permission]]
+identifier = "deny-resolve-version-integration-recovery"
+description = "Denies the resolve_version_integration_recovery command without any pre-configured scope."
+commands.deny = ["resolve_version_integration_recovery"]

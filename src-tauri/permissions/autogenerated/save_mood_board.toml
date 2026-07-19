@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-mood-board"
+description = "Enables the save_mood_board command without any pre-configured scope."
+commands.allow = ["save_mood_board"]
+
+[[permission]]
+identifier = "deny-save-mood-board"
+description = "Denies the save_mood_board command without any pre-configured scope."
+commands.deny = ["save_mood_board"]

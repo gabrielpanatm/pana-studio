@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-unstage-all-versioning"
+description = "Enables the unstage_all_versioning command without any pre-configured scope."
+commands.allow = ["unstage_all_versioning"]
+
+[[permission]]
+identifier = "deny-unstage-all-versioning"
+description = "Denies the unstage_all_versioning command without any pre-configured scope."
+commands.deny = ["unstage_all_versioning"]

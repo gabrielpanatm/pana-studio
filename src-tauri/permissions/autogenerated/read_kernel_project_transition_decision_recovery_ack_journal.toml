@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-kernel-project-transition-decision-recovery-ack-journal"
+description = "Enables the read_kernel_project_transition_decision_recovery_ack_journal command without any pre-configured scope."
+commands.allow = ["read_kernel_project_transition_decision_recovery_ack_journal"]
+
+[[permission]]
+identifier = "deny-read-kernel-project-transition-decision-recovery-ack-journal"
+description = "Denies the read_kernel_project_transition_decision_recovery_ack_journal command without any pre-configured scope."
+commands.deny = ["read_kernel_project_transition_decision_recovery_ack_journal"]

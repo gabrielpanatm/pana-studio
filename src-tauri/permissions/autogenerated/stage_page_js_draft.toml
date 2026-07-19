@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stage-page-js-draft"
+description = "Enables the stage_page_js_draft command without any pre-configured scope."
+commands.allow = ["stage_page_js_draft"]
+
+[[permission]]
+identifier = "deny-stage-page-js-draft"
+description = "Denies the stage_page_js_draft command without any pre-configured scope."
+commands.deny = ["stage_page_js_draft"]

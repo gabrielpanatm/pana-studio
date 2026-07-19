@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-scss-variable"
+description = "Enables the set_scss_variable command without any pre-configured scope."
+commands.allow = ["set_scss_variable"]
+
+[[permission]]
+identifier = "deny-set-scss-variable"
+description = "Denies the set_scss_variable command without any pre-configured scope."
+commands.deny = ["set_scss_variable"]

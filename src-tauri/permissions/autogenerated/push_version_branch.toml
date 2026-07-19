@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-push-version-branch"
+description = "Enables the push_version_branch command without any pre-configured scope."
+commands.allow = ["push_version_branch"]
+
+[[permission]]
+identifier = "deny-push-version-branch"
+description = "Denies the push_version_branch command without any pre-configured scope."
+commands.deny = ["push_version_branch"]

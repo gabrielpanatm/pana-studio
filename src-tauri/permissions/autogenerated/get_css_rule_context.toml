@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-css-rule-context"
+description = "Enables the get_css_rule_context command without any pre-configured scope."
+commands.allow = ["get_css_rule_context"]
+
+[[permission]]
+identifier = "deny-get-css-rule-context"
+description = "Denies the get_css_rule_context command without any pre-configured scope."
+commands.deny = ["get_css_rule_context"]

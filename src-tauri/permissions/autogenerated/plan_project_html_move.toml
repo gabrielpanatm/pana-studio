@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-project-html-move"
+description = "Enables the plan_project_html_move command without any pre-configured scope."
+commands.allow = ["plan_project_html_move"]
+
+[[permission]]
+identifier = "deny-plan-project-html-move"
+description = "Denies the plan_project_html_move command without any pre-configured scope."
+commands.deny = ["plan_project_html_move"]

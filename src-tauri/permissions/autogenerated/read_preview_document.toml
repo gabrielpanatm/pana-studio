@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-preview-document"
+description = "Enables the read_preview_document command without any pre-configured scope."
+commands.allow = ["read_preview_document"]
+
+[[permission]]
+identifier = "deny-read-preview-document"
+description = "Denies the read_preview_document command without any pre-configured scope."
+commands.deny = ["read_preview_document"]

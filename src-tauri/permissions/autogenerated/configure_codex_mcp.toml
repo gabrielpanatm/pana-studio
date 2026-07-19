@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-configure-codex-mcp"
+description = "Enables the configure_codex_mcp command without any pre-configured scope."
+commands.allow = ["configure_codex_mcp"]
+
+[[permission]]
+identifier = "deny-configure-codex-mcp"
+description = "Denies the configure_codex_mcp command without any pre-configured scope."
+commands.deny = ["configure_codex_mcp"]

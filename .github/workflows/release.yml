@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Verify source and licence inventory
+        run: |
+          npm run check
+          npm run test:kernel
+          npm run licenses:check
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Build AppImage and create draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Pană Studio ${{ github.ref_name }}
+          releaseBody: |
+            Primul preview public Pană Studio pentru Linux x86_64.
+
+            Verifică fișierul AppImage cu fișierul `.sha256` înainte de rulare.
+            Acest preview nu este încă semnat criptografic.
+          releaseDraft: true
+          prerelease: true
+          generateReleaseNotes: true
+
+      - name: Create and upload AppImage checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bundle_dir="src-tauri/target/release/bundle/appimage"
+          mapfile -d '' appimages < <(find "$bundle_dir" -maxdepth 1 -type f -name '*.AppImage' -print0)
+
+          if [ "${#appimages[@]}" -ne 1 ]; then
+            echo "Expected exactly one AppImage, found ${#appimages[@]}." >&2
+            exit 1
+          fi
+
+          appimage_path="${appimages[0]}"
+          checksum_path="${appimage_path}.sha256"
+          appimage_name="$(basename "$appimage_path")"
+          checksum_name="$(basename "$checksum_path")"
+
+          (
+            cd "$bundle_dir"
+            sha256sum "$appimage_name" > "$checksum_name"
+            sha256sum --check "$checksum_name"
+          )
+
+          gh release upload "$GITHUB_REF_NAME" "$checksum_path" --clobber

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-version-integration-plan"
+description = "Enables the read_version_integration_plan command without any pre-configured scope."
+commands.allow = ["read_version_integration_plan"]
+
+[[permission]]
+identifier = "deny-read-version-integration-plan"
+description = "Denies the read_version_integration_plan command without any pre-configured scope."
+commands.deny = ["read_version_integration_plan"]

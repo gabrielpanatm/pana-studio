@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-search-google-fonts"
+description = "Enables the search_google_fonts command without any pre-configured scope."
+commands.allow = ["search_google_fonts"]
+
+[[permission]]
+identifier = "deny-search-google-fonts"
+description = "Denies the search_google_fonts command without any pre-configured scope."
+commands.deny = ["search_google_fonts"]

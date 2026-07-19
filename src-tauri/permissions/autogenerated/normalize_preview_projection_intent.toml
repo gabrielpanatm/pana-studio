@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-normalize-preview-projection-intent"
+description = "Enables the normalize_preview_projection_intent command without any pre-configured scope."
+commands.allow = ["normalize_preview_projection_intent"]
+
+[[permission]]
+identifier = "deny-normalize-preview-projection-intent"
+description = "Denies the normalize_preview_projection_intent command without any pre-configured scope."
+commands.deny = ["normalize_preview_projection_intent"]

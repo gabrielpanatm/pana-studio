@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-find-class-in-scss"
+description = "Enables the find_class_in_scss command without any pre-configured scope."
+commands.allow = ["find_class_in_scss"]
+
+[[permission]]
+identifier = "deny-find-class-in-scss"
+description = "Denies the find_class_in_scss command without any pre-configured scope."
+commands.deny = ["find_class_in_scss"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-kernel-project-transition-decision-retention-hot-journals"
+description = "Enables the read_kernel_project_transition_decision_retention_hot_journals command without any pre-configured scope."
+commands.allow = ["read_kernel_project_transition_decision_retention_hot_journals"]
+
+[[permission]]
+identifier = "deny-read-kernel-project-transition-decision-retention-hot-journals"
+description = "Denies the read_kernel_project_transition_decision_retention_hot_journals command without any pre-configured scope."
+commands.deny = ["read_kernel_project_transition_decision_retention_hot_journals"]

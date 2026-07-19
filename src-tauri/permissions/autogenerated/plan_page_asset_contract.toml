@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-page-asset-contract"
+description = "Enables the plan_page_asset_contract command without any pre-configured scope."
+commands.allow = ["plan_page_asset_contract"]
+
+[[permission]]
+identifier = "deny-plan-page-asset-contract"
+description = "Denies the plan_page_asset_contract command without any pre-configured scope."
+commands.deny = ["plan_page_asset_contract"]

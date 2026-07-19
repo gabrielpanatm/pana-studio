@@ -1,0 +1,67 @@
+[package]
+name = "pana-studio"
+version = "0.1.0"
+description = "Editor vizual desktop open-source pentru site-uri Zola"
+authors = ["Gabriel Pană"]
+license = "EUPL-1.2-or-later"
+homepage = "https://github.com/gabrielpanatm/pana-studio"
+repository = "https://github.com/gabrielpanatm/pana-studio"
+publish = false
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "pana_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["image-png"] }
+# Refolosește parserul HTML5 al stack-ului Tauri pentru sanitizarea Design Safe.
+tauri-utils = { version = "2", features = ["html-manipulation"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+# SDK-ul oficial MCP; versiunea exactă fixează semantica protocolului și
+# include corecțiile de conformitate pentru Streamable HTTP 2025-11-25.
+rmcp = { version = "=2.2.0", features = ["server", "macros", "schemars", "transport-streamable-http-server"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time"] }
+tokio-util = "0.7"
+schemars = "1"
+# Hash-urile CSP cer codarea standard RFC 4648 a digestului SHA-256.
+base64 = "0.22"
+getrandom = "0.3"
+toml_edit = "0.25"
+tauri-plugin-pty = "0.2.1"
+reqwest = { version = "0.12", features = ["blocking"] }
+walkdir = "2"
+mime_guess = "2"
+percent-encoding = "2"
+relative-path = "2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# Motorul de randare Preview este exact crate-ul `site` din release-ul
+# oficial Zola 0.22.1. Commitul fix împiedică schimbarea semanticii Tera,
+# Markdown, Sass sau a rutelor fără un upgrade explicit și teste de paritate.
+zola-site = { package = "site", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
+# Workbench-ul randă un template prin aceleași API-uri și aceeași versiune
+# Tera folosite de motorul Zola embedded; nu pornește `zola serve` separat.
+zola-utils = { package = "utils", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
+tera = { version = "1.17", features = ["preserve_order", "date-locale"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gdk = "0.18"
+gtk = "0.18"
+webkit2gtk = "2"
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+
+[dev-dependencies]
+tauri = { version = "2", features = ["image-png", "test"] }

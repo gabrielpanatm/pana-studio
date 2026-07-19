@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fetch-version-remote"
+description = "Enables the fetch_version_remote command without any pre-configured scope."
+commands.allow = ["fetch_version_remote"]
+
+[[permission]]
+identifier = "deny-fetch-version-remote"
+description = "Denies the fetch_version_remote command without any pre-configured scope."
+commands.deny = ["fetch_version_remote"]

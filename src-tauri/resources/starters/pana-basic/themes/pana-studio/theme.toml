@@ -1,0 +1,11 @@
+name = "pana-studio"
+description = "Starter structural local pentru proiecte Zola create cu Pană Studio."
+license = "MIT"
+homepage = "https://pana.tm.ro"
+min_version = "0.22.0"
+
+[extra]
+
+[author]
+name = "Gabriel Pană"
+homepage = "https://pana.tm.ro"

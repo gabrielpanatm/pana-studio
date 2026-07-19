@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-include-site-partial"
+description = "Enables the include_site_partial command without any pre-configured scope."
+commands.allow = ["include_site_partial"]
+
+[[permission]]
+identifier = "deny-include-site-partial"
+description = "Denies the include_site_partial command without any pre-configured scope."
+commands.deny = ["include_site_partial"]

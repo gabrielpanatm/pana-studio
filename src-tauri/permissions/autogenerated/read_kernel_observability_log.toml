@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-kernel-observability-log"
+description = "Enables the read_kernel_observability_log command without any pre-configured scope."
+commands.allow = ["read_kernel_observability_log"]
+
+[[permission]]
+identifier = "deny-read-kernel-observability-log"
+description = "Denies the read_kernel_observability_log command without any pre-configured scope."
+commands.deny = ["read_kernel_observability_log"]

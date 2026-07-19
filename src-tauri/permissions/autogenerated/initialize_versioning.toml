@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-initialize-versioning"
+description = "Enables the initialize_versioning command without any pre-configured scope."
+commands.allow = ["initialize_versioning"]
+
+[[permission]]
+identifier = "deny-initialize-versioning"
+description = "Denies the initialize_versioning command without any pre-configured scope."
+commands.deny = ["initialize_versioning"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-accept-ai-edit-conflict-for-reconciliation"
+description = "Enables the accept_ai_edit_conflict_for_reconciliation command without any pre-configured scope."
+commands.allow = ["accept_ai_edit_conflict_for_reconciliation"]
+
+[[permission]]
+identifier = "deny-accept-ai-edit-conflict-for-reconciliation"
+description = "Denies the accept_ai_edit_conflict_for_reconciliation command without any pre-configured scope."
+commands.deny = ["accept_ai_edit_conflict_for_reconciliation"]

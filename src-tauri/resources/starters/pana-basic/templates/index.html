@@ -1,0 +1,71 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+{% block css_pagina %}<link rel="stylesheet" href="/pagini/index.css">{% endblock %}
+
+{% block content %}
+<section class="hero hero-centered starter-hero">
+  <div class="container starter-hero-inner">
+    <span class="badge badge-primary">Zola + SCSS</span>
+    <h1 class="hero-title">Construiește un site rapid, curat și ușor de editat.</h1>
+    <p class="hero-subtitle">Acesta este un starter minimal pentru Pană Studio, pregătit cu template-uri Tera și framework SCSS local.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#servicii">Vezi structura</a>
+      <a class="btn btn-secondary" href="#contact">Editează conținutul</a>
+    </div>
+  </div>
+</section>
+
+<section id="servicii" class="section starter-section">
+  <div class="container">
+    <div class="starter-section-head">
+      <span class="badge badge-accent">Start simplu</span>
+      <h2>Structură de bază pentru un website Zola</h2>
+      <p>Template-ul include elemente reale pentru editare vizuală: navigație, hero, carduri, pași și footer.</p>
+    </div>
+
+    <div class="starter-grid">
+      <article class="card card-static">
+        <div class="card-body">
+          <h3>Template-uri clare</h3>
+          <p>Layout-ul de bază stă în <code>base.html</code>, iar homepage-ul extinde acest layout prin Tera.</p>
+        </div>
+      </article>
+      <article class="card card-static">
+        <div class="card-body">
+          <h3>Framework în temă</h3>
+          <p>Framework-ul global este compilat din <code>themes/pana-studio/sass/css-framework/framework.scss</code>.</p>
+        </div>
+      </article>
+      <article class="card card-static">
+        <div class="card-body">
+          <h3>CSS per pagină</h3>
+          <p>Stilurile homepage-ului sunt în <code>sass/pagini/index.scss</code>, separat de framework.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section id="proces" class="section starter-process">
+  <div class="container starter-process-inner">
+    <div>
+      <span class="badge badge-neutral">Workflow</span>
+      <h2>Un punct de plecare editabil, nu o temă rigidă.</h2>
+    </div>
+    <ol class="starter-steps">
+      <li><strong>1.</strong><span>Alegi dosarul gol.</span></li>
+      <li><strong>2.</strong><span>Pană Studio inițializează proiectul.</span></li>
+      <li><strong>3.</strong><span>Editezi vizual template-ul și SCSS-ul.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section id="contact" class="section starter-cta">
+  <div class="container starter-cta-inner">
+    <h2>Începe prin a modifica acest conținut.</h2>
+    <p>Selectează un element în preview, ajustează textul, clasele sau stilurile, apoi salvează când ești mulțumit.</p>
+  </div>
+</section>
+{% endblock %}

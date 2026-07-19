@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-file-buffer-draft"
+description = "Enables the set_file_buffer_draft command without any pre-configured scope."
+commands.allow = ["set_file_buffer_draft"]
+
+[[permission]]
+identifier = "deny-set-file-buffer-draft"
+description = "Denies the set_file_buffer_draft command without any pre-configured scope."
+commands.deny = ["set_file_buffer_draft"]

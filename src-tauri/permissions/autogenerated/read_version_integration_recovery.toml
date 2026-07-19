@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-version-integration-recovery"
+description = "Enables the read_version_integration_recovery command without any pre-configured scope."
+commands.allow = ["read_version_integration_recovery"]
+
+[[permission]]
+identifier = "deny-read-version-integration-recovery"
+description = "Denies the read_version_integration_recovery command without any pre-configured scope."
+commands.deny = ["read_version_integration_recovery"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-page-js-draft"
+description = "Enables the clear_page_js_draft command without any pre-configured scope."
+commands.allow = ["clear_page_js_draft"]
+
+[[permission]]
+identifier = "deny-clear-page-js-draft"
+description = "Denies the clear_page_js_draft command without any pre-configured scope."
+commands.deny = ["clear_page_js_draft"]

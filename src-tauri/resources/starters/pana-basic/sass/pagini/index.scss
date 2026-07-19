@@ -1,0 +1,126 @@
+@import '../../themes/pana-studio/sass/css-framework/variabile';
+
+.starter-hero {
+  min-height: calc(100dvh - 72px);
+  background:
+    radial-gradient(circle at 20% 20%, color-mix(in srgb, $color-primary 10%, transparent), transparent 32%),
+    radial-gradient(circle at 80% 10%, color-mix(in srgb, $color-accent 12%, transparent), transparent 34%),
+    $bg-body;
+}
+
+.starter-hero-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: $space-m;
+}
+
+.starter-section {
+  background-color: $bg-surface;
+}
+
+.starter-section-head {
+  display: grid;
+  gap: $space-xs;
+  max-width: 760px;
+  margin-bottom: $space-l;
+}
+
+.starter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: $space-s;
+}
+
+.starter-process-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: $space-xl;
+  align-items: start;
+}
+
+.starter-steps {
+  display: grid;
+  gap: $space-xs;
+  list-style: none;
+}
+
+.starter-steps li {
+  display: flex;
+  gap: $space-xs;
+  align-items: center;
+  padding: $space-s;
+  border: 1px solid $border-color;
+  border-radius: $radius-l;
+  background-color: $bg-body;
+}
+
+.starter-steps strong {
+  color: $color-primary;
+}
+
+.starter-cta {
+  background-color: $color-gray-900;
+}
+
+.starter-cta-inner {
+  display: grid;
+  gap: $space-xs;
+  justify-items: center;
+  text-align: center;
+}
+
+.starter-cta h2,
+.starter-cta p {
+  color: $text-inverse;
+}
+
+.site-footer {
+  border-top: 1px solid $border-color;
+  padding-block: $space-s;
+  background-color: $bg-body;
+}
+
+.site-footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-s;
+  font-size: $text-sm;
+  color: $text-light;
+}
+
+.site-footer p {
+  margin: 0;
+}
+
+.site-footer a {
+  color: $color-primary;
+}
+
+@media (max-width: $bp-tableta) {
+  .starter-grid,
+  .starter-process-inner {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .starter-hero {
+    min-height: auto;
+  }
+
+  .starter-hero .hero-actions {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .starter-hero .btn {
+    width: 100%;
+  }
+
+  .site-footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

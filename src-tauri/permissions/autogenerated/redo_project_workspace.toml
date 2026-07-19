@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-redo-project-workspace"
+description = "Enables the redo_project_workspace command without any pre-configured scope."
+commands.allow = ["redo_project_workspace"]
+
+[[permission]]
+identifier = "deny-redo-project-workspace"
+description = "Denies the redo_project_workspace command without any pre-configured scope."
+commands.deny = ["redo_project_workspace"]

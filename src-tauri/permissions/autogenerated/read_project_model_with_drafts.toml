@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-project-model-with-drafts"
+description = "Enables the read_project_model_with_drafts command without any pre-configured scope."
+commands.allow = ["read_project_model_with_drafts"]
+
+[[permission]]
+identifier = "deny-read-project-model-with-drafts"
+description = "Denies the read_project_model_with_drafts command without any pre-configured scope."
+commands.deny = ["read_project_model_with_drafts"]

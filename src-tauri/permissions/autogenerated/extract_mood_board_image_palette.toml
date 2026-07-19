@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-extract-mood-board-image-palette"
+description = "Enables the extract_mood_board_image_palette command without any pre-configured scope."
+commands.allow = ["extract_mood_board_image_palette"]
+
+[[permission]]
+identifier = "deny-extract-mood-board-image-palette"
+description = "Denies the extract_mood_board_image_palette command without any pre-configured scope."
+commands.deny = ["extract_mood_board_image_palette"]

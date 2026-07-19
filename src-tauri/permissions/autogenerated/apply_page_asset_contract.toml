@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-page-asset-contract"
+description = "Enables the apply_page_asset_contract command without any pre-configured scope."
+commands.allow = ["apply_page_asset_contract"]
+
+[[permission]]
+identifier = "deny-apply-page-asset-contract"
+description = "Denies the apply_page_asset_contract command without any pre-configured scope."
+commands.deny = ["apply_page_asset_contract"]

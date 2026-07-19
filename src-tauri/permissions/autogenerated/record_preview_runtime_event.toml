@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-record-preview-runtime-event"
+description = "Enables the record_preview_runtime_event command without any pre-configured scope."
+commands.allow = ["record_preview_runtime_event"]
+
+[[permission]]
+identifier = "deny-record-preview-runtime-event"
+description = "Denies the record_preview_runtime_event command without any pre-configured scope."
+commands.deny = ["record_preview_runtime_event"]

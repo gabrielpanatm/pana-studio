@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-unstage-versioning-paths"
+description = "Enables the unstage_versioning_paths command without any pre-configured scope."
+commands.allow = ["unstage_versioning_paths"]
+
+[[permission]]
+identifier = "deny-unstage-versioning-paths"
+description = "Denies the unstage_versioning_paths command without any pre-configured scope."
+commands.deny = ["unstage_versioning_paths"]

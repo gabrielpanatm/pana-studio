@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-delete-project-entry"
+description = "Enables the workspace_delete_project_entry command without any pre-configured scope."
+commands.allow = ["workspace_delete_project_entry"]
+
+[[permission]]
+identifier = "deny-workspace-delete-project-entry"
+description = "Denies the workspace_delete_project_entry command without any pre-configured scope."
+commands.deny = ["workspace_delete_project_entry"]

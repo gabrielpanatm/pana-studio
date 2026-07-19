@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-template-workbench-plan"
+description = "Enables the resolve_template_workbench_plan command without any pre-configured scope."
+commands.allow = ["resolve_template_workbench_plan"]
+
+[[permission]]
+identifier = "deny-resolve-template-workbench-plan"
+description = "Denies the resolve_template_workbench_plan command without any pre-configured scope."
+commands.deny = ["resolve_template_workbench_plan"]

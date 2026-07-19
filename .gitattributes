@@ -1,0 +1,11 @@
+* text=auto eol=lf
+
+*.icns binary
+*.ico binary
+*.jpg binary
+*.png binary
+*.webp binary
+src-tauri/binaries/zola binary
+
+src-tauri/resources/anime.umd.min.js linguist-vendored=true
+src-tauri/resources/licenses/THIRD_PARTY_LICENSES.txt -whitespace linguist-generated=true

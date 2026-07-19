@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-page-css-rule-at-viewport"
+description = "Enables the set_page_css_rule_at_viewport command without any pre-configured scope."
+commands.allow = ["set_page_css_rule_at_viewport"]
+
+[[permission]]
+identifier = "deny-set-page-css-rule-at-viewport"
+description = "Denies the set_page_css_rule_at_viewport command without any pre-configured scope."
+commands.deny = ["set_page_css_rule_at_viewport"]

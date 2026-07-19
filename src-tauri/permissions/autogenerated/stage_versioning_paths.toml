@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stage-versioning-paths"
+description = "Enables the stage_versioning_paths command without any pre-configured scope."
+commands.allow = ["stage_versioning_paths"]
+
+[[permission]]
+identifier = "deny-stage-versioning-paths"
+description = "Denies the stage_versioning_paths command without any pre-configured scope."
+commands.deny = ["stage_versioning_paths"]

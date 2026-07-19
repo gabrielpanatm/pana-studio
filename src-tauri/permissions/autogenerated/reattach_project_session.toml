@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reattach-project-session"
+description = "Enables the reattach_project_session command without any pre-configured scope."
+commands.allow = ["reattach_project_session"]
+
+[[permission]]
+identifier = "deny-reattach-project-session"
+description = "Denies the reattach_project_session command without any pre-configured scope."
+commands.deny = ["reattach_project_session"]

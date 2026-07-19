@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-inspect-project-open-recovery"
+description = "Enables the inspect_project_open_recovery command without any pre-configured scope."
+commands.allow = ["inspect_project_open_recovery"]
+
+[[permission]]
+identifier = "deny-inspect-project-open-recovery"
+description = "Denies the inspect_project_open_recovery command without any pre-configured scope."
+commands.deny = ["inspect_project_open_recovery"]

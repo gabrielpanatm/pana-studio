@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-versioning-snapshot"
+description = "Enables the read_versioning_snapshot command without any pre-configured scope."
+commands.allow = ["read_versioning_snapshot"]
+
+[[permission]]
+identifier = "deny-read-versioning-snapshot"
+description = "Denies the read_versioning_snapshot command without any pre-configured scope."
+commands.deny = ["read_versioning_snapshot"]

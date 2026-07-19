@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-version-upstream"
+description = "Enables the clear_version_upstream command without any pre-configured scope."
+commands.allow = ["clear_version_upstream"]
+
+[[permission]]
+identifier = "deny-clear-version-upstream"
+description = "Denies the clear_version_upstream command without any pre-configured scope."
+commands.deny = ["clear_version_upstream"]

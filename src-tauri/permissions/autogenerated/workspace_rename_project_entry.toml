@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-rename-project-entry"
+description = "Enables the workspace_rename_project_entry command without any pre-configured scope."
+commands.allow = ["workspace_rename_project_entry"]
+
+[[permission]]
+identifier = "deny-workspace-rename-project-entry"
+description = "Denies the workspace_rename_project_entry command without any pre-configured scope."
+commands.deny = ["workspace_rename_project_entry"]

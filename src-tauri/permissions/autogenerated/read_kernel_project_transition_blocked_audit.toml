@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-kernel-project-transition-blocked-audit"
+description = "Enables the read_kernel_project_transition_blocked_audit command without any pre-configured scope."
+commands.allow = ["read_kernel_project_transition_blocked_audit"]
+
+[[permission]]
+identifier = "deny-read-kernel-project-transition-blocked-audit"
+description = "Denies the read_kernel_project_transition_blocked_audit command without any pre-configured scope."
+commands.deny = ["read_kernel_project_transition_blocked_audit"]

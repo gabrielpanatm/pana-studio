@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-record-project-transition-operator-decision"
+description = "Enables the record_project_transition_operator_decision command without any pre-configured scope."
+commands.allow = ["record_project_transition_operator_decision"]
+
+[[permission]]
+identifier = "deny-record-project-transition-operator-decision"
+description = "Denies the record_project_transition_operator_decision command without any pre-configured scope."
+commands.deny = ["record_project_transition_operator_decision"]

@@ -23,7 +23,6 @@ export type TerminalSession = {
 };
 
 export type TerminalRuntime = {
-  CanvasAddon: typeof import("@xterm/addon-canvas").CanvasAddon;
   FitAddon: typeof import("@xterm/addon-fit").FitAddon;
   Terminal: typeof import("@xterm/xterm").Terminal;
   WebLinksAddon: typeof import("@xterm/addon-web-links").WebLinksAddon;
@@ -100,13 +99,11 @@ export function createTerminalTab(index: number): TerminalTab {
 export async function loadTerminalRuntime(): Promise<TerminalRuntime> {
   if (!terminalRuntimePromise) {
     terminalRuntimePromise = Promise.all([
-      import("@xterm/addon-canvas"),
       import("@xterm/addon-fit"),
       import("@xterm/addon-web-links"),
       import("@xterm/xterm"),
       import("tauri-pty"),
-    ]).then(([canvas, fit, webLinks, xterm, pty]) => ({
-      CanvasAddon: canvas.CanvasAddon,
+    ]).then(([fit, webLinks, xterm, pty]) => ({
       FitAddon: fit.FitAddon,
       Terminal: xterm.Terminal,
       WebLinksAddon: webLinks.WebLinksAddon,

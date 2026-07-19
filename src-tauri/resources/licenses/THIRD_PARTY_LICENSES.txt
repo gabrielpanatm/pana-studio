@@ -147,7 +147,6 @@ NPM PACKAGES
 @types/estree 1.0.8 | MIT | https://github.com/DefinitelyTyped/DefinitelyTyped.git
 @types/node 25.6.0 | MIT | https://github.com/DefinitelyTyped/DefinitelyTyped.git
 @types/trusted-types 2.0.7 | MIT | https://github.com/DefinitelyTyped/DefinitelyTyped.git
-@xterm/addon-canvas 0.7.0 | MIT | https://registry.npmjs.org/@xterm/addon-canvas/-/addon-canvas-0.7.0.tgz
 @xterm/addon-fit 0.11.0 | MIT | https://registry.npmjs.org/@xterm/addon-fit/-/addon-fit-0.11.0.tgz
 @xterm/addon-web-links 0.12.0 | MIT | https://registry.npmjs.org/@xterm/addon-web-links/-/addon-web-links-0.12.0.tgz
 @xterm/xterm 6.0.0 | MIT | https://registry.npmjs.org/@xterm/xterm/-/xterm-6.0.0.tgz
@@ -22428,11 +22427,11 @@ MIT License
 
 ========================================================================
 
-Applies to: npm:@xterm/addon-canvas@0.7.0, npm:@xterm/addon-web-links@0.12.0
+Applies to: npm:@xterm/addon-fit@0.11.0
 Source file name(s): LICENSE
-Content SHA-256: 8d1456802c2f26c66e458bc8fe402d4298de27e492d6847fd74f7f9b0cdaa115
+Content SHA-256: c434897a5a6c56ce8b89647531e8f25396ff288e331277615c895916ac2e6d25
 ------------------------------------------------------------------------
-Copyright (c) 2017, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+Copyright (c) 2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22454,11 +22453,11 @@ THE SOFTWARE.
 
 ========================================================================
 
-Applies to: npm:@xterm/addon-fit@0.11.0
+Applies to: npm:@xterm/addon-web-links@0.12.0
 Source file name(s): LICENSE
-Content SHA-256: c434897a5a6c56ce8b89647531e8f25396ff288e331277615c895916ac2e6d25
+Content SHA-256: 8d1456802c2f26c66e458bc8fe402d4298de27e492d6847fd74f7f9b0cdaa115
 ------------------------------------------------------------------------
-Copyright (c) 2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
+Copyright (c) 2017, The xterm.js authors (https://github.com/xtermjs/xterm.js)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

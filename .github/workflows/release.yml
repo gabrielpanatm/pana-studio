@@ -97,14 +97,13 @@ jobs:
           fi
 
           appimage_path="${appimages[0]}"
-          checksum_path="${appimage_path}.sha256"
-          appimage_name="$(basename "$appimage_path")"
-          checksum_name="$(basename "$checksum_path")"
+          remote_appimage_name="$(
+            gh release view "$RELEASE_TAG" --json assets --jq \
+              '[.assets[] | select(.name | endswith(".AppImage"))] | if length == 1 then .[0].name else error("Expected exactly one uploaded AppImage") end'
+          )"
+          checksum_path="$bundle_dir/${remote_appimage_name}.sha256"
+          appimage_digest="$(sha256sum "$appimage_path" | cut -d ' ' -f 1)"
 
-          (
-            cd "$bundle_dir"
-            sha256sum "$appimage_name" > "$checksum_name"
-            sha256sum --check "$checksum_name"
-          )
+          printf '%s  %s\n' "$appimage_digest" "$remote_appimage_name" > "$checksum_path"
 
           gh release upload "$RELEASE_TAG" "$checksum_path" --clobber

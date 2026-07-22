@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::scope::is_derived_or_internal_dir;
 
 const MAX_MANIFEST_FILES: usize = 1000;
-const TRACKED_ROOT_DIRS: &[&str] = &["sursa", "design", "resurse"];
+const TRACKED_ROOT_DIRS: &[&str] = &["sursa", "resurse"];
 const TRACKED_ROOT_FILES: &[&str] = &[
     "AGENTS.md",
     "brief.md",
@@ -460,6 +460,28 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn manifest_leaves_retired_design_tree_outside_runtime_authority() {
+        let root = test_root("retired-design-tree");
+        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("design")).unwrap();
+        fs::write(root.join("sursa/templates/index.html"), "active").unwrap();
+        fs::write(root.join("design/legacy.json"), "{}\n").unwrap();
+
+        let manifest = read_project_disk_manifest(&root).unwrap();
+
+        assert_eq!(
+            manifest
+                .files
+                .iter()
+                .map(|entry| entry.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sursa/templates/index.html"]
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

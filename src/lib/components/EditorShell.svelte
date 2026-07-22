@@ -20,7 +20,7 @@
   } from "$lib/types";
   import type { InteractivePreviewDomNode } from "$lib/preview/interactive";
 
-  type CenterView = "preview" | "code" | "markdown" | "canvas" | "site" | "kernel";
+  type CenterView = "preview" | "code" | "markdown" | "site" | "kernel";
 
   export let centerView: CenterView = "preview";
   export let previewZoom = 100;

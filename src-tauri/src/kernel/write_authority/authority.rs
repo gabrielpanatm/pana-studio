@@ -1328,10 +1328,7 @@ impl<'a, R: Runtime> WriteAuthority<'a, R> {
         &self,
         intent: &WriteIntent,
     ) -> Result<(), WriteAuthorityError> {
-        if !matches!(
-            intent.category,
-            WriteCategory::ProjectSourceWrite | WriteCategory::ProjectDesignWrite
-        ) {
+        if intent.category != WriteCategory::ProjectSourceWrite {
             return Ok(());
         }
         let Some(state) = self.app.try_state::<AppState>() else {
@@ -1522,7 +1519,6 @@ fn category_label(category: WriteCategory) -> &'static str {
     match category {
         WriteCategory::InternalAppWrite => "internal_app_write",
         WriteCategory::ProjectSourceWrite => "project_source_write",
-        WriteCategory::ProjectDesignWrite => "project_design_write",
         WriteCategory::PreviewWorkspaceWrite => "preview_workspace_write",
         WriteCategory::ExternalIntegrationWrite => "external_integration_write",
         WriteCategory::BuildOutputWrite => "build_output_write",
@@ -1540,7 +1536,6 @@ fn owner_label(owner: WriteOwner) -> &'static str {
         WriteOwner::McpContext => "mcp_context",
         WriteOwner::CodexMcp => "codex_mcp",
         WriteOwner::ProjectInitializer => "project_initializer",
-        WriteOwner::MoodBoard => "mood_board",
         WriteOwner::Preview => "preview",
         WriteOwner::ImageOptimizer => "image_optimizer",
     }
@@ -1573,7 +1568,6 @@ fn copy_replace_policy(owner: WriteOwner) -> Result<CapabilityReplacePolicy, Str
         | WriteOwner::AppConfig
         | WriteOwner::McpContext
         | WriteOwner::CodexMcp
-        | WriteOwner::MoodBoard
         | WriteOwner::ImageOptimizer => Err(format!(
             "WriteAuthority Copy refuză ownerul {owner:?}; numai ProjectInitializer și Preview au contract copy."
         )),
@@ -1662,52 +1656,6 @@ mod tests {
             })
             .count();
         assert_eq!(wal_records, 0);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn write_commit_rejects_stale_runtime_session_after_same_root_reopen() {
-        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
-        let root = unique_test_dir("stale-runtime-session-write");
-        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
-        let project = root.join("project");
-        let target = project.join("design/mood-board.json");
-        fs::create_dir_all(target.parent().unwrap()).unwrap();
-        let app = tauri::test::mock_builder()
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .expect("Tauri test app should build with mock context");
-        let app_home = ensure_app_home(app.handle()).expect("test app home should be available");
-        let session_a = PathBuf::from(&app_home.sessions_dir).join("mood-session-a");
-        let session_b = PathBuf::from(&app_home.sessions_dir).join("mood-session-b");
-        fs::create_dir_all(&session_a).unwrap();
-        fs::create_dir_all(&session_b).unwrap();
-        install_test_project_authority(app.handle(), "mood/runtime-a", &project, &session_a)
-            .unwrap();
-
-        let intent = WriteIntent::new(
-            WriteCategory::ProjectDesignWrite,
-            WriteOwner::MoodBoard,
-            WriteOperationKind::WriteText,
-            WriteTarget::new(
-                target.clone(),
-                project.clone(),
-                "project/design/mood-board.json",
-            )
-            .with_expected_runtime_session_id("mood/runtime-a"),
-            WritePolicy::project_design_state_save(),
-            "Mood Board stale-session commit test.",
-        );
-
-        install_test_project_authority(app.handle(), "mood/runtime-b", &project, &session_b)
-            .unwrap();
-        let error = WriteAuthority::new(app.handle())
-            .write_text(intent, "{}\n")
-            .unwrap_err()
-            .into_terminal_diagnostic();
-
-        assert!(error.contains("mood/runtime-a"));
-        assert!(error.contains("mood/runtime-b"));
-        assert!(!target.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3105,12 +3053,9 @@ mod tests {
         let project = root.join("project");
         let source = root.join("source.txt");
         let initializer_target = project.join("sursa/config.toml");
-        let design_target = project.join("design/imagini/export.bin");
         fs::create_dir_all(initializer_target.parent().unwrap()).unwrap();
-        fs::create_dir_all(design_target.parent().unwrap()).unwrap();
         fs::write(&source, "new initializer").unwrap();
         fs::write(&initializer_target, "existing initializer").unwrap();
-        fs::write(&design_target, "existing design").unwrap();
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("Tauri test app should build with mock context");
@@ -3136,37 +3081,14 @@ mod tests {
             WritePolicy::project_creation_lifecycle(),
             "Project initializer copy must be create-only.",
         );
-        let design_intent = WriteIntent::new(
-            WriteCategory::ProjectDesignWrite,
-            WriteOwner::MoodBoard,
-            WriteOperationKind::WriteBytes,
-            WriteTarget::new(
-                design_target.clone(),
-                project,
-                "project/design/imagini/export.bin",
-            )
-            .with_expected_absent(),
-            WritePolicy::project_design_asset_create(),
-            "Explicit-override asset policy is create-only without an override token.",
-        );
-
         assert!(WriteAuthority::new(app.handle())
             .copy_file(initializer_intent, &source)
-            .unwrap_err()
-            .diagnostic()
-            .contains("există"));
-        assert!(WriteAuthority::new(app.handle())
-            .write_bytes(design_intent, b"new design")
             .unwrap_err()
             .diagnostic()
             .contains("există"));
         assert_eq!(
             fs::read_to_string(initializer_target).unwrap(),
             "existing initializer"
-        );
-        assert_eq!(
-            fs::read_to_string(design_target).unwrap(),
-            "existing design"
         );
         fs::remove_dir_all(root).unwrap();
     }

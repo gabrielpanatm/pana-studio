@@ -14,7 +14,6 @@ mod kernel_preview_context;
 mod kernel_preview_outcome;
 mod kernel_preview_pipeline;
 pub mod mcp;
-pub mod mood;
 pub mod page_assets;
 pub mod page_components;
 mod page_contracts;

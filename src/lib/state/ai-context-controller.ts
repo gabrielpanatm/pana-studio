@@ -5,7 +5,6 @@ import type {
   ExternalDiskState,
   ProjectScan,
   ProjectWorkspaceSnapshot,
-  SaveState,
   ScssVariable,
   SelectionInfo,
   SourceLanguage,
@@ -35,9 +34,6 @@ export type AiContextControllerHost = {
     areas: string[];
     immediateDiskOperationBlockedReason: string;
   };
-  moodBoard: { items: unknown[] };
-  moodBoardSaveState: SaveState | string;
-  moodBoardTool: string;
   externalDiskState: ExternalDiskState;
 };
 
@@ -50,7 +46,7 @@ export function buildAiContextProjection(
   const selected = host.selectedElement;
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     uiRevision,
     expectedProjectSessionId: workspace?.runtimeSessionId ?? null,
     expectedProjectRevision: workspace?.revision ?? null,
@@ -92,12 +88,6 @@ export function buildAiContextProjection(
       canSave: host.globalDirtyState.canSave,
       areas: host.globalDirtyState.areas,
       blockedReason: host.globalDirtyState.immediateDiskOperationBlockedReason,
-    },
-    moodBoard: {
-      available: Boolean(project),
-      items: host.moodBoard.items.length,
-      saveState: host.moodBoardSaveState,
-      tool: host.moodBoardTool,
     },
     externalDisk: {
       changed: host.externalDiskState.changed,

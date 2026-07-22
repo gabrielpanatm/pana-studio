@@ -57,9 +57,7 @@ pub(super) fn validate_authority_path(intent: &WriteIntent) -> Result<(), String
         WriteCategory::ExternalIntegrationWrite => {
             intent.owner == WriteOwner::CodexMcp && segments.as_slice() == ["config.toml"]
         }
-        WriteCategory::ProjectSourceWrite | WriteCategory::ProjectDesignWrite => {
-            validate_project_path(intent, &segments)
-        }
+        WriteCategory::ProjectSourceWrite => validate_project_path(intent, &segments),
     };
     if valid {
         return Ok(());
@@ -185,28 +183,11 @@ fn validate_build_output_path(segments: &[&str]) -> bool {
 fn validate_project_path(intent: &WriteIntent, segments: &[&str]) -> bool {
     match intent.owner {
         WriteOwner::ProjectInitializer => match intent.category {
-            WriteCategory::ProjectDesignWrite => segments.first() == Some(&"design"),
             WriteCategory::ProjectSourceWrite => !segments.is_empty(),
             _ => false,
         },
-        WriteOwner::MoodBoard => match intent.operation {
-            WriteOperationKind::WriteText => segments == ["design", "mood-board.json"],
-            WriteOperationKind::WriteBytes => {
-                segments.len() >= 3
-                    && matches!(
-                        &segments[0..2],
-                        ["design", "imagini"] | ["resurse", "imagini"]
-                    )
-            }
-            _ => false,
-        },
         WriteOwner::ProjectWorkspace => {
-            !segments.is_empty()
-                && match intent.category {
-                    WriteCategory::ProjectDesignWrite => segments.first() == Some(&"design"),
-                    WriteCategory::ProjectSourceWrite => segments.first() != Some(&"design"),
-                    _ => false,
-                }
+            !segments.is_empty() && intent.category == WriteCategory::ProjectSourceWrite
         }
         _ => false,
     }
@@ -437,28 +418,6 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
                 "ProjectWorkspace removes a file created by an interrupted Save only while its active journal and planned hash still match.",
         },
         WriteDeclaration {
-            category: WriteCategory::ProjectDesignWrite,
-            owner: WriteOwner::ProjectWorkspace,
-            operations: vec![WriteOperationKind::WriteText, WriteOperationKind::WriteBytes],
-            path_authority: "ProjectSession project root / design",
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::RequireDiskBaseline,
-            recovery: RecoveryPolicy::HotRollbackJournal,
-            validation:
-                "ProjectWorkspace writes design text or binary resources only from a validated active Save journal with an exact live disk baseline.",
-        },
-        WriteDeclaration {
-            category: WriteCategory::ProjectDesignWrite,
-            owner: WriteOwner::ProjectWorkspace,
-            operations: vec![WriteOperationKind::RemoveFile],
-            path_authority: "ProjectSession project root / design",
-            atomicity: WriteAtomicity::FileLifecycle,
-            conflict: ConflictPolicy::RequireDiskBaseline,
-            recovery: RecoveryPolicy::HotRollbackJournal,
-            validation:
-                "ProjectWorkspace removes a design file created by an interrupted Save only while its journal and planned hash match.",
-        },
-        WriteDeclaration {
             category: WriteCategory::ProjectSourceWrite,
             owner: WriteOwner::ProjectInitializer,
             operations: vec![
@@ -474,39 +433,6 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
             recovery: RecoveryPolicy::LoggedAtomicFile,
             validation:
                 "Project initializer writes only after empty-folder preflight, stays inside the selected project root, blocks file overwrite during resource copy, and logs lifecycle mutations through WriteAuthority.",
-        },
-        WriteDeclaration {
-            category: WriteCategory::ProjectDesignWrite,
-            owner: WriteOwner::ProjectInitializer,
-            operations: vec![WriteOperationKind::CreateDirectory, WriteOperationKind::Copy],
-            path_authority: "new empty project root / design during Project Initializer bootstrap",
-            atomicity: WriteAtomicity::FileLifecycle,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::LoggedAtomicFile,
-            validation:
-                "Design scaffold files copied by the project initializer stay inside project/design, are never copied over an existing destination file, and are logged through WriteAuthority.",
-        },
-        WriteDeclaration {
-            category: WriteCategory::ProjectDesignWrite,
-            owner: WriteOwner::MoodBoard,
-            operations: vec![WriteOperationKind::WriteText],
-            path_authority: "project/design/mood-board.json",
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::LoggedAtomicFile,
-            validation:
-                "Mood Board state is a single-owner JSON design document, written atomically through WriteAuthority inside project/design.",
-        },
-        WriteDeclaration {
-            category: WriteCategory::ProjectDesignWrite,
-            owner: WriteOwner::MoodBoard,
-            operations: vec![WriteOperationKind::WriteBytes],
-            path_authority: "project/design/imagini and project/resurse/imagini Mood Board exports",
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::RequireExplicitOverride,
-            recovery: RecoveryPolicy::LoggedAtomicFile,
-            validation:
-                "Mood Board binary image exports are create-only, limited to design/imagini or resurse/imagini, blocked on existing target/symlink/directory, and logged through WriteAuthority.",
         },
         WriteDeclaration {
             category: WriteCategory::PreviewWorkspaceWrite,
@@ -629,12 +555,6 @@ mod tests {
                 WriteCategory::ProjectSourceWrite => assert!(matches!(
                     declaration.owner,
                     WriteOwner::ProjectWorkspace | WriteOwner::ProjectInitializer
-                )),
-                WriteCategory::ProjectDesignWrite => assert!(matches!(
-                    declaration.owner,
-                    WriteOwner::ProjectWorkspace
-                        | WriteOwner::ProjectInitializer
-                        | WriteOwner::MoodBoard
                 )),
                 _ => {}
             }

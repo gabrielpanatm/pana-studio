@@ -41,6 +41,9 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- funcționalitatea de planșă vizuală și integrările ei frontend, Rust, AI/MCP,
+  Tauri și de inițializare a proiectelor; datele vechi rămân neatinse pe disc,
+  dar nu mai sunt încărcate sau urmărite de aplicație;
 - shell-ul CSS global legacy și arhitectura paralelă `SiteWorkspace`;
 - grupurile redundante de comenzi din topbar și vechiul overlay Git;
 - căile frontend directe care duplicau operațiile semantice mutate în nucleul
@@ -53,7 +56,7 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - prima versiune publică de test pentru Linux x86-64;
 - editor vizual și preview izolat pentru proiecte Zola;
 - editare HTML/Tera, SCSS, Markdown și JavaScript;
-- mood board, timeline de animații și gestionarea resurselor;
+- timeline de animații și gestionarea resurselor;
 - versionare Git locală și operații remote explicite;
 - integrare MCP/Codex și deploy opțional către Bunny;
 - motor și binar Zola `0.22.1` incluse.

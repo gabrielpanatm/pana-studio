@@ -16,7 +16,7 @@ local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 - navigare prin fișiere, straturi și structura site-ului;
 - editare HTML/Tera, SCSS, Markdown și comportamente JavaScript;
 - timeline pentru animații și generare locală de resurse Anime.js;
-- mood board, gestionare imagini, fonturi și resurse;
+- gestionare imagini, fonturi și resurse;
 - build Zola și deploy opțional către Bunny Storage/CDN;
 - versionare Git locală cu status, diff, istoric, branch-uri, fetch, push și
   integrare explicită;

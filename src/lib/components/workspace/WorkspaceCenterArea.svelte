@@ -7,7 +7,6 @@
   import AssetsWorkspace from "$lib/components/creation/AssetsWorkspace.svelte";
   import ComponentsWorkspace from "$lib/components/creation/ComponentsWorkspace.svelte";
   import DesignSystemWorkspace from "$lib/components/creation/DesignSystemWorkspace.svelte";
-  import MoodBoardCanvas from "$lib/components/canvas/MoodBoardCanvas.svelte";
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
   import PublishWorkspace from "$lib/components/publish/PublishWorkspace.svelte";
   import SiteOverviewWorkspace from "$lib/components/site/SiteOverviewWorkspace.svelte";
@@ -16,7 +15,6 @@
   import WorkbenchBottomPanel from "$lib/components/workbench/WorkbenchBottomPanel.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import type { AppState } from "$lib/state/app.svelte";
-  import type { MoodBoardRequestIdentity } from "$lib/mood-board/io";
   import type {
     CenterView,
     WorkbenchDocumentSnapshot,
@@ -60,33 +58,6 @@
       widthPx: Number.parseFloat(breakpointValue("bp-tableta", "1024px")) || 1_024,
     },
   ]);
-  const moodBoardSessionIdentity = $derived.by((): MoodBoardRequestIdentity | null => {
-    if (
-      app.projectTransitionFrontendLeaseActive
-      || app.kernelUndoRedoFrontendLeaseActive
-      || app.aiEditLeaseFrontendLockActive
-    ) return null;
-    if (!app.currentProjectPath || !app.kernelProjectSessionId) return null;
-    if (
-      app.moodBoardLoadedForRoot !== app.currentProjectPath
-      || app.moodBoardLoadedForSessionId !== app.kernelProjectSessionId
-    ) return null;
-    return {
-      expectedProjectRoot: app.currentProjectPath,
-      expectedSessionId: app.kernelProjectSessionId,
-    };
-  });
-
-  function isMoodBoardSessionCurrent(identity: MoodBoardRequestIdentity) {
-    return !app.projectTransitionFrontendLeaseActive
-      && !app.kernelUndoRedoFrontendLeaseActive
-      && !app.aiEditLeaseFrontendLockActive
-      && app.currentProjectPath === identity.expectedProjectRoot
-      && app.kernelProjectSessionId === identity.expectedSessionId
-      && app.moodBoardLoadedForRoot === identity.expectedProjectRoot
-      && app.moodBoardLoadedForSessionId === identity.expectedSessionId;
-  }
-
   function centerViewForSurface(surface: WorkbenchSurface): CenterView {
     if (surface === "code") return "code";
     if (surface === "markdown") return "markdown";
@@ -206,46 +177,6 @@
       />
     {:else if app.centerView === "site"}
       <SiteOverviewWorkspace {app} {openWorkspaceSource} />
-    {:else if app.centerView === "canvas"}
-      {#if moodBoardSessionIdentity}
-        {#key `${moodBoardSessionIdentity.expectedProjectRoot}\u0000${moodBoardSessionIdentity.expectedSessionId}`}
-          <MoodBoardCanvas
-            board={app.moodBoard}
-            tool={app.moodBoardTool}
-            canUndo={app.canUndoMoodBoard}
-            canRedo={app.canRedoMoodBoard}
-            saveState={app.moodBoardSaveState}
-            saveStatus={app.moodBoardSaveStatus}
-            scssVariables={app.scssVariables}
-            sessionIdentity={moodBoardSessionIdentity}
-            isSessionCurrent={isMoodBoardSessionCurrent}
-            setTool={(tool) => { app.moodBoardTool = tool; }}
-            commitBoard={(board) => app.commitMoodBoard(board)}
-            setTransientBoard={(board) => app.setMoodBoardTransient(board)}
-            undo={() => app.undoMoodBoard()}
-            redo={() => app.redoMoodBoard()}
-            applyImageToSelectedElement={async (path) => {
-              app.imageSourceValue = path;
-              await app.applyImageSourceToHtml(path);
-            }}
-            applyColorToScssVariable={(color, label, variableName) => app.applyMoodBoardColorToScssVariable(color, label, variableName)}
-            onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
-          />
-        {/key}
-      {:else}
-        <section class="mood-board-loading" aria-label="Mood Board se încarcă">
-          {#if app.moodBoardSaveState === "error"}
-            <strong>Mood Board indisponibil</strong>
-            <span>{app.moodBoardSaveStatus}</span>
-            <button type="button" onclick={() => { void app.loadMoodBoard(); }}>
-              Reîncearcă încărcarea
-            </button>
-          {:else}
-            <strong>Mood Board</strong>
-            <span>Se leagă documentul de sesiunea curentă…</span>
-          {/if}
-        </section>
-      {/if}
     {:else}
       <EditorShell
         bind:previewFrame={app.previewFrame}
@@ -323,44 +254,3 @@
     />
   {/if}
 </section>
-
-<style>
-  .mood-board-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-    min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--surface-2) 88%, var(--brand-soft));
-    box-shadow: var(--shadow);
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .mood-board-loading strong {
-    color: var(--text);
-    font-size: 12px;
-  }
-
-  .mood-board-loading span {
-    max-width: min(680px, 80%);
-    text-align: center;
-  }
-
-  .mood-board-loading button {
-    min-height: 30px;
-    margin-top: 6px;
-    padding: 0 12px;
-    border: 1px solid var(--brand);
-    border-radius: 7px;
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-    font: inherit;
-    font-weight: 800;
-    cursor: pointer;
-  }
-</style>

@@ -121,9 +121,8 @@ const projectPreviewDependencies: ProjectPreviewDependencies = {
   start: startProjectPreview,
 };
 
-async function flushProjectDraftsBeforeTransition(host: ProjectControllerHost) {
+async function flushProjectDraftsBeforeTransition() {
   await flushWorkspaceMutationInputs("manual");
-  await host.drainMoodBoardSaveBeforeTransition();
 }
 
 function createEmptyInspectorPending(): Record<InspectorPendingArea, boolean> {
@@ -195,7 +194,6 @@ export type ProjectControllerHost = {
   flushInteractiveEditorDrafts: () => Promise<void>;
   beginProjectTransitionFrontendLease?: () => Promise<void>;
   endProjectTransitionFrontendLease?: () => void;
-  drainMoodBoardSaveBeforeTransition: () => Promise<void>;
   loadScannedProjectFile: (
     file: ProjectFile,
     options?: {
@@ -504,7 +502,7 @@ async function openProjectRoot(
   await host.beginProjectTransitionFrontendLease?.();
   let transitionAllowed = false;
   try {
-    await flushProjectDraftsBeforeTransition(host);
+    await flushProjectDraftsBeforeTransition();
     transitionAllowed = await prepareProjectTransitionForTarget(
       host,
       root,
@@ -910,7 +908,7 @@ export async function rescanCurrentProject(
   if (!host.scannedProject) return;
   await host.beginProjectTransitionFrontendLease?.();
   try {
-    await flushProjectDraftsBeforeTransition(host);
+    await flushProjectDraftsBeforeTransition();
     await projectCurrentProjectRescan(host, preferredRelativePath, options, undefined, false);
   } finally {
     host.endProjectTransitionFrontendLease?.();
@@ -1144,7 +1142,7 @@ export async function closeCurrentProject(
   let transitionAllowed = false;
   try {
     if (host.scannedProject) {
-      await flushProjectDraftsBeforeTransition(host);
+      await flushProjectDraftsBeforeTransition();
     }
     transitionAllowed = await prepareProjectTransitionForTarget(
       host,
@@ -1220,7 +1218,7 @@ async function reloadCurrentProjectFromDisk(
   await host.beginProjectTransitionFrontendLease?.();
   let transitionAllowed = false;
   try {
-    await flushProjectDraftsBeforeTransition(host);
+    await flushProjectDraftsBeforeTransition();
     transitionAllowed = await prepareProjectTransitionForTarget(
       host,
       projectRoot,

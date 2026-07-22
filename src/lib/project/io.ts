@@ -147,7 +147,6 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { MoodBoardAssetReceipt, MoodBoardRequestIdentity } from "$lib/mood-board/io";
 
 export function openProject(
   path: string,
@@ -927,26 +926,6 @@ export function createProjectTextFile(
 
 export function readProjectFile(relativePath: string): Promise<string> {
   return invoke<string>("read_project_file", { relativePath });
-}
-
-export function exportProjectAssetDataUrl(
-  identity: MoodBoardRequestIdentity,
-  relativePath: string,
-  dataUrl: string,
-): Promise<MoodBoardAssetReceipt> {
-  return invoke<MoodBoardAssetReceipt>("export_project_asset_data_url", {
-    input: { ...identity, relativePath, dataUrl },
-  });
-}
-
-export function exportProjectAssetWebpFromDataUrl(
-  identity: MoodBoardRequestIdentity,
-  relativePath: string,
-  dataUrl: string,
-): Promise<MoodBoardAssetReceipt> {
-  return invoke<MoodBoardAssetReceipt>("export_project_asset_webp_from_data_url", {
-    input: { ...identity, relativePath, dataUrl },
-  });
 }
 
 export function semanticMoveProjectEntry(

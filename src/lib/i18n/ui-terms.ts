@@ -25,7 +25,6 @@ export const UI_TERMS = Object.freeze({
   workspace: "Spațiu de lucru",
   output: "Jurnal",
   timeline: "Cronologie",
-  moodBoard: "Planșă vizuală",
 });
 
 export type UiTerm = keyof typeof UI_TERMS;

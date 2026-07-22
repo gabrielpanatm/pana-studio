@@ -685,10 +685,7 @@ fn copy_owner_contract_matches(record: &WalRecord, evidence: &WalCopyEvidence) -
     match evidence.destination_policy {
         WalCopyDestinationPolicy::CreateNew => {
             record.body.owner == "project_initializer"
-                && matches!(
-                    record.body.category.as_str(),
-                    "project_source_write" | "project_design_write"
-                )
+                && record.body.category == "project_source_write"
                 && record
                     .body
                     .authority

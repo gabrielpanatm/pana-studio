@@ -368,7 +368,7 @@ export type ZolaProjectSettings = {
 };
 
 export type SourceLanguage = "html" | "css" | "scss" | "js" | "markdown" | "plain";
-export type CenterView = "preview" | "code" | "markdown" | "canvas" | "site" | "kernel";
+export type CenterView = "preview" | "code" | "markdown" | "site" | "kernel";
 export type ProjectPaneTab = "layers" | "files" | "page";
 export type InspectorTab = "html" | "css" | "vars" | "js";
 
@@ -3743,7 +3743,7 @@ export type CodexMcpStatus = {
 };
 
 export type UiContextProjection = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   uiRevision: number;
   expectedProjectSessionId: string | null;
   expectedProjectRevision: number | null;
@@ -3785,12 +3785,6 @@ export type UiContextProjection = {
     canSave: boolean;
     areas: string[];
     blockedReason: string;
-  };
-  moodBoard: {
-    available: boolean;
-    items: number;
-    saveState: string;
-    tool: string;
   };
   externalDisk: {
     changed: boolean;

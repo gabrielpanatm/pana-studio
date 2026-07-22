@@ -632,14 +632,10 @@ fn selector_for_intent(intent: &WriteIntent) -> AuthoritySelector {
         WriteCategory::PreviewWorkspaceWrite => AuthoritySelector::PreviewCache,
         WriteCategory::BuildOutputWrite => AuthoritySelector::ActiveProject,
         WriteCategory::ExternalIntegrationWrite => AuthoritySelector::ExternalCodex,
-        WriteCategory::ProjectSourceWrite | WriteCategory::ProjectDesignWrite
-            if intent.owner == WriteOwner::ProjectInitializer =>
-        {
+        WriteCategory::ProjectSourceWrite if intent.owner == WriteOwner::ProjectInitializer => {
             AuthoritySelector::ProjectBootstrap
         }
-        WriteCategory::ProjectSourceWrite | WriteCategory::ProjectDesignWrite => {
-            AuthoritySelector::ActiveProject
-        }
+        WriteCategory::ProjectSourceWrite => AuthoritySelector::ActiveProject,
     }
 }
 

@@ -51,8 +51,7 @@
       && (app.centerView === "preview" || app.workbenchSnapshot?.split !== "none")
       && app.previewCanvasMode === "fixed")
       || activeWorkbenchActivity === "site"
-      || activeWorkbenchActivity === "content"
-      || activeWorkbenchActivity === "design_system",
+      || activeWorkbenchActivity === "content",
   );
 
   async function toggleRightInspectorPane() {

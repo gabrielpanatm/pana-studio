@@ -600,11 +600,8 @@ fn restore_hot_journal_file<R: Runtime>(
 }
 
 fn category_for_project_path(relative_path: &str) -> WriteCategory {
-    if relative_path.starts_with("design/") {
-        WriteCategory::ProjectDesignWrite
-    } else {
-        WriteCategory::ProjectSourceWrite
-    }
+    let _ = relative_path;
+    WriteCategory::ProjectSourceWrite
 }
 
 struct HotDiskBaseline {

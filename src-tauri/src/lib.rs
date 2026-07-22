@@ -7,7 +7,6 @@ mod images;
 mod js;
 pub mod kernel;
 mod mcp;
-mod mood;
 mod page_assets;
 mod page_components;
 mod preview;
@@ -77,11 +76,6 @@ use commands::{
         configure_codex_mcp, read_ai_context_status, read_codex_mcp_status,
         save_ai_context_snapshot, write_ai_context_snapshot,
     },
-    mood::{
-        export_mood_board_svg_asset, extract_mood_board_image_palette, read_mood_board,
-        read_mood_board_image_data_url, read_mood_board_image_original_data_url,
-        read_mood_board_svg_source, save_mood_board, write_mood_board,
-    },
     page_assets::{apply_page_asset_contract, plan_page_asset_contract},
     page_components::{
         apply_page_component_contract, plan_page_component_contract, read_page_component_registry,
@@ -94,7 +88,6 @@ use commands::{
     project::{
         acknowledge_project_transition_decision_recovery_plan, apply_file_buffer_changeset,
         clear_file_buffer_draft, close_project, execute_project_transition_decision_retention,
-        export_project_asset_data_url, export_project_asset_webp_from_data_url,
         get_zola_binary_path, inspect_project_open_recovery, open_project,
         read_current_project_disk_manifest, read_file_buffer_store, read_file_buffer_text,
         read_project_file, read_project_session, read_project_workspace_history,
@@ -161,14 +154,6 @@ fn apply_main_window_icon(app: &tauri::App) {
 }
 
 #[derive(Clone, Serialize)]
-struct NativeCanvasZoomPayload {
-    x: f64,
-    y: f64,
-    scale: f64,
-    phase: i32,
-}
-
-#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeWindowCloseRequestPayload {
     project_root: String,
@@ -185,14 +170,12 @@ fn lock_main_webview_zoom(app: &tauri::App) {
 
     #[cfg(target_os = "linux")]
     {
-        let native_zoom_window = window.clone();
         if let Err(error) = window.with_webview(move |webview| {
             use gdk::{EventMask, EventType, ModifierType};
             use gtk::{glib::Propagation, prelude::*};
             use webkit2gtk::WebViewExt;
 
             let inner = webview.inner();
-            let pinch_event_window = native_zoom_window.clone();
             inner.add_events(
                 EventMask::SCROLL_MASK
                     | EventMask::SMOOTH_SCROLL_MASK
@@ -200,18 +183,6 @@ fn lock_main_webview_zoom(app: &tauri::App) {
             );
             inner.connect_event(move |view, event| {
                 if event.event_type() == EventType::TouchpadPinch {
-                    if let Some(pinch) = event.downcast_ref::<gdk::EventTouchpadPinch>() {
-                        let (x, y) = pinch.position();
-                        let _ = pinch_event_window.emit(
-                            "native-canvas-zoom",
-                            NativeCanvasZoomPayload {
-                                x,
-                                y,
-                                scale: pinch.scale(),
-                                phase: pinch.as_ref().phase as i32,
-                            },
-                        );
-                    }
                     view.set_zoom_level(1.0);
                     return Propagation::Stop;
                 }

@@ -2,14 +2,11 @@
   import {
     IconExternalLink,
     IconFileTypeCss,
-    IconLayoutBoard,
     IconPalette,
     IconSearch,
     IconTags,
     IconTypography,
   } from "@tabler/icons-svelte";
-  import MoodBoardCanvas from "$lib/components/canvas/MoodBoardCanvas.svelte";
-  import type { MoodBoardRequestIdentity } from "$lib/mood-board/io";
   import { getFontInventory } from "$lib/project/io";
   import type { AppState } from "$lib/state/app.svelte";
   import type { FontInventory, ScssVariable, SourceGraphStyle } from "$lib/types";
@@ -22,7 +19,7 @@
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
-  type DesignView = "tokens" | "classes" | "styles" | "fonts" | "mood_board";
+  type DesignView = "tokens" | "classes" | "styles" | "fonts";
   type TokenCategory = "all" | "color" | "type" | "space" | "breakpoint" | "other";
 
   let activeView = $state<DesignView>("tokens");
@@ -78,23 +75,6 @@
       ?? classes[0]
       ?? null,
   );
-  const moodBoardSessionIdentity = $derived.by((): MoodBoardRequestIdentity | null => {
-    if (
-      app.projectTransitionFrontendLeaseActive
-      || app.kernelUndoRedoFrontendLeaseActive
-      || app.aiEditLeaseFrontendLockActive
-    ) return null;
-    if (!app.currentProjectPath || !app.kernelProjectSessionId) return null;
-    if (
-      app.moodBoardLoadedForRoot !== app.currentProjectPath
-      || app.moodBoardLoadedForSessionId !== app.kernelProjectSessionId
-    ) return null;
-    return {
-      expectedProjectRoot: app.currentProjectPath,
-      expectedSessionId: app.kernelProjectSessionId,
-    };
-  });
-
   $effect(() => {
     const token = selectedToken;
     const key = token ? tokenKey(token) : "";
@@ -206,18 +186,7 @@
     { id: "classes", label: "Clase" },
     { id: "styles", label: "Stylesheets" },
     { id: "fonts", label: "Fonturi" },
-    { id: "mood_board", label: "Planșă vizuală" },
   ];
-
-  function isMoodBoardSessionCurrent(identity: MoodBoardRequestIdentity) {
-    return !app.projectTransitionFrontendLeaseActive
-      && !app.kernelUndoRedoFrontendLeaseActive
-      && !app.aiEditLeaseFrontendLockActive
-      && app.currentProjectPath === identity.expectedProjectRoot
-      && app.kernelProjectSessionId === identity.expectedSessionId
-      && app.moodBoardLoadedForRoot === identity.expectedProjectRoot
-      && app.moodBoardLoadedForSessionId === identity.expectedSessionId;
-  }
 
   function handleViewKeydown(event: KeyboardEvent, index: number) {
     let nextIndex: number | null = null;
@@ -285,43 +254,6 @@
     </label>
   </div>
 
-  {#if activeView === "mood_board"}
-    <div id="design-panel-mood_board" class="mood-board-surface" role="tabpanel" aria-labelledby="design-tab-mood_board">
-      {#if moodBoardSessionIdentity}
-        {#key `${moodBoardSessionIdentity.expectedProjectRoot}\u0000${moodBoardSessionIdentity.expectedSessionId}`}
-          <MoodBoardCanvas
-            board={app.moodBoard}
-            tool={app.moodBoardTool}
-            canUndo={app.canUndoMoodBoard}
-            canRedo={app.canRedoMoodBoard}
-            saveState={app.moodBoardSaveState}
-            saveStatus={app.moodBoardSaveStatus}
-            scssVariables={app.scssVariables}
-            sessionIdentity={moodBoardSessionIdentity}
-            isSessionCurrent={isMoodBoardSessionCurrent}
-            setTool={(tool) => { app.moodBoardTool = tool; }}
-            commitBoard={(board) => app.commitMoodBoard(board)}
-            setTransientBoard={(board) => app.setMoodBoardTransient(board)}
-            undo={() => app.undoMoodBoard()}
-            redo={() => app.redoMoodBoard()}
-            applyImageToSelectedElement={async (path) => {
-              app.imageSourceValue = path;
-              await app.applyImageSourceToHtml(path);
-            }}
-            applyColorToScssVariable={(color, label, variableName) => app.applyMoodBoardColorToScssVariable(color, label, variableName)}
-            onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
-          />
-        {/key}
-      {:else}
-        <div class="workspace-state mood-board-loading">
-          <IconLayoutBoard size={28} stroke={1.5} />
-          <strong>{app.moodBoardSaveState === "error" ? "Planșa vizuală este indisponibilă" : "Se leagă planșa vizuală de sesiune…"}</strong>
-          <span>{app.moodBoardSaveStatus}</span>
-          <button type="button" onclick={() => { void app.loadMoodBoard(); }}>Reîncearcă</button>
-        </div>
-      {/if}
-    </div>
-  {:else}
   <div class="workspace-body">
     <div class="resource-list" id={`design-panel-${activeView}`} role="tabpanel" aria-labelledby={`design-tab-${activeView}`}>
       {#if activeView === "tokens"}
@@ -444,7 +376,6 @@
       {/if}
     </aside>
   </div>
-  {/if}
 </section>
 
 <style>
@@ -468,11 +399,6 @@
   .search-field input { width: 100%; padding: 0 8px 0 28px; }
   .category-field select { min-width: 124px; padding: 0 7px; }
   .workspace-body { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(290px, .58fr); min-width: 0; min-height: 0; }
-  .mood-board-surface { min-width: 0; min-height: 0; overflow: hidden; padding: 8px; background: var(--wb-surface-document); }
-  .mood-board-loading { align-content: center; gap: 7px; height: 100%; }
-  .mood-board-loading strong { color: var(--text-strong); font-size: 12px; }
-  .mood-board-loading span { color: var(--wb-text-muted); font-size: 12px; }
-  .mood-board-loading button { min-height: 28px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; font-weight: 800; }
   .resource-list { min-width: 0; min-height: 0; overflow: auto; padding: 8px; border-right: 1px solid var(--wb-border-subtle); }
   .token-row, .class-row, .style-row { display: grid; grid-template-columns: 82px minmax(0, 1fr) minmax(130px, auto); gap: 9px; width: 100%; min-height: 52px; padding: 7px 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-primary); background: transparent; text-align: left; }
   .class-row, .style-row { grid-template-columns: 34px minmax(0, 1fr) auto 70px; }

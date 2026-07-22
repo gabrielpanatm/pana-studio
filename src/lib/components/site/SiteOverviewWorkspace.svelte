@@ -52,7 +52,7 @@
   }[] = [
     { activity: "content", title: "Conținut", description: "Pagini, colecții, frontmatter și taxonomii", icon: "content" },
     { activity: "components", title: "Componente", description: "Parțiale, macro-uri și componente interactive", icon: "components" },
-    { activity: "design_system", title: "Sistem de design", description: "Tokeni, clase, stiluri, fonturi și planșă vizuală", icon: "design" },
+    { activity: "design_system", title: "Sistem de design", description: "Tokeni, clase, stiluri și fonturi", icon: "design" },
     { activity: "assets", title: "Resurse", description: "Imagini, fonturi și fișiere statice cu utilizările lor", icon: "assets" },
     { activity: "versioning", title: "Control versiuni", description: "Modificări, commit-uri, ramuri și sincronizare Git", icon: "versioning" },
     { activity: "audit", title: "Probleme și audit", description: "Erori, avertismente și verificări de calitate", icon: "audit" },

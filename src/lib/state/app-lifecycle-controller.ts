@@ -26,11 +26,6 @@ export function destroyApp(app: AppState) {
   app.terminalController.destroyAll();
   app.codeEditorController?.destroy();
   app.codeEditorController = null;
-  if (app.moodBoardSaveTimer !== null) {
-    window.clearTimeout(app.moodBoardSaveTimer);
-    app.moodBoardSaveTimer = null;
-    void app.saveMoodBoardNow();
-  }
   clearStatusDismissTimerFromController(app.statusControllerHost());
   if (app.pendingRestoredSelectionTimer !== null) window.clearTimeout(app.pendingRestoredSelectionTimer);
   clearPreviewTimersFromController(app.previewControllerHost());

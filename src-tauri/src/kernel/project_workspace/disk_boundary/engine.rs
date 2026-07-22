@@ -591,9 +591,7 @@ fn validate_delete_text_preconditions(
 }
 
 fn category_for_relative_path(relative_path: &str) -> WriteCategory {
-    if relative_path.starts_with("design/") {
-        return WriteCategory::ProjectDesignWrite;
-    }
+    let _ = relative_path;
     WriteCategory::ProjectSourceWrite
 }
 
@@ -607,7 +605,7 @@ mod tests {
             file_buffer_store::{
                 hash_text, FileBufferBaseline, FileBufferStore, FileBufferStoreLimits,
             },
-            write_authority::{test_support::install_test_project_authority, WriteCategory},
+            write_authority::test_support::install_test_project_authority,
         },
     };
 
@@ -616,8 +614,7 @@ mod tests {
             disk::DiskTextBaseline,
             model::{SaveConflictReason, SaveTextFileStatus},
         },
-        category_for_relative_path, save_text_file, validate_remove_created_preconditions,
-        validate_save_preconditions,
+        save_text_file, validate_remove_created_preconditions, validate_save_preconditions,
         with_after_text_write_before_file_buffer_projection_hook_for_test,
     };
 
@@ -708,18 +705,6 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("disk-ul s-a schimbat"));
-    }
-
-    #[test]
-    fn design_paths_use_design_write_category() {
-        assert_eq!(
-            category_for_relative_path("design/mood/shape.svg"),
-            WriteCategory::ProjectDesignWrite
-        );
-        assert_eq!(
-            category_for_relative_path("sursa/templates/index.html"),
-            WriteCategory::ProjectSourceWrite
-        );
     }
 
     #[test]

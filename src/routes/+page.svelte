@@ -525,6 +525,7 @@
       return;
     }
     const intent = deleteShortcutIntent(event, {
+      activeWorkbenchActivity: app.workbenchSnapshot?.activeActivity ?? "editor",
       centerView: app.centerView,
       selectedElement: app.selectedElement,
       settingsPanelOpen: app.settingsPanelOpen,

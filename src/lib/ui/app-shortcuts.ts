@@ -12,6 +12,7 @@ export type AppShortcutIntent =
 export type DeleteShortcutIntent = "none" | "deleteSelectedHtml";
 
 type DeleteShortcutState = {
+  activeWorkbenchActivity: string;
   centerView: string;
   selectedElement: unknown;
   settingsPanelOpen: boolean;
@@ -21,12 +22,6 @@ export function isAppTextEditingTarget(target: EventTarget | null) {
   return typeof HTMLElement !== "undefined"
     && target instanceof HTMLElement
     && Boolean(target.closest("input, textarea, select, [contenteditable='true'], .cm-editor"));
-}
-
-export function isMoodBoardCanvasTarget(target: EventTarget | null) {
-  return typeof HTMLElement !== "undefined"
-    && target instanceof HTMLElement
-    && Boolean(target.closest("[data-mood-board-canvas]"));
 }
 
 export function isManagedWorkspaceEditorTarget(target: EventTarget | null) {
@@ -66,8 +61,9 @@ export function appShortcutIntent(event: KeyboardEvent): AppShortcutIntent {
 export function deleteShortcutIntent(event: KeyboardEvent, state: DeleteShortcutState): DeleteShortcutIntent {
   if (event.key !== "Delete" && event.key !== "Backspace") return "none";
   if (event.ctrlKey || event.metaKey || event.altKey) return "none";
-  if (state.centerView === "canvas" || state.centerView === "site" || state.centerView === "kernel") return "none";
-  if (isMoodBoardCanvasTarget(event.target) || isAppTextEditingTarget(event.target)) return "none";
+  if (state.activeWorkbenchActivity !== "editor") return "none";
+  if (state.centerView === "site" || state.centerView === "kernel") return "none";
+  if (isAppTextEditingTarget(event.target)) return "none";
   if (!state.selectedElement || state.settingsPanelOpen) return "none";
   return "deleteSelectedHtml";
 }

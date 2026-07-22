@@ -131,42 +131,6 @@ fn reconcile_source_identity_aliases(
     }
 }
 
-pub(crate) fn invalidate_project_model_for_session(
-    state: &AppState,
-    expected_project_root: &str,
-    expected_runtime_session_id: &str,
-) -> Result<Option<u64>, String> {
-    let current_root = state
-        .current_root
-        .lock()
-        .map_err(|_| "Nu am putut valida root-ul pentru invalidarea ProjectModel.".to_string())?;
-    let mut workspace = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut invalida ProjectModel din ProjectWorkspace.".to_string())?;
-
-    let (Some(root), Some(workspace)) = (current_root.as_ref(), workspace.as_mut()) else {
-        return Ok(None);
-    };
-    if root.to_string_lossy() != expected_project_root
-        || workspace.session.project_root != expected_project_root
-        || workspace.runtime_session_id() != expected_runtime_session_id
-    {
-        return Ok(None);
-    }
-
-    Ok(Some(invalidate_project_model_locked(workspace)?))
-}
-
-pub(crate) fn invalidate_project_model_locked(
-    workspace: &mut ProjectWorkspace,
-) -> Result<u64, String> {
-    workspace.project_model = None;
-    workspace.project_model_source_revision = None;
-    workspace.source_identity_aliases.clear();
-    Ok(workspace.revision)
-}
-
 fn validate_live_lease(
     current_root: &Option<PathBuf>,
     workspace: &ProjectWorkspace,

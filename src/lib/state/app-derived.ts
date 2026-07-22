@@ -151,14 +151,6 @@ function normalizedProjectPath(path: string | null | undefined) {
     .replace(/^\.\//, "");
 }
 
-export function deriveCanUndoMoodBoard(app: AppState) {
-  return app.moodBoardPast.length > 0;
-}
-
-export function deriveCanRedoMoodBoard(app: AppState) {
-  return app.moodBoardFuture.length > 0;
-}
-
 export function deriveActiveTerminalTab(app: AppState) {
   return app.terminalTabs.find((tab) => tab.id === app.activeTerminalTabId) ?? app.terminalTabs[0] ?? null;
 }

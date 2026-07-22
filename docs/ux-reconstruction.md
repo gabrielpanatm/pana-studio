@@ -46,7 +46,7 @@ model.
 | 6. Responsive canvas | Complete | Fit/fixed mode, exact width, free resize, zoom, ruler, SCSS breakpoint context and presets are persisted in the Rust Workbench projection |
 | 7. Problems and Audit | Complete | One Rust audit projection feeds both the filterable Audit workspace and bottom Problems; Zola validation, exact source navigation and the preserved Runtime console are integrated |
 | 8. Creation workspaces | Complete | Components, Design System, Assets and Content are dedicated workspaces backed by Rust/project projections; class inventory/rename, source usage, frontmatter and taxonomies are integrated |
-| 9. Canvas authoring | Complete | Existing code-native visual editing, contextual inspector, responsive canvas and synchronized source remain the authoring path; Mood Board is preserved inside Design System |
+| 9. Canvas authoring | Complete | Existing code-native visual editing, contextual inspector, responsive canvas and synchronized source remain the authoring path |
 | 10. Publish Center | Complete | Release gates, configuration, build/deploy actions, session-bound cancellation and durable Output events form one traceable Rust operation flow |
 | 11. Migration completion | Complete | Duplicate deploy/shell paths were removed, controls use the shared workbench language and the complete frontend/Rust verification suite passes |
 | 12. Version Control workspace | Complete | Git status, staging, commits, history, branches, remotes, explicit integration and recovery are exposed as a central Rust-owned Workbench activity rather than a local overlay |
@@ -187,9 +187,9 @@ restoration and no longer introduces a parallel navigation or overlay model.
 - `npm run build`: production static build completed.
 - `cargo check` and `cargo fmt --check`: completed cleanly.
 - `cargo test`: 1001 passed, 0 failed, 2 environment-dependent tests ignored.
-- Live AT-SPI review: session restoration, document/split canvas, Publish and
-  Design System tab semantics, Mood Board integration and the Rust class
-  inventory were verified without writing to the active project.
+- Live AT-SPI review: session restoration, document/split canvas, Publish,
+  Design System tab semantics and the Rust class inventory were verified
+  without writing to the active project.
 - Live inspector review for Version Control: canonical activity selection,
   1120×915 central workspace, controls of at least 32 px, text of at least
   11 px and no large fixed overlay.

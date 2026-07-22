@@ -9,7 +9,6 @@ use super::root_authority::DirectoryAuthority;
 pub enum WriteCategory {
     InternalAppWrite,
     ProjectSourceWrite,
-    ProjectDesignWrite,
     PreviewWorkspaceWrite,
     ExternalIntegrationWrite,
     BuildOutputWrite,
@@ -27,7 +26,6 @@ pub enum WriteOwner {
     McpContext,
     CodexMcp,
     ProjectInitializer,
-    MoodBoard,
     Preview,
     ImageOptimizer,
 }
@@ -382,33 +380,6 @@ impl WritePolicy {
     }
 
     pub fn project_creation_lifecycle() -> Self {
-        Self {
-            atomicity: WriteAtomicity::FileLifecycle,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::LoggedAtomicFile,
-            log_required: true,
-        }
-    }
-
-    pub fn project_design_state_save() -> Self {
-        Self {
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::LoggedAtomicFile,
-            log_required: true,
-        }
-    }
-
-    pub fn project_design_asset_create() -> Self {
-        Self {
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::RequireExplicitOverride,
-            recovery: RecoveryPolicy::LoggedAtomicFile,
-            log_required: true,
-        }
-    }
-
-    pub fn project_design_lifecycle() -> Self {
         Self {
             atomicity: WriteAtomicity::FileLifecycle,
             conflict: ConflictPolicy::SingleOwnerInternal,

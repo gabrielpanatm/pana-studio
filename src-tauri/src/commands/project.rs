@@ -1,10 +1,9 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::{
     commands::kernel::current_kernel_project_state_snapshot,
-    images::{decode_data_url_bounded, encode_canvas_data_url_as_webp},
     js::PageJsDraftStore,
     kernel::{
         ai_coordination::EditAuthority,
@@ -65,10 +64,6 @@ use crate::{
         scan_project_workspace_projection, AcceptedProjectDiskManifest,
     },
     state::AppState,
-};
-
-use super::mood::{
-    capture_mood_board_request_session, finalize_mood_board_asset_write, MoodBoardAssetWriteReceipt,
 };
 
 pub fn current_project_root(state: &State<AppState>) -> Option<PathBuf> {
@@ -1640,83 +1635,4 @@ pub(crate) fn refresh_recovery_coordinator_scan<R: Runtime>(
             Ok(())
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MoodBoardDataUrlAssetRequest {
-    pub expected_project_root: String,
-    pub expected_session_id: String,
-    pub relative_path: String,
-    pub data_url: String,
-}
-
-#[tauri::command]
-pub async fn export_project_asset_data_url(
-    input: MoodBoardDataUrlAssetRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<MoodBoardAssetWriteReceipt, String> {
-    let captured = capture_mood_board_request_session(
-        state.inner(),
-        &input.expected_project_root,
-        &input.expected_session_id,
-    )?;
-    require_project_workspace_available_for_write(&state)?;
-    require_recovery_coordinator_clean_for_write(&state, &captured.session, "Mood Board")?;
-    let worker_app = app.clone();
-    let worker_session = captured.clone();
-    let max_bytes = usize::try_from(crate::mood::MAX_MOOD_BOARD_ASSET_BYTES)
-        .map_err(|_| "Limita asset-ului Mood Board nu încape în usize.".to_string())?;
-    let saved_path = tauri::async_runtime::spawn_blocking(move || {
-        let _resource_permit = crate::mood::acquire_heavy_mood_asset_operation()?;
-        let bytes = decode_data_url_bounded(&input.data_url, max_bytes)?;
-        crate::mood::export_mood_board_binary_asset(
-            &worker_app,
-            &worker_session.root,
-            &input.relative_path,
-            &bytes,
-            None,
-            "Mood Board exportă o imagine din data URL.",
-            &worker_session.session_id(),
-        )
-    })
-    .await
-    .map_err(|error| format!("Exportul imaginii a căzut în task-ul de fundal: {error}"))??;
-    finalize_mood_board_asset_write(&app, state.inner(), &captured, saved_path)
-}
-
-#[tauri::command]
-pub async fn export_project_asset_webp_from_data_url(
-    input: MoodBoardDataUrlAssetRequest,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<MoodBoardAssetWriteReceipt, String> {
-    let captured = capture_mood_board_request_session(
-        state.inner(),
-        &input.expected_project_root,
-        &input.expected_session_id,
-    )?;
-    require_project_workspace_available_for_write(&state)?;
-    require_recovery_coordinator_clean_for_write(&state, &captured.session, "Mood Board")?;
-    let worker_app = app.clone();
-    let worker_session = captured.clone();
-    let max_bytes = usize::try_from(crate::mood::MAX_MOOD_BOARD_ASSET_BYTES)
-        .map_err(|_| "Limita asset-ului Mood Board nu încape în usize.".to_string())?;
-    let saved_path = tauri::async_runtime::spawn_blocking(move || {
-        let _resource_permit = crate::mood::acquire_heavy_mood_asset_operation()?;
-        let bytes = encode_canvas_data_url_as_webp(&input.data_url, max_bytes, max_bytes)?;
-        crate::mood::export_mood_board_binary_asset(
-            &worker_app,
-            &worker_session.root,
-            &input.relative_path,
-            &bytes,
-            Some("webp"),
-            "Mood Board exportă compoziția ca WebP.",
-            &worker_session.session_id(),
-        )
-    })
-    .await
-    .map_err(|error| format!("Exportul WebP a căzut în task-ul de fundal: {error}"))??;
-    finalize_mood_board_asset_write(&app, state.inner(), &captured, saved_path)
 }

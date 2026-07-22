@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::ai_coordination::AiCoordinationSnapshot;
 
-pub const UI_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 1;
-pub const CONTEXT_HUB_SCHEMA_VERSION: u32 = 2;
+pub const UI_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 2;
+pub const CONTEXT_HUB_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,7 +11,6 @@ pub enum UiCenterView {
     Preview,
     Code,
     Markdown,
-    Canvas,
     Site,
     Kernel,
 }
@@ -110,15 +109,6 @@ pub struct UiDirtyContext {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UiMoodBoardContext {
-    pub available: bool,
-    pub items: usize,
-    pub save_state: String,
-    pub tool: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UiExternalDiskContext {
     pub changed: bool,
     #[serde(default)]
@@ -153,7 +143,6 @@ pub struct UiContextProjection {
     pub selection: UiSelectionContext,
     pub css: UiCssContext,
     pub ui_dirty_state: UiDirtyContext,
-    pub mood_board: UiMoodBoardContext,
     pub external_disk: UiExternalDiskContext,
 }
 
@@ -219,7 +208,6 @@ pub struct AiContextCore {
     pub css: UiCssContext,
     pub dirty_state: AiContextDirtyState,
     pub files: AiContextFileInventory,
-    pub mood_board: UiMoodBoardContext,
     pub external_disk: UiExternalDiskContext,
     pub guidance: Vec<String>,
 }

@@ -129,16 +129,6 @@ export function registerAppEffects(app: AppState) {
     }
   });
 
-  // Load mood board when a project is available.
-  $effect(() => {
-    app.currentProjectPath;
-    app.projectWorkspaceSnapshot?.runtimeSessionId;
-    app.projectWorkspaceSnapshot?.revision;
-    app.kernelProjectSessionId;
-    if (!app.currentProjectPath || !app.kernelProjectSessionId) return;
-    void app.loadMoodBoard();
-  });
-
   // Create code editor when host is ready.
   $effect(() => {
     const secondaryGroup = app.workbenchSnapshot?.groups.find(
@@ -150,7 +140,11 @@ export function registerAppEffects(app: AppState) {
     const splitSourceSurface = app.workbenchSnapshot?.split !== "none"
       ? secondaryDocument?.surface ?? null
       : null;
-    if (app.centerView === "canvas" || app.centerView === "site" || app.centerView === "kernel") {
+    if (
+      app.workbenchSnapshot?.activeActivity === "design_system"
+      || app.centerView === "site"
+      || app.centerView === "kernel"
+    ) {
       app.codeEditorController?.destroy();
       app.codeEditorController = null;
       app.codeEditorHost = undefined;
@@ -268,9 +262,6 @@ export function registerAppEffects(app: AppState) {
     app.globalDirtyState.dirty;
     app.globalDirtyState.canSave;
     app.globalDirtyState.areas.join(",");
-    app.moodBoard.items.length;
-    app.moodBoardSaveState;
-    app.moodBoardTool;
     app.externalDiskState.changed;
     app.externalDiskState.changedFiles.join(",");
     app.externalDiskState.blockedByDirtySession;

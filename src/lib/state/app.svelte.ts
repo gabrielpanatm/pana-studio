@@ -205,24 +205,6 @@ import {
   type SourceEditorControllerHost,
 } from "$lib/state/source-editor-controller";
 import {
-  applyMoodBoardColorToScssVariable as applyMoodBoardColorToScssVariableFromController,
-  commitMoodBoard as commitMoodBoardFromController,
-  drainMoodBoardSaveBeforeTransition as drainMoodBoardSaveBeforeTransitionFromController,
-  loadMoodBoard as loadMoodBoardFromController,
-  redoMoodBoard as redoMoodBoardFromController,
-  resetMoodBoard as resetMoodBoardFromController,
-  saveMoodBoardNow as saveMoodBoardNowFromController,
-  setMoodBoardTransient as setMoodBoardTransientFromController,
-  undoMoodBoard as undoMoodBoardFromController,
-  type MoodBoardControllerHost,
-} from "$lib/state/mood-board-controller";
-import {
-  createEmptyMoodBoard,
-  type MoodBoard,
-  type MoodBoardSaveState,
-  type MoodBoardTool,
-} from "$lib/mood-board/model";
-import {
   removeAttribute as removeAttributeFromController,
   htmlTextSelectionKey,
   updateAttributeValue as updateAttributeValueFromController,
@@ -449,8 +431,6 @@ import {
   deriveCanAddChildToSelectedElement,
   deriveCanEditHtml,
   deriveCanPreviewCurrentSource,
-  deriveCanRedoMoodBoard,
-  deriveCanUndoMoodBoard,
   deriveCurrentHtmlRelativePath,
   deriveCurrentProjectPath,
   deriveCurrentSourceCacheKey,
@@ -734,23 +714,6 @@ export class AppState {
   private workbenchController: WorkbenchProjectionController;
   private workbenchHydratedRuntimeSessionId = "";
 
-  // ── Mood board state ──
-  moodBoard = $state<MoodBoard>(createEmptyMoodBoard());
-  moodBoardPast = $state<MoodBoard[]>([]);
-  moodBoardFuture = $state<MoodBoard[]>([]);
-  moodBoardTool = $state<MoodBoardTool>("select");
-  moodBoardSaveState = $state<MoodBoardSaveState>("idle");
-  moodBoardSaveStatus = $state("Mood board nesalvat încă.");
-  moodBoardSaveTimer: number | null = null;
-  moodBoardSaveInFlight: Promise<boolean> | null = null;
-  moodBoardSaveRequested = false;
-  moodBoardLoadedForRoot = $state<string | null>(null);
-  moodBoardLoadedForSessionId = $state<string | null>(null);
-  moodBoardLoadSerial = 0;
-  moodBoardMutationRevision = 0;
-  moodBoardDocumentRevision = 0;
-  moodBoardSavedDocumentRevision = 0;
-
   // ── Terminal state ──
   terminalPaneOpen = $state(false);
   terminalQuickTasks = defaultTerminalQuickTasks;
@@ -853,10 +816,6 @@ export class AppState {
   canAddChildToSelectedElement = $derived(deriveCanAddChildToSelectedElement(this));
   canPreviewCurrentSource = $derived(deriveCanPreviewCurrentSource(this));
   htmlSourceMutationBlockedReason = $derived(deriveHtmlSourceMutationBlockedReason(this));
-
-  // ── Derived: history ──
-  canUndoMoodBoard = $derived(deriveCanUndoMoodBoard(this));
-  canRedoMoodBoard = $derived(deriveCanRedoMoodBoard(this));
 
   // ── Derived: terminal ──
   activeTerminalTab = $derived(deriveActiveTerminalTab(this));
@@ -1156,8 +1115,6 @@ export class AppState {
           : "preview";
     } else if (activity === "site" || activity === "content") {
       this.centerView = "site";
-    } else if (activity === "design_system") {
-      this.centerView = "canvas";
     } else if (activity === "audit") {
       this.centerView = "kernel";
     }
@@ -1587,7 +1544,6 @@ export class AppState {
     this.activeTerminalTabId = "terminal-shell-1";
     this.terminalTabSerial = 1;
     this.terminalPaneOpen = false;
-    this.resetMoodBoard();
   }
 
   async initZolaProject() {
@@ -1598,7 +1554,6 @@ export class AppState {
     resetProjectScopedStateFromController(this.projectControllerHost());
     this.workbenchController.reset();
     this.workbenchHydratedRuntimeSessionId = "";
-    this.resetMoodBoard();
   }
 
   async rescanCurrentProject(
@@ -2435,11 +2390,9 @@ export class AppState {
     }
     const targetActivity: WorkbenchActivity = view === "site"
       ? "site"
-      : view === "canvas"
-        ? "design_system"
-        : view === "kernel"
-          ? "audit"
-          : "editor";
+      : view === "kernel"
+        ? "audit"
+        : "editor";
     if (
       this.workbenchHydratedRuntimeSessionId === this.kernelProjectSessionId
       && this.workbenchSnapshot
@@ -2695,52 +2648,6 @@ export class AppState {
   }
 
   sourceEditorControllerHost(): SourceEditorControllerHost {
-    return this;
-  }
-
-  // ── Mood board ───────────────────────────────────────────────────────────
-
-  async loadMoodBoard() {
-    await loadMoodBoardFromController(this.moodBoardControllerHost());
-  }
-
-  resetMoodBoard() {
-    resetMoodBoardFromController(this.moodBoardControllerHost());
-  }
-
-  commitMoodBoard(board: MoodBoard) {
-    commitMoodBoardFromController(this.moodBoardControllerHost(), board);
-  }
-
-  setMoodBoardTransient(board: MoodBoard) {
-    setMoodBoardTransientFromController(this.moodBoardControllerHost(), board);
-  }
-
-  undoMoodBoard() {
-    undoMoodBoardFromController(this.moodBoardControllerHost());
-  }
-
-  redoMoodBoard() {
-    redoMoodBoardFromController(this.moodBoardControllerHost());
-  }
-
-  async saveMoodBoardNow() {
-    return await saveMoodBoardNowFromController(this.moodBoardControllerHost());
-  }
-
-  async drainMoodBoardSaveBeforeTransition() {
-    await drainMoodBoardSaveBeforeTransitionFromController(this.moodBoardControllerHost());
-  }
-
-  isProjectTransitionFrontendLeaseActive() {
-    return this.projectTransitionFrontendLeaseActive;
-  }
-
-  applyMoodBoardColorToScssVariable(color: string, label = "culoare", variableName?: string) {
-    applyMoodBoardColorToScssVariableFromController(this.moodBoardControllerHost(), color, label, variableName);
-  }
-
-  moodBoardControllerHost(): MoodBoardControllerHost {
     return this;
   }
 

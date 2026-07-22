@@ -30,7 +30,6 @@ Zola
 ├── brief.md
 ├── structura.md
 ├── inspiratie/
-├── design/
 ├── materiale/
 ├── resurse/
 ├── sursa/

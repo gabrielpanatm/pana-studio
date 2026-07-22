@@ -219,7 +219,7 @@ fn project_initializer_intent(
     description: &str,
 ) -> Result<WriteIntent, String> {
     Ok(WriteIntent::new(
-        initializer_category(label_boundary, target),
+        WriteCategory::ProjectSourceWrite,
         WriteOwner::ProjectInitializer,
         operation,
         bootstrap.target(
@@ -229,24 +229,6 @@ fn project_initializer_intent(
         WritePolicy::project_creation_lifecycle(),
         description,
     ))
-}
-
-fn initializer_category(boundary_root: &Path, target: &Path) -> WriteCategory {
-    let is_design_path = target
-        .strip_prefix(boundary_root)
-        .ok()
-        .and_then(|relative| relative.components().next())
-        .and_then(|component| match component {
-            std::path::Component::Normal(name) => name.to_str(),
-            _ => None,
-        })
-        == Some("design");
-
-    if is_design_path {
-        WriteCategory::ProjectDesignWrite
-    } else {
-        WriteCategory::ProjectSourceWrite
-    }
 }
 
 fn initializer_label(boundary_root: &Path, target: &Path, label_root: &str) -> String {
@@ -281,21 +263,6 @@ mod tests {
         .unwrap();
         assert_eq!(root_intent.target.public_label, "project-template/root");
 
-        let design_intent = project_initializer_intent(
-            &bootstrap,
-            &root,
-            &root.join("design").join("imagini"),
-            "project-template",
-            WriteOperationKind::CreateDirectory,
-            "directory",
-        )
-        .unwrap();
-        assert_eq!(
-            design_intent.target.public_label,
-            "project-template/design/imagini"
-        );
-        assert_eq!(design_intent.category, WriteCategory::ProjectDesignWrite);
-
         let source_intent = project_initializer_intent(
             &bootstrap,
             &root,
@@ -326,9 +293,7 @@ mod tests {
         ));
         let source = fixture.join("template");
         let destination = fixture.join("project");
-        fs::create_dir_all(source.join("design/imagini")).unwrap();
         fs::create_dir_all(source.join("sursa/templates")).unwrap();
-        fs::write(source.join("design/imagini/readme.txt"), b"design").unwrap();
         fs::write(source.join("sursa/templates/index.html"), b"<main></main>").unwrap();
         fs::create_dir_all(&destination).unwrap();
 
@@ -349,10 +314,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            fs::read(destination.join("design/imagini/readme.txt")).unwrap(),
-            b"design"
-        );
         assert_eq!(
             fs::read(destination.join("sursa/templates/index.html")).unwrap(),
             b"<main></main>"

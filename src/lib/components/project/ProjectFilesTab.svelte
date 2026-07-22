@@ -243,10 +243,6 @@
     return ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif", "ico"].includes(projectFileExt(name));
   }
 
-  function isImageNode(node: FlatProjectFileNode | null | undefined) {
-    return Boolean(node && node.type === "file" && isImageFile(node.name));
-  }
-
   function isCodeFile(name: string): boolean {
     return ["html", "htm", "scss", "css", "js", "ts"].includes(projectFileExt(name));
   }
@@ -330,11 +326,6 @@
     return node ? { row, node } : null;
   }
 
-  function moodCanvasForPointer(event: PointerEvent) {
-    const element = document.elementFromPoint(event.clientX, event.clientY);
-    return element instanceof HTMLElement ? element.closest("[data-mood-board-canvas]") : null;
-  }
-
   function handlePointerDown(node: typeof flatTree[number], event: PointerEvent) {
     if (event.button !== 0) return;
     if (!projectRoot || !runtimeSessionId) return;
@@ -368,14 +359,6 @@
     }
 
     const sourceNode = flatTree.find((item) => item.path === dragCandidate?.path);
-    if (isImageNode(sourceNode) && moodCanvasForPointer(event)) {
-      dragTargetPath = null;
-      dragDropInvalid = false;
-      dragDropLabel = "Canvas";
-      dragDropMessage = `Adaugă ${sourceNode?.name ?? "imagine"} în Mood Board`;
-      return;
-    }
-
     const target = nodeForPointer(event);
     if (!target) {
       dragTargetPath = null;
@@ -419,19 +402,6 @@
     }, 0);
     event.preventDefault();
     const sourceNode = flatTree.find((item) => item.path === sourcePath);
-    if (!wasInvalid && isImageNode(sourceNode) && moodCanvasForPointer(event)) {
-      window.dispatchEvent(new CustomEvent("mood-board-image-drop", {
-        detail: {
-          relativePath: sourceNode?.commandPath ?? sourcePath,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          expectedProjectRoot,
-          expectedSessionId,
-        },
-      }));
-      return;
-    }
-
     if (wasInvalid || targetPath === null || targetPath === sourcePath) return;
 
     const targetNode = targetNodeForPath(targetPath);

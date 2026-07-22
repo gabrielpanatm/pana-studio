@@ -625,10 +625,7 @@ impl WalRecordBody {
                         && match evidence.destination_policy {
                             WalCopyDestinationPolicy::CreateNew => {
                                 self.owner != "project_initializer"
-                                    || !matches!(
-                                        self.category.as_str(),
-                                        "project_source_write" | "project_design_write"
-                                    )
+                                    || self.category != "project_source_write"
                                     || !self.authority.scope.starts_with("project_bootstrap:")
                             }
                             WalCopyDestinationPolicy::Replace => {
@@ -749,10 +746,7 @@ impl WalRecordBody {
                             );
                         }
                         let project_initializer = self.owner == "project_initializer"
-                            && matches!(
-                                self.category.as_str(),
-                                "project_source_write" | "project_design_write"
-                            )
+                            && self.category == "project_source_write"
                             && self.recovery_policy == "logged_atomic_file"
                             && self.authority.scope.starts_with("project_bootstrap:");
                         let preview = self.owner == "preview"

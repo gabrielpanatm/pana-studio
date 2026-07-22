@@ -1,7 +1,7 @@
 use super::{
     AiContextApp, AiContextCore, AiContextDirtyState, AiContextFileInventory, AiContextProject,
     ContextHubPublication, ContextHubRuntime, UiCenterView, UiCssContext, UiExternalDiskContext,
-    UiMoodBoardContext, UiPreviewDevice, UiSelectionContext, UiSourceLanguage, UiWorkspaceContext,
+    UiPreviewDevice, UiSelectionContext, UiSourceLanguage, UiWorkspaceContext,
 };
 
 fn core(active_file: Option<&str>) -> AiContextCore {
@@ -65,12 +65,6 @@ fn core(active_file: Option<&str>) -> AiContextCore {
             scripts: Vec::new(),
             config_and_data: Vec::new(),
             truncated: false,
-        },
-        mood_board: UiMoodBoardContext {
-            available: true,
-            items: 0,
-            save_state: "idle".to_string(),
-            tool: "select".to_string(),
         },
         external_disk: UiExternalDiskContext {
             changed: false,

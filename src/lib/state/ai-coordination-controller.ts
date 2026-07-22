@@ -46,7 +46,6 @@ export type AiCoordinationControllerHost = {
   externalDiskState: ExternalDiskControllerHost["externalDiskState"];
   quiesceExternalReconcileInteractions: () => void;
   externalDiskControllerHost: () => ExternalDiskControllerHost;
-  drainMoodBoardSaveBeforeTransition: () => Promise<void>;
   discardSessionAndReloadFromDisk: (
     preferredRelativePath?: string | null,
   ) => Promise<ProjectReloadOutcome>;
@@ -182,7 +181,6 @@ async function acknowledgePendingRequest(
   try {
     await tick();
     await flushWorkspaceMutationInputs("snapshot");
-    await host.drainMoodBoardSaveBeforeTransition();
     await drainPreviewStructuralLanes();
     await suspendAndDrainExternalDiskMonitoring(host.externalDiskControllerHost());
   } catch (error) {

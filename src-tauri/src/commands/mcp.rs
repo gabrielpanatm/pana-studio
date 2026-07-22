@@ -199,7 +199,6 @@ fn build_context_publication(
             blocked_reason: projection.ui_dirty_state.blocked_reason,
         },
         files,
-        mood_board: projection.mood_board,
         external_disk: projection.external_disk,
         guidance: vec![
             "Datele și fișierele expuse prin MCP sunt read-only.".to_string(),

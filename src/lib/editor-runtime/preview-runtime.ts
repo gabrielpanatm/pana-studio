@@ -195,7 +195,7 @@ export class PreviewRuntime {
     if (!this.incomingOverflowReported) {
       this.incomingOverflowReported = true;
       this.host.setGlobalStatus(
-        "Preview a depășit bugetul de mesaje; surplusul a fost refuzat fără retry.",
+        "Previzualizarea a depășit bugetul de mesaje; surplusul a fost refuzat fără reîncercare.",
         "error",
       );
     }
@@ -216,7 +216,7 @@ export class PreviewRuntime {
       if (typeof oldestRevision !== "number") break;
       this.failPending(
         oldestRevision,
-        "Preview a depășit limita operațiilor fără ACK; operația cea mai veche a fost invalidată.",
+        "Previzualizarea a depășit limita operațiilor neconfirmate; operația cea mai veche a fost invalidată.",
         "capacity",
       );
     }
@@ -315,7 +315,7 @@ export class PreviewRuntime {
       || !Number.isSafeInteger(patch.issuedAtMs)
       || patch.issuedAtMs <= 0
     ) {
-      throw new Error(ack.error || "Preview nu a confirmat CanvasPatch-ul exact.");
+      throw new Error(ack.error || "Previzualizarea nu a confirmat exact CanvasPatch-ul.");
     }
     const roundTripDurationMs = Math.max(0, this.now() - roundTripStartedAt);
     const receiptToCommitDurationMs = Math.max(0, Date.now() - patch.issuedAtMs);
@@ -343,7 +343,7 @@ export class PreviewRuntime {
       || receipt.workspaceRevision !== patch.baseWorkspaceRevision
       || receipt.workspaceTransactionId !== patch.workspaceTransactionId
     ) {
-      throw new Error(ack.error || "Preview nu a confirmat rollback-ul CanvasPatch exact.");
+      throw new Error(ack.error || "Previzualizarea nu a confirmat exact revenirea CanvasPatch-ului.");
     }
     return receipt;
   }
@@ -376,7 +376,7 @@ export class PreviewRuntime {
     for (const waiter of this.waiters.values()) {
       waiter.reject(new PreviewRuntimeTransportError(
         "runtime_reset",
-        "Preview runtime a fost resetat înainte de ACK.",
+        "Execuția previzualizării a fost resetată înainte de confirmare.",
       ));
     }
     this.waiters.clear();

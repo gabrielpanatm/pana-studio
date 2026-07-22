@@ -154,7 +154,7 @@
 
   .group-header h3 {
     margin: 0;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -184,7 +184,7 @@
 
   .var-name {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -217,7 +217,7 @@
     border-radius: 6px;
     color: var(--text);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
+    font-size: 12px;
     background: var(--surface-8);
   }
 </style>

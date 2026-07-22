@@ -80,18 +80,18 @@ export function transitionReasonLabel(reason: KernelProjectTransitionReason) {
     clean: "sesiune curată",
     metadata_changed: "metadata schimbată",
     workspace_dirty: "modificări nesalvate",
-    disk_conflict: "conflict disk",
-    blocked_project_state: "ProjectState blocat",
-    unknown_warning: "warning necunoscut",
+    disk_conflict: "conflict pe disc",
+    blocked_project_state: "stare proiect blocată",
+    unknown_warning: "avertisment necunoscut",
   };
   return labels[reason];
 }
 
 export function transitionActionLabel(action: KernelProjectTransitionAction) {
   const labels: Record<KernelProjectTransitionAction, string> = {
-    open_project: "Open Project",
-    reload_project: "Reload Project",
-    close_project: "Close Project",
+    open_project: "Deschide proiectul",
+    reload_project: "Reîncarcă proiectul",
+    close_project: "Închide proiectul",
   };
   return labels[action];
 }
@@ -105,10 +105,10 @@ export function projectTransitionDecisionMetrics(
       policy.workspaceDirtyResourceCount,
       policy.workspaceDirtyResourceCount > 0 ? "warning" : "neutral",
     ),
-    metric("Revizie workspace", policy.workspaceRevision ?? "—", "neutral"),
+    metric("Revizie sesiune", policy.workspaceRevision ?? "—", "neutral"),
     metric("Istoric", `${policy.workspaceUndoCount} undo / ${policy.workspaceRedoCount} redo`, "neutral"),
-    metric("Conflicte disk", policy.diskConflictCount, policy.diskBlockingCount > 0 ? "danger" : "neutral"),
-    metric("Metadata drift", policy.metadataChangedCount, policy.metadataChangedCount > 0 ? "warning" : "neutral"),
+    metric("Conflicte pe disc", policy.diskConflictCount, policy.diskBlockingCount > 0 ? "danger" : "neutral"),
+    metric("Metadate schimbate", policy.metadataChangedCount, policy.metadataChangedCount > 0 ? "warning" : "neutral"),
   ];
 }
 

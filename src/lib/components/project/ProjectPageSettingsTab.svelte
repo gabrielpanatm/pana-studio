@@ -86,6 +86,19 @@
       </section>
 
       <section class="metadata-group">
+        <h4>Taxonomii</h4>
+        <label class="field">
+          <span>Tags</span>
+          <input placeholder="design, zola, ghid" value={values.tags} oninput={(event) => setField("tags", event.currentTarget.value)} />
+        </label>
+        <label class="field">
+          <span>Categories</span>
+          <input placeholder="Articole, Noutăți" value={values.categories} oninput={(event) => setField("categories", event.currentTarget.value)} />
+        </label>
+        <p class="taxonomy-note">Separă valorile prin virgulă. Pană păstrează array-urile TOML în <code>taxonomies.*</code>.</p>
+      </section>
+
+      <section class="metadata-group">
         <h4>SEO</h4>
         <label class="field">
           <span>SEO title</span>
@@ -159,9 +172,17 @@
     margin: 0;
   }
 
+  .taxonomy-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
   .section-heading h3 {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -173,7 +194,7 @@
     border-radius: 999px;
     color: var(--text-muted);
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
   }
 
@@ -193,7 +214,7 @@
     min-width: 0;
     overflow: hidden;
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -223,7 +244,7 @@
   .field,
   .toggle-field {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -248,7 +269,7 @@
     border: 1px solid var(--border-4);
     border-radius: 6px;
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     letter-spacing: 0;
     text-transform: none;
     background: var(--surface-5);
@@ -286,7 +307,7 @@
 
   .empty-text {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.45;
   }
 </style>

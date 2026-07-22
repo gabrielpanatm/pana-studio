@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-publish-operation"
+description = "Enables the cancel_publish_operation command without any pre-configured scope."
+commands.allow = ["cancel_publish_operation"]
+
+[[permission]]
+identifier = "deny-cancel-publish-operation"
+description = "Denies the cancel_publish_operation command without any pre-configured scope."
+commands.deny = ["cancel_publish_operation"]

@@ -99,7 +99,7 @@
   </header>
 
   <div class="filters">
-    <label><input type="checkbox" bind:checked={recoveryOnly} onchange={() => void refresh()} /> doar recovery</label>
+    <label><input type="checkbox" bind:checked={recoveryOnly} onchange={() => void refresh()} /> doar recuperare</label>
     <label><input type="checkbox" bind:checked={includeArchives} onchange={() => void refresh()} /> include arhive</label>
     {#each levels as level}
       <label><input type="checkbox" checked={selectedLevels.includes(level)} onchange={() => toggleLevel(level)} /> {kernelLogLevelLabel(level)}</label>
@@ -160,9 +160,9 @@
   .health span,
   .path,
   article p,
-  article small { color: var(--text-muted); font-size: 11px; }
+  article small { color: var(--text-muted); font-size: 12px; }
   button { width: 36px; height: 34px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
-  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text-muted); font-size: 11px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--text-muted); font-size: 12px; }
   .health { gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
   .health span { margin-left: auto; }
   .path { margin: 0; }
@@ -172,13 +172,13 @@
   article.error { border-left-color: #ef4444; }
   article.info { border-left-color: var(--brand-strong); }
   article header { justify-content: space-between; gap: 12px; }
-  article strong { font-size: 11px; }
-  article time { color: var(--text-muted); font-size: 10px; }
+  article strong { font-size: 12px; }
+  article time { color: var(--text-muted); font-size: 12px; }
   article p { margin: 0; line-height: 1.4; }
   .diagnostic { color: #d97706; }
   dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 5px; margin: 0; }
   dl div { min-width: 0; padding: 5px; background: var(--surface-3); }
-  dt { color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
-  dd { margin: 2px 0 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-  .error { margin: 0; color: #ef4444; font-size: 11px; }
+  dt { color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
+  dd { margin: 2px 0 0; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .error { margin: 0; color: #ef4444; font-size: 12px; }
 </style>

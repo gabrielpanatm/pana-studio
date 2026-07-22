@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-workbench-intent"
+description = "Enables the apply_workbench_intent command without any pre-configured scope."
+commands.allow = ["apply_workbench_intent"]
+
+[[permission]]
+identifier = "deny-apply-workbench-intent"
+description = "Denies the apply_workbench_intent command without any pre-configured scope."
+commands.deny = ["apply_workbench_intent"]

@@ -235,13 +235,13 @@
   }
 
   .sub-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 
   .conflict-note {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.3;
   }
 

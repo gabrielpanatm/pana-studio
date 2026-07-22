@@ -153,7 +153,7 @@ test("Template Workbench binds activation to the exact ProjectWorkspace revision
   assert.equal(host.templateWorkbenchTarget, template.relativePath);
   assert.equal(host.templateWorkbenchReturnPreviewPath, "sursa/content/_index.md");
   assert.match(host.previewSrc, /__pana_workbench\/template-active/);
-  assert.match(statuses.at(-1).text, /Template Workbench activ/);
+  assert.match(statuses.at(-1).text, /Context de template activ/);
 });
 
 test("a late Workbench result has zero UI effects after the selected source changes", async () => {

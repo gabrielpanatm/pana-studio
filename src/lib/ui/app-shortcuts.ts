@@ -1,4 +1,14 @@
-export type AppShortcutIntent = "none" | "preventNativeZoom" | "save" | "undo" | "redo";
+export type AppShortcutIntent =
+  | "none"
+  | "preventNativeZoom"
+  | "commandCenter"
+  | "toggleTerminal"
+  | "togglePrimarySidebar"
+  | "showProblems"
+  | "toggleEditorSplit"
+  | "save"
+  | "undo"
+  | "redo";
 export type DeleteShortcutIntent = "none" | "deleteSelectedHtml";
 
 type DeleteShortcutState = {
@@ -8,16 +18,20 @@ type DeleteShortcutState = {
 };
 
 export function isAppTextEditingTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement
+  return typeof HTMLElement !== "undefined"
+    && target instanceof HTMLElement
     && Boolean(target.closest("input, textarea, select, [contenteditable='true'], .cm-editor"));
 }
 
 export function isMoodBoardCanvasTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement && Boolean(target.closest("[data-mood-board-canvas]"));
+  return typeof HTMLElement !== "undefined"
+    && target instanceof HTMLElement
+    && Boolean(target.closest("[data-mood-board-canvas]"));
 }
 
 export function isManagedWorkspaceEditorTarget(target: EventTarget | null) {
-  return target instanceof HTMLElement
+  return typeof HTMLElement !== "undefined"
+    && target instanceof HTMLElement
     && Boolean(target.closest(".cm-editor, .tiptap-markdown-editor"));
 }
 
@@ -25,6 +39,12 @@ export function appShortcutIntent(event: KeyboardEvent): AppShortcutIntent {
   const hasModifier = event.ctrlKey || event.metaKey;
   if (!hasModifier || event.altKey) return "none";
   const key = event.key.toLowerCase();
+
+  if (key === "k") return "commandCenter";
+  if (key === "`" || key === "~") return "toggleTerminal";
+  if (key === "b" && !isAppTextEditingTarget(event.target)) return "togglePrimarySidebar";
+  if (key === "m" && event.shiftKey) return "showProblems";
+  if (key === "\\") return "toggleEditorSplit";
 
   if (key === "+" || key === "=" || key === "-" || key === "_" || key === "0") {
     return "preventNativeZoom";

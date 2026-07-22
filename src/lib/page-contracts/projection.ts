@@ -61,7 +61,7 @@ export function capturePageContractSessionLease(
   const projectRoot = host.sessionProjectRoot.trim();
   const sessionId = host.kernelProjectSessionId.trim();
   if (!projectRoot || !sessionId) {
-    throw new Error("Page Contract cere un ProjectWorkspace activ și identificabil.");
+    throw new Error("Contractul paginii cere o sesiune de proiect activă și identificabilă.");
   }
   return { projectRoot, sessionId, projectSessionEpoch: host.projectSessionEpoch };
 }

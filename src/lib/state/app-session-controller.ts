@@ -42,14 +42,6 @@ import {
 
 export function setGlobalStatus(app: AppState, text: string, kind: SaveState) {
   setGlobalStatusFromController(app.statusControllerHost(), text, kind);
-  if (kind === "error") {
-    notify(app, {
-      id: `status.error.${text}`,
-      level: "error",
-      title: "Eroare",
-      message: text,
-    });
-  }
 }
 
 export function notify(app: AppState, notification: Omit<AppNotification, "createdAt">) {
@@ -87,7 +79,7 @@ export async function handleNotificationAction(app: AppState, notification: AppN
     }
     if (actionId === EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID) {
       app.setGlobalStatus(
-        "Sesiunea rămâne deschisă, dar conflictul extern nu a fost acceptat; Save rămâne protejat de Disk Conflict Gate.",
+        "Sesiunea rămâne deschisă, dar conflictul extern nu a fost acceptat; salvarea rămâne protejată de controlul conflictelor de pe disc.",
         "idle",
       );
       return;
@@ -135,7 +127,7 @@ export async function refreshCurrentSession(app: AppState) {
   }
   app.refreshToken += 1;
   await app.requestPreviewRefresh("session-refresh");
-  app.setGlobalStatus("Proiecția ProjectWorkspace a fost reîncărcată în editor și preview.", "restored");
+  app.setGlobalStatus("Proiecția sesiunii proiectului a fost reîncărcată în editor și previzualizare.", "restored");
 }
 
 export async function createProjectFile(app: AppState, relativePath: string, content: string) {

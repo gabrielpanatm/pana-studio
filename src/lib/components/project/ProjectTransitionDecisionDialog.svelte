@@ -101,7 +101,7 @@
       <p class="target-path">{request.targetRoot}</p>
     </div>
 
-    <div class="metric-list" aria-label="Evidență ProjectState">
+    <div class="metric-list" aria-label="Evidență stare proiect">
       {#each metrics as metric}
         <div class="metric-row" class:warning={metric.tone === "warning"} class:danger={metric.tone === "danger"}>
           <span>{metric.label}</span>
@@ -110,10 +110,10 @@
       {/each}
     </div>
 
-    <section class="evidence-block" aria-label="Evidență kernel">
+    <section class="evidence-block" aria-label="Evidență nucleu Rust">
       <div class="section-heading">
         <IconAlertTriangle size={15} stroke={1.8} />
-        <h3>Evidență kernel</h3>
+        <h3>Evidență nucleu Rust</h3>
       </div>
       <p>{request.policy.evidence}</p>
       <p class="recommendation">{request.policy.recommendedAction}</p>
@@ -125,7 +125,7 @@
         bind:value={diagnostic}
         rows="4"
         disabled={submitting}
-        placeholder="Ex: Confirm tranziția după revizuirea drafturilor locale și accept pierderea sesiunii curente."
+        placeholder="Ex.: Confirm tranziția după revizuirea ciornelor locale și accept pierderea sesiunii curente."
       ></textarea>
     </label>
 
@@ -217,7 +217,7 @@
 
   .dialog-title p {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -271,7 +271,7 @@
     border: 1px solid #d49b24;
     border-radius: 999px;
     color: #f3bd55;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 850;
     text-transform: uppercase;
   }
@@ -287,7 +287,7 @@
     overflow-wrap: anywhere;
     color: var(--text-muted) !important;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 11px !important;
+    font-size: 12px !important;
   }
 
   .metric-list {
@@ -311,7 +311,7 @@
   .metric-row span {
     min-width: 0;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 750;
   }
 
@@ -335,7 +335,7 @@
   }
 
   .section-heading h3 {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -368,7 +368,7 @@
 
   .diagnostic-field span {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-transform: uppercase;

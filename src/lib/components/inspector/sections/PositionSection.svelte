@@ -47,10 +47,10 @@
   ];
 </script>
 
-<InspectorSection title="Position" {hasValues}>
+<InspectorSection title="Poziție" {hasValues}>
   {#snippet icon()}<IconMapPin size={13} stroke={1.7} />{/snippet}
 
-  <div class="row-label">Position</div>
+  <div class="row-label">Poziție</div>
   <SegmentedControl
     options={positionOpts}
     value={getValue("position")}
@@ -83,6 +83,6 @@
 </InspectorSection>
 
 <style>
-  .row-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .row-label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
   .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 </style>

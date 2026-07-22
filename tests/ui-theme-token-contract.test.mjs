@@ -11,8 +11,8 @@ function styleSourceUrls(directory) {
 }
 
 test("interfața folosește tokenul canonic --brand pentru accente", () => {
-  const shellCss = readFileSync(new URL("../src/routes/workspace-shell.css", import.meta.url), "utf8");
-  assert.match(shellCss, /--brand\s*:/);
+  const designSystemCss = readFileSync(new URL("../src/routes/design-system.css", import.meta.url), "utf8");
+  assert.match(designSystemCss, /--brand\s*:/);
 
   const sourceUrls = [
     ...styleSourceUrls(new URL("../src/", import.meta.url)),

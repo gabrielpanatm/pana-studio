@@ -176,14 +176,14 @@
 
   .group-header h3 {
     margin: 0;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
   .group-header code {
-    font-size: 11px;
+    font-size: 12px;
     padding: 2px 6px;
     border-radius: 4px;
     background: var(--code-bg);
@@ -199,7 +199,7 @@
     border-radius: 999px;
     color: var(--brand-strong);
     background: var(--brand-soft);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 0;
     text-transform: none;
@@ -217,7 +217,7 @@
     border-radius: 6px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     cursor: pointer;
     transition: border-color 80ms, color 80ms, background 80ms;
@@ -250,7 +250,7 @@
     background: var(--surface-5);
     color: var(--text);
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     outline: none;
   }
 

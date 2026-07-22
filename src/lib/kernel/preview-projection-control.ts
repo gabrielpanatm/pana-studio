@@ -143,7 +143,7 @@ async function applyCommittedCanvasPatch(
     || patch.workspaceRevision !== mutation.revisionAfter
     || patch.workspaceTransactionId !== transactionId
   ) {
-    throw new Error("CanvasPatch nu corespunde mutației ProjectWorkspace comise.");
+    throw new Error("CanvasPatch nu corespunde mutației comise în sesiunea proiectului.");
   }
   const snapshot = await readProjectWorkspaceState();
   requireCurrentPreviewStructuralSession(host, lease);
@@ -175,7 +175,7 @@ function requireWorkspaceMutation(
 ): ProjectWorkspaceMutationReceipt {
   if (!mutation?.changed || mutation.revisionAfter <= mutation.revisionBefore) {
     throw new Error(
-      "Mutația structurală comisă nu conține o tranziție ProjectWorkspace validă.",
+      "Mutația structurală comisă nu conține o tranziție validă a sesiunii proiectului.",
     );
   }
   return mutation;
@@ -202,7 +202,7 @@ export async function projectCanonicalPreviewWorkspaceRevision(
   const touchedFiles = previewStructuralTouchedFiles(receipt, patch);
   if (touchedFiles.length === 0) {
     throw new Error(
-      "Mutația structurală a fost comisă fără fișiere pentru proiecția Preview.",
+      "Mutația structurală a fost comisă fără fișiere pentru previzualizare.",
     );
   }
   if (!touchedFiles.some((file) => (

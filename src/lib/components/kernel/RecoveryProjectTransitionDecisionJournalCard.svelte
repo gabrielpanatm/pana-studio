@@ -50,24 +50,24 @@
   const noteId = $derived(`project-transition-retention-note-${journal.retentionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
   const candidateIdsLabel = $derived(projectTransitionDecisionRetentionCandidateIdsLabel(journal));
   const hashLabel = $derived(
-    `before ${shortHash(journal.beforeJournalHash)} · after ${shortHash(journal.afterJournalHash)} · archive ${shortHash(journal.archiveHash)}`,
+    `înainte ${shortHash(journal.beforeJournalHash)} · după ${shortHash(journal.afterJournalHash)} · arhivă ${shortHash(journal.archiveHash)}`,
   );
 
   function actionButtonLabel(action: KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction): string {
-    if (action === "restore_before_journal") return "Restaurează before";
-    if (action === "manual_review_conflict") return "Review manual";
-    return "Curăță journal";
+    if (action === "restore_before_journal") return "Restaurează starea anterioară";
+    if (action === "manual_review_conflict") return "Revizuire manuală";
+    return "Curăță jurnalul";
   }
 </script>
 
 <article
   class={`project-transition-retention-journal ${journal.diskState}`}
   class:kernel-context-focus={highlighted}
-  aria-label="ProjectTransition Decision retention hot journal"
+  aria-label="Jurnal activ pentru retenția deciziilor de tranziție"
 >
   <header class="retention-journal-header">
     <div>
-      <span class="journal-kind">project transition decision retention</span>
+      <span class="journal-kind">retenția deciziei de tranziție</span>
       <h3>{journal.retentionId}</h3>
     </div>
     <span class="journal-time">
@@ -80,11 +80,11 @@
 
   <dl class="journal-facts">
     <div>
-      <dt>Disk state</dt>
+      <dt>Stare disc</dt>
       <dd>{projectTransitionRetentionStateLabel(journal.diskState)}</dd>
     </div>
     <div>
-      <dt>Action</dt>
+      <dt>Acțiune</dt>
       <dd>{projectTransitionRetentionActionLabel(journal.recoveryPlan.action)}</dd>
     </div>
     <div>
@@ -92,7 +92,7 @@
       <dd title={candidateIdsLabel}>{journal.candidateCount}</dd>
     </div>
     <div>
-      <dt>Kept</dt>
+      <dt>Păstrate</dt>
       <dd>{journal.keptRecordCount}</dd>
     </div>
   </dl>
@@ -107,7 +107,7 @@
     <span>{compactKernelPath(journal.archivePath)}</span>
   </div>
 
-  <section class="journal-plan" aria-label="Plan recovery Decision Retention">
+  <section class="journal-plan" aria-label="Plan de recuperare a retenției deciziei">
     <strong>{journal.recoveryPlan.title}</strong>
     <p>{journal.recoveryPlan.summary}</p>
     <ul>
@@ -117,7 +117,7 @@
     </ul>
   </section>
 
-  <section class="journal-integrity" aria-label="Integritate retention hot journal">
+  <section class="journal-integrity" aria-label="Integritatea jurnalului activ de retenție">
     <strong title={hashLabel}>{hashLabel}</strong>
     <span title={candidateIdsLabel}>{candidateIdsLabel}</span>
     {#if journal.diagnostics.length}
@@ -130,9 +130,9 @@
   </section>
 
   {#if journal.recoveryPlan.canClearJournal || journal.recoveryPlan.canRestoreBeforeJournal}
-    <section class="journal-action" aria-label="Acțiune recovery Decision Retention">
+    <section class="journal-action" aria-label="Acțiune de recuperare a retenției deciziei">
       <label class="journal-note-field" for={noteId}>
-        <span>Diagnostic operator pentru recovery</span>
+        <span>Diagnostic operator pentru recuperare</span>
         <textarea
           id={noteId}
           rows="2"
@@ -189,7 +189,7 @@
 
   .journal-kind {
     color: var(--brand-strong);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0;
     text-transform: uppercase;
@@ -208,7 +208,7 @@
     gap: 5px;
     flex: 0 0 auto;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
   }
 
@@ -244,7 +244,7 @@
   .journal-facts dt,
   .journal-note-field span {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0;
     text-transform: uppercase;
@@ -267,7 +267,7 @@
     min-width: 0;
     padding: 9px 10px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 750;
   }
 
@@ -308,7 +308,7 @@
     margin: 8px 0 0;
     padding: 0 0 0 16px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.45;
   }
 
@@ -333,7 +333,7 @@
   .journal-note-error {
     margin: 7px 0 0;
     color: #fca5a5;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.4;
   }
 
@@ -349,7 +349,7 @@
     border-radius: 7px;
     color: var(--brand-strong);
     background: var(--brand-soft);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 850;
     cursor: pointer;
   }

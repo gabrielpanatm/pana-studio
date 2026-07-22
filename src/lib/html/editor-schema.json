@@ -64,7 +64,7 @@
     "audio": { "group": "Media", "family": "audio", "sourceEditable": true, "liveProjectable": true, "previewMode": "live", "acceptsChildren": true, "attributeEditor": "complete" },
     "img": { "group": "Media", "family": "void", "sourceEditable": true, "liveProjectable": true, "previewMode": "live", "acceptsChildren": false, "attributeEditor": "complete" },
     "source": { "group": "Media", "family": "void", "sourceEditable": true, "liveProjectable": true, "previewMode": "live", "acceptsChildren": false, "attributeEditor": "complete" },
-    "iframe": { "group": "Media", "family": "inert", "sourceEditable": true, "liveProjectable": false, "previewMode": "inert", "acceptsChildren": true, "attributeEditor": "complete", "reason": "Iframe-ul este păstrat în sursă, dar eliminat din Design Safe Preview." },
+    "iframe": { "group": "Media", "family": "inert", "sourceEditable": true, "liveProjectable": false, "previewMode": "inert", "acceptsChildren": true, "attributeEditor": "complete", "reason": "Iframe-ul este păstrat în sursă, dar eliminat din Editare sigură Preview." },
 
     "a": { "group": "Link / Buton", "family": "link", "sourceEditable": true, "liveProjectable": true, "previewMode": "live", "acceptsChildren": true, "attributeEditor": "complete" },
     "button": { "group": "Link / Buton", "family": "button", "sourceEditable": true, "liveProjectable": true, "previewMode": "live", "acceptsChildren": true, "attributeEditor": "complete" },
@@ -113,9 +113,9 @@
     "aria-disabled": { "semantic": "ariaBoolean", "emptyPolicy": "remove", "scope": "accessibility", "values": ["true", "false"], "sourceEditable": true, "liveProjectable": true },
 
     "href": { "semantic": "url", "emptyPolicy": "preserve", "elements": ["a", "area"], "sourceEditable": true, "liveProjectable": true },
-    "target": { "semantic": "enumeratedOrString", "emptyPolicy": "remove", "elements": ["a", "area", "form"], "values": ["_blank", "_self", "_parent", "_top"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly", "reason": "Navigarea este dezactivată în Design Safe Preview." },
+    "target": { "semantic": "enumeratedOrString", "emptyPolicy": "remove", "elements": ["a", "area", "form"], "values": ["_blank", "_self", "_parent", "_top"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly", "reason": "Navigarea este dezactivată în Editare sigură Preview." },
     "rel": { "semantic": "tokenList", "emptyPolicy": "remove", "elements": ["a", "area"], "sourceEditable": true, "liveProjectable": true },
-    "download": { "semantic": "booleanOrString", "emptyPolicy": "preserve", "elements": ["a"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly", "reason": "Descărcările sunt dezactivate în Design Safe Preview." },
+    "download": { "semantic": "booleanOrString", "emptyPolicy": "preserve", "elements": ["a"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly", "reason": "Descărcările sunt dezactivate în Editare sigură Preview." },
     "hreflang": { "semantic": "string", "emptyPolicy": "remove", "elements": ["a"], "sourceEditable": true, "liveProjectable": true },
     "ping": { "semantic": "urlList", "emptyPolicy": "remove", "elements": ["a", "area"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly" },
 
@@ -152,7 +152,7 @@
     "rows": { "semantic": "positiveInteger", "emptyPolicy": "remove", "elements": ["textarea"], "sourceEditable": true, "liveProjectable": true },
     "cols": { "semantic": "positiveInteger", "emptyPolicy": "remove", "elements": ["textarea"], "sourceEditable": true, "liveProjectable": true },
     "size": { "semantic": "positiveInteger", "emptyPolicy": "remove", "elements": ["select"], "sourceEditable": true, "liveProjectable": true },
-    "action": { "semantic": "url", "emptyPolicy": "preserve", "elements": ["form"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly", "reason": "Trimiterea formularelor este dezactivată în Design Safe Preview." },
+    "action": { "semantic": "url", "emptyPolicy": "preserve", "elements": ["form"], "sourceEditable": true, "liveProjectable": false, "previewMode": "sourceOnly", "reason": "Trimiterea formularelor este dezactivată în Editare sigură Preview." },
     "method": { "semantic": "enumerated", "emptyPolicy": "remove", "elements": ["form"], "values": ["get", "post", "dialog"], "implicitValue": "get", "sourceEditable": true, "liveProjectable": true },
     "enctype": { "semantic": "enumerated", "emptyPolicy": "remove", "elements": ["form"], "values": ["application/x-www-form-urlencoded", "multipart/form-data", "text/plain"], "implicitValue": "application/x-www-form-urlencoded", "sourceEditable": true, "liveProjectable": true },
     "novalidate": { "semantic": "booleanPresence", "emptyPolicy": "remove", "elements": ["form"], "sourceEditable": true, "liveProjectable": true },
@@ -178,7 +178,7 @@
     "shape": { "semantic": "enumerated", "emptyPolicy": "remove", "elements": ["area"], "values": ["rect", "circle", "poly", "default"], "implicitValue": "rect", "sourceEditable": true, "liveProjectable": true },
     "coords": { "semantic": "numberList", "emptyPolicy": "remove", "elements": ["area"], "sourceEditable": true, "liveProjectable": true },
 
-    "srcdoc": { "semantic": "string", "emptyPolicy": "preserve", "elements": ["iframe"], "sourceEditable": false, "liveProjectable": false, "previewMode": "blocked", "reason": "srcdoc poate injecta document activ și este blocat de Design Safe." }
+    "srcdoc": { "semantic": "string", "emptyPolicy": "preserve", "elements": ["iframe"], "sourceEditable": false, "liveProjectable": false, "previewMode": "blocked", "reason": "srcdoc poate injecta document activ și este blocat de Editare sigură." }
   },
   "dynamicAttributes": {
     "data-*": { "semantic": "stringAllowEmpty", "emptyPolicy": "preserve", "sourceEditable": true, "liveProjectable": true },

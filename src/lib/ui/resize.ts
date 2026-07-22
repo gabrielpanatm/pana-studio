@@ -1,14 +1,11 @@
 import { defaultTerminalPaneHeight } from "$lib/terminal/runtime";
 
-export type ResizeKind = "left" | "right" | "terminal" | "motionTimeline";
-
-export const defaultMotionTimelinePaneHeight = 220;
+export type ResizeKind = "left" | "right" | "terminal";
 
 type ResizeState = {
   leftPaneWidth: number;
   rightPaneWidth: number;
   terminalPaneHeight: number;
-  motionTimelinePaneHeight: number;
 };
 
 type BeginResizeDragOptions = {
@@ -29,11 +26,7 @@ export function clampResizeValue(kind: ResizeKind, value: number) {
     return clamp(value, 280, 520);
   }
 
-  if (kind === "terminal") {
-    return clamp(value, 160, 480);
-  }
-
-  return clamp(value, 140, 420);
+  return clamp(value, 160, 480);
 }
 
 export function defaultResizeValue(kind: ResizeKind) {
@@ -45,17 +38,13 @@ export function defaultResizeValue(kind: ResizeKind) {
     return 320;
   }
 
-  if (kind === "terminal") {
-    return defaultTerminalPaneHeight;
-  }
-
-  return defaultMotionTimelinePaneHeight;
+  return defaultTerminalPaneHeight;
 }
 
 export function applyResizeBodyClasses(kind: ResizeKind) {
   document.body.classList.add("is-resizing");
   document.body.classList.toggle("is-col-resizing", kind === "left" || kind === "right");
-  document.body.classList.toggle("is-row-resizing", kind === "terminal" || kind === "motionTimeline");
+  document.body.classList.toggle("is-row-resizing", kind === "terminal");
 }
 
 export function clearResizeBodyClasses() {
@@ -90,19 +79,9 @@ export function beginResizeDrag(options: BeginResizeDragOptions) {
       };
     }
 
-    if (options.kind === "terminal") {
-      return {
-        ...startState,
-        terminalPaneHeight: clampResizeValue("terminal", startState.terminalPaneHeight - (moveEvent.clientY - startY)),
-      };
-    }
-
     return {
       ...startState,
-      motionTimelinePaneHeight: clampResizeValue(
-        "motionTimeline",
-        startState.motionTimelinePaneHeight - (moveEvent.clientY - startY),
-      ),
+      terminalPaneHeight: clampResizeValue("terminal", startState.terminalPaneHeight - (moveEvent.clientY - startY)),
     };
   };
 

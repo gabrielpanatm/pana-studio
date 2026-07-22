@@ -75,7 +75,7 @@ pub(crate) fn tag_transition_diagnostic(current_tag: &str, new_tag: &str) -> Opt
     }
     if !destination.live_projectable || destination.preview_mode != "live" {
         return Some(format!(
-            "Tag-ul nou <{new_tag}> nu poate avea o țintă stabilă în Design Safe Preview."
+            "Tag-ul nou <{new_tag}> nu poate avea o țintă stabilă în Editare sigură Preview."
         ));
     }
     if !current.accepts_children || !destination.accepts_children {
@@ -226,7 +226,7 @@ pub(crate) fn validate_visual_attribute_mutation(
 }
 
 /// Reports whether an authored attribute mutation can be accelerated directly
-/// in the Design Safe DOM. Source-only attributes remain valid canonical
+/// in the Editare sigură DOM. Source-only attributes remain valid canonical
 /// ProjectWorkspace edits, but must wait for the sanitized Zola projection.
 pub(crate) fn is_live_projectable_attribute(name: &str) -> bool {
     let normalized_name = name.trim().to_ascii_lowercase();

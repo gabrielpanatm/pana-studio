@@ -932,9 +932,9 @@ test("latest-wins păstrează numai al doilea refresh și starea canonical afere
 
 test("un refresh de proiecție poate păstra eșecul intern fără notificare globală prematură", async () => {
   const activeHost = controlledHost({
-    projectStatus: "Preview anterior valid",
+    projectStatus: "Previzualizare anterioară validă",
     async reloadPreview() {
-      this.projectStatus = "Preview render esuat: Preview-ul local a raspuns cu un status invalid: HTTP/1.1 404 Not Found";
+      this.projectStatus = "Randarea previzualizării a eșuat: previzualizarea locală a răspuns cu un statut invalid: HTTP/1.1 404 Not Found";
       return false;
     },
   });

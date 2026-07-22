@@ -6,6 +6,7 @@
     IconDeviceFloppy,
   } from "@tabler/icons-svelte";
   import ToolbarButton from "$lib/components/topbar/ToolbarButton.svelte";
+  import { UI_TERMS } from "$lib/i18n/ui-terms";
 
   export let canUndo = false;
   export let canRedo = false;
@@ -18,18 +19,18 @@
 </script>
 
 <ToolbarButton
-  title={inspectorHasPending ? "Salvează modificări (Ctrl+S)" : "Save"}
+  title={inspectorHasPending ? `${UI_TERMS.save} modificările (Ctrl+S)` : UI_TERMS.save}
   pending={inspectorHasPending}
   onclick={saveActiveFile}
 >
   <IconDeviceFloppy size={17} stroke={1.8} />
 </ToolbarButton>
-<ToolbarButton title="Undo (Ctrl+Z)" disabled={!canUndo} onclick={undoAction}>
+<ToolbarButton title={`${UI_TERMS.undo} (Ctrl+Z)`} disabled={!canUndo} onclick={undoAction}>
   <IconArrowBackUp size={17} stroke={1.8} />
 </ToolbarButton>
-<ToolbarButton title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onclick={redoAction}>
+<ToolbarButton title={`${UI_TERMS.redo} (Ctrl+Shift+Z)`} disabled={!canRedo} onclick={redoAction}>
   <IconArrowForwardUp size={17} stroke={1.8} />
 </ToolbarButton>
-<ToolbarButton title="History snapshots" active={historyPanelOpen} onclick={toggleHistoryPanel}>
+<ToolbarButton title={UI_TERMS.historySnapshots} active={historyPanelOpen} onclick={toggleHistoryPanel}>
   <IconClock size={17} stroke={1.8} />
 </ToolbarButton>

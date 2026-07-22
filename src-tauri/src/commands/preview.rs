@@ -427,7 +427,7 @@ pub async fn project_template_workbench_preview(
         input.expected_workspace_revision,
     )?;
     if !is_zola_project(&root) {
-        return Err("Template Workbench cere un proiect Zola inițializat.".to_string());
+        return Err("Context de template cere un proiect Zola inițializat.".to_string());
     }
     let task_input = input.clone();
     let task_identity = identity.clone();
@@ -437,7 +437,7 @@ pub async fn project_template_workbench_preview(
             move || -> Result<TemplateWorkbenchPreviewReceipt, String> {
                 let state = app.state::<AppState>();
                 let _operation = state.preview_workspace_operation.lock().map_err(|_| {
-                    "Nu am putut serializa proiecția Template Workbench.".to_string()
+                    "Nu am putut serializa proiecția Context de template.".to_string()
                 })?;
                 require_project_preview_workspace_revision(
                     state.inner(),
@@ -469,7 +469,7 @@ pub async fn project_template_workbench_preview(
                     "Nu am putut bloca motorul Preview pentru Workbench.".to_string()
                 })?;
                 let engine = engine_slot.as_mut().ok_or_else(|| {
-                    "Template Workbench cere mai întâi Preview-ul canonic al aceleiași revizii."
+                    "Context de template cere mai întâi Preview-ul canonic al aceleiași revizii."
                         .to_string()
                 })?;
                 let publication = engine.publish_template_workbench_view(&projection, &plan)?;
@@ -484,7 +484,7 @@ pub async fn project_template_workbench_preview(
             },
         )
         .await
-        .map_err(|error| format!("Template Workbench task eșuat: {error}"))??;
+        .map_err(|error| format!("Context de template task eșuat: {error}"))??;
 
     require_project_preview_workspace_revision(
         state.inner(),
@@ -608,14 +608,16 @@ pub fn record_preview_runtime_event(
             .as_deref()
             .is_some_and(|value| value.trim().is_empty() || value.len() > 4_096)
     {
-        return Err("Evenimentul Interactive Preview nu respectă protocolul bounded.".to_string());
+        return Err(
+            "Evenimentul Previzualizare interactivă nu respectă protocolul bounded.".to_string(),
+        );
     }
     let engine = state.preview_engine.lock().map_err(|_| {
-        "Nu am putut valida motorul pentru evenimentul Interactive Preview.".to_string()
+        "Nu am putut valida motorul pentru evenimentul Previzualizare interactivă.".to_string()
     })?;
     let plan = engine
         .as_ref()
-        .ok_or_else(|| "Interactive Preview nu are motor Preview activ.".to_string())?
+        .ok_or_else(|| "Previzualizare interactivă nu are motor Preview activ.".to_string())?
         .canvas_plan_for_identity(&input.identity)?
         .ok_or_else(|| {
             "Evenimentul Preview nu aparține unei generații Canvas reținute.".to_string()
@@ -626,7 +628,9 @@ pub fn record_preview_runtime_event(
             | PreviewRuntimeEventKind::InteractiveJsFailed
     );
     if interactive_event && plan.phase != CanvasProjectionPhase::CanonicalVerified {
-        return Err("Evenimentul Interactive Preview cere generația canonică activă.".to_string());
+        return Err(
+            "Evenimentul Previzualizare interactivă cere generația canonică activă.".to_string(),
+        );
     }
     let (event_kind, level) = match input.kind {
         PreviewRuntimeEventKind::InteractiveJsRestarted => (

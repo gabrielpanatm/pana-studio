@@ -1,0 +1,31 @@
+/** Glosarul canonic pentru etichetele vizibile ale shell-ului Pană Studio. */
+export const UI_TERMS = Object.freeze({
+  editor: "Editor",
+  site: "Site",
+  components: "Componente",
+  designSystem: "Sistem de design",
+  assets: "Resurse",
+  content: "Conținut",
+  versionControl: "Control versiuni",
+  problemsAudit: "Probleme și audit",
+  publish: "Publicare",
+  settings: "Setări",
+  history: "Istoric",
+  historySnapshots: "Instantanee de istoric",
+  save: "Salvează",
+  undo: "Anulează",
+  redo: "Refă",
+  visual: "Vizual",
+  code: "Cod",
+  preview: "Previzualizare",
+  safeEditing: "Editare sigură",
+  interactivePreview: "Previzualizare interactivă",
+  externalOpen: "Deschidere externă",
+  sourceMap: "Harta surselor",
+  workspace: "Spațiu de lucru",
+  output: "Jurnal",
+  timeline: "Cronologie",
+  moodBoard: "Planșă vizuală",
+});
+
+export type UiTerm = keyof typeof UI_TERMS;

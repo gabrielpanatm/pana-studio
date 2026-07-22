@@ -6,6 +6,7 @@
     IconRocket,
     IconEye,
     IconEyeOff,
+    IconX,
   } from "@tabler/icons-svelte";
   import {
     readProjectAppConfig,
@@ -17,6 +18,7 @@
     zolaInit,
     zolaBuild,
     deployToBunny,
+    cancelPublishOperation,
   } from "$lib/project/io";
   import {
     BUNNY_ENV_KEYS,
@@ -37,6 +39,10 @@
     isZola = false,
     isEmpty = false,
     cachebustAssets = false,
+    workspaceMode = false,
+    actionsOnly = false,
+    projectRoot = "",
+    runtimeSessionId = "",
     onStatusUpdate = undefined as ((text: string, kind: string) => void) | undefined,
     onCachebustAssetsChange = undefined as ((value: boolean) => void) | undefined,
   }: {
@@ -44,6 +50,10 @@
     isZola?: boolean;
     isEmpty?: boolean;
     cachebustAssets?: boolean;
+    workspaceMode?: boolean;
+    actionsOnly?: boolean;
+    projectRoot?: string;
+    runtimeSessionId?: string;
     onStatusUpdate?: (text: string, kind: string) => void;
     onCachebustAssetsChange?: (value: boolean) => void;
   } = $props();
@@ -69,6 +79,7 @@
   let initRunning = $state(false);
   let buildRunning = $state(false);
   let deployRunning = $state(false);
+  let cancelRunning = $state(false);
   const insertAnchorOptions = ["none", "left", "right", "heading"];
   const searchIndexFormatOptions = ["elasticlunr_javascript", "elasticlunr_json", "fuse_javascript", "fuse_json"];
   let actionLog = $state("");
@@ -192,15 +203,15 @@
     buildRunning = true;
     actionLog = "";
     actionOk = null;
-    onStatusUpdate?.("Se rulează Zola build...", "saving");
+    onStatusUpdate?.("Se construiește proiectul cu Zola...", "saving");
     try {
       actionLog = await zolaBuild();
       actionOk = true;
-      onStatusUpdate?.("Build Zola finalizat.", "saved");
+      onStatusUpdate?.("Construirea Zola s-a încheiat.", "saved");
     } catch (e) {
       actionLog = errorMessage(e);
       actionOk = false;
-      onStatusUpdate?.(`Eroare build: ${actionLog}`, "error");
+      onStatusUpdate?.(`Eroare la construire: ${actionLog}`, "error");
     }
     buildRunning = false;
   }
@@ -209,21 +220,43 @@
     deployRunning = true;
     actionLog = "";
     actionOk = null;
-    onStatusUpdate?.("Se rulează deploy...", "saving");
+    onStatusUpdate?.("Se publică proiectul...", "saving");
     try {
       actionLog = await deployToBunny();
       actionOk = true;
-      onStatusUpdate?.("Deploy finalizat.", "saved");
+      onStatusUpdate?.("Publicarea s-a încheiat.", "saved");
     } catch (e) {
       actionLog = errorMessage(e);
       actionOk = false;
-      onStatusUpdate?.(`Eroare deploy: ${actionLog}`, "error");
+      onStatusUpdate?.(`Eroare la publicare: ${actionLog}`, "error");
     }
     deployRunning = false;
   }
+
+  async function cancelRunningOperation() {
+    if (cancelRunning || (!buildRunning && !deployRunning)) return;
+    if (!projectRoot || !runtimeSessionId) {
+      onStatusUpdate?.("Operația nu poate fi anulată fără identitatea sesiunii proiectului.", "error");
+      return;
+    }
+    cancelRunning = true;
+    try {
+      const receipt = await cancelPublishOperation({
+        expectedProjectRoot: projectRoot,
+        expectedSessionId: runtimeSessionId,
+      });
+      actionLog = `Anulare solicitată pentru ${receipt.kind} (${receipt.operationId}).`;
+      actionOk = null;
+      onStatusUpdate?.("Anularea operației de publicare a fost solicitată.", "saving");
+    } catch (error) {
+      onStatusUpdate?.(`Anularea publicării a eșuat: ${errorMessage(error)}`, "error");
+    } finally {
+      cancelRunning = false;
+    }
+  }
 </script>
 
-<div class="deploy-pane">
+<div class:workspace-mode={workspaceMode} class:actions-only={actionsOnly} class="deploy-pane">
 
   {#if canInit}
     <section class="actions-section">
@@ -235,17 +268,41 @@
   {:else if !scannedProject}
     <p class="hint">Deschide un dosar pentru configurarea proiectului.</p>
   {:else if !isZola && !isEmpty}
-    <p class="hint">Setările Zola și deploy-ul sunt disponibile doar pentru proiecte Zola.</p>
+    <p class="hint">Setările și publicarea Zola sunt disponibile doar pentru proiecte Zola.</p>
   {:else if loading}
     <p class="hint">Se încarcă configurația...</p>
   {:else}
     <div class="sticky-config-actions">
       <span class:dirty={configDirty}>{configDirty ? "Modificări nesalvate" : "Configurație sincronizată"}</span>
-      <button type="button" class="save-config-btn compact-save" onclick={saveConfig}>
-        Salvează configurația
-      </button>
+      <div class="sticky-action-buttons">
+        <button type="button" class="save-config-btn compact-save" onclick={saveConfig}>
+          Salvează configurația
+        </button>
+        {#if workspaceMode}
+          <button type="button" class="action-btn build-btn compact-action" onclick={runBuild} disabled={buildRunning || configDirty} title={configDirty ? "Salvează configurația înainte de construire" : "Construiește proiectul cu Zola"}>
+            <IconHammer size={14} stroke={1.8} />
+            {buildRunning ? "Se construiește…" : "Construiește"}
+          </button>
+          <button type="button" class="action-btn deploy-btn compact-action" onclick={runDeploy} disabled={deployRunning || configDirty} title={configDirty ? "Salvează configurația înainte de publicare" : "Publică pe Bunny CDN"}>
+            <IconRocket size={14} stroke={1.8} />
+            {deployRunning ? "Publicare…" : "Publică"}
+          </button>
+          {#if buildRunning || deployRunning}
+            <button type="button" class="action-btn cancel-btn compact-action" onclick={cancelRunningOperation} disabled={cancelRunning}>
+              <IconX size={14} stroke={2} /> {cancelRunning ? "Se anulează…" : "Anulează"}
+            </button>
+          {/if}
+        {/if}
+      </div>
     </div>
 
+    {#if workspaceMode && actionLog}
+      <div class="log-box workspace-log" class:log-ok={actionOk === true} class:log-err={actionOk === false} aria-live="polite">
+        <pre class="log-text">{actionLog}</pre>
+      </div>
+    {/if}
+
+    {#if !actionsOnly}
     <section class="config-section">
       <div class="section-title-row">
         <h3 class="section-label">PROIECT</h3>
@@ -319,7 +376,7 @@
       <label class="switch-field">
         <span>
           <strong>Optimizează imaginile după build</strong>
-          <small>Procesează doar output-ul Zola din <code>{zolaSettings.outputDir || "public"}</code>; sursele rămân neatinse.</small>
+          <small>Procesează doar rezultatul Zola din <code>{zolaSettings.outputDir || "public"}</code>; sursele rămân neatinse.</small>
         </span>
         <input
           type="checkbox"
@@ -454,7 +511,7 @@
       </div>
       <label class="config-field">
         <span>insert_anchor_links</span>
-        <SelectControl value={zolaSettings.insertAnchorLinks} options={insertAnchorOptions} ariaLabel="Insert anchor links" onchange={(value) => setSetting("insertAnchorLinks", value)} />
+        <SelectControl value={zolaSettings.insertAnchorLinks} options={insertAnchorOptions} ariaLabel="Inserare linkuri ancoră" onchange={(value) => setSetting("insertAnchorLinks", value)} />
       </label>
       <h4 class="subsection-label">Link-uri externe</h4>
       <div class="field-grid">
@@ -482,14 +539,14 @@
     <section class="config-section">
       <h3 class="section-label">SEARCH</h3>
       <label class="switch-field">
-        <span><strong>Build search index</strong><small>Generează indexul de căutare Zola.</small></span>
+        <span><strong>Construiește indexul de căutare</strong><small>Generează indexul de căutare Zola.</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.buildSearchIndex}
           onchange={(event) => setSetting("buildSearchIndex", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
       </label>
       <label class="config-field">
         <span>index_format</span>
-        <SelectControl value={zolaSettings.searchIndexFormat} options={searchIndexFormatOptions} ariaLabel="Search index format" onchange={(value) => setSetting("searchIndexFormat", value)} />
+        <SelectControl value={zolaSettings.searchIndexFormat} options={searchIndexFormatOptions} ariaLabel="Formatul indexului de căutare" onchange={(value) => setSetting("searchIndexFormat", value)} />
       </label>
       <div class="field-grid">
         <label class="switch-field compact">
@@ -569,20 +626,21 @@
 
     <div class="divider"></div>
 
-    <section class="actions-section">
+    {#if !workspaceMode}<section class="actions-section">
       <button type="button" class="action-btn build-btn" onclick={runBuild} disabled={buildRunning}>
         <IconHammer size={14} stroke={1.8} />
-        {buildRunning ? "Se compilează..." : "Zola Build"}
+        {buildRunning ? "Se construiește..." : "Construire Zola"}
       </button>
       <button type="button" class="action-btn deploy-btn" onclick={runDeploy} disabled={deployRunning}>
         <IconRocket size={14} stroke={1.8} />
-        {deployRunning ? "Se uploadează..." : "Deploy"}
+        {deployRunning ? "Se publică..." : "Publică"}
       </button>
-    </section>
+    </section>{/if}
+    {/if}
 
   {/if}
 
-  {#if actionLog}
+  {#if actionLog && !workspaceMode}
     <div class="log-box" class:log-ok={actionOk === true} class:log-err={actionOk === false}>
       <pre class="log-text">{actionLog}</pre>
     </div>
@@ -614,11 +672,46 @@
     backdrop-filter: blur(10px);
   }
 
+  .sticky-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .compact-action {
+    width: auto;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 7px;
+    white-space: nowrap;
+  }
+
+  .workspace-mode {
+    gap: 12px;
+    min-width: 0;
+  }
+
+  .workspace-mode .sticky-config-actions {
+    top: 0;
+    grid-template-columns: minmax(130px, 1fr) auto;
+    border-color: var(--wb-border-subtle, var(--border-3));
+    background: color-mix(in srgb, var(--wb-surface-chrome, var(--surface-2)) 94%, transparent);
+  }
+
+  .workspace-mode.actions-only .sticky-config-actions {
+    position: static;
+  }
+
+  .workspace-log {
+    max-height: 240px;
+    overflow: auto;
+  }
+
   .sticky-config-actions span {
     min-width: 0;
     overflow: hidden;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -656,14 +749,14 @@
     overflow: hidden;
     color: var(--text-muted);
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .section-label {
     margin: 0;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -673,7 +766,7 @@
   .subsection-label {
     margin: 2px 0 0;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -699,7 +792,7 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -758,7 +851,7 @@
   }
 
   .switch-field.compact strong {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .switch-field span {
@@ -775,13 +868,13 @@
 
   .switch-field small {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.35;
   }
 
   .switch-field code {
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .switch-field input {
@@ -838,12 +931,12 @@
 
   .env-note {
     margin: 0;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     opacity: 0.65;
   }
 
-  .env-note code { font-family: "JetBrains Mono", monospace; font-size: 10px; }
+  .env-note code { font-family: "JetBrains Mono", monospace; font-size: 12px; }
 
   .save-config-btn {
     width: 100%;
@@ -911,6 +1004,12 @@
     color: #fff;
   }
 
+  .cancel-btn {
+    border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 48%, transparent);
+    color: var(--danger, #dc2626);
+    background: color-mix(in srgb, var(--danger, #dc2626) 9%, var(--surface));
+  }
+
   .log-box {
     border: 1px solid var(--border-3);
     border-radius: 8px;
@@ -924,7 +1023,7 @@
     margin: 0;
     padding: 8px 10px;
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.6;
     color: var(--text-muted);
     white-space: pre-wrap;

@@ -55,7 +55,7 @@
       <div class="section-head"><span>Stagger params</span></div>
       <div class="field-grid">
         <label><span>Each</span><input type="number" value={utility.stagger.each} oninput={(event) => patchStagger({ each: numberValue(event.currentTarget.value) })} /></label>
-        <label><span>Start</span><input type="number" value={utility.stagger.start} oninput={(event) => patchStagger({ start: numberValue(event.currentTarget.value) })} /></label>
+        <label><span>Început</span><input type="number" value={utility.stagger.start} oninput={(event) => patchStagger({ start: numberValue(event.currentTarget.value) })} /></label>
         <label><span>From</span><input class="mono" value={utility.stagger.from} placeholder="first, center, last, index" oninput={(event) => patchStagger({ from: event.currentTarget.value })} /></label>
         <label><span>Ease</span><input class="mono" value={utility.stagger.ease} oninput={(event) => patchStagger({ ease: event.currentTarget.value })} /></label>
         <label><span>Grid</span><input class="mono" value={utility.stagger.grid} placeholder="4, 3" oninput={(event) => patchStagger({ grid: event.currentTarget.value })} /></label>
@@ -112,7 +112,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -145,7 +145,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   input,
@@ -167,7 +167,7 @@
   }
 
   button {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

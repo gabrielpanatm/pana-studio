@@ -41,21 +41,21 @@ export const defaultTerminalPaneHeight = 240;
 export const terminalQuickTasks: TerminalQuickTask[] = [
   {
     id: "zola-check",
-    label: "Check",
+    label: "Verificare",
     title: "Rulează zola check în proiectul curent",
     command: "check",
     useBundledZola: true,
   },
   {
     id: "zola-build",
-    label: "Build",
+    label: "Construire",
     title: "Rulează zola build în proiectul curent",
     command: "build",
     useBundledZola: true,
   },
   {
     id: "zola-serve",
-    label: "Serve",
+    label: "Server",
     title: "Pornește zola serve în terminal",
     command: "serve",
     useBundledZola: true,

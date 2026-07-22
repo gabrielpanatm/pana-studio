@@ -68,11 +68,11 @@
           <IconShieldCheck size={18} stroke={1.9} />
         </span>
         <div>
-          <p>Open Project</p>
+          <p>Deschidere proiect</p>
           <h2 id="project-open-recovery-title">Sesiune recuperabilă incompatibilă</h2>
         </div>
       </div>
-      <button type="button" class="icon-button" title="Anulează și păstrează recovery-ul" disabled={submitting} onclick={close}>
+      <button type="button" class="icon-button" title="Anulează și păstrează recuperarea" disabled={submitting} onclick={close}>
         <IconX size={16} stroke={1.9} />
       </button>
     </header>
@@ -80,13 +80,13 @@
     <div class="recovery-summary">
       <span class="reason-pill">{projectOpenRecoveryReasonLabel(request.assessment)}</span>
       <p id="project-open-recovery-message">
-        La această cale există drafturi dintr-o sesiune mai veche, dar dosarul de pe disk nu mai
-        corespunde baseline-ului lor. Aplicarea automată ar putea combina două proiecte diferite.
+        La această cale există ciorne dintr-o sesiune mai veche, dar dosarul de pe disc nu mai
+        corespunde stării lor de referință. Aplicarea automată ar putea combina două proiecte diferite.
       </p>
       <p class="target-path">{request.targetRoot}</p>
     </div>
 
-    <div class="metric-list" aria-label="Evidență recovery">
+    <div class="metric-list" aria-label="Evidență de recuperare">
       <div class="metric-row">
         <span>Documente modificate</span>
         <strong>{request.assessment.dirtyDocumentCount}</strong>
@@ -96,7 +96,7 @@
         <strong>{request.assessment.undoCount} undo / {request.assessment.redoCount} redo</strong>
       </div>
       <div class="metric-row">
-        <span>Fișiere în baseline / acum</span>
+        <span>Fișiere în starea de referință / acum</span>
         <strong>{request.assessment.acceptedFileCount} / {request.assessment.currentFileCount}</strong>
       </div>
       <div class="metric-row">
@@ -108,9 +108,9 @@
     <section class="warning-block" aria-label="Consecința alegerii">
       <IconAlertTriangle size={17} stroke={1.9} />
       <div>
-        <strong>Recovery-ul rămâne neatins dacă anulezi.</strong>
+        <strong>Recuperarea rămâne neatinsă dacă anulezi.</strong>
         <p>
-          Continuarea deschide adevărul actual de pe disk și abandonează explicit drafturile vechi
+          Continuarea deschide starea actuală de pe disc și abandonează explicit ciornele vechi
           numai după ce noua sesiune a fost publicată cu succes.
         </p>
       </div>
@@ -125,14 +125,14 @@
 
     <footer class="dialog-actions">
       <button type="button" class="secondary-button" disabled={submitting} onclick={close}>
-        Păstrează recovery-ul și anulează
+        Păstrează recuperarea și anulează
       </button>
       <button type="button" class="danger-button" disabled={submitting} onclick={() => void confirmAbandonment()}>
         {#if submitting}
           Se verifică și se deschide...
         {:else}
           <IconFolderOpen size={16} stroke={1.9} />
-          Deschide dosarul actual și abandonează drafturile
+          Deschide dosarul actual și abandonează ciornele
         {/if}
       </button>
     </footer>
@@ -210,7 +210,7 @@
 
   .dialog-title p {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -243,7 +243,7 @@
     border: 1px solid color-mix(in srgb, var(--source-origin-theme) 55%, var(--border-4));
     border-radius: 999px;
     color: var(--source-origin-theme);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
   }

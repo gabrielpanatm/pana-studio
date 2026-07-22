@@ -37,7 +37,7 @@
     { name: "Bouncy",      value: "all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)" },
     { name: "Spring",      value: "all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275)" },
     { name: "Snappy",      value: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)" },
-    { name: "None",        value: "none" },
+    { name: "Niciuna",        value: "none" },
   ];
 
   const TRANSFORM_FUNCTIONS = [
@@ -247,7 +247,7 @@
   }
 
   .sub-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -281,7 +281,7 @@
   }
 
   .row-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
   }
@@ -342,7 +342,7 @@
   }
 
   .tr-opt-value {
-    font-size: 10px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     color: var(--text-muted);
   }

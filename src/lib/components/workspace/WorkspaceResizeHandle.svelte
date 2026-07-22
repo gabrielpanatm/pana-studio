@@ -1,5 +1,5 @@
 <script lang="ts">
-  export let kind: "left" | "right" | "terminal" | "motionTimeline";
+  export let kind: "left" | "right" | "terminal";
   export let active = false;
   export let ariaLabel = "";
   export let onDrag: (event: MouseEvent) => void;
@@ -11,7 +11,6 @@
   class:workspace-resize-handle-left={kind === "left"}
   class:workspace-resize-handle-right={kind === "right"}
   class:workspace-resize-handle-terminal={kind === "terminal"}
-  class:workspace-resize-handle-motion-timeline={kind === "motionTimeline"}
   class:active
   type="button"
   aria-label={ariaLabel}
@@ -66,8 +65,7 @@
     height: 100%;
   }
 
-  .workspace-resize-handle-terminal,
-  .workspace-resize-handle-motion-timeline {
+  .workspace-resize-handle-terminal {
     left: 8px;
     right: 8px;
     height: 12px;
@@ -78,16 +76,7 @@
     bottom: calc(var(--terminal-pane-height) + 4px - 6px);
   }
 
-  .workspace-resize-handle-motion-timeline {
-    bottom: calc(var(--motion-timeline-pane-height) + 4px - 6px);
-  }
-
-  :global(.center-stack.terminal-open) .workspace-resize-handle-motion-timeline {
-    bottom: calc(var(--terminal-pane-height) + var(--motion-timeline-pane-height) + 6px);
-  }
-
-  .workspace-resize-handle-terminal::after,
-  .workspace-resize-handle-motion-timeline::after {
+  .workspace-resize-handle-terminal::after {
     width: 100%;
     height: 4px;
   }

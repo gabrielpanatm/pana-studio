@@ -89,7 +89,7 @@ function receiptMatchesMoodBoardIdentity(
 function allowMoodBoardMutation(host: MoodBoardControllerHost) {
   if (host.isProjectTransitionFrontendLeaseActive()) {
     host.setGlobalStatus(
-      "Editarea Mood Board este temporar blocată: Project Transition a rezervat sesiunea curentă.",
+      "Editarea planșei vizuale este temporar blocată: tranziția proiectului a rezervat sesiunea curentă.",
       "error",
     );
     return false;

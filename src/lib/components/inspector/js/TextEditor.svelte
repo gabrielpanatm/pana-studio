@@ -64,7 +64,7 @@
       <span>Text</span>
     </div>
     <label>
-      <span>Mode</span>
+      <span>Mod</span>
       <SelectControl value={text.mode} options={modeOptions} ariaLabel="Text mode" onchange={(value) => patch({ mode: value as PanaMotionTextItem["mode"] })} />
     </label>
   </section>
@@ -115,7 +115,7 @@
         <label><span>Settle rate</span><input type="number" value={text.scramble.settleRate} oninput={(event) => patchScramble({ settleRate: numberValue(event.currentTarget.value) })} /></label>
         <label><span>Settle duration</span><input type="number" value={text.scramble.settleDuration} oninput={(event) => patchScramble({ settleDuration: numberValue(event.currentTarget.value) })} /></label>
         <label><span>Delay</span><input type="number" value={text.scramble.delay} oninput={(event) => patchScramble({ delay: numberValue(event.currentTarget.value) })} /></label>
-        <label><span>Duration</span><input type="number" value={text.scramble.duration} oninput={(event) => patchScramble({ duration: numberValue(event.currentTarget.value) })} /></label>
+        <label><span>Durată</span><input type="number" value={text.scramble.duration} oninput={(event) => patchScramble({ duration: numberValue(event.currentTarget.value) })} /></label>
         <label><span>Perturbation</span><input type="number" min="0" max="1" step="0.05" value={text.scramble.perturbation} oninput={(event) => patchScramble({ perturbation: ratioValue(event.currentTarget.value) })} /></label>
         <label><span>Seed</span><input type="number" value={text.scramble.seed} oninput={(event) => patchScramble({ seed: numberValue(event.currentTarget.value) })} /></label>
       </div>
@@ -170,7 +170,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -198,7 +198,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -233,7 +233,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

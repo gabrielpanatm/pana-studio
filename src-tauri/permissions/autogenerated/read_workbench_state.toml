@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-workbench-state"
+description = "Enables the read_workbench_state command without any pre-configured scope."
+commands.allow = ["read_workbench_state"]
+
+[[permission]]
+identifier = "deny-read-workbench-state"
+description = "Denies the read_workbench_state command without any pre-configured scope."
+commands.deny = ["read_workbench_state"]

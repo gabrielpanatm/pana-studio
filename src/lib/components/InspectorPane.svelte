@@ -85,7 +85,7 @@
       if (!isCurrentCssIdentity(identity)) return;
       onCommitted?.();
       cssWorkspaceMutationFailure = "";
-      onStatusUpdate?.(`${label} este în ProjectWorkspace — Ctrl+S persistă pe disc`, "unsaved");
+      onStatusUpdate?.(`${label} este în sesiunea proiectului — Ctrl+S persistă pe disc`, "unsaved");
       if (!onCssWorkspaceMutationCommitted) return;
       try {
         await onCssWorkspaceMutationCommitted(receipt.authority, liveEpoch);
@@ -93,7 +93,7 @@
         if (!isCurrentCssIdentity(identity)) return;
         const message = error instanceof Error ? error.message : String(error);
         onStatusUpdate?.(
-          `${label} este în ProjectWorkspace, dar proiecția CSS live nu a fost finalizată: ${message}`,
+          `${label} este în sesiunea proiectului, dar proiecția CSS live nu a fost finalizată: ${message}`,
           "error",
         );
       }
@@ -103,7 +103,7 @@
         if (!isCurrentCssIdentity(identity)) return;
         if (liveEpoch !== null) onInspectorLivePropertiesRejected?.(liveEpoch);
         cssWorkspaceMutationFailure = error instanceof Error ? error.message : String(error);
-        onStatusUpdate?.(`${label} nu a putut fi aplicat în ProjectWorkspace: ${cssWorkspaceMutationFailure}`, "error");
+        onStatusUpdate?.(`${label} nu a putut fi aplicat în sesiunea proiectului: ${cssWorkspaceMutationFailure}`, "error");
       })
       .finally(() => {
         if (area === "css") queuedCssRuleMutationCount = Math.max(0, queuedCssRuleMutationCount - 1);
@@ -897,7 +897,7 @@
       }, property, value, baseline);
     }
     if (!onLivePropertiesChange) onLivePropertyChange?.(selector, property, value);
-    onStatusUpdate?.(`Preview CSS modificat: ${property} — commit la încheierea editării`, "unsaved");
+    onStatusUpdate?.(`Previzualizare CSS modificată: ${property} — commit la încheierea editării`, "unsaved");
   }
 
   function commitCssProperty(property: string, value?: string) {
@@ -1106,7 +1106,7 @@
       </div>
     </section>
 
-    <nav class="inspector-tabs" aria-label="Inspector tabs">
+    <nav class="inspector-tabs" aria-label="Secțiuni inspector">
       <button class:active={inspectorTab === "html"} type="button" onclick={() => { void changeInspectorTab("html"); }}>
         HTML
       </button>

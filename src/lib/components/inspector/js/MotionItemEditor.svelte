@@ -111,8 +111,8 @@
   {#if itemUsesTarget}
     <div class="field-grid">
       <label>
-        <span>Target mode</span>
-        <SelectControl value={item.target.mode} options={targetModeOptions} ariaLabel="Target motion" onchange={(value) => patchTarget("mode", value)} />
+        <span>Mod țintă</span>
+        <SelectControl value={item.target.mode} options={targetModeOptions} ariaLabel="Țintă mișcare" onchange={(value) => patchTarget("mode", value)} />
       </label>
       <label>
         <span>Selector</span>
@@ -129,7 +129,7 @@
 
     {#if item.target.mode === "expression"}
       <label>
-        <span>Target expression</span>
+        <span>Expresie țintă</span>
         <textarea value={item.target.expression} oninput={(event) => patchTarget("expression", event.currentTarget.value)}></textarea>
       </label>
     {/if}
@@ -214,7 +214,7 @@
   .advanced-heading span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -234,7 +234,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -264,7 +264,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 

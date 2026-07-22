@@ -94,7 +94,7 @@
     </div>
 
     <!-- Object Position -->
-    <div class="row-label">Object Position</div>
+    <div class="row-label">Poziția obiectului</div>
     <TextWithOptions
       value={getValue("object-position")}
       placeholder="auto"
@@ -123,7 +123,7 @@
     </div>
 
     <!-- Touch Action -->
-    <div class="row-label">Touch Action</div>
+    <div class="row-label">Acțiune la atingere</div>
     <TextWithOptions
       value={getValue("touch-action")}
       placeholder="auto"
@@ -166,7 +166,7 @@
   }
 
   .row-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
   }
@@ -181,7 +181,7 @@
     border: none;
     background: transparent;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
     transition: color 80ms;
     margin-top: 2px;

@@ -229,7 +229,7 @@ export function injectRawCss(host: PreviewLiveControllerHost, id: string, css: s
     css,
     refreshSelection: false,
   });
-  if (css.trim()) host.markPreviewLive?.("Preview live CSS actualizat.");
+  if (css.trim()) host.markPreviewLive?.("Previzualizare live CSS actualizată.");
 }
 
 export function restoreLiveCssLayersToPreview(host: PreviewLiveControllerHost) {

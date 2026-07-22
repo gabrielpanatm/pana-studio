@@ -80,14 +80,14 @@
 
   <section class="editor-card">
     <div class="section-head">
-      <span>Settings</span>
+      <span>Setări</span>
     </div>
     <div class="field-grid">
       <label><span>Container</span><input class="mono" value={draggable.container} oninput={(event) => patch({ container: event.currentTarget.value })} /></label>
       <label><span>Trigger</span><input class="mono" value={draggable.trigger} oninput={(event) => patch({ trigger: event.currentTarget.value })} /></label>
       <label><span>Container padding</span><input type="number" value={draggable.containerPadding} oninput={(event) => patch({ containerPadding: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Container friction</span><input type="number" step="0.05" value={draggable.friction} oninput={(event) => patch({ friction: numberValue(event.currentTarget.value) })} /></label>
-      <label><span>Release container friction</span><input type="number" step="0.05" value={draggable.releaseContainerFriction} oninput={(event) => patch({ releaseContainerFriction: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Frecare container la eliberare</span><input type="number" step="0.05" value={draggable.releaseContainerFriction} oninput={(event) => patch({ releaseContainerFriction: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Velocity multiplier</span><input type="number" step="0.1" value={draggable.velocity} oninput={(event) => patch({ velocity: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Min velocity</span><input type="number" value={draggable.minVelocity} oninput={(event) => patch({ minVelocity: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Max velocity</span><input type="number" value={draggable.maxVelocity} oninput={(event) => patch({ maxVelocity: numberValue(event.currentTarget.value) })} /></label>
@@ -96,8 +96,8 @@
       <label><span>Scroll threshold</span><input type="number" value={draggable.scrollThreshold} oninput={(event) => patch({ scrollThreshold: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Scroll speed</span><input type="number" step="0.1" value={draggable.scrollSpeed} oninput={(event) => patch({ scrollSpeed: numberValue(event.currentTarget.value) })} /></label>
       <label>
-        <span>Release ease</span>
-        <SelectControl value={draggable.releaseEase} options={easingOptions} ariaLabel="Release ease" onchange={(value) => patch({ releaseEase: value })} />
+        <span>Easing la eliberare</span>
+        <SelectControl value={draggable.releaseEase} options={easingOptions} ariaLabel="Easing la eliberare" onchange={(value) => patch({ releaseEase: value })} />
       </label>
     </div>
     <div class="toggle-grid two">
@@ -107,7 +107,7 @@
 
   <section class="editor-card">
     <div class="section-head">
-      <span>Release</span>
+      <span>Eliberare</span>
     </div>
     <div class="field-grid">
       <label><span>Mass</span><input type="number" step="0.1" value={draggable.release.mass} oninput={(event) => patchRelease({ mass: numberValue(event.currentTarget.value) })} /></label>
@@ -163,7 +163,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -191,7 +191,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -226,7 +226,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

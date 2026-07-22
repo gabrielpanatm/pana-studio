@@ -138,7 +138,7 @@ pub fn resolve_template_workbench_plan(
     let active =
         find_template(graph.templates.as_slice(), &input.template_path).ok_or_else(|| {
             format!(
-                "Template Workbench nu a găsit template-ul «{}» în ProjectModel revizia {}.",
+                "Context de template nu a găsit template-ul «{}» în ProjectModel revizia {}.",
                 input.template_path, model.revision
             )
         })?;

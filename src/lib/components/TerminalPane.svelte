@@ -1,6 +1,6 @@
 <script lang="ts">
   import "@xterm/xterm/css/xterm.css";
-  import { IconBolt, IconEraser, IconPlus, IconX } from "@tabler/icons-svelte";
+  import { IconBolt, IconChevronDown, IconEraser, IconPlus, IconX } from "@tabler/icons-svelte";
   import type { TerminalQuickTask, TerminalTab } from "$lib/terminal/runtime";
 
   export type TerminalPaneProps = {
@@ -12,6 +12,7 @@
     closeTab: (tabId: string) => void;
     runQuickTask: (task: TerminalQuickTask) => void | Promise<void>;
     clearActiveTerminal: () => void | Promise<void>;
+    closePane: () => void | Promise<void>;
     terminalHost?: HTMLDivElement;
   };
 
@@ -24,6 +25,7 @@
     closeTab,
     runQuickTask,
     clearActiveTerminal,
+    closePane,
     terminalHost = $bindable(),
   }: TerminalPaneProps = $props();
 </script>
@@ -33,7 +35,14 @@
     <div class="terminal-tab-strip" role="tablist" aria-label="Terminal tabs">
       {#each terminalTabs as tab}
         <div class:active={activeTerminalTabId === tab.id} class="terminal-tab">
-          <button type="button" title={tab.description} onclick={() => selectTab(tab.id)}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTerminalTabId === tab.id ? "true" : "false"}
+            tabindex={activeTerminalTabId === tab.id ? 0 : -1}
+            title={tab.description}
+            onclick={() => { void selectTab(tab.id); }}
+          >
             <span>{tab.title}</span>
           </button>
           <button class="terminal-tab-close" type="button" title={`Inchide ${tab.title}`} onclick={() => closeTab(tab.id)}>
@@ -55,7 +64,16 @@
       </button>
       <button class="terminal-add-button" type="button" title="Tab nou terminal" onclick={openTab}>
         <IconPlus size={14} stroke={2} />
-        <span>New Tab</span>
+        <span>Filă nouă</span>
+      </button>
+      <button
+        class="terminal-icon-button"
+        type="button"
+        title="Ascunde terminalul (Ctrl+`)"
+        aria-label="Ascunde terminalul"
+        onclick={() => { void closePane(); }}
+      >
+        <IconChevronDown size={15} stroke={2} />
       </button>
     </div>
   </div>

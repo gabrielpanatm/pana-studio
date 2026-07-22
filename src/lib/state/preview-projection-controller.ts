@@ -63,7 +63,7 @@ export async function handlePreviewProjectionIntent(
     }
   } catch (error) {
     if (isPreviewStructuralCancellation(error)) return;
-    app.setGlobalStatus(`Preview Projection preflight eșuat: ${errorMessage(error)}`, "error");
+    app.setGlobalStatus(`Verificarea proiecției de previzualizare a eșuat: ${errorMessage(error)}`, "error");
     return;
   }
 

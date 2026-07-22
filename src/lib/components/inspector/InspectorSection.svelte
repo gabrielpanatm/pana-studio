@@ -81,7 +81,7 @@
 
   .section-title {
     flex: 1;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;

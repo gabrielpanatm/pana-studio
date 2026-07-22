@@ -21,6 +21,7 @@ pub enum WriteOwner {
     Kernel,
     ProjectSession,
     ProjectWorkspace,
+    Workbench,
     ScratchState,
     AppConfig,
     McpContext,
@@ -309,6 +310,15 @@ impl WritePolicy {
     }
 
     pub fn scratch_state_atomic() -> Self {
+        Self {
+            atomicity: WriteAtomicity::AtomicRename,
+            conflict: ConflictPolicy::SingleOwnerInternal,
+            recovery: RecoveryPolicy::EphemeralRebuildable,
+            log_required: true,
+        }
+    }
+
+    pub fn workbench_projection_atomic() -> Self {
         Self {
             atomicity: WriteAtomicity::AtomicRename,
             conflict: ConflictPolicy::SingleOwnerInternal,

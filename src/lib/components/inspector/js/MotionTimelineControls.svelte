@@ -63,7 +63,7 @@
     step="50"
     value={playheadMs}
     disabled={!hasSteps || !previewPlayable}
-    title={previewPlayable ? "Poziție preview" : "Seek este disponibil numai în Run extern"}
+    title={previewPlayable ? "Poziție în previzualizare" : "Navigarea este disponibilă numai la deschiderea externă"}
     oninput={(event) => onPlayheadInput?.(event.currentTarget.value)}
   />
   <span class="motion-time">{(playheadMs / 1000).toFixed(1)}s / {(maxMs / 1000).toFixed(1)}s</span>
@@ -101,7 +101,7 @@
     border-radius: 6px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -125,7 +125,7 @@
     border-radius: 6px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     padding: 0 8px;
     cursor: pointer;
@@ -139,7 +139,7 @@
   .motion-time {
     flex-shrink: 0;
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     text-align: right;
   }

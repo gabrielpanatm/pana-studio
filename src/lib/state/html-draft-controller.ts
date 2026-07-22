@@ -32,7 +32,7 @@ export function updateAttributeValue(
     `Atribut modificat: ${property} — se aplică prin ProjectWorkspace`,
     "unsaved",
   );
-  host.attributeStatus = "Atributul este în draft; Canvas primește o proiecție speculativă cu ACK, iar ProjectWorkspace rămâne autoritatea.";
+  host.attributeStatus = "Atributul este în ciornă; Canvas primește o proiecție temporară confirmată, iar sesiunea proiectului rămâne autoritatea.";
 }
 
 export function updateTextContentValue(host: HtmlDraftControllerHost, value: string) {
@@ -47,8 +47,8 @@ export function updateTextContentValue(host: HtmlDraftControllerHost, value: str
     host.textEditOriginalText = host.selectedElement.rawText ?? "";
   }
   host.setHtmlPending("text", true);
-  host.setGlobalStatus("Text modificat — se aplică prin ProjectWorkspace", "unsaved");
-  host.textStatus = "Textul este în draft; proiecția live nu înlocuiește commit-ul ProjectWorkspace.";
+  host.setGlobalStatus("Text modificat — se aplică prin sesiunea proiectului", "unsaved");
+  host.textStatus = "Textul este în ciornă; proiecția live nu înlocuiește confirmarea sesiunii proiectului.";
 }
 
 export function removeAttribute(host: HtmlDraftControllerHost, name: string) {
@@ -59,5 +59,5 @@ export function removeAttribute(host: HtmlDraftControllerHost, name: string) {
     `Atribut eliminat: ${name} — se aplică prin ProjectWorkspace`,
     "unsaved",
   );
-  host.attributeStatus = "Eliminarea este în draft; Canvas o proiectează speculativ, iar ProjectWorkspace o confirmă canonic.";
+  host.attributeStatus = "Eliminarea este în ciornă; Canvas o proiectează temporar, iar sesiunea proiectului o confirmă canonic.";
 }

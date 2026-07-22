@@ -36,11 +36,11 @@
     { value: "callback", label: "callback" },
     { value: "set", label: "set" },
     { value: "sync", label: "sync" },
-    { value: "label", label: "label" },
+    { value: "label", label: "reper" },
   ];
   const trackOptions = $derived(tracks.map((track) => ({ value: track.id, label: track.name })));
   const targetOptions = $derived([
-    { value: "", label: "fără target" },
+    { value: "", label: "fără țintă" },
     ...targetItems.map((item) => ({
       value: item.id,
       label: item.name,
@@ -72,16 +72,16 @@
 
 </script>
 
-<aside class="step-inspector" aria-label="Timeline step inspector">
+<aside class="step-inspector" aria-label="Inspector pas cronologie">
   {#if !step}
     <div class="empty-step">
-      <strong>Step</strong>
-      <span>Selectează un clip din timeline.</span>
+      <strong>Pas</strong>
+      <span>Selectează un clip din cronologie.</span>
     </div>
   {:else}
     <div class="step-head">
       <div>
-        <span>Step</span>
+        <span>Pas</span>
         <strong>{step.label || step.type}</strong>
       </div>
       <button type="button" class="delete-btn" onclick={() => onDelete?.(step.id)}>Șterge</button>
@@ -89,24 +89,24 @@
 
     <div class="field-grid">
       <label>
-        <span>Type</span>
+        <span>Tip</span>
         <SelectControl
           value={step.type}
           options={typeOptions}
-          ariaLabel="Tip step"
+          ariaLabel="Tip pas"
           onchange={(nextValue) => patch({ type: nextValue as PanaMotionTimelineStep["type"] })}
         />
       </label>
-      <label><span>Label</span><input value={step.label} oninput={(event) => patch({ label: event.currentTarget.value })} /></label>
-      <label><span>Position</span><input class="mono" value={step.position} placeholder="0, 500ms, 1.2s, +=200" oninput={(event) => patch({ position: event.currentTarget.value })} /></label>
-      <label><span>Duration</span><input type="number" min="0" step="50" value={step.duration} oninput={(event) => patch({ duration: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Etichetă</span><input value={step.label} oninput={(event) => patch({ label: event.currentTarget.value })} /></label>
+      <label><span>Poziție</span><input class="mono" value={step.position} placeholder="0, 500ms, 1.2s, +=200" oninput={(event) => patch({ position: event.currentTarget.value })} /></label>
+      <label><span>Durată</span><input type="number" min="0" step="50" value={step.duration} oninput={(event) => patch({ duration: numberValue(event.currentTarget.value) })} /></label>
       <label>
-        <span>Track</span>
+        <span>Pistă</span>
         {#if tracks.length > 0}
           <SelectControl
             value={step.lane}
             options={trackOptions}
-            ariaLabel="Track step"
+            ariaLabel="Pista pasului"
             onchange={(nextValue) => patch({ lane: nextValue })}
           />
         {:else}
@@ -114,11 +114,11 @@
         {/if}
       </label>
       <label>
-        <span>Target</span>
+        <span>Țintă</span>
         <SelectControl
           value={step.targetItemId}
           options={targetOptions}
-          ariaLabel="Target step"
+          ariaLabel="Ținta pasului"
           disabled={step.type === "callback" || step.type === "label"}
           onchange={(nextValue) => patch({ targetItemId: nextValue })}
         />
@@ -170,7 +170,7 @@
     gap: 4px;
     color: var(--text-muted);
     text-align: center;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .empty-step strong {
@@ -188,7 +188,7 @@
   .step-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -225,7 +225,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   input,
@@ -247,7 +247,7 @@
   }
 
   button {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

@@ -95,10 +95,10 @@
   </div>
 
   <div class="dock-group">
-    <button type="button" title="Undo canvas" disabled={!canUndo} onclick={undo}>
+    <button type="button" title="Anulează pe planșă" disabled={!canUndo} onclick={undo}>
       <IconArrowBackUp size={15} stroke={1.9} />
     </button>
-    <button type="button" title="Redo canvas" disabled={!canRedo} onclick={redo}>
+    <button type="button" title="Refă pe planșă" disabled={!canRedo} onclick={redo}>
       <IconArrowForwardUp size={15} stroke={1.9} />
     </button>
   </div>
@@ -189,7 +189,7 @@
     padding: 0 8px;
     text-align: left;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 750;
   }
 
@@ -227,7 +227,7 @@
     min-width: 48px;
     color: var(--text-muted);
     text-align: center;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
   }
 

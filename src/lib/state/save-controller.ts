@@ -89,7 +89,7 @@ function captureSaveSession(host: SaveControllerHost): SaveSessionIdentity {
     expectedSessionId: host.kernelProjectSessionId.trim(),
   };
   if (!identity.expectedProjectRoot || !identity.expectedSessionId) {
-    throw new Error("Save cere un ProjectWorkspace activ, legat de root și runtime session ID.");
+    throw new Error("Salvarea cere o sesiune activă a proiectului, legată de rădăcină și de identitatea Rust.");
   }
   return identity;
 }
@@ -111,15 +111,15 @@ function requireWorkspaceSnapshot(
   snapshot: ProjectWorkspaceSnapshot | null,
   identity: SaveSessionIdentity,
 ): ProjectWorkspaceSnapshot {
-  if (!snapshot) throw new Error("ProjectWorkspace nu este inițializat.");
+  if (!snapshot) throw new Error("Sesiunea proiectului nu este inițializată.");
   if (
     snapshot.projectRoot !== identity.expectedProjectRoot
     || snapshot.runtimeSessionId !== identity.expectedSessionId
   ) {
-    throw new Error("Snapshot-ul ProjectWorkspace aparține altei sesiuni.");
+    throw new Error("Instantaneul sesiunii proiectului aparține altei sesiuni.");
   }
   if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) {
-    throw new Error("ProjectWorkspace a returnat o revizie invalidă.");
+    throw new Error("Sesiunea proiectului a returnat o revizie invalidă.");
   }
   return snapshot;
 }
@@ -135,7 +135,7 @@ function requireSaveReceipt(
     || receipt.workspace.projectRoot !== identity.expectedProjectRoot
     || receipt.workspace.runtimeSessionId !== identity.expectedSessionId
   ) {
-    throw new Error("Receipt-ul Save ProjectWorkspace aparține altei sesiuni.");
+    throw new Error("Confirmarea salvării aparține altei sesiuni.");
   }
   if (
     receipt.revisionBefore !== before.revision
@@ -143,10 +143,10 @@ function requireSaveReceipt(
     || receipt.diskGenerationBefore !== before.diskGeneration
     || receipt.diskGenerationAfter !== receipt.workspace.diskGeneration
   ) {
-    throw new Error("Receipt-ul Save ProjectWorkspace nu respectă lease-ul revision/generation.");
+    throw new Error("Confirmarea salvării nu respectă revizia și generația rezervate.");
   }
   if (receipt.workspace.dirty) {
-    throw new Error("Save a revenit cu ProjectWorkspace încă dirty; baseline-ul nu a fost acceptat.");
+    throw new Error("Salvarea s-a încheiat cu modificări nesalvate; starea de referință nu a fost acceptată.");
   }
   if (
     receipt.acceptedManifest.root !== identity.expectedProjectRoot
@@ -154,10 +154,10 @@ function requireSaveReceipt(
     || !Number.isSafeInteger(receipt.diskGenerationAfter)
     || receipt.diskGenerationAfter < 1
   ) {
-    throw new Error("Receipt-ul Save nu conține un manifest AcceptedDisk complet și valid.");
+    throw new Error("Confirmarea salvării nu conține un manifest complet și valid al discului acceptat.");
   }
   if (receipt.status === "noop" && before.dirty) {
-    throw new Error("ProjectWorkspace a raportat noop pentru o revizie dirty.");
+    throw new Error("Sesiunea proiectului nu a raportat nicio operație pentru o revizie modificată.");
   }
 }
 
@@ -188,7 +188,7 @@ export async function savePendingHtmlChanges(
     if (!editorActionSucceeded(result)) return result;
     if (host.htmlPending[area]) {
       return blockedAction(
-        `Save a fost oprit: editarea HTML „${area}” a rămas pending după ${result.status}.`,
+        `Salvarea a fost oprită: editarea HTML „${area}” a rămas în așteptare după ${result.status}.`,
       );
     }
     committed ||= result.status === "committed";
@@ -210,10 +210,10 @@ export async function savePendingHtmlChanges(
     .find((area) => host.htmlPending[area]);
   if (remainingArea || host.pendingTag || host.inspectorPending.html) {
     return blockedAction(
-      `Save a fost oprit: există încă o editare HTML pending${remainingArea ? ` (${remainingArea})` : ""}.`,
+      `Salvarea a fost oprită: există încă o editare HTML în așteptare${remainingArea ? ` (${remainingArea})` : ""}.`,
     );
   }
-  return committed ? committedAction() : noopAction("Nu există editări HTML pending.");
+  return committed ? committedAction() : noopAction("Nu există editări HTML în așteptare.");
 }
 
 async function settleFrontendProjection(
@@ -256,7 +256,7 @@ async function settleFrontendProjection(
     });
     requireCurrentSaveSession(host, identity, "Save ProjectWorkspace Preview projection");
     host.scheduleZolaValidation?.("save");
-    host.markPreviewSavedToDisk?.("ProjectWorkspace a fost salvat atomic pe disk.");
+    host.markPreviewSavedToDisk?.("Sesiunea proiectului a fost salvată atomic pe disc.");
     host.diskState = markDiskMutation(host.diskState, "save", host.activeScannedPath);
   }
 }
@@ -265,13 +265,13 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
   const identity = captureSaveSession(host);
   host.saveRequest += 1;
   host.saveState = "saving";
-  host.saveStatus = "Se sincronizează editorii în ProjectWorkspace...";
+  host.saveStatus = "Se sincronizează editorii în sesiunea proiectului...";
 
   await flushAllEditorDrafts(host, identity);
   const html = await savePendingHtmlChanges(host);
   requireCurrentSaveSession(host, identity, "Save HTML staging");
   if (!editorActionSucceeded(html)) {
-    throw new Error(html.reason ?? `Save HTML oprit (${html.status}).`);
+    throw new Error(html.reason ?? `Salvarea HTML a fost oprită (${html.status}).`);
   }
   // HTML staging may update a code-editor draft as part of the same action.
   await flushAllEditorDrafts(host, identity);
@@ -292,7 +292,7 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
     return false;
   }
 
-  host.saveStatus = `Se salvează atomic ProjectWorkspace revision ${before.revision}...`;
+  host.saveStatus = `Se salvează atomic revizia ${before.revision} a sesiunii proiectului...`;
   const receipt = await saveProjectWorkspace({
     expectedProjectRoot: identity.expectedProjectRoot,
     expectedSessionId: identity.expectedSessionId,
@@ -317,7 +317,7 @@ export async function saveSessionDrafts(host: SaveControllerHost): Promise<boole
   try {
     return await saveWorkspace(host);
   } catch (error) {
-    host.setGlobalStatus(`Save ProjectWorkspace a eșuat: ${errorMessage(error)}`, "error");
+    host.setGlobalStatus(`Salvarea sesiunii proiectului a eșuat: ${errorMessage(error)}`, "error");
     return false;
   }
 }

@@ -32,7 +32,7 @@ pub struct WorkspaceEntryMutationReceipt {
     pub workspace: ProjectWorkspaceSnapshot,
 }
 
-fn current_workspace_identity(workspace: &ProjectWorkspace) -> ProjectWorkspaceIdentity {
+pub(crate) fn current_workspace_identity(workspace: &ProjectWorkspace) -> ProjectWorkspaceIdentity {
     ProjectWorkspaceIdentity {
         expected_project_root: workspace.session.project_root.clone(),
         expected_session_id: workspace.runtime_session_id(),
@@ -40,7 +40,7 @@ fn current_workspace_identity(workspace: &ProjectWorkspace) -> ProjectWorkspaceI
     }
 }
 
-fn mutation_metadata(label: &str, source: &str) -> WorkspaceMutationMetadata {
+pub(crate) fn mutation_metadata(label: &str, source: &str) -> WorkspaceMutationMetadata {
     WorkspaceMutationMetadata {
         label: label.to_string(),
         source: source.to_string(),
@@ -49,7 +49,7 @@ fn mutation_metadata(label: &str, source: &str) -> WorkspaceMutationMetadata {
     }
 }
 
-fn require_bound_workspace<'a>(
+pub(crate) fn require_bound_workspace<'a>(
     state: &'a AppState,
     identity: &FileBufferRequestIdentity,
 ) -> Result<(PathBuf, std::sync::MutexGuard<'a, Option<ProjectWorkspace>>), String> {
@@ -76,7 +76,7 @@ fn require_bound_workspace<'a>(
     Ok((root, workspace))
 }
 
-fn finish_mutation(
+pub(crate) fn finish_mutation(
     app: &AppHandle,
     workspace: &mut ProjectWorkspace,
     relative_path: Option<String>,

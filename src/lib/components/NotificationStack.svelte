@@ -74,7 +74,7 @@
     position: fixed;
     left: 12px;
     right: 12px;
-    bottom: 26px;
+    bottom: 42px;
     z-index: 80;
     display: flex;
     justify-content: center;
@@ -133,7 +133,7 @@
     border: 1px solid var(--border-4);
     border-radius: 999px;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
   }
@@ -162,13 +162,13 @@
 
   .notification-action {
     justify-self: start;
-    min-height: 26px;
+    min-height: 32px;
     padding: 0 9px;
     border: 1px solid var(--border-4);
     border-radius: 6px;
     color: var(--text-strong);
     background: var(--surface);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -185,8 +185,8 @@
   .notification-close {
     display: inline-grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
     padding: 0;
     border: 1px solid var(--border-4);
     border-radius: 6px;

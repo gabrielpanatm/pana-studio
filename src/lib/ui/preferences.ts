@@ -5,16 +5,12 @@ export type StoredUiPreferences = {
   leftPaneWidth: number | null;
   rightPaneWidth: number | null;
   terminalPaneHeight: number | null;
-  motionTimelinePaneHeight: number | null;
-  previewZoom: number | null;
 };
 
 const uiThemeKey = "pana-studio-ui-theme";
 const leftPaneWidthKey = "pana-studio-left-pane-width";
 const rightPaneWidthKey = "pana-studio-right-pane-width";
 const terminalPaneHeightKey = "pana-studio-terminal-height";
-const motionTimelinePaneHeightKey = "pana-studio-motion-timeline-height";
-const previewZoomKey = "pana-studio-preview-zoom";
 const uiDensityVersionKey = "pana-studio-ui-density-version";
 const currentUiDensityVersion = "2";
 
@@ -31,10 +27,6 @@ export function loadStoredUiPreferences(storage: Storage): StoredUiPreferences {
     leftPaneWidth: shouldResetPaneDimensions ? null : parseStoredNumber(storage.getItem(leftPaneWidthKey)),
     rightPaneWidth: shouldResetPaneDimensions ? null : parseStoredNumber(storage.getItem(rightPaneWidthKey)),
     terminalPaneHeight: shouldResetPaneDimensions ? null : parseStoredNumber(storage.getItem(terminalPaneHeightKey)),
-    motionTimelinePaneHeight: shouldResetPaneDimensions
-      ? null
-      : parseStoredNumber(storage.getItem(motionTimelinePaneHeightKey)),
-    previewZoom: parseStoredNumber(storage.getItem(previewZoomKey)),
   };
 }
 
@@ -48,17 +40,11 @@ export function savePaneDimensions(
     leftPaneWidth: number;
     rightPaneWidth: number;
     terminalPaneHeight: number;
-    motionTimelinePaneHeight: number;
   },
 ) {
   storage.setItem(leftPaneWidthKey, String(dimensions.leftPaneWidth));
   storage.setItem(rightPaneWidthKey, String(dimensions.rightPaneWidth));
   storage.setItem(terminalPaneHeightKey, String(dimensions.terminalPaneHeight));
-  storage.setItem(motionTimelinePaneHeightKey, String(dimensions.motionTimelinePaneHeight));
-}
-
-export function savePreviewZoom(storage: Storage, previewZoom: number) {
-  storage.setItem(previewZoomKey, String(previewZoom));
 }
 
 function parseStoredNumber(value: string | null) {

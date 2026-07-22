@@ -96,7 +96,7 @@
 
       <div class="field-grid three">
         <label>
-          <span>Mode</span>
+          <span>Mod</span>
           <SelectControl value={property.value.mode} options={valueModes} ariaLabel="Mod valoare motion" onchange={(value) => updateValue(property.id, { mode: value as PanaMotionValue["mode"] })} />
         </label>
         <label><span>From</span><input value={property.value.from} oninput={(event) => updateValue(property.id, { from: event.currentTarget.value })} /></label>
@@ -169,7 +169,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -184,7 +184,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -229,7 +229,7 @@
     border-radius: 5px;
     background: var(--surface-4);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 

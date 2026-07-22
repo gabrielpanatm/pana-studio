@@ -1,5 +1,6 @@
 use reqwest::{blocking::Client, Url};
 use std::{path::Path, time::Duration};
+use tokio_util::sync::CancellationToken;
 
 use super::{
     artifact::{build_deploy_artifact_manifest, DeployArtifactFile, DeployArtifactManifest},
@@ -9,22 +10,25 @@ use super::{
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub fn deploy_project_to_bunny(
+pub fn deploy_project_to_bunny_cancellable(
     project_root: &Path,
     zola_root: &Path,
     env_root: &Path,
+    cancellation_token: &CancellationToken,
 ) -> Result<String, String> {
     let client = bunny_client()?;
     let transport = ReqwestBunnyTransport { client };
-    deploy_project_with_transport(
+    deploy_project_with_transport_cancellable(
         project_root,
         zola_root,
         env_root,
         &transport,
         |credentials| BunnyEndpoints::production(&credentials.region),
+        || cancellation_token.is_cancelled(),
     )
 }
 
+#[cfg(test)]
 fn deploy_project_with_transport<T, F>(
     project_root: &Path,
     zola_root: &Path,
@@ -36,12 +40,35 @@ where
     T: BunnyTransport,
     F: FnOnce(&BunnyCredentials) -> Result<BunnyEndpoints, String>,
 {
+    deploy_project_with_transport_cancellable(
+        project_root,
+        zola_root,
+        env_root,
+        transport,
+        endpoints,
+        || false,
+    )
+}
+
+fn deploy_project_with_transport_cancellable<T, F, C>(
+    project_root: &Path,
+    zola_root: &Path,
+    env_root: &Path,
+    transport: &T,
+    endpoints: F,
+    is_cancelled: C,
+) -> Result<String, String>
+where
+    T: BunnyTransport,
+    F: FnOnce(&BunnyCredentials) -> Result<BunnyEndpoints, String>,
+    C: Fn() -> bool,
+{
     // Ordering is a safety contract: the complete bounded/no-follow artifact
     // must exist in memory before the transport can receive an upload call.
     let manifest = build_deploy_artifact_manifest(project_root, zola_root)?;
     let credentials = BunnyCredentials::from_root(env_root)?;
     let endpoints = endpoints(&credentials)?;
-    upload_manifest_and_purge(transport, endpoints, credentials, manifest)
+    upload_manifest_and_purge(transport, endpoints, credentials, manifest, is_cancelled)
 }
 
 #[derive(Debug)]
@@ -155,11 +182,12 @@ impl BunnyTransport for ReqwestBunnyTransport {
     }
 }
 
-fn upload_manifest_and_purge<T: BunnyTransport>(
+fn upload_manifest_and_purge<T: BunnyTransport, C: Fn() -> bool>(
     transport: &T,
     endpoints: BunnyEndpoints,
     credentials: BunnyCredentials,
     manifest: DeployArtifactManifest,
+    is_cancelled: C,
 ) -> Result<String, String> {
     let total_files = manifest.files.len();
     let total_bytes = manifest.total_bytes;
@@ -168,6 +196,11 @@ fn upload_manifest_and_purge<T: BunnyTransport>(
     let mut log = String::new();
 
     for file in manifest.files {
+        if is_cancelled() {
+            return Err(format!(
+                "[publish_cancelled] Deploy Bunny anulat după {uploaded}/{total_files} uploaduri. Cache-ul CDN nu a fost purjat."
+            ));
+        }
         let remote_path = file.relative_path.clone();
         let url = storage_file_url(&endpoints.storage_base, &credentials.zone, &file)?;
         let content_type = mime_for_extension(Path::new(&file.relative_path));
@@ -186,6 +219,12 @@ fn upload_manifest_and_purge<T: BunnyTransport>(
             })?;
         uploaded += 1;
         log.push_str(&format!("upload {remote_path}\n"));
+    }
+
+    if is_cancelled() {
+        return Err(format!(
+            "[publish_cancelled] Deploy Bunny anulat după {uploaded}/{total_files} uploaduri. Cache-ul CDN nu a fost purjat."
+        ));
     }
 
     purge_cdn_cache(
@@ -431,6 +470,35 @@ mod tests {
         assert_eq!(transport.purge_calls.get(), 1);
         assert!(result.contains("purge CDN confirmat"));
         drop(uploads);
+        cleanup(root);
+    }
+
+    #[test]
+    fn cancellation_stops_between_uploads_and_skips_purge() {
+        let root = deploy_fixture("cancel-between-uploads");
+        fs::create_dir_all(root.join("export")).unwrap();
+        fs::write(root.join("export/a.html"), "a").unwrap();
+        fs::write(root.join("export/b.html"), "b").unwrap();
+        let transport = FakeTransport::default();
+        let cancellation_checks = Cell::new(0usize);
+
+        let error = deploy_project_with_transport_cancellable(
+            &root,
+            &root.join("sursa"),
+            &root,
+            &transport,
+            |_| Ok(test_endpoints()),
+            || {
+                let next = cancellation_checks.get() + 1;
+                cancellation_checks.set(next);
+                next >= 2
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("[publish_cancelled]"));
+        assert_eq!(transport.uploads.borrow().len(), 1);
+        assert_eq!(transport.purge_calls.get(), 0);
         cleanup(root);
     }
 

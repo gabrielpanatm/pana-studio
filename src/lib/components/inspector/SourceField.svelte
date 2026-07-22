@@ -63,7 +63,7 @@
   .source-label {
     margin: 0;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.06em;
     text-transform: uppercase;

@@ -5,10 +5,12 @@
 
   let { app }: { app: AppState } = $props();
 
-  const centerUsesFullWorkspace = $derived(app.centerView === "site" || app.centerView === "kernel");
+  const activityUsesFullWorkspace = $derived(
+    (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
+  );
 </script>
 
-{#if !app.leftPaneCollapsed && !centerUsesFullWorkspace}
+{#if !app.leftPaneCollapsed && !activityUsesFullWorkspace}
   <div class="project-pane-shell">
     <ProjectPane
       scannedProject={!!app.scannedProject}
@@ -64,7 +66,7 @@
   </div>
 {/if}
 
-{#if !app.leftPaneCollapsed && !centerUsesFullWorkspace}
+{#if !app.leftPaneCollapsed && !activityUsesFullWorkspace}
   <WorkspaceResizeHandle
     kind="left"
     active={app.activeResizeKind === "left"}

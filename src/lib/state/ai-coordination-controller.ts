@@ -199,7 +199,7 @@ async function acknowledgePendingRequest(
   ) {
     uiQuiescent = false;
     blockerReason =
-      "Frontendul nu poate transfera autoritatea cât timp proiecția disk/surse nu este terminală și clean.";
+      "Interfața nu poate transfera autoritatea cât timp proiecția disc/surse nu este stabilă și curată.";
   }
 
   try {
@@ -377,7 +377,7 @@ async function automaticallyReloadAuthorizedAiReconciliation(
     host.aiCoordinationSnapshot = refreshed;
     if (refreshed.authority.state !== "user_active") {
       throw new Error(
-        "Reconstrucția din disk nu a readus coordonarea în starea user_active.",
+        "Reconstrucția de pe disc nu a readus coordonarea în starea activă a utilizatorului.",
       );
     }
   } catch (error) {
@@ -457,7 +457,7 @@ async function performAuthorizedAiReconciliationReload(
         || !authorization.authority.detail.recoveryReloadAuthorized
       ) {
         throw new Error(
-          authorization.reason ?? "Nucleul nu a autorizat reconstruirea ProjectSession din disk.",
+          authorization.reason ?? "Nucleul nu a autorizat reconstruirea sesiunii proiectului de pe disc.",
         );
       }
       live = await readAiCoordinationState();
@@ -474,7 +474,7 @@ async function performAuthorizedAiReconciliationReload(
   }
   if (!readyToReload) {
     throw new Error(
-      "Coordonarea AI nu a ajuns la o stare terminală pentru reconstruirea din disk.",
+      "Coordonarea AI nu a ajuns la o stare stabilă pentru reconstruirea de pe disc.",
     );
   }
 

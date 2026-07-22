@@ -107,12 +107,12 @@
       scan = result.recoveryCoordinator;
       pruneNotes(scan);
       onStatusUpdate?.(
-        `ProjectWorkspace Save recovery finalizat pentru ${journal.transactionId}.`,
+        `Recuperarea salvării sesiunii proiectului s-a încheiat pentru ${journal.transactionId}.`,
         "restored",
       );
       onChanged?.();
     } catch (error) {
-      onStatusUpdate?.(`ProjectWorkspace Save recovery a eșuat: ${errorMessage(error)}`, "error");
+      onStatusUpdate?.(`Recuperarea salvării sesiunii proiectului a eșuat: ${errorMessage(error)}`, "error");
       await refresh();
     } finally {
       busyId = null;
@@ -172,7 +172,7 @@
         <span>{loading ? "Se scanează jurnalele active..." : summary.detail}</span>
       </div>
     </div>
-    <button type="button" title="Recitește Recovery Coordinator" disabled={loading || busyId !== null} onclick={() => void refresh()}>
+    <button type="button" title="Recitește coordonatorul recuperării" disabled={loading || busyId !== null} onclick={() => void refresh()}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
@@ -187,7 +187,7 @@
     </div>
 
     {#if scan.hotJournalFamilies.length}
-      <div class="families" aria-label="Familii de recovery active">
+      <div class="families" aria-label="Familii de recuperare active">
         {#each scan.hotJournalFamilies as family (family.family)}
           <article class:manual={family.status === "manual_review_required"}>
             <strong>{recoveryJournalFamilyLabel(family.family)}</strong>
@@ -199,11 +199,11 @@
       </div>
     {/if}
 
-    <RecoveryDiagnosticsList diagnostics={scan.diagnostics} compact label="Diagnostice Recovery Coordinator" />
+    <RecoveryDiagnosticsList diagnostics={scan.diagnostics} compact label="Diagnosticele coordonatorului de recuperare" />
 
     {#if scan.hotProjectWorkspaceSaveJournals.length}
       <div class="journal-group">
-        <h3>Save întrerupt</h3>
+        <h3>Salvare întreruptă</h3>
         {#each scan.hotProjectWorkspaceSaveJournals as journal (journal.transactionId)}
           <RecoveryProjectWorkspaceSaveJournalCard
             {journal}
@@ -221,7 +221,7 @@
 
     {#if scan.hotProjectTransitionDecisionRetentionJournals.length}
       <div class="journal-group">
-        <h3>ProjectTransition Decision Retention</h3>
+        <h3>Retenția deciziilor de tranziție</h3>
         {#each scan.hotProjectTransitionDecisionRetentionJournals as journal (journal.retentionId)}
           <RecoveryProjectTransitionDecisionJournalCard
             {journal}
@@ -251,7 +251,7 @@
   .summary span,
   .scan-meta,
   .families span,
-  .families small { color: var(--text-muted); font-size: 11px; }
+  .families small { color: var(--text-muted); font-size: 12px; }
   .toolbar button { width: 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
   .scan-meta { display: flex; flex-wrap: wrap; gap: 12px; }
   .families { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }

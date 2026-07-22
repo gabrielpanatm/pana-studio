@@ -38,20 +38,20 @@
     <div class="section-head"><span>Easing</span></div>
     <div class="field-grid">
       <label>
-        <span>Mode</span>
-        <SelectControl value={easing.mode} options={modeOptions.map((mode) => ({ value: mode, label: mode === "builtIn" ? "built-in" : mode }))} ariaLabel="Easing mode" onchange={(value) => patch({ mode: value as PanaMotionEasingItem["mode"] })} />
+        <span>Mod</span>
+        <SelectControl value={easing.mode} options={modeOptions.map((mode) => ({ value: mode, label: mode === "builtIn" ? "integrat" : mode }))} ariaLabel="Mod easing" onchange={(value) => patch({ mode: value as PanaMotionEasingItem["mode"] })} />
       </label>
-      <label><span>Preview duration</span><input type="number" value={easing.previewDuration} oninput={(event) => patch({ previewDuration: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Durată previzualizare</span><input type="number" value={easing.previewDuration} oninput={(event) => patch({ previewDuration: numberValue(event.currentTarget.value) })} /></label>
     </div>
 
     {#if easing.mode === "builtIn"}
       <label>
-        <span>Value</span>
-        <SelectControl value={easing.value} options={ANIME_EASING_OPTIONS} ariaLabel="Easing value" onchange={(value) => patch({ value })} />
+        <span>Valoare</span>
+        <SelectControl value={easing.value} options={ANIME_EASING_OPTIONS} ariaLabel="Valoare easing" onchange={(value) => patch({ value })} />
       </label>
     {:else}
       <label>
-        <span>Value / args</span>
+        <span>Valoare / argumente</span>
         <textarea class="mono" value={easing.value} placeholder={placeholder(easing.mode)} oninput={(event) => patch({ value: event.currentTarget.value })}></textarea>
       </label>
     {/if}
@@ -80,7 +80,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -108,7 +108,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 

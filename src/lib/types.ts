@@ -369,7 +369,7 @@ export type ZolaProjectSettings = {
 
 export type SourceLanguage = "html" | "css" | "scss" | "js" | "markdown" | "plain";
 export type CenterView = "preview" | "code" | "markdown" | "canvas" | "site" | "kernel";
-export type ProjectPaneTab = "layers" | "files" | "structure" | "page";
+export type ProjectPaneTab = "layers" | "files" | "page";
 export type InspectorTab = "html" | "css" | "vars" | "js";
 
 export type VersionRepositoryState =
@@ -1075,6 +1075,205 @@ export type ProjectWorkspaceSnapshot = {
   documents: FileBufferStoreSnapshot;
   pageJs: PageJsDraftStoreSnapshot;
   history: WorkspaceHistorySnapshot;
+};
+
+export const WORKBENCH_SCHEMA_VERSION = 1;
+export const WORKBENCH_COMMAND_SCHEMA_VERSION = 1;
+
+export type WorkbenchActivity =
+  | "editor"
+  | "site"
+  | "components"
+  | "design_system"
+  | "assets"
+  | "content"
+  | "versioning"
+  | "audit"
+  | "publish";
+
+export type WorkbenchSurface = "visual" | "code" | "markdown";
+export type WorkbenchSplit = "none" | "vertical" | "horizontal";
+export type WorkbenchGroupId = "primary" | "secondary";
+export type WorkbenchBottomPanelView = "problems" | "output" | "terminal" | "timeline";
+export type WorkbenchCanvasMode = "fit" | "fixed";
+export type WorkbenchCanvasPreset = "desktop" | "tablet" | "mobile" | "custom";
+
+export type WorkbenchIdentity = {
+  expectedProjectRoot: string;
+  expectedRuntimeSessionId: string;
+  expectedRevision: number;
+};
+
+export type WorkbenchDocumentSnapshot = {
+  documentId: string;
+  relativePath: string;
+  title: string;
+  surface: WorkbenchSurface;
+  pinned: boolean;
+};
+
+export type WorkbenchGroupSnapshot = {
+  groupId: WorkbenchGroupId;
+  documents: WorkbenchDocumentSnapshot[];
+  activeDocumentId: string | null;
+};
+
+export type WorkbenchBottomPanelSnapshot = {
+  open: boolean;
+  activeView: WorkbenchBottomPanelView;
+};
+
+export type WorkbenchCanvasViewportSnapshot = {
+  mode: WorkbenchCanvasMode;
+  preset: WorkbenchCanvasPreset;
+  widthPx: number;
+  zoomPercent: number;
+  showRulers: boolean;
+};
+
+export type WorkbenchSnapshot = {
+  schemaVersion: typeof WORKBENCH_SCHEMA_VERSION;
+  projectRoot: string;
+  projectSessionId: string;
+  runtimeSessionId: string;
+  revision: number;
+  activeActivity: WorkbenchActivity;
+  activeGroupId: WorkbenchGroupId;
+  split: WorkbenchSplit;
+  splitRatioBasisPoints: number;
+  canvasViewport: WorkbenchCanvasViewportSnapshot;
+  groups: WorkbenchGroupSnapshot[];
+  bottomPanel: WorkbenchBottomPanelSnapshot;
+};
+
+export type WorkbenchIntent =
+  | {
+      kind: "open_document";
+      relativePath: string;
+      groupId?: WorkbenchGroupId;
+      surface?: WorkbenchSurface;
+      pinned?: boolean;
+    }
+  | { kind: "activate_document"; documentId: string; groupId: WorkbenchGroupId }
+  | { kind: "close_document"; documentId: string; groupId: WorkbenchGroupId }
+  | {
+      kind: "move_document";
+      documentId: string;
+      fromGroupId: WorkbenchGroupId;
+      toGroupId: WorkbenchGroupId;
+      index?: number;
+    }
+  | {
+      kind: "set_document_surface";
+      documentId: string;
+      groupId: WorkbenchGroupId;
+      surface: WorkbenchSurface;
+    }
+  | { kind: "set_split"; split: WorkbenchSplit }
+  | {
+      kind: "configure_synchronized_split";
+      split: Exclude<WorkbenchSplit, "none">;
+      relativePath: string;
+      secondarySurface: WorkbenchSurface;
+    }
+  | { kind: "set_split_ratio"; ratioBasisPoints: number }
+  | { kind: "set_canvas_viewport"; viewport: WorkbenchCanvasViewportSnapshot }
+  | { kind: "set_activity"; activity: WorkbenchActivity }
+  | {
+      kind: "set_bottom_panel";
+      open: boolean;
+      activeView: WorkbenchBottomPanelView;
+    };
+
+export type WorkbenchCommandReceipt = {
+  schemaVersion: typeof WORKBENCH_COMMAND_SCHEMA_VERSION;
+  changed: boolean;
+  projectRoot: string;
+  runtimeSessionId: string;
+  revisionBefore: number;
+  revisionAfter: number;
+  snapshot: WorkbenchSnapshot;
+};
+
+export const COMMAND_CENTER_SCHEMA_VERSION = 1 as const;
+
+export type CommandCenterScope = "all" | "commands" | "files" | "symbols";
+
+export type CommandCenterItemKind =
+  | "command"
+  | "activity"
+  | "file"
+  | "page"
+  | "component"
+  | "style"
+  | "asset"
+  | "symbol"
+  | "diagnostic";
+
+export type CommandCenterAppCommand =
+  | "open_project"
+  | "close_project"
+  | "save"
+  | "undo"
+  | "redo"
+  | "validate"
+  | "run_external"
+  | "refresh_session"
+  | "rescan_project"
+  | "toggle_terminal"
+  | "show_problems"
+  | "show_output"
+  | "show_timeline"
+  | "split_vertical"
+  | "split_horizontal"
+  | "close_split"
+  | "canvas_fit"
+  | "canvas_desktop"
+  | "canvas_tablet"
+  | "canvas_mobile"
+  | "toggle_left_sidebar"
+  | "toggle_inspector"
+  | "toggle_theme"
+  | "open_settings"
+  | "open_history"
+  | "show_visual"
+  | "show_code"
+  | "show_markdown";
+
+export type CommandCenterAction =
+  | { kind: "set_activity"; activity: WorkbenchActivity }
+  | { kind: "open_document"; relativePath: string; surface: WorkbenchSurface }
+  | { kind: "app_command"; command: CommandCenterAppCommand };
+
+export type CommandCenterItem = {
+  id: string;
+  kind: CommandCenterItemKind;
+  title: string;
+  subtitle: string;
+  shortcut: string | null;
+  enabled: boolean;
+  disabledReason: string | null;
+  score: number;
+  action: CommandCenterAction;
+};
+
+export type CommandCenterSearchRequest = {
+  query: string;
+  scope: CommandCenterScope;
+  limit?: number;
+  expectedProjectRoot: string | null;
+  expectedSessionId: string | null;
+};
+
+export type CommandCenterSearchResponse = {
+  schemaVersion: typeof COMMAND_CENTER_SCHEMA_VERSION;
+  projectRoot: string | null;
+  runtimeSessionId: string | null;
+  query: string;
+  scope: CommandCenterScope;
+  totalMatches: number;
+  truncated: boolean;
+  results: CommandCenterItem[];
 };
 
 export type ProjectWorkspaceSaveStatus = "noop" | "saved";
@@ -2459,6 +2658,93 @@ export type ProjectModelSnapshot = {
   sourceGraph: SourceGraph;
   teraGraph: TeraGraph;
   diagnostics: ProjectModelDiagnostic[];
+};
+
+export const PROJECT_AUDIT_SCHEMA_VERSION = 1 as const;
+
+export type AuditSeverity = "info" | "warning" | "error";
+
+export type AuditCategory =
+  | "build"
+  | "references"
+  | "accessibility"
+  | "seo"
+  | "assets"
+  | "workspace";
+
+export type AuditDiagnostic = {
+  id: string;
+  severity: AuditSeverity;
+  category: AuditCategory;
+  code: string;
+  title: string;
+  message: string;
+  file: string | null;
+  range: SourceRange | null;
+};
+
+export type AuditSummary = {
+  total: number;
+  errors: number;
+  warnings: number;
+  info: number;
+  affectedFiles: number;
+};
+
+export type ProjectAuditSnapshot = {
+  schemaVersion: typeof PROJECT_AUDIT_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  projectModelRevision: string;
+  summary: AuditSummary;
+  diagnostics: AuditDiagnostic[];
+};
+
+export const DESIGN_CLASS_INVENTORY_SCHEMA_VERSION = 1;
+export const DESIGN_CLASS_RENAME_SCHEMA_VERSION = 1;
+
+export type DesignClassOccurrenceKind = "markup" | "style";
+
+export type DesignClassOccurrence = {
+  file: string;
+  kind: DesignClassOccurrenceKind;
+  range: SourceRange;
+};
+
+export type DesignClassEntry = {
+  name: string;
+  markupOccurrences: number;
+  selectorOccurrences: number;
+  files: string[];
+  occurrences: DesignClassOccurrence[];
+};
+
+export type DesignClassInventorySnapshot = {
+  schemaVersion: typeof DESIGN_CLASS_INVENTORY_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  projectModelRevision: string;
+  classes: DesignClassEntry[];
+};
+
+export type DesignClassRenameReceipt = {
+  schemaVersion: typeof DESIGN_CLASS_RENAME_SCHEMA_VERSION;
+  oldName: string;
+  newName: string;
+  changedFiles: string[];
+  replacementCount: number;
+  workspace: WorkspaceEntryMutationReceipt;
+};
+
+export type PublishOperationKind = "build" | "deploy";
+
+export type PublishOperationCancelReceipt = {
+  schemaVersion: 1;
+  operationId: string;
+  kind: PublishOperationKind;
+  cancellationRequested: boolean;
 };
 
 export type TemplateWorkbenchDependencyKind = "extends" | "includes" | "imports";

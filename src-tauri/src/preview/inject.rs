@@ -55,9 +55,9 @@ pub(crate) fn bind_canvas_identity_to_editor_html(
     identity: &CanvasProjectionIdentity,
 ) -> Result<(), String> {
     let document = parse(prepared.editor.clone());
-    let html = document
-        .select_first("html")
-        .map_err(|_| "Documentul Design Safe nu are root pentru identitatea Canvas.".to_string())?;
+    let html = document.select_first("html").map_err(|_| {
+        "Documentul Editare sigură nu are root pentru identitatea Canvas.".to_string()
+    })?;
     let mut attributes = html.attributes.borrow_mut();
     attributes.insert(
         "data-pana-canvas-project-root",
@@ -77,7 +77,7 @@ pub(crate) fn bind_canvas_identity_to_editor_html(
     );
     drop(attributes);
     prepared.editor = String::from_utf8(serialize_node(&document)).map_err(|error| {
-        format!("Documentul Design Safe nu a putut lega identitatea Canvas: {error}")
+        format!("Documentul Editare sigură nu a putut lega identitatea Canvas: {error}")
     })?;
     Ok(())
 }
@@ -170,14 +170,14 @@ fn prepare_interactive_document(html: &str, preview_revision: &str) -> Result<St
     remove_authored_content_security_policy(&document);
     revision_local_resource_urls(&document, preview_revision);
     let html = document.select_first("html").map_err(|_| {
-        "Documentul Interactive Preview nu are element html normalizat.".to_string()
+        "Documentul Previzualizare interactivă nu are element html normalizat.".to_string()
     })?;
     html.attributes
         .borrow_mut()
         .insert("data-pana-preview-revision", preview_revision.to_string());
     append_interactive_runtime(&document)?;
     String::from_utf8(serialize_node(&document)).map_err(|error| {
-        format!("Documentul Interactive Preview nu a putut fi serializat: {error}")
+        format!("Documentul Previzualizare interactivă nu a putut fi serializat: {error}")
     })
 }
 
@@ -206,16 +206,16 @@ fn append_interactive_runtime(document: &NodeRef) -> Result<(), String> {
     ));
     let runtime = runtime_document
         .select_first("script#pana-interactive-runtime")
-        .map_err(|_| "Runtime-ul Interactive Preview nu a putut fi construit.".to_string())?
+        .map_err(|_| "Runtime-ul Previzualizare interactivă nu a putut fi construit.".to_string())?
         .as_node()
         .clone();
     if runtime.text_contents() != INTERACTIVE_RUNTIME_SCRIPT {
-        return Err("Parserul HTML a modificat runtime-ul Interactive Preview.".to_string());
+        return Err("Parserul HTML a modificat runtime-ul Previzualizare interactivă.".to_string());
     }
     runtime.detach();
     let body = document
         .select_first("body")
-        .map_err(|_| "Documentul Interactive Preview nu are body normalizat.".to_string())?;
+        .map_err(|_| "Documentul Previzualizare interactivă nu are body normalizat.".to_string())?;
     body.as_node().append(runtime);
     Ok(())
 }
@@ -246,7 +246,7 @@ fn sanitize_design_safe_document(
         revision_local_resource_urls(&document, preview_revision);
         let html = document
             .select_first("html")
-            .map_err(|_| "Documentul Design Safe nu are element html normalizat.".to_string())?;
+            .map_err(|_| "Documentul Editare sigură nu are element html normalizat.".to_string())?;
         html.attributes
             .borrow_mut()
             .insert("data-pana-preview-revision", preview_revision.to_string());
@@ -256,7 +256,7 @@ fn sanitize_design_safe_document(
     }
     String::from_utf8(serialize_node(&document)).map_err(|error| {
         format!(
-            "Documentul Design Safe nu a putut fi serializat ca UTF-8: {}",
+            "Documentul Editare sigură nu a putut fi serializat ca UTF-8: {}",
             error
         )
     })
@@ -380,17 +380,17 @@ fn append_internal_bridge(document: &NodeRef) -> Result<(), String> {
     ));
     let bridge = bridge_document
         .select_first("script#pana-studio-bridge")
-        .map_err(|_| "Bridge-ul intern Design Safe nu a putut fi construit.".to_string())?
+        .map_err(|_| "Bridge-ul intern Editare sigură nu a putut fi construit.".to_string())?
         .as_node()
         .clone();
     if bridge.text_contents() != BRIDGE_SCRIPT {
-        return Err("Parserul HTML a modificat textul bridge-ului Design Safe.".to_string());
+        return Err("Parserul HTML a modificat textul bridge-ului Editare sigură.".to_string());
     }
     bridge.detach();
 
     let body = document
         .select_first("body")
-        .map_err(|_| "Documentul Design Safe nu are un element body normalizat.".to_string())?;
+        .map_err(|_| "Documentul Editare sigură nu are un element body normalizat.".to_string())?;
     body.as_node().append(bridge);
     Ok(())
 }
@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn internal_bridge_accepts_commands_only_from_the_mounted_parent_frame() {
         assert!(BRIDGE_SCRIPT.contains(
-            "window.addEventListener(\"message\", function (event) {\n    // The Design Safe document has a single trusted controller"
+            "window.addEventListener(\"message\", function (event) {\n    // The Editare sigură document has a single trusted controller"
         ));
         assert!(BRIDGE_SCRIPT.contains("if (event.source !== window.parent)"));
         assert!(BRIDGE_SCRIPT.contains("data.source !== SOURCE_APP"));

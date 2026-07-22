@@ -120,7 +120,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
@@ -173,7 +173,7 @@
   .context-menu kbd {
     color: var(--text-muted);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
   }
 

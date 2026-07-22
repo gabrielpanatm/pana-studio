@@ -65,7 +65,7 @@
     </div>
     <div class="field-grid">
       <label>
-        <span>Mode</span>
+        <span>Mod</span>
         <SelectControl value={svg.mode} options={modeOptions} ariaLabel="SVG mode" onchange={(value) => patch({ mode: value as PanaMotionSvgItem["mode"] })} />
       </label>
       <label>
@@ -95,7 +95,7 @@
     <div class="field-grid">
       <label><span>Autoplay</span><SelectControl value={svg.playback.autoplay ? "yes" : "no"} options={yesNoOptions} ariaLabel="SVG autoplay" onchange={(value) => patchPlayback({ autoplay: value === "yes" })} /></label>
       <label><span>Delay</span><input type="number" min="0" step="50" value={svg.playback.delay} oninput={(event) => patchPlayback({ delay: numberValue(event.currentTarget.value) })} /></label>
-      <label><span>Duration</span><input type="number" min="0" step="50" value={svg.playback.duration} oninput={(event) => patchPlayback({ duration: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Durată</span><input type="number" min="0" step="50" value={svg.playback.duration} oninput={(event) => patchPlayback({ duration: numberValue(event.currentTarget.value) })} /></label>
       <label>
         <span>Ease</span>
         <SelectControl value={svg.playback.playbackEase} options={easingOptions} ariaLabel="SVG ease" onchange={(value) => patchPlayback({ playbackEase: value })} />
@@ -154,7 +154,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -182,7 +182,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -213,7 +213,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

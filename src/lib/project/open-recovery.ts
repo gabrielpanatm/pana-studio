@@ -19,7 +19,7 @@ export function createProjectOpenRecoveryDecisionRequest(
   operatorDecisionId: string | null,
 ): ProjectOpenRecoveryDecisionRequest {
   if (assessment.status !== "decision_required" || !assessment.assessmentToken) {
-    throw new Error("Recovery preflight nu cere o decizie explicită validă.");
+    throw new Error("Verificarea recuperării nu cere o decizie explicită validă.");
   }
   return {
     id: [
@@ -39,7 +39,7 @@ export function projectOpenRecoveryAbandonDecision(
 ): ProjectOpenRecoveryDecisionInput {
   const assessmentToken = request.assessment.assessmentToken;
   if (!assessmentToken || request.assessment.status !== "decision_required") {
-    throw new Error("Cererea de recovery nu mai conține tokenul inspectat.");
+    throw new Error("Cererea de recuperare nu mai conține identificatorul inspectat.");
   }
   return { action: "abandon", assessmentToken };
 }
@@ -51,9 +51,9 @@ export function projectOpenRecoveryReasonLabel(
     case "project_root_replaced":
       return "dosar fizic înlocuit";
     case "recovery_invalid":
-      return "recovery incompatibil";
+      return "recuperare incompatibilă";
     case "disk_baseline_changed":
     default:
-      return "conținut schimbat pe disk";
+      return "conținut schimbat pe disc";
   }
 }

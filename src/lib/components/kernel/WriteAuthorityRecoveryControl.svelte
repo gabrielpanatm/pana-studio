@@ -106,8 +106,8 @@
     <div class="wal-title">
       <IconShieldLock size={18} stroke={1.9} />
       <div>
-        <h2 id="write-authority-wal-title">WriteAuthority WAL</h2>
-        <p>Recovery global, înainte de Transaction Log și înainte de deschiderea proiectului.</p>
+        <h2 id="write-authority-wal-title">Jurnal WAL al autorității de scriere</h2>
+        <p>Recuperare globală, înainte de jurnalul tranzacțiilor și înainte de deschiderea proiectului.</p>
       </div>
     </div>
     <button type="button" onclick={() => void refresh()} disabled={loading}>
@@ -142,7 +142,7 @@
             <p>{item.diagnostic}</p>
             <small>
               fază {item.phase ?? "necunoscută"} ·
-              {item.automaticRecoveryAvailable ? "auto-recovery disponibil" : "manual review"}
+              {item.automaticRecoveryAvailable ? "recuperare automată disponibilă" : "revizuire manuală"}
             </small>
             {#if item.availableResolutionActions.length}
               <div class="wal-actions">
@@ -297,7 +297,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--danger) 10%, var(--surface));
     color: var(--danger);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .wal-message {

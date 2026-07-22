@@ -186,7 +186,7 @@
   .section-heading h3 {
     margin: 0;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -194,7 +194,7 @@
 
   .section-heading span {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
   }
 
@@ -228,7 +228,7 @@
 
   .palette-mode-heading span {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
   }
@@ -241,7 +241,7 @@
   .palette-group h4 {
     margin: 0;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -345,7 +345,7 @@
 
   .palette-copy small {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.2;
   }
 

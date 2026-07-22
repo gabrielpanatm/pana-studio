@@ -347,7 +347,7 @@
 
   .alpha-label {
     padding: 0 4px;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--text-muted);
     font-family: "JetBrains Mono", monospace;
@@ -366,7 +366,7 @@
     border: none;
     background: transparent;
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     outline: none;
     text-align: center;
@@ -384,7 +384,7 @@
     padding: 0;
     border: none;
     border-right: 1px solid var(--border-4);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     background: var(--surface-4);
     cursor: pointer;
@@ -405,7 +405,7 @@
     padding: 0 6px;
     border: none;
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     background: transparent;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     outline: none;

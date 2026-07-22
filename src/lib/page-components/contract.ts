@@ -61,7 +61,7 @@ export async function reconcilePageComponentContracts(
     projectPageContractReceipt(host, projectionLease, templateRelativePath, fallbackScssPath, receipt);
     syncComponentPreview(host, receipt.plan.previewCss);
     if (options.ensureComponentId) {
-      host.setGlobalStatus("Component adăugat în sesiunea ProjectWorkspace.", "unsaved");
+      host.setGlobalStatus("Componentă adăugată în sesiunea proiectului.", "unsaved");
     }
     return receipt;
   });

@@ -34,7 +34,7 @@ export function deriveGlobalDirtyState(input: DirtyStateInput): GlobalDirtyState
     requiresImmediateDiskWrite: false,
     blocksImmediateDiskOperations: uniqueAreas.length > 0,
     immediateDiskOperationBlockedReason: uniqueAreas.length > 0
-      ? "Salvează sau renunță la modificările curente înainte de operații directe pe disk."
+      ? "Salvează sau renunță la modificările curente înainte de operații directe pe disc."
       : "",
   };
 }

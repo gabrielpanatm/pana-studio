@@ -1534,6 +1534,7 @@ fn owner_label(owner: WriteOwner) -> &'static str {
         WriteOwner::Kernel => "kernel",
         WriteOwner::ProjectSession => "project_session",
         WriteOwner::ProjectWorkspace => "project_workspace",
+        WriteOwner::Workbench => "workbench",
         WriteOwner::ScratchState => "scratch_state",
         WriteOwner::AppConfig => "app_config",
         WriteOwner::McpContext => "mcp_context",
@@ -1567,6 +1568,7 @@ fn copy_replace_policy(owner: WriteOwner) -> Result<CapabilityReplacePolicy, Str
         WriteOwner::Kernel
         | WriteOwner::ProjectSession
         | WriteOwner::ProjectWorkspace
+        | WriteOwner::Workbench
         | WriteOwner::ScratchState
         | WriteOwner::AppConfig
         | WriteOwner::McpContext

@@ -99,7 +99,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     user-select: none;
     -webkit-user-select: none;
@@ -111,7 +111,7 @@
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     user-select: none;
     -webkit-user-select: none;
@@ -126,7 +126,7 @@
     background: var(--surface-2);
     color: var(--text);
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     padding: 0 6px;
     user-select: text;
     -webkit-user-select: text;

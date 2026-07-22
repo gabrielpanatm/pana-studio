@@ -102,7 +102,7 @@ function requireSnapshotIdentity(
     || snapshot.runtimeSessionId !== identity.sessionId
   ) {
     throw new Error(
-      "Coordonatorul Preview a refuzat un snapshot ProjectWorkspace din altă sesiune.",
+      "Coordonatorul previzualizării a refuzat un instantaneu al sesiunii altui proiect.",
     );
   }
   return snapshot;
@@ -128,7 +128,7 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
     minimumRevision !== undefined
     && (!Number.isSafeInteger(minimumRevision) || minimumRevision < 0)
   ) {
-    throw new Error("Coordonatorul Preview a primit o revizie minimă invalidă.");
+    throw new Error("Coordonatorul previzualizării a primit o revizie minimă invalidă.");
   }
 
   let attempts = 0;
@@ -140,7 +140,7 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
     attempts += 1;
     if (attempts > 32) {
       throw new Error(
-        "Coordonatorul Preview nu a putut stabiliza ProjectWorkspace după 32 de revizii consecutive.",
+        "Coordonatorul previzualizării nu a putut stabiliza sesiunea proiectului după 32 de revizii consecutive.",
       );
     }
 
@@ -160,14 +160,14 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
         options.expectedWorkspaceRevision !== undefined
         && options.expectedWorkspaceRevision !== snapshot.revision
       ) {
-        throw new Error("Cache-ul Preview nu corespunde reviziei ProjectWorkspace așteptate.");
+        throw new Error("Cache-ul previzualizării nu corespunde reviziei așteptate a sesiunii proiectului.");
       }
       if (
         options.expectedWorkspaceTransactionId !== undefined
         && cachedPlan?.workspaceTransactionId !== options.expectedWorkspaceTransactionId
       ) {
         throw new Error(
-          "Cache-ul Preview nu dovedește tranzacția ProjectWorkspace așteptată.",
+          "Cache-ul previzualizării nu dovedește tranzacția așteptată a sesiunii proiectului.",
         );
       }
       if (cachedPlan) options.onCanvasPlanPrepared?.(cachedPlan);
@@ -201,13 +201,13 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
           !== options.expectedWorkspaceTransactionId
       ) {
         throw new Error(
-          "Proiecția Canvas nu aparține tranzacției ProjectWorkspace a fast patch-ului.",
+          "Proiecția Canvas nu aparține tranzacției sesiunii proiectului pentru patch-ul rapid.",
         );
       }
       const confirmedPaths = new Set(receipt.requestedPaths);
       if (!input.requestedPaths.every((path) => confirmedPaths.has(path))) {
         throw new Error(
-          "Preview workspace nu a confirmat toate resursele cerute pentru proiecție.",
+          "Spațiul de previzualizare nu a confirmat toate resursele cerute pentru proiecție.",
         );
       }
       if (!identityIsCurrent(host, identity)) return;
@@ -219,7 +219,7 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
         return receipt.workspaceRevision;
       }
       if (!receipt.canvasProjection) {
-        throw new Error("Preview workspace a publicat o revizie fără plan Canvas.");
+        throw new Error("Spațiul de previzualizare a publicat o revizie fără plan Canvas.");
       }
       // The surface may have been unmounted while Rust built the candidate.
       // Leave the revision unpublished in the UI and retry it on the next
@@ -237,7 +237,7 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
       if (!refreshed) {
         host.pendingCanvasProjection = null;
         throw new Error(
-          "Preview-ul nu a confirmat generația ProjectWorkspace publicată de Rust.",
+          "Previzualizarea nu a confirmat generația sesiunii proiectului publicată de Rust.",
         );
       }
       projectedEvidence = {
@@ -315,7 +315,7 @@ export function scheduleProjectWorkspaceDerivedPreviewProjection(
     minimumWorkspaceRevision !== undefined
     && (!Number.isSafeInteger(minimumWorkspaceRevision) || minimumWorkspaceRevision < 0)
   ) {
-    throw new Error("Coordonatorul Preview a primit o revizie minimă invalidă.");
+    throw new Error("Coordonatorul previzualizării a primit o revizie minimă invalidă.");
   }
   scheduledHost = host;
   scheduledReason = reason;
@@ -340,7 +340,7 @@ export function scheduleProjectWorkspaceDerivedPreviewProjection(
       .catch((error) => {
         if (!identityIsCurrent(target, identity)) return;
         target.setGlobalStatus?.(
-          `Proiecția Preview/Template Workbench a ProjectWorkspace a eșuat: ${errorMessage(error)}`,
+          `Proiecția Preview/Context de template a ProjectWorkspace a eșuat: ${errorMessage(error)}`,
           "error",
         );
       });

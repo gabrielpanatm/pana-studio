@@ -200,7 +200,7 @@ export function startElementPaletteDrag(
           element: previewPayloadFor(element),
         });
       } else if (host.centerView !== "preview") {
-        host.setGlobalStatus("Comută pe Preview ca să adaugi elemente prin drag.", "error");
+        host.setGlobalStatus("Comută pe Previzualizare ca să adaugi elemente prin tragere.", "error");
       }
     }
     cleanup();

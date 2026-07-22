@@ -73,6 +73,6 @@
   code {
     color: var(--text-muted);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
+    font-size: 12px;
   }
 </style>

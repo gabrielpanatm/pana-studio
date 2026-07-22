@@ -157,8 +157,8 @@
     <div>
       <IconRoute size={18} stroke={1.8} />
       <div>
-        <h2 id="project-transition-title">ProjectTransition</h2>
-        <p>Open, Reload și Close sunt decise din starea ProjectWorkspace și din conflictele reale de disk.</p>
+        <h2 id="project-transition-title">Tranziția proiectului</h2>
+        <p>Deschiderea, reîncărcarea și închiderea sunt decise din starea sesiunii și din conflictele reale de pe disc.</p>
       </div>
     </div>
     <button type="button" disabled={loading || mutating} onclick={() => void refresh()} title="Recitește">
@@ -221,7 +221,7 @@
 
       {#if recoveryPlan?.status === "retention_review" && matchingAck}
         <label>
-          <span>Diagnostic pentru retention</span>
+          <span>Diagnostic pentru retenție</span>
           <textarea rows="2" bind:value={retentionDiagnostic}></textarea>
         </label>
         <button class="action" type="button" disabled={!canRetain} onclick={() => void executeRetention()}>
@@ -251,7 +251,7 @@
   article span,
   article small,
   .decision-summary span,
-  .decision-summary small { color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+  .decision-summary small { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
   header button { width: 36px; height: 34px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text); }
   .policies { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .policies article,
@@ -260,16 +260,16 @@
   .policies article.blocked { border-color: color-mix(in srgb, #ef4444 42%, var(--border)); }
   .policies article.confirm { border-color: color-mix(in srgb, #f59e0b 42%, var(--border)); }
   .policies article > div { gap: 5px; }
-  .policies strong { font-size: 11px; text-transform: uppercase; }
-  .policies em { margin-left: auto; color: var(--text-muted); font-size: 10px; font-style: normal; }
+  .policies strong { font-size: 12px; text-transform: uppercase; }
+  .policies em { margin-left: auto; color: var(--text-muted); font-size: 12px; font-style: normal; }
   .audit { display: grid; gap: 7px; }
   .audit article { grid-template-columns: minmax(120px, auto) minmax(0, 1fr); }
   .audit small { grid-column: 1 / -1; }
   .decisions label { display: grid; gap: 5px; }
-  .decisions label span { color: var(--text-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+  .decisions label span { color: var(--text-muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
   textarea { width: 100%; box-sizing: border-box; resize: vertical; }
   .action { justify-self: start; min-height: 32px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-3); color: var(--text); }
   button:disabled { opacity: 0.55; }
-  .error { color: #ef4444; font-size: 11px; }
+  .error { color: #ef4444; font-size: 12px; }
   @media (max-width: 900px) { .policies { grid-template-columns: 1fr; } }
 </style>

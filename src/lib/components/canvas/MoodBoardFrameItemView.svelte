@@ -109,7 +109,7 @@
     bottom: 8px;
     color: color-mix(in srgb, var(--text-muted) 72%, transparent);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
   }
 

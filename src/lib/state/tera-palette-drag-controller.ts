@@ -200,7 +200,7 @@ export function startTeraPaletteDrag(
           item: previewPayloadFor(item),
         });
       } else if (host.centerView !== "preview") {
-        host.setGlobalStatus("Comută pe Preview ca să adaugi Tera prin drag.", "error");
+        host.setGlobalStatus("Comută pe Previzualizare ca să adaugi Tera prin tragere.", "error");
       }
     }
     cleanup();

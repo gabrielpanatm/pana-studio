@@ -171,7 +171,7 @@
   }
 
   .studio-meta {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 
@@ -188,14 +188,14 @@
 
   .family-card span {
     display: block;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     color: var(--text);
   }
 
   .family-card p {
     margin: 3px 0 0;
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.4;
     color: var(--text-muted);
   }
@@ -203,7 +203,7 @@
   .family-card small {
     display: block;
     margin-top: 5px;
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.35;
     color: var(--brand-strong);
   }
@@ -215,7 +215,7 @@
     border-radius: 6px;
     background: var(--brand-soft);
     color: var(--brand-strong);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     cursor: pointer;
     white-space: nowrap;
@@ -251,13 +251,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
   }
 
   .item-list small {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .empty-family {
@@ -269,7 +269,7 @@
     border: 1px dashed var(--border-4);
     border-radius: 7px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     text-align: center;
   }
 </style>

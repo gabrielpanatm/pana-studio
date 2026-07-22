@@ -7,9 +7,9 @@ export type LiveProjectableHtmlAttributeDraft = Readonly<{
 }>;
 
 /**
- * Produces the speculative Design Safe projection only. The canonical source
+ * Produces the speculative Editare sigură projection only. The canonical source
  * mutation still receives every source-editable attribute, including values
- * which Design Safe deliberately neutralizes (target, download, action, ...).
+ * which Editare sigură deliberately neutralizes (target, download, action, ...).
  */
 export function liveProjectableHtmlAttributeDraft(
   tag: string,

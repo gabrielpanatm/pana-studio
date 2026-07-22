@@ -8,7 +8,7 @@
   export let toggleUiTheme: () => void;
 </script>
 
-<ToolbarButton title={uiTheme === "dark" ? "Light UI" : "Dark UI"} onclick={toggleUiTheme}>
+<ToolbarButton title={uiTheme === "dark" ? "Interfață luminoasă" : "Interfață întunecată"} onclick={toggleUiTheme}>
   {#if uiTheme === "dark"}
     <IconSun size={17} stroke={1.8} />
   {:else}

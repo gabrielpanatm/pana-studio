@@ -356,7 +356,7 @@ pub fn execute_preview_html_attributes(
     // A no-op has no ProjectWorkspace transaction identity and therefore must
     // never manufacture a CanvasPatch. Likewise, a source-only attribute
     // (download, target, action, ...) is committed canonically but is omitted
-    // from the Design Safe fast path as one indivisible attribute operation.
+    // from the Editare sigură fast path as one indivisible attribute operation.
     let canvas_patch = if html_attribute_canvas_patch_allowed(
         commit.workspace_mutation.changed,
         &patch.attributes,

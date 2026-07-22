@@ -144,7 +144,7 @@ export function deriveHtmlSourceMutationBlockedReason(app: AppState) {
 }
 
 function normalizedProjectPath(path: string | null | undefined) {
-  if (!path || path === "about:blank" || path.startsWith("Template Workbench:")) return "";
+  if (!path || path === "about:blank" || path.startsWith("Context de template:")) return "";
   return projectRelativeZolaPath(path)
     .replaceAll("\\", "/")
     .replace(/\/+/g, "/")

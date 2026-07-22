@@ -3,6 +3,7 @@
     IconAlertTriangle,
     IconCheck,
     IconChevronDown,
+    IconGitBranch,
     IconGitCommit,
     IconEye,
     IconPlus,
@@ -44,6 +45,7 @@
   } from "$lib/project/io";
   import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import { UI_TERMS } from "$lib/i18n/ui-terms";
   import type {
     ProjectWorkspaceSnapshot,
     SaveState,
@@ -72,7 +74,6 @@
   } from "$lib/types";
 
   let {
-    open = false,
     projectRoot = "",
     sessionId = "",
     workspace = null,
@@ -84,9 +85,7 @@
     afterRecovery,
     afterIntegration,
     afterIntegrationRecovery,
-    close,
   }: {
-    open?: boolean;
     projectRoot?: string;
     sessionId?: string;
     workspace?: ProjectWorkspaceSnapshot | null;
@@ -98,7 +97,6 @@
     afterRecovery: (receipt: VersionRestoreRecoveryResolutionReceipt) => void | Promise<void>;
     afterIntegration: (receipt: VersionIntegrationReceipt) => void | Promise<void>;
     afterIntegrationRecovery: (receipt: VersionIntegrationRecoveryResolutionReceipt) => void | Promise<void>;
-    close: () => void;
   } = $props();
 
   let snapshot = $state<VersioningSnapshot | null>(null);
@@ -182,7 +180,7 @@
       await projection();
       return true;
     } catch (reason) {
-      error = `${label}, dar actualizarea interfeței a eșuat: ${errorMessage(reason)} Efectul nu trebuie repetat automat; reîncarcă proiectul și verifică Recovery.`;
+      error = `${label}, dar actualizarea interfeței a eșuat: ${errorMessage(reason)} Efectul nu trebuie repetat automat; reîncarcă proiectul și verifică Recuperare.`;
       onStatusUpdate(error, "error");
       return false;
     }
@@ -228,7 +226,7 @@
     error = "";
     try {
       const next = await readVersioningSnapshot(identity);
-      if (serial !== requestSerial || !open) return;
+      if (serial !== requestSerial) return;
       snapshot = next;
       hydrateIdentity(next);
       hydrateRemoteSelection(next);
@@ -495,7 +493,7 @@
       ))) return;
       if (receipt.status === "recovery_required") {
         await refresh();
-        error = receipt.diagnostic ?? "Restaurarea cere recovery explicit.";
+        error = receipt.diagnostic ?? "Restaurarea cere recuperare explicită.";
         onStatusUpdate(error, "error");
         return;
       }
@@ -846,7 +844,7 @@
           "error",
         );
       } else if (receipt.status === "recovery_required") {
-        error = receipt.diagnostic ?? "Integrarea cere recovery explicit.";
+        error = receipt.diagnostic ?? "Integrarea cere recuperare explicită.";
         onStatusUpdate(error, "error");
       } else {
         onStatusUpdate(
@@ -888,7 +886,7 @@
       ))) return;
       await refresh();
       if (!receipt.resolved) {
-        error = receipt.diagnostic ?? "Integrarea necesită încă recovery.";
+        error = receipt.diagnostic ?? "Integrarea necesită încă recuperare.";
         onStatusUpdate(error, "error");
       } else {
         onStatusUpdate(
@@ -954,49 +952,45 @@
   });
 
   $effect(() => {
-    const active = open;
     const root = projectRoot;
     const session = sessionId;
-    if (!active || !root || !session) {
+    if (!root || !session) {
       requestSerial += 1;
-      if (!active) {
-        snapshot = null;
-        history = [];
-        diff = null;
-        error = "";
-        recovery = null;
-        integrationRecovery = null;
-        syncComparison = null;
-        integrationPlan = null;
-        integrationDiff = null;
-        pendingRemoteRemoval = "";
-        remoteRemovalConfirmation = "";
-        pendingBranchRemoval = "";
-        branchRemovalConfirmation = "";
-        activeNetwork = null;
-        cancelRestore();
-        hydratedIdentityToken = "";
-      }
+      snapshot = null;
+      history = [];
+      diff = null;
+      error = "";
+      recovery = null;
+      integrationRecovery = null;
+      syncComparison = null;
+      integrationPlan = null;
+      integrationDiff = null;
+      pendingRemoteRemoval = "";
+      remoteRemovalConfirmation = "";
+      pendingBranchRemoval = "";
+      branchRemovalConfirmation = "";
+      activeNetwork = null;
+      cancelRestore();
+      hydratedIdentityToken = "";
       return;
     }
     void refresh();
   });
 </script>
 
-{#if open}
-  <div class="versions-backdrop" role="presentation" onclick={close}></div>
-  <aside class="versions-panel" aria-label="Versiuni Git">
+<section class="versions-panel" aria-label={UI_TERMS.versionControl}>
     <header class="panel-header">
-      <div>
-        <p class="eyebrow">Git · sursa/</p>
-        <h2>Versiuni</h2>
+      <div class="title-block">
+        <span class="title-icon"><IconGitBranch size={20} stroke={1.8} /></span>
+        <div>
+          <span class="eyebrow">Repository · sursa/</span>
+          <h1>{UI_TERMS.versionControl}</h1>
+          <p>Modificări, versiuni, ramuri și sincronizare Git într-un singur flux.</p>
+        </div>
       </div>
       <div class="header-actions">
-        <button type="button" class="icon-button" title="Actualizează" disabled={loading || !!busyAction} onclick={() => refresh()}>
-          <IconRefresh size={16} stroke={1.9} />
-        </button>
-        <button type="button" class="icon-button" title="Închide" onclick={close}>
-          <IconX size={16} stroke={1.9} />
+        <button type="button" class="refresh-button" disabled={loading || !!busyAction} onclick={() => refresh()}>
+          <IconRefresh size={16} stroke={1.9} /> Actualizează
         </button>
       </div>
     </header>
@@ -1017,9 +1011,9 @@
         </div>
         <div class="status-grid">
           <span>Editor <b class:warning={workspaceDirty}>{workspaceDirty ? "nesalvat" : "salvat"}</b></span>
-          <span>Git <b>{snapshot.clean ? "curat" : "modificat"}</b></span>
-          <span>Staged <b>{snapshot.stagedCount}</b></span>
-          <span>Unstaged <b>{snapshot.unstagedCount}</b></span>
+          <span>Git <b>{snapshot.repositoryState === "ready" ? (snapshot.clean ? "curat" : "modificat") : "neinițializat"}</b></span>
+          <span>Pregătite <b>{snapshot.stagedCount}</b></span>
+          <span>Nepregătite <b>{snapshot.unstagedCount}</b></span>
         </div>
         {#if snapshot.diagnostic}<p class="diagnostic">{snapshot.diagnostic}</p>{/if}
         {#if mutationBlockedReason}<p class="guard-message"><IconAlertTriangle size={14} /> {mutationBlockedReason}</p>{/if}
@@ -1027,7 +1021,7 @@
 
       {#if activePreviewCommitOid}
         <section class="preview-banner">
-          <div><IconEye size={15} /><span>Preview izolat <code>{activePreviewCommitOid.slice(0, 8)}</code></span></div>
+          <div><IconEye size={15} /><span>Previzualizare izolată <code>{activePreviewCommitOid.slice(0, 8)}</code></span></div>
           <button type="button" onclick={returnToLivePreview}>Revino la versiunea curentă</button>
         </section>
       {/if}
@@ -1046,7 +1040,7 @@
 
       {#if recovery?.items.length}
         <section class="recovery-section" aria-label="Restaurări Git întrerupte">
-          <div class="recovery-title"><IconAlertTriangle size={16} /><div><strong>Recovery restaurare</strong><small>{recovery.items.length} tranzacție(i) pendinte</small></div></div>
+          <div class="recovery-title"><IconAlertTriangle size={16} /><div><strong>Recuperarea restaurării</strong><small>{recovery.items.length} tranzacție(i) pendinte</small></div></div>
           {#each recovery.items as item (item.recoveryRef)}
             <article class="recovery-item" class:manual={item.state === "manual_review"}>
               <div class="recovery-meta"><code>{item.targetCommitOid.slice(0, 8)}</code><span>{item.state.replaceAll("_", " ")}</span></div>
@@ -1201,9 +1195,9 @@
                 {/if}
                 {#if integrationDiff}
                   <details class="integration-diff">
-                    <summary>Preview patch din țintă{integrationDiff.truncated ? " (trunchiat)" : ""}</summary>
+                    <summary>Previzualizare patch din țintă{integrationDiff.truncated ? " (trunchiat)" : ""}</summary>
                     {#if integrationDiff.binary}
-                      <p>Preview-ul include fișiere binare; conținutul lor nu este afișat textual.</p>
+                      <p>Previzualizarea include fișiere binare; conținutul lor nu este afișat textual.</p>
                     {:else if integrationDiff.patch}
                       <pre>{integrationDiff.patch}{integrationDiff.truncated ? "\n\n… diff trunchiat la limita de siguranță" : ""}</pre>
                     {:else}
@@ -1367,23 +1361,26 @@
     {/if}
 
     {#if error}<p class="error-message" role="alert">{error}</p>{/if}
-  </aside>
-{/if}
+</section>
 
 <style>
-  .versions-backdrop { position: fixed; inset: 0; z-index: 39; background: rgba(13, 18, 16, 0.2); }
-  .versions-panel { position: fixed; top: 0; right: 0; z-index: 40; display: flex; flex-direction: column; gap: 11px; width: min(520px, calc(100vw - 24px)); height: 100vh; padding: 13px; overflow-y: auto; border-left: 1px solid var(--border); background: var(--surface); color: var(--text); box-shadow: -18px 0 42px rgba(0, 0, 0, 0.24); }
-  .panel-header, .header-actions, .repository-state, .section-heading, .file-row, .file-main, .commit-row, .guard-message, summary, .primary-button, .load-more, .empty-row { display: flex; align-items: center; }
+  .versions-panel { position: relative; display: flex; flex-direction: column; gap: 11px; width: min(100%, 1120px); height: 100%; margin: 0 auto; padding: 18px 20px 30px; overflow-y: auto; border-right: 1px solid var(--wb-border-subtle, var(--border)); border-left: 1px solid var(--wb-border-subtle, var(--border)); background: var(--wb-surface-document, var(--surface)); color: var(--wb-text-primary, var(--text)); }
+  .versions-panel .panel-header { position: sticky; top: -18px; z-index: 3; min-height: 76px; margin: -18px -20px 3px; padding: 12px 20px; border-bottom: 1px solid var(--wb-border-subtle, var(--border)); background: color-mix(in srgb, var(--wb-surface-chrome, var(--surface)) 94%, transparent); backdrop-filter: blur(12px); }
+  .panel-header, .title-block, .header-actions, .repository-state, .section-heading, .file-row, .file-main, .commit-row, .guard-message, summary, .primary-button, .load-more, .empty-row { display: flex; align-items: center; }
   .panel-header, .section-heading { justify-content: space-between; gap: 10px; }
-  .panel-header h2, .eyebrow, .section-label, p { margin: 0; }
-  .panel-header h2 { font-size: 19px; }
-  .eyebrow, .section-label { color: var(--text-muted); font-size: 10px; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
+  .title-block { gap: 12px; min-width: 0; }
+  .title-block > div { min-width: 0; }
+  .title-icon { display: grid; flex: 0 0 auto; width: 40px; height: 40px; place-items: center; border-radius: 10px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
+  .panel-header h1, .eyebrow, .section-label, p { margin: 0; }
+  .panel-header h1 { margin-top: 2px; color: var(--text-strong); font-size: 24px; line-height: 1.15; }
+  .title-block p { margin-top: 4px; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; }
+  .eyebrow, .section-label { color: var(--text-muted); font-size: 12px; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
   .header-actions { gap: 6px; }
   button, input, textarea, select { font: inherit; }
   button { cursor: pointer; }
   button:disabled { cursor: default; opacity: .45; }
-  .icon-button, .mini-button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text-muted); }
-  .icon-button { width: 30px; height: 30px; }
+  .mini-button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text-muted); }
+  .refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--wb-radius-control, 7px); color: var(--wb-text-primary, var(--text)); background: var(--wb-surface-document, var(--surface)); font-size: 12px; font-weight: 750; }
   .mini-button { flex: 0 0 27px; width: 27px; height: 27px; }
   .repository-card, .setup-card, .identity-card, .remote-card, .sync-card, .branches-card, .changes-section, .commit-card, .diff-card, .history-section, .preview-banner, .network-progress, .restore-card, .recovery-section { border: 1px solid var(--border-3); border-radius: 9px; background: var(--surface-2); }
   .repository-card { display: grid; gap: 9px; padding: 10px; }
@@ -1391,27 +1388,27 @@
   .repository-state { gap: 8px; min-width: 0; }
   .repository-state > div { display: grid; min-width: 0; flex: 1; }
   .repository-state small { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .repository-state code { font-size: 10px; color: var(--text-muted); }
+  .repository-state code { font-size: 12px; color: var(--text-muted); }
   .state-dot { width: 9px; height: 9px; border-radius: 50%; background: #d29a3a; }
   .state-dot.clean { background: #3ea66b; }
   .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; }
-  .status-grid span { color: var(--text-muted); font-size: 11px; }
+  .status-grid span { color: var(--text-muted); font-size: 12px; }
   .status-grid b { color: var(--text); }
   .status-grid b.warning { color: #d29a3a; }
-  .diagnostic, .guard-message, .error-message { font-size: 11px; line-height: 1.45; }
+  .diagnostic, .guard-message, .error-message { font-size: 12px; line-height: 1.45; }
   .diagnostic, .error-message { color: var(--danger, #d64545); }
   .guard-message { gap: 6px; color: #d29a3a; }
   .preview-banner, .preview-banner > div { display: flex; align-items: center; gap: 7px; }
-  .preview-banner { justify-content: space-between; padding: 8px 9px; border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); font-size: 10px; }
-  .preview-banner button { min-height: 27px; padding: 4px 7px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 10px; }
+  .preview-banner { justify-content: space-between; padding: 8px 9px; border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); font-size: 12px; }
+  .preview-banner button { min-height: 27px; padding: 4px 7px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 12px; }
   .setup-card { display: grid; grid-template-columns: auto 1fr; gap: 10px; padding: 12px; }
-  .setup-card p { margin-top: 4px; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
+  .setup-card p { margin-top: 4px; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
   .setup-card button { grid-column: 1 / -1; min-height: 32px; }
   .identity-card { padding: 9px; }
-  summary { gap: 7px; cursor: pointer; font-size: 11px; font-weight: 750; }
+  summary { gap: 7px; cursor: pointer; font-size: 12px; font-weight: 750; }
   .identity-fields, .commit-card { display: grid; gap: 8px; }
   .identity-fields { grid-template-columns: 1fr 1fr; margin-top: 9px; }
-  .identity-fields label, .commit-card label { display: grid; gap: 4px; color: var(--text-muted); font-size: 10px; }
+  .identity-fields label, .commit-card label { display: grid; gap: 4px; color: var(--text-muted); font-size: 12px; }
   .identity-fields button { grid-column: 1 / -1; }
   input, textarea, select { width: 100%; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface); color: var(--text); outline: none; }
   input { min-height: 31px; padding: 5px 7px; }
@@ -1419,20 +1416,20 @@
   input:focus, textarea:focus, select:focus { border-color: var(--brand); }
   .changes-section, .history-section, .diff-card { display: grid; gap: 7px; padding: 9px; }
   .section-heading > div { display: grid; gap: 1px; min-width: 0; }
-  .section-heading span { color: var(--text-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .section-heading > button:not(.mini-button), .identity-fields button, .setup-card button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 10px; }
+  .section-heading span { color: var(--text-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .section-heading > button:not(.mini-button), .identity-fields button, .setup-card button { min-height: 28px; padding: 4px 8px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 12px; }
   .file-list, .commit-list { display: grid; gap: 4px; }
   .file-row { gap: 5px; min-width: 0; }
   .file-row.conflict .file-main { border-color: var(--danger, #d64545); }
   .file-main { flex: 1; gap: 8px; min-width: 0; min-height: 29px; padding: 4px 7px; border: 1px solid transparent; border-radius: 6px; background: var(--surface-3); color: var(--text); text-align: left; }
-  .file-main b { width: 13px; color: var(--text-muted); font-size: 10px; }
-  .file-main span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+  .file-main b { width: 13px; color: var(--text-muted); font-size: 12px; }
+  .file-main span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .commit-card { padding: 9px; }
   .primary-button { justify-content: center; gap: 7px; min-height: 34px; border: 1px solid color-mix(in srgb, var(--brand) 70%, var(--border)); border-radius: 7px; background: color-mix(in srgb, var(--brand) 18%, var(--surface-3)); color: var(--text-strong); }
-  .empty-row, .empty-text { color: var(--text-muted); font-size: 11px; }
+  .empty-row, .empty-text { color: var(--text-muted); font-size: 12px; }
   .empty-row { justify-content: center; gap: 5px; padding: 9px; }
   .empty-text { padding: 15px 5px; text-align: center; }
-  .diff-card pre { max-height: 330px; margin: 0; padding: 9px; overflow: auto; border-radius: 7px; background: #151917; color: #d8e2db; font: 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  .diff-card pre { max-height: 330px; margin: 0; padding: 9px; overflow: auto; border-radius: 7px; background: #151917; color: #d8e2db; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   .commit-row { gap: 6px; width: 100%; min-width: 0; padding: 4px 5px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text); text-align: left; }
   .commit-row:hover { background: var(--surface-3); }
   .commit-row.active-preview { border-color: var(--brand); }
@@ -1440,84 +1437,84 @@
   .commit-graph { align-self: stretch; width: 2px; border-radius: 2px; background: var(--brand); }
   .commit-content { display: grid; min-width: 0; flex: 1; gap: 2px; }
   .commit-content strong, .commit-content small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .commit-content strong { font-size: 11px; }
-  .commit-content small, .commit-main code { color: var(--text-muted); font-size: 9px; }
-  .load-more { justify-content: center; gap: 5px; min-height: 29px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text-muted); font-size: 10px; }
+  .commit-content strong { font-size: 12px; }
+  .commit-content small, .commit-main code { color: var(--text-muted); font-size: 12px; }
+  .load-more { justify-content: center; gap: 5px; min-height: 29px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text-muted); font-size: 12px; }
   .restore-button { color: #d29a3a; }
   .restore-card { position: sticky; bottom: 4px; z-index: 2; display: grid; gap: 9px; padding: 11px; border-color: color-mix(in srgb, #d29a3a 60%, var(--border)); box-shadow: 0 -10px 30px rgba(0, 0, 0, .18); }
-  .restore-card p { color: var(--text-muted); font-size: 11px; line-height: 1.45; }
-  .restore-card label { display: grid; gap: 4px; color: var(--text-muted); font-size: 10px; }
+  .restore-card p { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+  .restore-card label { display: grid; gap: 4px; color: var(--text-muted); font-size: 12px; }
   .restore-heading, .restore-actions { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
   .restore-heading > div { display: grid; gap: 2px; min-width: 0; }
   .restore-heading strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-  .restore-heading code { color: #d29a3a; font-size: 10px; }
+  .restore-heading code { color: #d29a3a; font-size: 12px; }
   .restore-actions { justify-content: flex-end; }
-  .restore-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 31px; padding: 5px 9px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text); font-size: 10px; }
+  .restore-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 31px; padding: 5px 9px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text); font-size: 12px; }
   .restore-actions .danger-button { border-color: color-mix(in srgb, #d29a3a 70%, var(--border)); background: color-mix(in srgb, #d29a3a 14%, var(--surface-3)); }
   .recovery-section { display: grid; gap: 8px; padding: 10px; border-color: color-mix(in srgb, #d29a3a 65%, var(--border)); }
   .recovery-title, .recovery-meta, .recovery-actions { display: flex; align-items: center; gap: 7px; }
   .recovery-title > div { display: grid; gap: 1px; }
-  .recovery-title small, .recovery-meta span { color: var(--text-muted); font-size: 9px; }
+  .recovery-title small, .recovery-meta span { color: var(--text-muted); font-size: 12px; }
   .recovery-item { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface); }
   .recovery-item.manual { border-color: color-mix(in srgb, var(--danger, #d64545) 55%, var(--border)); }
-  .recovery-item p { color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+  .recovery-item p { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
   .recovery-meta { justify-content: space-between; }
-  .recovery-meta code { color: #d29a3a; font-size: 10px; }
+  .recovery-meta code { color: #d29a3a; font-size: 12px; }
   .recovery-meta span { text-transform: uppercase; }
   .recovery-actions { flex-wrap: wrap; justify-content: flex-end; }
-  .recovery-actions button { min-height: 28px; padding: 4px 8px; border: 1px solid color-mix(in srgb, #d29a3a 55%, var(--border)); border-radius: 6px; background: color-mix(in srgb, #d29a3a 10%, var(--surface-3)); color: var(--text); font-size: 9px; }
+  .recovery-actions button { min-height: 28px; padding: 4px 8px; border: 1px solid color-mix(in srgb, #d29a3a 55%, var(--border)); border-radius: 6px; background: color-mix(in srgb, #d29a3a 10%, var(--surface-3)); color: var(--text); font-size: 12px; }
   .network-progress { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 9px; border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); }
   .network-progress > div { display: grid; min-width: 0; gap: 2px; }
-  .network-progress strong { font-size: 10px; }
-  .network-progress small { max-height: 44px; overflow: hidden; color: var(--text-muted); font-size: 9px; white-space: pre-line; }
-  .network-progress button { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 9px; }
+  .network-progress strong { font-size: 12px; }
+  .network-progress small { max-height: 44px; overflow: hidden; color: var(--text-muted); font-size: 12px; white-space: pre-line; }
+  .network-progress button { flex: 0 0 auto; min-height: 28px; padding: 4px 8px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 12px; }
   .integration-recovery { border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); }
-  .conflict-list { display: grid; gap: 3px; max-height: 120px; margin: 0; padding: 0 0 0 18px; overflow: auto; color: var(--danger, #d64545); font-size: 9px; }
+  .conflict-list { display: grid; gap: 3px; max-height: 120px; margin: 0; padding: 0 0 0 18px; overflow: auto; color: var(--danger, #d64545); font-size: 12px; }
   .remote-card, .branches-card { padding: 9px; }
-  .card-hint { margin-top: 8px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+  .card-hint { margin-top: 8px; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
   .remote-list, .branch-list { display: grid; gap: 5px; margin-top: 8px; }
   .remote-row { display: grid; grid-template-columns: 1fr auto; gap: 5px; min-width: 0; }
   .remote-row.invalid { color: var(--danger, #d64545); }
-  .remote-row > p { grid-column: 1 / -1; color: var(--danger, #d64545); font-size: 9px; line-height: 1.4; }
+  .remote-row > p { grid-column: 1 / -1; color: var(--danger, #d64545); font-size: 12px; line-height: 1.4; }
   .remote-main { display: grid; min-width: 0; padding: 6px 7px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface); color: var(--text); text-align: left; }
-  .remote-main strong { font-size: 10px; }
-  .remote-main small { overflow: hidden; color: var(--text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .remote-main strong { font-size: 12px; }
+  .remote-main small { overflow: hidden; color: var(--text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .remote-form { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
-  .remote-form label, .sync-selectors label, .integration-plan label, .destructive-confirmation label { display: grid; gap: 4px; color: var(--text-muted); font-size: 9px; }
+  .remote-form label, .sync-selectors label, .integration-plan label, .destructive-confirmation label { display: grid; gap: 4px; color: var(--text-muted); font-size: 12px; }
   .span-2 { grid-column: 1 / -1; }
-  .remote-form button, .branch-create button, .wide-button, .button-grid button, .destructive-confirmation button, .branch-row > button:not(.mini-button) { min-height: 29px; padding: 4px 8px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 9px; }
+  .remote-form button, .branch-create button, .wide-button, .button-grid button, .destructive-confirmation button, .branch-row > button:not(.mini-button) { min-height: 29px; padding: 4px 8px; border: 1px solid var(--border-3); border-radius: 6px; background: var(--surface-3); color: var(--text); font-size: 12px; }
   .destructive-confirmation { display: grid; gap: 7px; margin-top: 9px; padding: 8px; border: 1px solid color-mix(in srgb, var(--danger, #d64545) 50%, var(--border)); border-radius: 7px; background: var(--surface); }
-  .destructive-confirmation p { color: var(--text-muted); font-size: 9px; line-height: 1.4; }
+  .destructive-confirmation p { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
   .destructive-confirmation > div { display: flex; justify-content: flex-end; gap: 6px; }
   .destructive-confirmation .danger-button { border-color: color-mix(in srgb, var(--danger, #d64545) 60%, var(--border)); }
   .sync-card { display: grid; gap: 8px; padding: 9px; }
-  .sync-badge { padding: 3px 6px; border-radius: 999px; background: var(--surface-3); color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+  .sync-badge { padding: 3px 6px; border-radius: 999px; background: var(--surface-3); color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
   .sync-selectors { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
   select { min-height: 31px; padding: 5px 7px; }
   .sync-counters { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; }
-  .sync-counters span { min-width: 0; padding: 5px 6px; border-radius: 6px; background: var(--surface); color: var(--text-muted); font-size: 9px; }
+  .sync-counters span { min-width: 0; padding: 5px 6px; border-radius: 6px; background: var(--surface); color: var(--text-muted); font-size: 12px; }
   .sync-counters b { display: block; overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
   .button-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .wide-button { width: 100%; }
   .integration-plan { display: grid; gap: 7px; padding: 8px; border: 1px solid color-mix(in srgb, var(--brand) 45%, var(--border)); border-radius: 7px; background: var(--surface); }
   .integration-plan > div:first-child { display: flex; justify-content: space-between; gap: 8px; }
-  .integration-plan p { color: var(--text-muted); font-size: 10px; line-height: 1.45; }
-  .comparison-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; color: var(--text-muted); font-size: 9px; }
+  .integration-plan p { color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+  .comparison-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; color: var(--text-muted); font-size: 12px; }
   .comparison-grid span { padding: 5px 6px; border-radius: 6px; background: var(--surface-2); }
   .integration-history { display: grid; gap: 4px; max-height: 150px; padding: 7px; overflow: auto; border: 1px solid var(--border-3); border-radius: 6px; }
-  .integration-history strong { margin-top: 3px; color: var(--text-muted); font-size: 9px; }
+  .integration-history strong { margin-top: 3px; color: var(--text-muted); font-size: 12px; }
   .integration-history div { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 6px; min-width: 0; }
-  .integration-history code { color: var(--brand); font-size: 8px; }
-  .integration-history span { overflow: hidden; color: var(--text); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+  .integration-history code { color: var(--brand); font-size: 12px; }
+  .integration-history span { overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .integration-diff { border: 1px solid var(--border-3); border-radius: 6px; }
-  .integration-diff summary { padding: 6px 7px; color: var(--text-muted); cursor: pointer; font-size: 9px; }
-  .integration-diff pre { max-height: 280px; margin: 0; padding: 7px; overflow: auto; border-top: 1px solid var(--border-3); background: var(--surface-2); color: var(--text); font-size: 8px; line-height: 1.45; white-space: pre; }
+  .integration-diff summary { padding: 6px 7px; color: var(--text-muted); cursor: pointer; font-size: 12px; }
+  .integration-diff pre { max-height: 280px; margin: 0; padding: 7px; overflow: auto; border-top: 1px solid var(--border-3); background: var(--surface-2); color: var(--text); font-size: 12px; line-height: 1.45; white-space: pre; }
   .integration-diff p { padding: 0 7px 7px; }
   .branch-create { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 8px; }
   .branch-row { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface); }
   .branch-row.current { border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); }
   .branch-row > div { display: grid; min-width: 0; flex: 1; }
-  .branch-row strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-  .branch-row small { color: var(--text-muted); font-size: 9px; }
+  .branch-row strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .branch-row small { color: var(--text-muted); font-size: 12px; }
   .error-message { position: sticky; bottom: 0; padding: 9px; border: 1px solid color-mix(in srgb, var(--danger, #d64545) 55%, var(--border)); border-radius: 8px; background: color-mix(in srgb, var(--danger, #d64545) 10%, var(--surface)); }
 </style>

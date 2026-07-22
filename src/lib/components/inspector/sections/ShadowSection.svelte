@@ -222,7 +222,7 @@
   }
 
   .sh-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 
@@ -255,7 +255,7 @@
   .sh-empty {
     margin: 0;
     padding: 6px 0;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     text-align: center;
   }
@@ -292,7 +292,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;

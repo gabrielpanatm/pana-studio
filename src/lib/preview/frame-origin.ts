@@ -44,7 +44,7 @@ export function resetPreviewFrameDocumentAccess(
 }
 
 /**
- * Shell-side half of the Design Safe message boundary.
+ * Shell-side half of the Editare sigură message boundary.
  *
  * This proves that the browser delivered the message from the currently
  * mounted iframe WindowProxy. Document trust is supplied separately by the

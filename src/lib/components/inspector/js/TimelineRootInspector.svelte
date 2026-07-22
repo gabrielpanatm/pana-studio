@@ -51,11 +51,11 @@
   }
 </script>
 
-<aside class="timeline-root-inspector" aria-label="Setări timeline">
+<aside class="timeline-root-inspector" aria-label="Setări cronologie">
   <div class="root-head">
     <div>
-      <span>Timeline pagină</span>
-      <strong>{timeline.name || "Timeline"}</strong>
+      <span>Cronologia paginii</span>
+      <strong>{timeline.name || "Cronologie"}</strong>
     </div>
   </div>
 
@@ -66,54 +66,54 @@
     </label>
     <label>
       <span>Activ</span>
-      <SelectControl value={timeline.enabled ? "yes" : "no"} options={booleanOptions} ariaLabel="Timeline activ" onchange={(value) => patch({ enabled: value === "yes" })} />
+      <SelectControl value={timeline.enabled ? "yes" : "no"} options={booleanOptions} ariaLabel="Cronologie activă" onchange={(value) => patch({ enabled: value === "yes" })} />
     </label>
     <label>
       <span>Durată scenă</span>
       <input type="number" min="100" step="100" value={timeline.duration} oninput={(event) => patch({ duration: Math.max(100, numberValue(event.currentTarget.value, timeline.duration)) })} />
     </label>
     <label>
-      <span>Autoplay</span>
-      <SelectControl value={timeline.playback.autoplay ? "yes" : "no"} options={booleanOptions} ariaLabel="Autoplay timeline" onchange={(value) => patchPlayback({ autoplay: value === "yes" })} />
+      <span>Pornire automată</span>
+      <SelectControl value={timeline.playback.autoplay ? "yes" : "no"} options={booleanOptions} ariaLabel="Pornire automată cronologie" onchange={(value) => patchPlayback({ autoplay: value === "yes" })} />
     </label>
     <label>
-      <span>Loop</span>
+      <span>Repetări</span>
       <input type="number" min="0" step="1" value={timeline.playback.loop} oninput={(event) => patchPlayback({ loop: Math.max(0, numberValue(event.currentTarget.value, timeline.playback.loop)) })} />
     </label>
     <label>
-      <span>Loop delay</span>
+      <span>Întârziere repetare</span>
       <input type="number" min="0" step="50" value={timeline.playback.loopDelay} oninput={(event) => patchPlayback({ loopDelay: Math.max(0, numberValue(event.currentTarget.value, timeline.playback.loopDelay)) })} />
     </label>
     <label>
-      <span>Alternate</span>
-      <SelectControl value={timeline.playback.alternate ? "yes" : "no"} options={booleanOptions} ariaLabel="Timeline alternate" onchange={(value) => patchPlayback({ alternate: value === "yes" })} />
+      <span>Direcție alternată</span>
+      <SelectControl value={timeline.playback.alternate ? "yes" : "no"} options={booleanOptions} ariaLabel="Direcție alternată" onchange={(value) => patchPlayback({ alternate: value === "yes" })} />
     </label>
     <label>
-      <span>Reversed</span>
-      <SelectControl value={timeline.playback.reversed ? "yes" : "no"} options={booleanOptions} ariaLabel="Timeline reversed" onchange={(value) => patchPlayback({ reversed: value === "yes" })} />
+      <span>Inversată</span>
+      <SelectControl value={timeline.playback.reversed ? "yes" : "no"} options={booleanOptions} ariaLabel="Cronologie inversată" onchange={(value) => patchPlayback({ reversed: value === "yes" })} />
     </label>
     <label>
-      <span>Speed</span>
+      <span>Viteză</span>
       <input type="number" min="0.1" step="0.1" value={timeline.playback.playbackRate} oninput={(event) => patchPlayback({ playbackRate: Math.max(0.1, numberValue(event.currentTarget.value, timeline.playback.playbackRate)) })} />
     </label>
     <label>
-      <span>Frame rate</span>
+      <span>Cadre pe secundă</span>
       <input type="number" min="0" step="1" value={timeline.playback.frameRate} oninput={(event) => patchPlayback({ frameRate: Math.max(0, numberValue(event.currentTarget.value, timeline.playback.frameRate)) })} />
     </label>
     <label class="field-full">
       <span>Ease global</span>
-      <SelectControl value={timeline.playback.playbackEase} options={easingOptions} ariaLabel="Timeline ease" onchange={(value) => patchPlayback({ playbackEase: value })} />
+      <SelectControl value={timeline.playback.playbackEase} options={easingOptions} ariaLabel="Easing global al cronologiei" onchange={(value) => patchPlayback({ playbackEase: value })} />
     </label>
   </div>
 
   <div class="toggle-row">
-    <button type="button" class:active={timeline.playback.persist} onclick={() => patchPlayback({ persist: !timeline.playback.persist })}>persist</button>
+    <button type="button" class:active={timeline.playback.persist} onclick={() => patchPlayback({ persist: !timeline.playback.persist })}>păstrează starea</button>
   </div>
 
   <div class="subpanel">
     <div class="section-head">
-      <strong>Tracks</strong>
-      <button type="button" onclick={() => onAddTrack?.()} disabled={!onAddTrack}>+ track</button>
+      <strong>Piste</strong>
+      <button type="button" onclick={() => onAddTrack?.()} disabled={!onAddTrack}>+ pistă</button>
     </div>
     {#each timeline.tracks as track}
       <div class="track-row">
@@ -122,18 +122,18 @@
           type="color"
           value={track.color}
           oninput={(event) => patchTrack(track, { color: event.currentTarget.value })}
-          aria-label="Culoare track"
+          aria-label="Culoare pistă"
         />
         <input
           value={track.name}
           oninput={(event) => patchTrack(track, { name: event.currentTarget.value })}
-          aria-label="Nume track"
+          aria-label="Nume pistă"
         />
         <button
           type="button"
           class:active={track.collapsed}
           onclick={() => patchTrack(track, { collapsed: !track.collapsed })}
-          title={track.collapsed ? "Extinde track" : "Strânge track"}
+          title={track.collapsed ? "Extinde pista" : "Restrânge pista"}
         >
           {track.collapsed ? "▸" : "▾"}
         </button>
@@ -142,7 +142,7 @@
           class="delete-btn"
           onclick={() => onDeleteTrack?.(track.id)}
           disabled={timeline.tracks.length <= 1 || !onDeleteTrack}
-          title="Șterge track"
+          title="Șterge pista"
         >
           ×
         </button>
@@ -152,17 +152,17 @@
 
   <div class="subpanel">
     <div class="section-head">
-      <strong>Labels</strong>
+      <strong>Repere</strong>
       <small>{timeline.labels.length}</small>
     </div>
     {#if timeline.labels.length === 0}
-      <span class="muted">Adaugă labels din ruler-ul timeline.</span>
+      <span class="muted">Adaugă repere de pe rigla cronologiei.</span>
     {:else}
       {#each timeline.labels as label}
         <div class="label-row">
-          <input value={label.name} oninput={(event) => patchLabel(label.id, { name: event.currentTarget.value })} aria-label="Nume label" />
-          <input class="mono" value={label.position} oninput={(event) => patchLabel(label.id, { position: event.currentTarget.value })} aria-label="Poziție label" />
-          <button type="button" class="delete-btn" onclick={() => deleteLabel(label.id)} title="Șterge label">×</button>
+          <input value={label.name} oninput={(event) => patchLabel(label.id, { name: event.currentTarget.value })} aria-label="Nume reper" />
+          <input class="mono" value={label.position} oninput={(event) => patchLabel(label.id, { position: event.currentTarget.value })} aria-label="Poziție reper" />
+          <button type="button" class="delete-btn" onclick={() => deleteLabel(label.id)} title="Șterge reperul">×</button>
         </div>
       {/each}
     {/if}
@@ -188,7 +188,7 @@
   .root-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -229,7 +229,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   input {
@@ -239,7 +239,7 @@
   }
 
   button {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -270,7 +270,7 @@
   }
 
   .section-head strong {
-    font-size: 11px;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--text);
@@ -283,7 +283,7 @@
   .section-head small,
   .muted {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .track-row {

@@ -657,7 +657,10 @@ mod tests {
 
         fs::remove_dir_all(&root).unwrap();
         assert!(!plan.allowed);
-        assert!(plan.diagnostic.unwrap_or_default().contains("Design Safe"));
+        assert!(plan
+            .diagnostic
+            .unwrap_or_default()
+            .contains("Editare sigură"));
     }
 
     fn write_project(root: &PathBuf, template: &str) {

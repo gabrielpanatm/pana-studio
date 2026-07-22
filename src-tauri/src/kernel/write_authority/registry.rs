@@ -136,6 +136,7 @@ fn validate_internal_path(owner: WriteOwner, segments: &[&str]) -> bool {
                 && segments[2].ends_with(".json")
         }
         WriteOwner::ProjectSession => session_tail(segments) == Some(&["manifest.json"][..]),
+        WriteOwner::Workbench => session_tail(segments) == Some(&["workbench.json"][..]),
         WriteOwner::ProjectWorkspace => {
             session_tail(segments) == Some(&["project-workspace.json"][..])
                 || session_tail(segments) == Some(&["project-open-recovery-decision.json"][..])
@@ -229,6 +230,17 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
             recovery: RecoveryPolicy::LoggedAtomicFile,
             validation:
                 "Project session manifests stay inside the session directory and are logged.",
+        },
+        WriteDeclaration {
+            category: WriteCategory::InternalAppWrite,
+            owner: WriteOwner::Workbench,
+            operations: vec![WriteOperationKind::WriteText],
+            path_authority: "ApplicationHome.data/sessions/[project-id]/workbench.json",
+            atomicity: WriteAtomicity::AtomicRename,
+            conflict: ConflictPolicy::SingleOwnerInternal,
+            recovery: RecoveryPolicy::EphemeralRebuildable,
+            validation:
+                "Workbench projections are bounded, project-scoped navigation state written atomically under the stable ProjectSession directory; they can be rebuilt without touching project content.",
         },
         WriteDeclaration {
             category: WriteCategory::InternalAppWrite,

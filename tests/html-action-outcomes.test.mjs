@@ -238,7 +238,7 @@ test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS r
   assert.deepEqual(host.kernelSourceDirtyPaths, ["sursa/templates/index.html"]);
   assert.equal(host.saveRequest, 1);
   assert.deepEqual(statuses.at(-1), {
-    text: "Save ProjectWorkspace a eșuat: commit HTML refuzat de kernel",
+    text: "Salvarea sesiunii proiectului a eșuat: commit HTML refuzat de kernel",
     kind: "error",
   });
 });

@@ -39,10 +39,10 @@
 
 {#if open}
   <div class="history-backdrop" role="presentation" onclick={close}></div>
-  <aside class="history-panel" aria-label="Istoric ProjectWorkspace">
+  <aside class="history-panel" aria-label="Istoricul sesiunii proiectului">
     <header class="history-header">
       <div>
-        <p class="eyebrow">ProjectWorkspace</p>
+        <p class="eyebrow">Sesiunea proiectului</p>
         <h2>Istoric autoritativ</h2>
       </div>
       <button type="button" class="icon-button" title="Închide" onclick={close}>
@@ -51,30 +51,30 @@
     </header>
 
     {#if workspace && history}
-      <section class="workspace-runtime" aria-label="Stare ProjectWorkspace">
+      <section class="workspace-runtime" aria-label="Starea sesiunii proiectului">
         <span>Revizie <b>{workspace.revision}</b></span>
-        <span>Disk <b>{workspace.diskGeneration}</b></span>
-        <span>Documente dirty <b>{workspace.dirtyDocumentCount}</b></span>
-        <span>Page JS dirty <b>{workspace.dirtyPageJsCount}</b></span>
-        <span>Undo <b>{history.undoCount}</b></span>
-        <span>Redo <b>{history.redoCount}</b></span>
+        <span>Disc <b>{workspace.diskGeneration}</b></span>
+        <span>Documente modificate <b>{workspace.dirtyDocumentCount}</b></span>
+        <span>JavaScript modificat <b>{workspace.dirtyPageJsCount}</b></span>
+        <span>Anulări <b>{history.undoCount}</b></span>
+        <span>Refaceri <b>{history.redoCount}</b></span>
         <span class="memory">Memorie <b>{formatBytes(history.retainedBytes)} / {formatBytes(history.retainedBytesLimit)}</b></span>
       </section>
 
       <div class="history-actions">
         <button type="button" disabled={!history.canUndo} onclick={undoAction}>
           <IconArrowBackUp size={16} stroke={1.9} />
-          Undo
+          Anulează
         </button>
         <button type="button" disabled={!history.canRedo} onclick={redoAction}>
           <IconArrowForwardUp size={16} stroke={1.9} />
-          Redo
+          Refă
         </button>
       </div>
 
       <button type="button" class="discard-session-btn" disabled={!workspace.dirty} onclick={discardSession}>
         <IconRotateClockwise size={16} stroke={1.9} />
-        <span>Abandonează workspace-ul și reîncarcă de pe disk</span>
+        <span>Abandonează sesiunea și reîncarcă de pe disc</span>
       </button>
 
       {#if history.undoEntries.length === 0 && history.redoEntries.length === 0}
@@ -82,7 +82,7 @@
       {:else}
         <div class="snapshot-list">
           {#if history.undoEntries.length > 0}
-            <p class="section-label">Undo — următoarea acțiune este prima</p>
+            <p class="section-label">De anulat — următoarea acțiune este prima</p>
             {#each history.undoEntries as entry, index}
               <article class="snapshot-item" class:next={index === 0}>
                 <div class="snapshot-main">
@@ -96,7 +96,7 @@
           {/if}
 
           {#if history.redoEntries.length > 0}
-            <p class="section-label redo">Redo — următoarea acțiune este prima</p>
+            <p class="section-label redo">De refăcut — următoarea acțiune este prima</p>
             {#each history.redoEntries as entry, index}
               <article class="snapshot-item redo" class:next={index === 0}>
                 <div class="snapshot-main">
@@ -111,7 +111,7 @@
         </div>
       {/if}
     {:else}
-      <p class="empty-text">Deschide un proiect pentru istoricul ProjectWorkspace.</p>
+      <p class="empty-text">Deschide un proiect pentru istoricul sesiunii.</p>
     {/if}
   </aside>
 {/if}
@@ -164,7 +164,7 @@
   .eyebrow,
   .section-label {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -182,7 +182,7 @@
 
   .workspace-runtime span {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .workspace-runtime .memory {
@@ -278,17 +278,17 @@
   }
 
   .snapshot-main span {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .snapshot-main small {
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .snapshot-item code {
     max-width: 90px;
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: 12px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

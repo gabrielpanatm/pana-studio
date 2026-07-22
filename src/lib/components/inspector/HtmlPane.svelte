@@ -140,12 +140,12 @@
   async function applyAttributeMutation(name: string, nextAttributes: EditableAttributes) {
     const serial = ++fieldCommitSerial;
     const previewMode = htmlAttributePreviewMode(name, tag);
-    setFieldStatus(name, "Se aplică prin ProjectWorkspace…", "info");
+    setFieldStatus(name, "Se aplică în sesiunea proiectului…", "info");
     try {
       const result = await applyAttributesToHtml(nextAttributes);
       if (serial !== fieldCommitSerial) return;
       if (!result) {
-        setFieldStatus(name, attributeStatus || "Operația a fost trimisă către ProjectWorkspace.", "info");
+        setFieldStatus(name, attributeStatus || "Operația a fost trimisă către sesiunea proiectului.", "info");
         return;
       }
       if (result.status === "failed" || result.status === "blocked") {
@@ -153,9 +153,9 @@
         return;
       }
       const projectionNote = previewMode === "sourceOnly"
-        ? " Sursa a fost actualizată; Design Safe Preview neutralizează acest atribut."
+        ? " Sursa a fost actualizată; previzualizarea sigură neutralizează acest atribut."
         : previewMode === "inert"
-          ? " Sursa a fost actualizată; elementul este inert în Design Safe Preview."
+          ? " Sursa a fost actualizată; elementul este inert în previzualizarea sigură."
           : "";
       setFieldStatus(
         name,
@@ -395,7 +395,7 @@
     <SelectControl value={tag} options={tagOptions} disabled={!canChangeTag} ariaLabel="Tag HTML" onchange={commitTagDraft} />
   </div>
   {#if tagCapability?.previewMode === "inert"}
-    <p class="hf-capability-note">{tagCapability.reason ?? "Elementul este păstrat în sursă, dar este inert în Design Safe Preview."}</p>
+    <p class="hf-capability-note">{tagCapability.reason ?? "Elementul este păstrat în sursă, dar este inert în previzualizarea sigură."}</p>
   {:else if canEdit && !canChangeTag}
     <p class="hf-capability-note">Schimbarea tagului nu are o destinație structural compatibilă și live-projectable.</p>
   {/if}
@@ -518,7 +518,7 @@
     </div>
     <div class="hf-row">
       <span class="hf-label">target</span>
-      <SelectControl value={getAttr("target")} options={targetOptions} disabled={!canEditAttribute("target")} ariaLabel="Target link" onchange={(value) => commitField("target", value)} />
+      <SelectControl value={getAttr("target")} options={targetOptions} disabled={!canEditAttribute("target")} ariaLabel="Ținta linkului" onchange={(value) => commitField("target", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">rel</span>
@@ -726,7 +726,7 @@
   </InspectorSection>
 
 {:else if tag === "label"}
-  <InspectorSection title="Label" hasValues={"for" in attributeValues}>
+  <InspectorSection title="Etichetă" hasValues={"for" in attributeValues}>
     {#snippet icon()}<IconTag size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">for</span>
@@ -807,7 +807,7 @@
 
 {#if sourceOnlySpecializedAttributes.length}
   <p class="hf-capability-note">
-    {sourceOnlySpecializedAttributes.join(", ")} se salvează în sursa canonică, dar sunt neutralizate în Design Safe Preview.
+    {sourceOnlySpecializedAttributes.join(", ")} se salvează în sursa canonică, dar sunt neutralizate în previzualizarea sigură.
   </p>
 {/if}
 
@@ -1009,7 +1009,7 @@
     border-radius: 6px;
     background: color-mix(in srgb, #cf4a4a 8%, var(--surface-3));
     color: #cf4a4a;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -1025,7 +1025,7 @@
   }
 
   .hf-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     color: var(--text-muted);
     text-transform: uppercase;
@@ -1047,7 +1047,7 @@
 
   .hf-dims {
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 
@@ -1063,7 +1063,7 @@
     background: var(--surface-8);
     color: var(--text);
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     outline: none;
     transition: border-color 80ms;
   }
@@ -1089,7 +1089,7 @@
     border-radius: 6px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     cursor: pointer;
     transition: border-color 80ms, color 80ms, background 80ms;
@@ -1123,7 +1123,7 @@
     border-radius: 999px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     font-weight: 600;
     cursor: pointer;
@@ -1152,7 +1152,7 @@
   }
 
   .hf-sublabel {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -1197,7 +1197,7 @@
     border-radius: 6px;
     background: transparent;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
     transition: color 80ms, border-color 80ms;
     width: 100%;
@@ -1228,7 +1228,7 @@
     border-radius: 6px;
     background: var(--brand);
     color: #fff;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -1267,7 +1267,7 @@
 
   .hf-data-key {
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--brand-strong);
     overflow: hidden;
@@ -1298,7 +1298,7 @@
 
   .cls-chip-name {
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .cls-chip-del {
@@ -1332,7 +1332,7 @@
   }
 
   .hint-inline {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 
@@ -1368,7 +1368,7 @@
     background: color-mix(in srgb, #f59e0b 10%, transparent);
     border: 1px solid color-mix(in srgb, #f59e0b 30%, transparent);
     color: #92400e;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .hf-capability-note,
@@ -1376,7 +1376,7 @@
   .hf-schema-reason {
     margin: 0;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.35;
   }
 
@@ -1422,7 +1422,7 @@
     border-radius: 999px;
     color: var(--brand-strong);
     background: var(--brand-soft);
-    font-size: 8px;
+    font-size: 12px;
     font-weight: 800;
     text-transform: uppercase;
   }

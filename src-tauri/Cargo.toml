@@ -23,7 +23,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["image-png"] }
-# Refolosește parserul HTML5 al stack-ului Tauri pentru sanitizarea Design Safe.
+# Refolosește parserul HTML5 al stack-ului Tauri pentru sanitizarea Editare sigură.
 tauri-utils = { version = "2", features = ["html-manipulation"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"

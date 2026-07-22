@@ -100,7 +100,7 @@
     </div>
     <div class="field-grid">
       <label>
-        <span>Mode</span>
+        <span>Mod</span>
         <SelectControl value={scroll.syncMode} options={syncModes} ariaLabel="Scroll sync mode" onchange={(value) => updateSyncMode(value as PanaMotionScrollItem["syncMode"])} />
       </label>
       {#if scroll.syncMode === "methods"}
@@ -172,7 +172,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -204,7 +204,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -235,7 +235,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -256,7 +256,7 @@
   .hint {
     margin: 0;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.35;
   }
 </style>

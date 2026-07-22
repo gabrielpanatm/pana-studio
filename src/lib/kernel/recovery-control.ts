@@ -26,13 +26,13 @@ const statusLabels: Record<RecoveryCoordinatorStatus, string> = {
 };
 
 const familyLabels: Record<RecoveryJournalFamily, string> = {
-  project_workspace_save: "ProjectWorkspace Save",
-  project_transition_decision_retention: "ProjectTransition Decision Retention",
+  project_workspace_save: "salvarea sesiunii proiectului",
+  project_transition_decision_retention: "retenția deciziei de tranziție",
 };
 
 const familyStatusLabels: Record<RecoveryJournalFamilyStatus, string> = {
   needs_attention: "necesită atenție",
-  manual_review_required: "review manual obligatoriu",
+  manual_review_required: "revizuire manuală obligatorie",
 };
 
 const severityLabels: Record<RecoveryCoordinatorDiagnostic["severity"], string> = {
@@ -46,7 +46,7 @@ export function recoveryCoordinatorSummary(
   if (!scan) {
     return {
       tone: "idle",
-      label: "Recovery Coordinator indisponibil",
+      label: "Coordonator de recuperare indisponibil",
       detail: "Deschide un proiect valid pentru scanarea jurnalelor active.",
       blocked: false,
     };
@@ -54,8 +54,8 @@ export function recoveryCoordinatorSummary(
   if (scan.status === "clean") {
     return {
       tone: "clean",
-      label: "Recovery Coordinator curat",
-      detail: "Nu există operații pe disk întrerupte care necesită intervenție.",
+      label: "Coordonator de recuperare curat",
+      detail: "Nu există operații pe disc întrerupte care necesită intervenție.",
       blocked: false,
     };
   }
@@ -63,14 +63,14 @@ export function recoveryCoordinatorSummary(
   if (scan.status === "unreadable") {
     return {
       tone: "error",
-      label: "Recovery Coordinator necitibil",
-      detail: `${scan.diagnostics.length} diagnostice; mutațiile pe disk rămân blocate până la clarificare.`,
+      label: "Coordonator de recuperare necitibil",
+      detail: `${scan.diagnostics.length} diagnostice; mutațiile pe disc rămân blocate până la clarificare.`,
       blocked: true,
     };
   }
   return {
     tone: "blocked",
-    label: "Recovery necesar",
+    label: "Recuperare necesară",
     detail: `${journalCount} jurnale active în ${scan.hotJournalFamilies.length} familii.`,
     blocked: true,
   };
@@ -91,7 +91,7 @@ export function recoveryJournalFamilyStatusLabel(status: RecoveryJournalFamilySt
 export function recoveryJournalFamilyActionLabel(summary: RecoveryJournalFamilySummary): string {
   const parts = [
     summary.clearableCount ? `${summary.clearableCount} curățare` : "",
-    summary.rollbackCount ? `${summary.rollbackCount} rollback` : "",
+    summary.rollbackCount ? `${summary.rollbackCount} revenire` : "",
     summary.restoreCount ? `${summary.restoreCount} restaurare` : "",
     summary.manualReviewCount ? `${summary.manualReviewCount} manual` : "",
   ].filter(Boolean);
@@ -169,8 +169,8 @@ export function projectTransitionRetentionStateLabel(
 ): string {
   const labels: Record<KernelProjectTransitionDecisionRetentionHotJournalDiskState, string> = {
     no_effect: "fără efect",
-    completed_retention: "retention finalizat",
-    partial_retention: "retention parțial",
+    completed_retention: "retenție finalizată",
+    partial_retention: "retenție parțială",
     conflict_state: "conflict",
   };
   return labels[state];
@@ -183,7 +183,7 @@ export function projectTransitionRetentionActionLabel(
     clear_no_effect_journal: "curăță jurnalul fără efect",
     clear_completed_journal: "curăță jurnalul finalizat",
     restore_before_journal: "restaurează jurnalul anterior",
-    manual_review_conflict: "review manual al conflictului",
+    manual_review_conflict: "revizuire manuală a conflictului",
   };
   return labels[action];
 }

@@ -51,7 +51,11 @@ import {
 } from "$lib/session/latest-wins-async-queue";
 import { dispatchExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
 import { flushWorkspaceMutationInputs } from "$lib/session/workspace-mutation-coordinator";
-import { drainPreviewStructuralLanes } from "$lib/kernel/preview-structural-lane";
+import {
+  drainPreviewStructuralLanes,
+  requireCurrentPreviewStructuralSession,
+  runInPreviewStructuralLane,
+} from "$lib/kernel/preview-structural-lane";
 import {
   applyTagChange as applyHtmlTagChange,
   changeElementTag as changeHtmlElementTag,
@@ -89,7 +93,7 @@ import {
 } from "$lib/state/html-actions-controller";
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
 import type { LayerMoveRequest } from "$lib/project/layers-drag";
-import { defaultMotionTimelinePaneHeight, type ResizeKind } from "$lib/ui/resize";
+import type { ResizeKind } from "$lib/ui/resize";
 import {
   DEFAULT_PREVIEW_ZOOM,
   resetPreviewZoom as resetPreviewZoomFromController,
@@ -112,12 +116,23 @@ import type {
   AiCoordinationSnapshot,
   AiContextStatus,
   CenterView,
+  DesignClassInventorySnapshot,
   ExternalDiskState,
   PageSection,
   ProjectDiskManifest,
+  ProjectAuditSnapshot,
   ProjectFile,
   ProjectScan,
   ProjectWorkspaceSnapshot,
+  WorkbenchActivity,
+  WorkbenchBottomPanelView,
+  WorkbenchCanvasMode,
+  WorkbenchCanvasPreset,
+  WorkbenchCanvasViewportSnapshot,
+  WorkbenchIntent,
+  WorkbenchSnapshot,
+  WorkbenchSplit,
+  WorkbenchSurface,
   VersionPreviewReceipt,
   PreviewSelectionState,
   SaveState,
@@ -128,6 +143,10 @@ import type {
   TemplateWorkbenchPlan,
   SourceGraphNode,
 } from "$lib/types";
+import {
+  WorkbenchProjectionController,
+  type WorkbenchProjectionHost,
+} from "$lib/workbench/controller";
 import {
   createInspectorPendingSourceRegistry,
   type InspectorPendingSource,
@@ -248,6 +267,7 @@ import {
   closeCurrentProject as closeCurrentProjectFromController,
   continueProjectOpenWithRecoveryAbandonment as continueProjectOpenWithRecoveryAbandonmentFromController,
   createContentPage as createContentPageFromController,
+  createContentPageFromInput as createContentPageFromInputFromController,
   continueProjectTransitionWithOperatorDecision as continueProjectTransitionWithOperatorDecisionFromController,
   discardSessionAndReloadFromDisk as discardSessionAndReloadFromDiskFromController,
   initZolaProject as initZolaProjectFromController,
@@ -341,8 +361,15 @@ import {
 } from "$lib/session/file-buffer-draft-sync";
 import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
 import {
+  createCssRequestIdentity,
+  getScssVariables,
+  readDesignClassInventory,
+  readProjectAudit,
+  readProjectFile,
   readProjectWorkspaceState,
   recordPreviewRuntimeEvent,
+  renameDesignClass as renameDesignClassCommand,
+  setScssVariable,
   type PreviewRuntimeEventKind,
 } from "$lib/project/io";
 import type { FileMoveRequest } from "$lib/project/files-drag";
@@ -626,6 +653,19 @@ export class AppState {
   saveState = $state<SaveState>("idle");
   saveStatus = $state("Nicio modificare salvata in aceasta sesiune.");
   projectWorkspaceSnapshot = $state<ProjectWorkspaceSnapshot | null>(null);
+  projectAuditSnapshot = $state<ProjectAuditSnapshot | null>(null);
+  projectAuditLoading = $state(false);
+  projectAuditError = $state("");
+  private projectAuditRequestSerial = 0;
+  private projectAuditRequestKey = "";
+  private projectAuditRequest: Promise<ProjectAuditSnapshot | null> | null = null;
+  designClassInventory = $state<DesignClassInventorySnapshot | null>(null);
+  designClassInventoryLoading = $state(false);
+  designClassInventoryError = $state("");
+  private designClassInventorySerial = 0;
+  private designClassInventoryRequestKey = "";
+  private designClassInventoryRequest: Promise<DesignClassInventorySnapshot | null> | null = null;
+  workbenchSnapshot = $state<WorkbenchSnapshot | null>(null);
   jsRefreshToken = $state(0);
   scannedProject = $state<ProjectScan | null>(null);
   projectOpenRecoveryDecisionRequest = $state<ProjectOpenRecoveryDecisionRequest | null>(null);
@@ -676,19 +716,23 @@ export class AppState {
   codeSelectionRevealConsumedId = 0;
   previewDevice = $state<"desktop" | "tablet" | "mobile">("desktop");
   previewZoom = $state(DEFAULT_PREVIEW_ZOOM);
+  previewCanvasMode = $state<WorkbenchCanvasMode>("fit");
+  previewCanvasPreset = $state<WorkbenchCanvasPreset>("desktop");
+  previewWidthPx = $state(1_440);
+  previewRulers = $state(true);
   uiTheme = $state<"dark" | "light">(initialUiTheme());
   leftPaneWidth = $state(DEFAULT_LEFT_PANE_WIDTH);
   rightPaneWidth = $state(DEFAULT_RIGHT_PANE_WIDTH);
   terminalPaneHeight = $state(defaultTerminalPaneHeight);
-  motionTimelinePaneHeight = $state(defaultMotionTimelinePaneHeight);
   leftPaneCollapsed = $state(false);
   rightPaneCollapsed = $state(false);
   historyPanelOpen = $state(false);
-  versionsPanelOpen = $state(false);
   settingsPanelOpen = $state(false);
   activeVersionPreview = $state<VersionPreviewReceipt | null>(null);
   activeInspectorTab = $state<InspectorTab>("html");
   activeResizeKind = $state<ResizeKind | null>(null);
+  private workbenchController: WorkbenchProjectionController;
+  private workbenchHydratedRuntimeSessionId = "";
 
   // ── Mood board state ──
   moodBoard = $state<MoodBoard>(createEmptyMoodBoard());
@@ -803,7 +847,7 @@ export class AppState {
     this.aiEditLeaseFrontendLockActive
       ? "Operațiile pe surse sunt blocate cât timp AI deține sau reconciliază autoritatea de editare."
       : this.externalDiskState.workspaceProjectionRecoveryRequired
-      ? "Operațiile pe disk sunt blocate până la reîncărcarea explicită a proiecției externe."
+      ? "Operațiile pe disc sunt blocate până la reîncărcarea explicită a proiecției externe."
       : this.globalDirtyState.immediateDiskOperationBlockedReason,
   );
   canAddChildToSelectedElement = $derived(deriveCanAddChildToSelectedElement(this));
@@ -820,6 +864,7 @@ export class AppState {
   // ── Constructor: reactive effects ────────────────────────────────────────
 
   constructor() {
+    this.workbenchController = new WorkbenchProjectionController(() => this.workbenchProjectionHost());
     this.editorRuntime = createEditorRuntime(this.editorRuntimeHost());
     this.previewRuntime = createPreviewRuntime(this.previewRuntimeHost());
     this.unregisterHtmlDraftCommitFlush = registerEditFlushHandler(
@@ -838,6 +883,284 @@ export class AppState {
 
   previewRuntimeHost(): PreviewRuntimeHost {
     return this;
+  }
+
+  workbenchProjectionHost(): WorkbenchProjectionHost {
+    return this;
+  }
+
+  refreshWorkbenchState() {
+    return this.workbenchController.refresh();
+  }
+
+  async restoreWorkbenchState() {
+    const projectRoot = this.sessionProjectRoot;
+    const runtimeSessionId = this.kernelProjectSessionId;
+    const snapshot = await this.workbenchController.refresh();
+    if (
+      !snapshot
+      || !projectRoot
+      || !runtimeSessionId
+      || snapshot.projectRoot !== projectRoot
+      || snapshot.runtimeSessionId !== runtimeSessionId
+      || this.scannedProject?.root !== projectRoot
+    ) return snapshot;
+
+    this.projectWorkbenchCanvas(snapshot.canvasViewport);
+
+    const group = snapshot.groups.find(
+      (candidate) => candidate.groupId === snapshot.activeGroupId,
+    );
+    const document = group?.documents.find(
+      (candidate) => candidate.documentId === group.activeDocumentId,
+    );
+    const file = document
+      ? this.scannedProject.files.find(
+          (candidate) => candidate.relativePath === document.relativePath,
+        )
+      : null;
+
+    if (document && !file) {
+      this.notify({
+        id: "workbench.restore.missing-document",
+        level: "warning",
+        title: "Documentul restaurat nu mai există",
+        message: document.relativePath,
+      });
+    } else if (file) {
+      await this.loadScannedProjectFile(file, {
+        strict: true,
+        skipDraftFlush: true,
+        syncWorkbench: false,
+      });
+      if (
+        this.sessionProjectRoot !== projectRoot
+        || this.kernelProjectSessionId !== runtimeSessionId
+      ) return this.workbenchSnapshot;
+      this.centerView = document?.surface === "code"
+        ? "code"
+        : document?.surface === "markdown"
+          ? "markdown"
+          : "preview";
+      this.clearNotification("workbench.restore.missing-document");
+    }
+
+    this.workbenchHydratedRuntimeSessionId = runtimeSessionId;
+    this.terminalPaneOpen = snapshot.bottomPanel.open
+      && snapshot.bottomPanel.activeView === "terminal";
+    this.projectWorkbenchActivity(snapshot.activeActivity, document?.surface ?? "visual");
+    this.clearNotification("workbench.restore");
+    if (!file && this.activeScannedPath) {
+      const fallbackFile = this.scannedProject.files.find(
+        (candidate) => candidate.relativePath === this.activeScannedPath,
+      );
+      if (fallbackFile) {
+        try {
+          const receipt = await this.workbenchController.openDocument(
+            fallbackFile,
+            this.centerView,
+          );
+          return receipt.snapshot;
+        } catch (error) {
+          this.workbenchHydratedRuntimeSessionId = "";
+          throw error;
+        }
+      }
+    }
+    return snapshot;
+  }
+
+  applyWorkbenchIntent(intent: WorkbenchIntent) {
+    return this.workbenchController.apply(intent);
+  }
+
+  private projectWorkbenchCanvas(viewport: WorkbenchCanvasViewportSnapshot) {
+    this.previewCanvasMode = viewport.mode;
+    this.previewCanvasPreset = viewport.preset;
+    this.previewWidthPx = viewport.widthPx;
+    this.previewZoom = viewport.zoomPercent;
+    this.previewRulers = viewport.showRulers;
+    this.previewDevice = viewport.mode === "fit"
+      ? "desktop"
+      : viewport.preset === "mobile"
+      ? "mobile"
+      : viewport.preset === "tablet"
+        ? "tablet"
+        : viewport.preset === "custom" && viewport.widthPx <= 600
+          ? "mobile"
+          : viewport.preset === "custom" && viewport.widthPx <= 1_100
+            ? "tablet"
+            : "desktop";
+  }
+
+  async setWorkbenchCanvasViewport(
+    viewport: Partial<WorkbenchCanvasViewportSnapshot>,
+  ) {
+    const current = this.workbenchSnapshot?.canvasViewport ?? {
+      mode: this.previewCanvasMode,
+      preset: this.previewCanvasPreset,
+      widthPx: this.previewWidthPx,
+      zoomPercent: this.previewZoom,
+      showRulers: this.previewRulers,
+    } satisfies WorkbenchCanvasViewportSnapshot;
+    const next: WorkbenchCanvasViewportSnapshot = {
+      ...current,
+      ...viewport,
+      widthPx: Math.round(viewport.widthPx ?? current.widthPx),
+      zoomPercent: Math.round(viewport.zoomPercent ?? current.zoomPercent),
+    };
+    try {
+      const receipt = await this.workbenchController.apply({
+        kind: "set_canvas_viewport",
+        viewport: next,
+      });
+      this.projectWorkbenchCanvas(receipt.snapshot.canvasViewport);
+      this.clearNotification("workbench.canvas-viewport");
+      return receipt;
+    } catch (error) {
+      this.notify({
+        id: "workbench.canvas-viewport",
+        level: "warning",
+        title: "Canvas-ul responsive nu a putut fi actualizat",
+        message: errorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  async setSynchronizedWorkbenchSplit(split: WorkbenchSplit) {
+    try {
+      if (split === "none") {
+        const receipt = await this.workbenchController.apply({
+          kind: "set_split",
+          split,
+        });
+        if (this.activeScannedPath) {
+          await this.workbenchController.setActiveDocumentSurface(
+            this.activeScannedPath,
+            this.centerView,
+          );
+        }
+        this.clearNotification("workbench.split");
+        return receipt;
+      }
+
+      if (!this.activeScannedPath) {
+        throw new Error("Deschide un document înainte de a activa split view.");
+      }
+      const secondarySurface: WorkbenchSurface = this.sourceLanguage === "markdown"
+        ? "markdown"
+        : "code";
+      const receipt = await this.workbenchController.apply({
+        kind: "configure_synchronized_split",
+        split,
+        relativePath: this.activeScannedPath,
+        secondarySurface,
+      });
+      this.clearNotification("workbench.split");
+      return receipt;
+    } catch (error) {
+      this.notify({
+        id: "workbench.split",
+        level: "warning",
+        title: "Split view nu a putut fi actualizat",
+        message: errorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  async setWorkbenchSplitRatio(ratioBasisPoints: number) {
+    try {
+      const receipt = await this.workbenchController.apply({
+        kind: "set_split_ratio",
+        ratioBasisPoints: Math.round(ratioBasisPoints),
+      });
+      this.clearNotification("workbench.split-ratio");
+      return receipt;
+    } catch (error) {
+      this.notify({
+        id: "workbench.split-ratio",
+        level: "warning",
+        title: "Dividerul split nu a putut fi salvat",
+        message: errorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  async setWorkbenchBottomPanel(
+    open: boolean,
+    activeView: WorkbenchBottomPanelView = "terminal",
+  ) {
+    try {
+      const receipt = await this.workbenchController.apply({
+        kind: "set_bottom_panel",
+        open,
+        activeView,
+      });
+      this.terminalPaneOpen = receipt.snapshot.bottomPanel.open
+        && receipt.snapshot.bottomPanel.activeView === "terminal";
+      this.clearNotification("workbench.bottom-panel");
+      return true;
+    } catch (error) {
+      this.notify({
+        id: "workbench.bottom-panel",
+        level: "warning",
+        title: "Panoul inferior nu a putut fi actualizat",
+        message: errorMessage(error),
+      });
+      return false;
+    }
+  }
+
+  toggleTerminalPane() {
+    return this.setWorkbenchBottomPanel(!this.terminalPaneOpen, "terminal");
+  }
+
+  async setWorkbenchActivity(activity: WorkbenchActivity) {
+    const receipt = await this.workbenchController.apply({
+      kind: "set_activity",
+      activity,
+    });
+    const group = receipt.snapshot.groups.find(
+      (candidate) => candidate.groupId === receipt.snapshot.activeGroupId,
+    );
+    const document = group?.documents.find(
+      (candidate) => candidate.documentId === group.activeDocumentId,
+    );
+    if (activity === "editor" && document && this.scannedProject) {
+      const file = this.scannedProject.files.find(
+        (candidate) => candidate.relativePath === document.relativePath,
+      );
+      if (file && this.activeScannedPath !== file.relativePath) {
+        await this.loadScannedProjectFile(file, {
+          strict: true,
+          syncWorkbench: false,
+        });
+      }
+    }
+    this.projectWorkbenchActivity(activity, document?.surface ?? "visual");
+    return receipt;
+  }
+
+  private projectWorkbenchActivity(
+    activity: WorkbenchActivity,
+    surface: "visual" | "code" | "markdown",
+  ) {
+    if (activity === "editor") {
+      this.centerView = surface === "code"
+        ? "code"
+        : surface === "markdown"
+          ? "markdown"
+          : "preview";
+    } else if (activity === "site" || activity === "content") {
+      this.centerView = "site";
+    } else if (activity === "design_system") {
+      this.centerView = "canvas";
+    } else if (activity === "audit") {
+      this.centerView = "kernel";
+    }
   }
 
   // ── Lifecycle (called from onMount) ──────────────────────────────────────
@@ -904,7 +1227,7 @@ export class AppState {
    */
   async beginPreviewStructuralWriteBoundary() {
     if (this.previewStructuralWriteBoundaryActive) {
-      throw new Error("O altă mutație structurală deține deja bariera monitorului disk.");
+      throw new Error("O altă mutație structurală deține deja bariera monitorului de disc.");
     }
     const resumesMonitoring = !this.externalDiskSuspended;
     try {
@@ -919,7 +1242,7 @@ export class AppState {
         || this.externalDiskState.workspaceProjectionRecoveryRequired
       ) {
         throw new Error(
-          "Monitorul disk nu a ajuns la o graniță curată înaintea mutației structurale.",
+          "Monitorul discului nu a ajuns la o graniță curată înaintea mutației structurale.",
         );
       }
       this.previewStructuralWriteBoundaryResumesMonitoring = resumesMonitoring;
@@ -998,7 +1321,144 @@ export class AppState {
   }
 
   setSessionProjectRoot(projectRoot = "") {
+    if (this.sessionProjectRoot !== projectRoot) {
+      this.projectAuditRequestSerial += 1;
+      this.projectAuditRequestKey = "";
+      this.projectAuditRequest = null;
+      this.projectAuditSnapshot = null;
+      this.projectAuditLoading = false;
+      this.projectAuditError = "";
+      this.designClassInventorySerial += 1;
+      this.designClassInventoryRequestKey = "";
+      this.designClassInventoryRequest = null;
+      this.designClassInventory = null;
+      this.designClassInventoryLoading = false;
+      this.designClassInventoryError = "";
+    }
     this.sessionProjectRoot = projectRoot;
+  }
+
+  async refreshProjectAudit(force = false): Promise<ProjectAuditSnapshot | null> {
+    const projectRoot = this.sessionProjectRoot.trim();
+    const runtimeSessionId = this.kernelProjectSessionId.trim();
+    const workspaceRevision = this.projectWorkspaceSnapshot?.revision ?? null;
+    if (!projectRoot || !runtimeSessionId || workspaceRevision === null) {
+      this.projectAuditSnapshot = null;
+      this.projectAuditError = "";
+      return null;
+    }
+
+    const requestKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    const current = this.projectAuditSnapshot;
+    if (
+      !force
+      && current?.projectRoot === projectRoot
+      && current.runtimeSessionId === runtimeSessionId
+      && current.workspaceRevision === workspaceRevision
+    ) {
+      return current;
+    }
+    if (!force && this.projectAuditRequest && this.projectAuditRequestKey === requestKey) {
+      return await this.projectAuditRequest;
+    }
+
+    const serial = ++this.projectAuditRequestSerial;
+    this.projectAuditRequestKey = requestKey;
+    this.projectAuditLoading = true;
+    this.projectAuditError = "";
+    const request = (async () => {
+      try {
+        const snapshot = await readProjectAudit();
+        if (
+          serial !== this.projectAuditRequestSerial
+          || this.sessionProjectRoot !== projectRoot
+          || this.kernelProjectSessionId !== runtimeSessionId
+          || this.projectWorkspaceSnapshot?.revision !== workspaceRevision
+        ) return null;
+        if (
+          snapshot.projectRoot !== projectRoot
+          || snapshot.runtimeSessionId !== runtimeSessionId
+          || snapshot.workspaceRevision !== workspaceRevision
+        ) {
+          throw new Error("Auditul Rust a răspuns pentru altă identitate a sesiunii proiectului.");
+        }
+        this.projectAuditSnapshot = snapshot;
+        return snapshot;
+      } catch (error) {
+        if (serial !== this.projectAuditRequestSerial) return null;
+        this.projectAuditError = errorMessage(error);
+        return null;
+      } finally {
+        if (serial === this.projectAuditRequestSerial) {
+          this.projectAuditLoading = false;
+          this.projectAuditRequest = null;
+          this.projectAuditRequestKey = "";
+        }
+      }
+    })();
+    this.projectAuditRequest = request;
+    return await request;
+  }
+
+  async refreshDesignClassInventory(
+    force = false,
+  ): Promise<DesignClassInventorySnapshot | null> {
+    const projectRoot = this.sessionProjectRoot.trim();
+    const runtimeSessionId = this.kernelProjectSessionId.trim();
+    const workspaceRevision = this.projectWorkspaceSnapshot?.revision ?? null;
+    if (!projectRoot || !runtimeSessionId || workspaceRevision === null) {
+      this.designClassInventory = null;
+      this.designClassInventoryError = "";
+      return null;
+    }
+    const requestKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    const current = this.designClassInventory;
+    if (
+      !force
+      && current?.projectRoot === projectRoot
+      && current.runtimeSessionId === runtimeSessionId
+      && current.workspaceRevision === workspaceRevision
+    ) return current;
+    if (
+      !force
+      && this.designClassInventoryRequest
+      && this.designClassInventoryRequestKey === requestKey
+    ) return await this.designClassInventoryRequest;
+
+    const serial = ++this.designClassInventorySerial;
+    this.designClassInventoryRequestKey = requestKey;
+    this.designClassInventoryLoading = true;
+    this.designClassInventoryError = "";
+    const request = (async () => {
+      try {
+        const snapshot = await readDesignClassInventory();
+        if (
+          serial !== this.designClassInventorySerial
+          || this.sessionProjectRoot !== projectRoot
+          || this.kernelProjectSessionId !== runtimeSessionId
+          || this.projectWorkspaceSnapshot?.revision !== workspaceRevision
+        ) return null;
+        if (
+          snapshot.projectRoot !== projectRoot
+          || snapshot.runtimeSessionId !== runtimeSessionId
+          || snapshot.workspaceRevision !== workspaceRevision
+        ) throw new Error("Inventarul de clase aparține altei revizii a sesiunii proiectului.");
+        this.designClassInventory = snapshot;
+        return snapshot;
+      } catch (error) {
+        if (serial !== this.designClassInventorySerial) return null;
+        this.designClassInventoryError = errorMessage(error);
+        return null;
+      } finally {
+        if (serial === this.designClassInventorySerial) {
+          this.designClassInventoryLoading = false;
+          this.designClassInventoryRequest = null;
+          this.designClassInventoryRequestKey = "";
+        }
+      }
+    })();
+    this.designClassInventoryRequest = request;
+    return await request;
   }
 
   statusControllerHost(): StatusControllerHost {
@@ -1011,6 +1471,12 @@ export class AppState {
 
   resetPreviewZoom() {
     resetPreviewZoomFromController(this.uiControllerHost());
+    void this.setWorkbenchCanvasViewport({ zoomPercent: this.previewZoom });
+  }
+
+  commitPreviewZoom(value = this.previewZoom) {
+    setPreviewZoomFromController(this.uiControllerHost(), value);
+    return this.setWorkbenchCanvasViewport({ zoomPercent: this.previewZoom });
   }
 
   setInspectorPending(
@@ -1080,7 +1546,7 @@ export class AppState {
     this.projectTransitionDecisionRequest = null;
     cancelPendingNativeWindowClose(this);
     this.clearNotification(PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID);
-    this.setGlobalStatus("Project Transition anulat de operator.", "idle");
+    this.setGlobalStatus("Tranziția proiectului a fost anulată de operator.", "idle");
   }
 
   async confirmProjectTransitionOperatorDecision(requestId: string, diagnostic: string) {
@@ -1130,6 +1596,8 @@ export class AppState {
 
   resetProjectScopedState() {
     resetProjectScopedStateFromController(this.projectControllerHost());
+    this.workbenchController.reset();
+    this.workbenchHydratedRuntimeSessionId = "";
     this.resetMoodBoard();
   }
 
@@ -1185,6 +1653,14 @@ export class AppState {
     await createContentPageFromController(this.projectControllerHost());
   }
 
+  async createContentPageFromInput(input: {
+    title: string;
+    slug?: string | null;
+    section?: string | null;
+  }) {
+    return await createContentPageFromInputFromController(this.projectControllerHost(), input);
+  }
+
   // ── File loading ──────────────────────────────────────────────────────────
 
   async loadScannedProjectFile(
@@ -1194,9 +1670,32 @@ export class AppState {
       skipDraftFlush?: boolean;
       deferPreviewRefresh?: boolean;
       activateTemplateWorkbench?: boolean;
+      syncWorkbench?: boolean;
     } = {},
   ) {
+    const workbenchSessionId = this.kernelProjectSessionId;
+    const shouldSyncWorkbench = options.syncWorkbench !== false
+      && this.workbenchHydratedRuntimeSessionId === workbenchSessionId;
     await loadScannedProjectFileFromController(this.projectControllerHost(), file, options);
+    if (
+      shouldSyncWorkbench
+      && this.kernelProjectSessionId === workbenchSessionId
+      && this.activeScannedPath === file.relativePath
+      && this.sessionProjectRoot
+      && this.kernelProjectSessionId
+    ) {
+      try {
+        await this.workbenchController.openDocument(file, this.centerView);
+        this.clearNotification("workbench.document-sync");
+      } catch (error) {
+        this.notify({
+          id: "workbench.document-sync",
+          level: "warning",
+          title: "Workbench nesincronizat",
+          message: errorMessage(error),
+        });
+      }
+    }
   }
 
   async updateTemplateWorkbenchContext(
@@ -1229,7 +1728,7 @@ export class AppState {
       : null;
     if (!project || !templateFile || this.activeScannedPath !== target) {
       throw new Error(
-        "Template Workbench activ nu mai are un template selectat în ProjectSession.",
+        "Context de template activ nu mai are un template selectat în ProjectSession.",
       );
     }
     await this.updateTemplateWorkbenchContext(
@@ -1348,7 +1847,7 @@ export class AppState {
       return true;
     }
     throw new Error(
-      this.projectStatus || "Preview-ul nu a confirmat generația ProjectWorkspace curentă.",
+      this.projectStatus || "Previzualizarea nu a confirmat generația curentă a sesiunii proiectului.",
     );
   }
 
@@ -1644,7 +2143,7 @@ export class AppState {
       || mutation.revisionAfter !== authority.revisionAfter
       || !transactionId
     ) {
-      throw new Error("Proiecția CSS live nu are o tranzacție ProjectWorkspace exactă.");
+      throw new Error("Proiecția CSS live nu are o tranzacție exactă a sesiunii proiectului.");
     }
 
     let boundIdentity: InspectorLiveCssIdentity | null = null;
@@ -1656,7 +2155,7 @@ export class AppState {
       expectedWorkspaceTransactionId: transactionId,
       onCanvasPlanPrepared: (plan) => {
         if (plan.workspaceTransactionId !== transactionId) {
-          throw new Error("Planul Canvas CSS nu aparține tranzacției ProjectWorkspace confirmate.");
+          throw new Error("Planul Canvas CSS nu aparține tranzacției confirmate a sesiunii proiectului.");
         }
         if (!draftIdentity) return;
         boundIdentity = bindInspectorLiveCssTransaction(
@@ -1683,6 +2182,72 @@ export class AppState {
         exactIdentity,
       );
     }
+  }
+
+  async updateDesignSystemVariable(
+    variable: ScssVariable,
+    value: string,
+  ): Promise<boolean> {
+    const nextValue = value.trim();
+    if (!nextValue || nextValue === variable.value) return false;
+    const projectRoot = this.sessionProjectRoot;
+    const runtimeSessionId = this.kernelProjectSessionId;
+    const identity = createCssRequestIdentity(projectRoot, runtimeSessionId);
+    const receipt = await setScssVariable(
+      variable.file,
+      variable.name,
+      nextValue,
+      identity,
+    );
+    if (
+      this.sessionProjectRoot !== projectRoot
+      || this.kernelProjectSessionId !== runtimeSessionId
+    ) return false;
+    await this.projectCommittedInspectorCssMutation(receipt.authority, null);
+    if (
+      this.sessionProjectRoot !== projectRoot
+      || this.kernelProjectSessionId !== runtimeSessionId
+    ) return false;
+    this.scssVariables = await getScssVariables(identity).catch(() => (
+      this.scssVariables.map((entry) => (
+        entry.file === variable.file && entry.name === variable.name
+          ? { ...entry, value: nextValue }
+          : entry
+      ))
+    ));
+    this.setGlobalStatus(`Tokenul $${variable.name} a fost actualizat în ProjectWorkspace.`, "unsaved");
+    return true;
+  }
+
+  async renameDesignSystemClass(oldName: string, newName: string): Promise<boolean> {
+    const outcome = await runInPreviewStructuralLane(this, async (lease) => {
+      const receipt = await renameDesignClassCommand(oldName, newName, {
+        expectedProjectRoot: lease.projectRoot,
+        expectedSessionId: lease.sessionId,
+      });
+      requireCurrentPreviewStructuralSession(this, lease);
+      if (
+        receipt.workspace.projectRoot !== lease.projectRoot
+        || receipt.workspace.runtimeSessionId !== lease.sessionId
+        || receipt.workspace.workspace.revision !== receipt.workspace.mutation.revisionAfter
+      ) throw new Error("Redenumirea clasei a primit o confirmare inconsistentă a sesiunii proiectului.");
+
+      this.projectWorkspaceSnapshot = receipt.workspace.workspace;
+      await this.rescanCurrentProjectWithinStructuralLane(
+        lease,
+        this.activeScannedPath,
+        { strict: true },
+      );
+      requireCurrentPreviewStructuralSession(this, lease);
+      await this.refreshDesignClassInventory(true);
+      requireCurrentPreviewStructuralSession(this, lease);
+      this.setGlobalStatus(
+        `Clasa .${receipt.oldName} a devenit .${receipt.newName} în ${receipt.changedFiles.length} fișiere (${receipt.replacementCount} referințe).`,
+        "unsaved",
+      );
+      return true;
+    });
+    return outcome ?? false;
   }
 
   handlePreviewMessage = (event: MessageEvent) => {
@@ -1868,7 +2433,52 @@ export class AppState {
       await this.prepareHtmlCodeRevealTargetForCodeEntry();
       this.requestCodeSelectionReveal();
     }
+    const targetActivity: WorkbenchActivity = view === "site"
+      ? "site"
+      : view === "canvas"
+        ? "design_system"
+        : view === "kernel"
+          ? "audit"
+          : "editor";
+    if (
+      this.workbenchHydratedRuntimeSessionId === this.kernelProjectSessionId
+      && this.workbenchSnapshot
+      && this.workbenchSnapshot.activeActivity !== targetActivity
+    ) {
+      try {
+        await this.workbenchController.apply({
+          kind: "set_activity",
+          activity: targetActivity,
+        });
+        this.clearNotification("workbench.activity-sync");
+      } catch (error) {
+        this.notify({
+          id: "workbench.activity-sync",
+          level: "warning",
+          title: "Activitatea nu a putut fi schimbată",
+          message: errorMessage(error),
+        });
+        return false;
+      }
+    }
     this.centerView = view;
+    if (
+      this.activeScannedPath
+      && (view === "preview" || view === "code" || view === "markdown")
+      && this.workbenchSnapshot?.split === "none"
+    ) {
+      try {
+        await this.workbenchController.setActiveDocumentSurface(this.activeScannedPath, view);
+        this.clearNotification("workbench.surface-sync");
+      } catch (error) {
+        this.notify({
+          id: "workbench.surface-sync",
+          level: "warning",
+          title: "Modul documentului nu a fost persistat",
+          message: errorMessage(error),
+        });
+      }
+    }
     if (enteringPreview && this.scannedProject?.isZola) {
       const projectRoot = this.sessionProjectRoot;
       const sessionId = this.kernelProjectSessionId;
@@ -1905,7 +2515,7 @@ export class AppState {
       receipt.projectRoot !== this.sessionProjectRoot
       || receipt.sessionId !== this.kernelProjectSessionId
     ) {
-      throw new Error("Preview-ul versiunii aparține unei ProjectSession depășite.");
+      throw new Error("Previzualizarea versiunii aparține unei sesiuni de proiect depășite.");
     }
     await this.flushInteractiveEditorDrafts("template-switch");
     invalidatePreviewRefreshLease(this);
@@ -2392,14 +3002,14 @@ export class AppState {
       attributes: projection.attributes,
       baselineNames: projection.baselineNames,
     }).then((ack) => {
-      if (!ack.ok) throw new Error(ack.error || "Preview a refuzat draftul live de atribute.");
+      if (!ack.ok) throw new Error(ack.error || "Previzualizarea a refuzat ciorna live de atribute.");
       if (!isLatestHtmlAttributeDraftSettlement(
         this.activeHtmlAttributeEditSession?.id ?? null,
         this.activeHtmlAttributeEditSession?.latestLiveEpoch ?? -1,
         session.id,
         draftEpoch,
       )) return;
-      this.attributeStatus = "Draftul atributelor este confirmat de Canvas; commit-ul canonic rămâne în ProjectWorkspace.";
+      this.attributeStatus = "Ciorna atributelor este confirmată de Canvas; starea canonică rămâne în sesiunea proiectului.";
     }).catch((error) => {
       if (isLatestHtmlAttributeDraftSettlement(
         this.activeHtmlAttributeEditSession?.id ?? null,
@@ -2516,7 +3126,7 @@ export class AppState {
       this.setHtmlPending("attributes", false);
       this.attributeStatus = result.status === "noop"
         ? "Atributele nu au modificări de aplicat."
-        : "Atribute confirmate în ProjectWorkspace și proiectate canonic.";
+        : "Atribute confirmate în sesiunea proiectului și proiectate canonic.";
       return result;
     }
     return null;
@@ -2671,7 +3281,7 @@ export class AppState {
     this.textEditOriginalKey = null;
     this.textEditOriginalText = null;
     this.setHtmlPending("text", false);
-    this.textStatus = "Text confirmat în ProjectWorkspace și proiectat canonic.";
+    this.textStatus = "Text confirmat în sesiunea proiectului și proiectat canonic.";
     return true;
   }
 
@@ -2861,7 +3471,7 @@ export class AppState {
     const activeResult = await this.finishActiveHtmlAttributeEditSession(attributes);
     if (activeResult) return activeResult;
     if (!this.htmlPending.attributes) {
-      return noopAction("Atributele sunt deja confirmate de ProjectWorkspace.");
+      return noopAction("Atributele sunt deja confirmate de sesiunea proiectului.");
     }
     return await applyAttributesToHtmlFromController(this.htmlActionsControllerHost(), attributes);
   }
@@ -2869,7 +3479,7 @@ export class AppState {
   async applyTextContentToHtml() {
     const committed = await this.finishActiveHtmlTextEditSession();
     if (!committed) {
-      return noopAction("Textul este deja confirmat de ProjectWorkspace.");
+      return noopAction("Textul este deja confirmat de sesiunea proiectului.");
     }
     return committedAction();
   }
@@ -2896,6 +3506,21 @@ export class AppState {
 
   updatePageFrontmatterSource(relativePath: string, nextSource: string) {
     updatePageFrontmatterSourceFromController(this.pageSettingsControllerHost(), relativePath, nextSource);
+  }
+
+  async readPageSettingsDocument(relativePath: string): Promise<string> {
+    const projectRoot = this.sessionProjectRoot;
+    const runtimeSessionId = this.kernelProjectSessionId;
+    const cacheKey = scannedCacheKey({ relativePath });
+    const cached = this.sourceCache[cacheKey];
+    if (typeof cached === "string") return cached;
+    const source = await readProjectFile(relativePath);
+    if (
+      this.sessionProjectRoot !== projectRoot
+      || this.kernelProjectSessionId !== runtimeSessionId
+    ) throw new Error("Documentul metadata aparține unei sesiuni care nu mai este activă.");
+    this.sourceCache = { ...this.sourceCache, [cacheKey]: source };
+    return source;
   }
 
   pageSettingsControllerHost(): PageSettingsControllerHost {
@@ -2938,17 +3563,17 @@ export class AppState {
   async savePendingHtmlChanges() {
     if (this.blockSaveForAiLease()) {
       return blockedAction(
-        "Save HTML este blocat cât timp AI deține sau reconciliază autoritatea de editare.",
+        "Salvarea HTML este blocată cât timp AI deține sau reconciliază autoritatea de editare.",
       );
     }
     if (this.blockSaveForExternalProjectionConflict()) {
       return blockedAction(
-        "Save HTML este blocat până când conflictul proiecției externe este reconciliat.",
+        "Salvarea HTML este blocată până când conflictul proiecției externe este reconciliat.",
       );
     }
     if (this.blockSaveForKernelUndoRedoLease()) {
       return blockedAction(
-        "Save HTML este blocat cât timp Undo/Redo rezervă sesiunea curentă.",
+        "Salvarea HTML este blocată cât timp anularea sau refacerea rezervă sesiunea curentă.",
       );
     }
     return await savePendingHtmlChangesFromController(this.saveControllerHost());
@@ -2960,7 +3585,7 @@ export class AppState {
     if (this.blockSaveForKernelUndoRedoLease()) return false;
     if (this.projectTransitionFrontendLeaseActive) {
       this.setGlobalStatus(
-        "Save este temporar blocat: Project Transition a rezervat sesiunea curentă.",
+        "Salvarea este temporar blocată: tranziția proiectului a rezervat sesiunea curentă.",
         "error",
       );
       return false;
@@ -2979,7 +3604,7 @@ export class AppState {
           || this.externalDiskState.blockedByDirtySession
         ) {
           this.setGlobalStatus(
-            "Save este blocat: monitorul extern a detectat o stare disk care trebuie reconciliată înainte de scriere.",
+            "Salvarea este blocată: monitorul extern a detectat o stare pe disc care trebuie reconciliată înainte de scriere.",
             "error",
           );
           return false;
@@ -3017,7 +3642,7 @@ export class AppState {
     }
     if (this.projectTransitionFrontendLeaseActive) {
       throw new Error(
-        "Undo/Redo nu poate porni cât timp Project Transition rezervă sesiunea.",
+        "Anularea sau refacerea nu poate porni cât timp tranziția proiectului rezervă sesiunea.",
       );
     }
     if (this.kernelUndoRedoFrontendLeaseActive) {
@@ -3043,7 +3668,7 @@ export class AppState {
         || this.externalDiskState.workspaceProjectionRecoveryRequired
       ) {
         throw new Error(
-          "Monitorul disk nu a ajuns la o graniță curată înainte de Undo/Redo.",
+          "Monitorul discului nu a ajuns la o graniță curată înainte de anulare sau refacere.",
         );
       }
     } catch (error) {
@@ -3066,12 +3691,12 @@ export class AppState {
       && !this.aiReconciliationRecoveryReloadAuthorized
     ) {
       throw new Error(
-        "Project Transition este blocat cât timp AI deține sau reconciliază autoritatea de editare.",
+        "Tranziția proiectului este blocată cât timp AI deține sau reconciliază autoritatea de editare.",
       );
     }
     if (this.kernelUndoRedoFrontendLeaseActive) {
       throw new Error(
-        "Project Transition este blocat cât timp Undo/Redo finalizează proiecția curentă.",
+        "Tranziția proiectului este blocată cât timp anularea sau refacerea finalizează proiecția curentă.",
       );
     }
     this.projectTransitionFrontendLeaseActive = true;
@@ -3110,7 +3735,7 @@ export class AppState {
   private blockSaveForExternalProjectionConflict() {
     if (!this.externalDiskState.workspaceProjectionRecoveryRequired) return false;
     this.setGlobalStatus(
-      "Save este blocat: proiecția UI s-a schimbat în timpul reconcilierii externe. Folosește «Reîncarcă de pe disk» înainte de orice scriere.",
+      "Salvarea este blocată: proiecția UI s-a schimbat în timpul reconcilierii externe. Folosește «Reîncarcă de pe disc» înainte de orice scriere.",
       "error",
     );
     return true;
@@ -3119,7 +3744,7 @@ export class AppState {
   private blockSaveForAiLease() {
     if (!this.aiEditLeaseFrontendLockActive) return false;
     this.setGlobalStatus(
-      "Save este blocat: AI deține sau reconciliază autoritatea de editare a surselor.",
+      "Salvarea este blocată: AI deține sau reconciliază autoritatea de editare a surselor.",
       "error",
     );
     return true;
@@ -3128,7 +3753,7 @@ export class AppState {
   private blockSaveForKernelUndoRedoLease() {
     if (!this.kernelUndoRedoFrontendLeaseActive) return false;
     this.setGlobalStatus(
-      "Save este temporar blocat: Undo/Redo rezervă sesiunea curentă.",
+      "Salvarea este temporar blocată: anularea sau refacerea rezervă sesiunea curentă.",
       "error",
     );
     return true;
@@ -3158,11 +3783,13 @@ export class AppState {
 
   // ── Terminal tabs ─────────────────────────────────────────────────────────
 
-  openTerminalTab() {
+  async openTerminalTab() {
+    if (!(await this.setWorkbenchBottomPanel(true, "terminal"))) return;
     openTerminalTabFromController(this.terminalTabsHost());
   }
 
-  selectTerminalTab(tabId: string) {
+  async selectTerminalTab(tabId: string) {
+    if (!(await this.setWorkbenchBottomPanel(true, "terminal"))) return;
     selectTerminalTabFromController(this.terminalTabsHost(), tabId);
   }
 
@@ -3175,6 +3802,7 @@ export class AppState {
   }
 
   async runTerminalQuickTask(task: TerminalQuickTask) {
+    if (!(await this.setWorkbenchBottomPanel(true, "terminal"))) return;
     await runTerminalQuickTaskFromController(this.terminalQuickTaskHost(), task);
   }
 

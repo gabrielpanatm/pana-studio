@@ -35,14 +35,14 @@
     <div class="section-head"><span>Animatable</span></div>
     <div class="field-grid">
       <label>
-        <span>Mode</span>
+        <span>Mod</span>
         <SelectControl value={animatable.mode} options={modeOptions} ariaLabel="Animatable mode" onchange={(value) => patch({ mode: value as PanaMotionAnimatableItem["mode"] })} />
       </label>
       <label>
         <span>Live source</span>
         <SelectControl value={animatable.liveSource} options={liveSourceOptions} ariaLabel="Animatable live source" onchange={(value) => patch({ liveSource: value as PanaMotionAnimatableItem["liveSource"] })} />
       </label>
-      <label><span>Duration</span><input type="number" value={animatable.duration} oninput={(event) => patch({ duration: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Durată</span><input type="number" value={animatable.duration} oninput={(event) => patch({ duration: numberValue(event.currentTarget.value) })} /></label>
       <label>
         <span>Ease</span>
         <SelectControl value={animatable.ease} options={easingOptions} ariaLabel="Animatable ease" onchange={(value) => patch({ ease: value })} />
@@ -97,7 +97,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -131,7 +131,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -151,7 +151,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

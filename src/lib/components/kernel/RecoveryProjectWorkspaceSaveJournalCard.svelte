@@ -42,15 +42,15 @@
 
   function actionLabel(action: ProjectWorkspaceSaveRecoveryAction): string {
     if (action === "clear_stale_journal") return "Curăță jurnalul stale";
-    if (action === "rollback_to_before") return "Revino la starea dinainte de Save";
-    return "Review manual obligatoriu";
+    if (action === "rollback_to_before") return "Revino la starea dinainte de salvare";
+    return "Revizuire manuală obligatorie";
   }
 </script>
 
 <article class={`workspace-save-journal ${journal.diskState}`}>
   <header>
     <div>
-      <span>ProjectWorkspace Save</span>
+      <span>Jurnal de salvare</span>
       <h3>{journal.transactionId}</h3>
     </div>
     <time>
@@ -61,9 +61,9 @@
 
   <div class="facts">
     <span><em>REVIZIE</em><strong>{journal.revision}</strong></span>
-    <span><em>STARE DISK</em><strong>{journal.diskState.replaceAll("_", " ")}</strong></span>
+    <span><em>STARE DISC</em><strong>{journal.diskState.replaceAll("_", " ")}</strong></span>
     <span><em>FIȘIERE</em><strong>{journal.fileCount}</strong></span>
-    <span><em>RECOVERY</em><strong>{actionLabel(journal.recoveryPlan.action)}</strong></span>
+    <span><em>RECUPERARE</em><strong>{actionLabel(journal.recoveryPlan.action)}</strong></span>
   </div>
 
   <p class="plan">{journal.recoveryPlan.summary}</p>
@@ -132,26 +132,26 @@
   header { justify-content: space-between; gap: 12px; }
   header span,
   em,
-  label span { color: var(--text-muted); font-size: 10px; font-weight: 850; font-style: normal; text-transform: uppercase; }
+  label span { color: var(--text-muted); font-size: 12px; font-weight: 850; font-style: normal; text-transform: uppercase; }
   h3 { margin: 4px 0 0; color: var(--text-strong); font-size: 13px; }
   time,
-  .path { gap: 5px; color: var(--text-muted); font-size: 11px; }
+  .path { gap: 5px; color: var(--text-muted); font-size: 12px; }
   .facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
   .facts span,
   .file,
   .action { padding: 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
-  .facts strong { display: block; margin-top: 4px; color: var(--text-strong); font-size: 11px; }
+  .facts strong { display: block; margin-top: 4px; color: var(--text-strong); font-size: 12px; }
   .plan { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
   .files { display: grid; gap: 6px; }
   .file { display: grid; gap: 3px; }
   .file strong { font-size: 12px; }
   .file span,
-  .file p { margin: 0; color: var(--text-muted); font-size: 11px; }
+  .file p { margin: 0; color: var(--text-muted); font-size: 12px; }
   .action { display: grid; gap: 7px; }
   label { display: grid; gap: 5px; }
   textarea { width: 100%; box-sizing: border-box; resize: vertical; }
   button { justify-self: start; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-3); color: var(--text); cursor: pointer; }
   button:disabled { cursor: not-allowed; opacity: 0.55; }
-  .error { margin: 0; color: #ef4444; font-size: 11px; }
+  .error { margin: 0; color: #ef4444; font-size: 12px; }
   @media (max-width: 920px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

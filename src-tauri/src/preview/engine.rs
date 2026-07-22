@@ -168,7 +168,7 @@ impl PersistentZolaPreviewEngine {
             )?
             .ok_or_else(|| {
                 format!(
-                    "Template Workbench nu găsește generația Preview exactă pentru revizia {}.",
+                    "Context de template nu găsește generația Preview exactă pentru revizia {}.",
                     lease.revision
                 )
             })?;
@@ -194,7 +194,7 @@ impl PersistentZolaPreviewEngine {
         generation
             .workbench_content
             .write()
-            .map_err(|_| "Registrul Template Workbench este indisponibil.".to_string())?
+            .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?
             .insert(route.clone(), RenderedPreviewContent::Html(prepared));
         let preview_url = format!(
             "{}{}?__pana_preview_revision={}&__pana_canvas_transaction={}",
@@ -531,7 +531,7 @@ fn render_template_workbench_document(
         }
         TemplateWorkbenchRenderMode::IncludedTemplate if consumer_render_is_required(plan) => {
             let consumer = plan.selected_context.as_ref().ok_or_else(|| {
-                "Template Workbench nu are consumator pentru partialul selectat.".to_string()
+                "Context de template nu are consumator pentru partialul selectat.".to_string()
             })?;
             let root = model
                 .source_graph
@@ -624,7 +624,7 @@ fn render_zola_template(
         .map_err(|error| tera::Error::msg(error.to_string()))
     };
     result
-        .map_err(|error| format!("Template Workbench nu a putut randa «{template_name}»: {error}"))
+        .map_err(|error| format!("Context de template nu a putut randa «{template_name}»: {error}"))
 }
 
 fn consumer_render_is_required(plan: &TemplateWorkbenchPlan) -> bool {
@@ -656,7 +656,7 @@ fn extract_template_owned_fragment(
         .collect::<std::collections::HashSet<_>>();
     if owned_ids.is_empty() {
         return Err(format!(
-            "Template Workbench nu a găsit noduri HTML provenite din «{active_file}» în SourceGraph."
+            "Context de template nu a găsit noduri HTML provenite din «{active_file}» în SourceGraph."
         ));
     }
 
@@ -811,7 +811,7 @@ fn controlled_macro_argument(name: &str) -> serde_json::Value {
 fn install_controlled_workbench_fixture(context: &mut Context) {
     let page = serde_json::json!({
         "title": "Pagină demonstrativă",
-        "description": "Context controlat Template Workbench",
+        "description": "Context controlat Context de template",
         "content": "<p>Conținut demonstrativ</p>",
         "permalink": "#",
         "path": "/exemplu/",
@@ -822,7 +822,7 @@ fn install_controlled_workbench_fixture(context: &mut Context) {
     });
     let section = serde_json::json!({
         "title": "Secțiune demonstrativă",
-        "description": "Context controlat Template Workbench",
+        "description": "Context controlat Context de template",
         "content": "<p>Conținut demonstrativ</p>",
         "permalink": "#",
         "path": "/",
@@ -844,10 +844,9 @@ fn template_workbench_context(
         .selected_context
         .as_ref()
         .map(|consumer| normalized_content_file(&consumer.page_file));
-    let library = site
-        .library
-        .read()
-        .map_err(|_| "Biblioteca Zola este indisponibilă pentru Template Workbench.".to_string())?;
+    let library = site.library.read().map_err(|_| {
+        "Biblioteca Zola este indisponibilă pentru Context de template.".to_string()
+    })?;
 
     if let Some(selected_file) = selected_file.as_deref() {
         if let Some(page) = library
@@ -950,13 +949,13 @@ fn mount_workbench_fragment(
     ));
     let mount = fragment_document
         .select_first("[data-pana-workbench-mount]")
-        .map_err(|_| "Template Workbench nu a putut normaliza fragmentul randat.".to_string())?;
+        .map_err(|_| "Context de template nu a putut normaliza fragmentul randat.".to_string())?;
     for child in mount.as_node().children().collect::<Vec<_>>() {
         child.detach();
         body.as_node().append(child);
     }
     String::from_utf8(serialize_node(&document))
-        .map_err(|error| format!("Template Workbench nu a putut serializa documentul: {error}"))
+        .map_err(|error| format!("Context de template nu a putut serializa documentul: {error}"))
 }
 
 fn template_workbench_route(source_id: &str) -> String {
@@ -1063,7 +1062,7 @@ fn build_new_official_zola_site(
     })?;
     site.enable_serve_mode(BuildMode::Memory);
     if draft_policy == DraftRenderPolicy::Include {
-        // Design Safe projects the full authoring workspace. Draft visibility
+        // Editare sigură projects the full authoring workspace. Draft visibility
         // is an editor concern and must not change the production-like Source
         // Browser generation rendered from accepted disk state.
         site.include_drafts();

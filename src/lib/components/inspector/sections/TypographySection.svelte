@@ -54,7 +54,7 @@
   ];
 
   const fontWeightOpts = [
-    { value: "300", label: "L",  title: "Light (300)"      },
+    { value: "300", label: "L",  title: "Subțire (300)"      },
     { value: "400", label: "R",  title: "Regular (400)"    },
     { value: "500", label: "M",  title: "Medium (500)"     },
     { value: "600", label: "Sb", title: "SemiBold (600)"   },
@@ -64,7 +64,7 @@
   ];
 
   const textDecorationOpts = [
-    { value: "none",         label: "—",              title: "None"          },
+    { value: "none",         label: "—",              title: "Niciuna"          },
     { value: "underline",    icon: IconUnderline,     title: "Underline"     },
     { value: "line-through", icon: IconStrikethrough, title: "Strikethrough" },
   ];
@@ -75,7 +75,7 @@
   ];
 
   const textTransformOpts = [
-    { value: "none",       label: "—",                    title: "None"      },
+    { value: "none",       label: "—",                    title: "Niciuna"      },
     { value: "uppercase",  icon: IconLetterCaseUpper,     title: "Uppercase" },
     { value: "capitalize", icon: IconLetterCase,          title: "Capitalize"},
     { value: "lowercase",  icon: IconLetterCaseLower,     title: "Lowercase" },
@@ -167,7 +167,7 @@
 
 <style>
   .row-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
   }

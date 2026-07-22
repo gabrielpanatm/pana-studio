@@ -224,7 +224,7 @@ async function waitForPreviewDocumentUrl(
         return { url: lastUrl, revision: requiredRevision, html };
       }
       lastError = new Error(
-        "Template Workbench nu a ajuns încă la generația Canvas cerută.",
+        "Context de template nu a ajuns încă la generația Canvas cerută.",
       );
     } catch (error) {
       if (!previewRefreshLeaseMatches(host, lease)) return null;
@@ -232,7 +232,7 @@ async function waitForPreviewDocumentUrl(
     }
   }
 
-  throw lastError ?? new Error("Template Workbench nu a răspuns cu generația cerută.");
+  throw lastError ?? new Error("Context de template nu a răspuns cu generația cerută.");
 }
 
 function samePreviewRoute(currentUrl: string, nextUrl: string) {
@@ -443,14 +443,14 @@ async function replaceMountedPreviewWithCanonicalDocument(
   if (!canvasIdentityMatches(ack.canvasIdentity, plan.identity)) {
     throw new PreviewProjectionDiagnosticError(
       "preview_canvas_identity_mismatch",
-      "Bridge-ul Preview a confirmat altă tranzacție Canvas.",
+      "Legătura previzualizării a confirmat altă tranzacție Canvas.",
     );
   }
   await confirmPendingCanvasProjection(host, plan, ack.canvasPhaseReceipts ?? []);
   if (!ack.ok) {
     throw new PreviewProjectionDiagnosticError(
       "preview_reconcile_failed",
-      ack.error || "Bridge-ul Preview a refuzat documentul Zola canonic.",
+      ack.error || "Legătura previzualizării a refuzat documentul Zola canonic.",
     );
   }
   if (!previewRefreshLeaseMatches(host, lease)) return { kind: "stale" };
@@ -542,12 +542,12 @@ export async function refreshRenderedPreviewDocument(
   } catch (error) {
     if (!previewRefreshLeaseMatches(host, lease)) return false;
     const message = errorMessage(error);
-    host.projectStatus = `Preview render esuat: ${message}`;
+    host.projectStatus = `Randarea previzualizării a eșuat: ${message}`;
     if (!host.previewSrc || host.previewSrc === "about:blank" || !host.previewFrame) {
       host.previewSrc = "about:blank";
       host.previewDocumentMarkup = buildPreviewStatusDocument(
-        "Preview indisponibil",
-        `Zola preview nu raspunde momentan.\n\n${message}`,
+        "Previzualizare indisponibilă",
+        `Previzualizarea Zola nu răspunde momentan.\n\n${message}`,
       );
     }
     return false;
@@ -573,7 +573,7 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
     || requestedUrl.searchParams.get("__pana_preview_revision") !== plan.identity.previewRevision
     || requestedUrl.searchParams.get("__pana_canvas_transaction") !== plan.identity.transactionId
   ) {
-    throw new Error("URL-ul Template Workbench nu aparține candidatului Canvas primit.");
+    throw new Error("URL-ul Context de template nu aparține candidatului Canvas primit.");
   }
 
   const lease = beginPreviewRefreshLease(host);

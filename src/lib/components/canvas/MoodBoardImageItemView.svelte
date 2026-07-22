@@ -220,7 +220,7 @@
     border-radius: inherit;
     text-align: center;
     background: var(--surface-3);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.35;
   }
 </style>

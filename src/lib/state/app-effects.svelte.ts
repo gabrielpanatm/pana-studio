@@ -1,7 +1,7 @@
 import type { AppState } from "$lib/state/app.svelte";
 import { scheduleAiContextSnapshot as scheduleAiContextSnapshotFromController } from "$lib/state/ai-context-controller";
 import { registerNativeWindowCloseGuard } from "$lib/state/native-window-close-controller";
-import { savePaneDimensions, savePreviewZoom } from "$lib/ui/preferences";
+import { savePaneDimensions } from "$lib/ui/preferences";
 import { readProjectWorkspaceState } from "$lib/project/io";
 import { subscribeProjectWorkspaceMutations } from "$lib/kernel/project-workspace-events";
 import { scheduleProjectWorkspaceDerivedPreviewProjection } from "$lib/kernel/project-workspace-preview-coordinator";
@@ -33,6 +33,33 @@ export function registerAppEffects(app: AppState) {
     return () => {
       disposed = true;
       unlisten?.();
+    };
+  });
+
+  // Restore the Rust-owned navigation projection for the active ProjectSession.
+  $effect(() => {
+    const projectRoot = app.sessionProjectRoot;
+    const sessionId = app.kernelProjectSessionId;
+    if (!projectRoot || !sessionId) {
+      app.workbenchSnapshot = null;
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void app.refreshWorkbenchState().catch((error) => {
+        if (cancelled) return;
+        app.workbenchSnapshot = null;
+        app.notify({
+          id: "workbench.restore",
+          level: "warning",
+          title: "Workbench nu a fost restaurat",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }, 40);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
     };
   });
 
@@ -114,19 +141,29 @@ export function registerAppEffects(app: AppState) {
 
   // Create code editor when host is ready.
   $effect(() => {
+    const secondaryGroup = app.workbenchSnapshot?.groups.find(
+      (group) => group.groupId === "secondary",
+    );
+    const secondaryDocument = secondaryGroup?.documents.find(
+      (document) => document.documentId === secondaryGroup.activeDocumentId,
+    );
+    const splitSourceSurface = app.workbenchSnapshot?.split !== "none"
+      ? secondaryDocument?.surface ?? null
+      : null;
     if (app.centerView === "canvas" || app.centerView === "site" || app.centerView === "kernel") {
       app.codeEditorController?.destroy();
       app.codeEditorController = null;
       app.codeEditorHost = undefined;
       return;
     }
-    if (app.centerView === "markdown") {
+    if (app.centerView === "markdown" || splitSourceSurface === "markdown") {
       app.codeEditorController?.destroy();
       app.codeEditorController = null;
       app.codeEditorHost = undefined;
       return;
     }
-    if (!app.codeEditorHost || app.centerView !== "code") return;
+    const codeSurfaceVisible = app.centerView === "code" || splitSourceSurface === "code";
+    if (!app.codeEditorHost || !codeSurfaceVisible) return;
     void app.createCodeEditor();
   });
 
@@ -208,21 +245,12 @@ export function registerAppEffects(app: AppState) {
     app.leftPaneWidth;
     app.rightPaneWidth;
     app.terminalPaneHeight;
-    app.motionTimelinePaneHeight;
     if (typeof window === "undefined") return;
     savePaneDimensions(window.localStorage, {
       leftPaneWidth: app.leftPaneWidth,
       rightPaneWidth: app.rightPaneWidth,
       terminalPaneHeight: app.terminalPaneHeight,
-      motionTimelinePaneHeight: app.motionTimelinePaneHeight,
     });
-  });
-
-  // Save browser-like preview zoom.
-  $effect(() => {
-    app.previewZoom;
-    if (typeof window === "undefined") return;
-    savePreviewZoom(window.localStorage, app.previewZoom);
   });
 
   // Publish lightweight read-only context for AI CLI sessions.

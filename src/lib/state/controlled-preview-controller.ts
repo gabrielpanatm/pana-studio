@@ -47,9 +47,9 @@ export async function requestControlledPreviewRefresh(
     const refreshed = await host.reloadPreview(lease);
     if (!previewRefreshLeaseMatches(host, lease)) return false;
     if (!refreshed) {
-      const message = host.projectStatus.startsWith("Preview render esuat:")
+      const message = host.projectStatus.startsWith("Randarea previzualizării a eșuat:")
         ? host.projectStatus
-        : "Refresh preview eșuat: randarea curentă nu a putut fi reîncărcată.";
+        : "Reîmprospătarea previzualizării a eșuat: randarea curentă nu a putut fi reîncărcată.";
       host.controlledPreview = markPreviewRefreshError(host.controlledPreview, reason, message);
       host.projectStatus = message;
       if (options.publishFailure !== false) host.setGlobalStatus(message, "error");
@@ -63,7 +63,7 @@ export async function requestControlledPreviewRefresh(
     return true;
   } catch (error) {
     if (!previewRefreshLeaseMatches(host, lease)) return false;
-    const message = `Refresh preview eșuat: ${errorMessage(error)}`;
+    const message = `Reîmprospătarea previzualizării a eșuat: ${errorMessage(error)}`;
     host.controlledPreview = markPreviewRefreshError(host.controlledPreview, reason, message);
     host.projectStatus = message;
     if (options.publishFailure !== false) host.setGlobalStatus(message, "error");
@@ -92,7 +92,7 @@ export async function runZolaValidation(
   reason: ZolaValidationReason,
 ) {
   if (!host.scannedProject?.isZola) {
-    host.setGlobalStatus("Zola check este disponibil doar pentru proiecte Zola.", "error");
+    host.setGlobalStatus("Verificarea Zola este disponibilă doar pentru proiecte Zola.", "error");
     return false;
   }
   if (host.zolaValidationTimer !== null && typeof window !== "undefined") {

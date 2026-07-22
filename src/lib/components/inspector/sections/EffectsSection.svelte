@@ -210,7 +210,7 @@
   />
 
   <!-- Mix Blend Mode -->
-  <div class="row-label" style="margin-top: 4px;">Mix Blend Mode</div>
+  <div class="row-label" style="margin-top: 4px;">Mod de amestecare</div>
   <TextWithOptions
     value={getValue("mix-blend-mode")}
     placeholder="normal"
@@ -297,7 +297,7 @@
     />
   </div>
 
-  <div class="row-label" style="margin-top: 2px;">Mask Position</div>
+  <div class="row-label" style="margin-top: 2px;">Poziția măștii</div>
   <TextWithOptions
     value={getValue("mask-position")}
     placeholder="center"
@@ -314,7 +314,7 @@
   }
 
   .effects-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -348,7 +348,7 @@
   }
 
   .row-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
   }
@@ -409,7 +409,7 @@
   }
 
   .effects-opt-val {
-    font-size: 10px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     color: var(--text-muted);
   }

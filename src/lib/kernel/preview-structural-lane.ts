@@ -58,7 +58,7 @@ export function capturePreviewStructuralSessionLease(
   }
   if (host.projectTransitionFrontendLeaseActive) {
     throw new PreviewStructuralCancellationError(
-      "Mutația structurală este blocată cât timp Project Transition rezervă sesiunea.",
+      "Mutația structurală este blocată cât timp tranziția proiectului rezervă sesiunea.",
     );
   }
   if (host.kernelUndoRedoFrontendLeaseActive) {

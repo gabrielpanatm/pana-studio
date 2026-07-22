@@ -282,7 +282,7 @@ export function markWorkspaceProjectionRecoveryRequired(
     level: "error",
     title: "Interfața necesită reproiectare",
     message,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
 }
@@ -339,7 +339,7 @@ export function acceptProjectWorkspaceSaveBaseline(
     || acceptedManifest.truncated
   ) {
     throw new Error(
-      "Baseline-ul Save nu poate fi publicat în monitorul extern pentru alt proiect, altă sesiune sau un manifest invalid.",
+      "Starea de referință a salvării nu poate fi publicată în monitorul extern pentru alt proiect, altă sesiune sau un manifest invalid.",
     );
   }
 
@@ -680,7 +680,7 @@ async function applyCleanExternalChanges(
   }
   rustReceiptAccepted = true;
   if (receipt.workspaceRevision === null) {
-    throw new Error("External reconcile nu a publicat revizia ProjectWorkspace rezultată.");
+    throw new Error("Reconcilierea externă nu a publicat revizia rezultată a sesiunii proiectului.");
   }
   const workspaceAfterCommit = await readProjectWorkspaceState();
   if (!isCurrentReconcile(host, expectedRoot, reconcileGeneration)) return;
@@ -692,7 +692,7 @@ async function applyCleanExternalChanges(
     || workspaceAfterCommit.dirty
   ) {
     throw new Error(
-      "Snapshotul ProjectWorkspace nu confirmă exact commit-ul external reconcile.",
+      "Instantaneul sesiunii proiectului nu confirmă exact reconcilierea externă.",
     );
   }
   host.projectWorkspaceSnapshot = workspaceAfterCommit;
@@ -872,7 +872,7 @@ function preserveConcurrentUiMutationAfterCommit(
   flags: { activeFileChanged: boolean; previewRelevantChanged: boolean },
 ) {
   const message =
-    "Nucleul a reconciliat disk-ul, dar o intenție de editare sau selecție a apărut în timpul operației. Proiecția a fost oprită înainte să suprascrie UI-ul; reîncărcarea explicită este necesară.";
+    "Nucleul a reconciliat discul, dar o intenție de editare sau selecție a apărut în timpul operației. Proiecția a fost oprită înainte să suprascrie interfața; reîncărcarea explicită este necesară.";
   host.externalDiskState = {
     ...host.externalDiskState,
     changed: true,
@@ -889,7 +889,7 @@ function preserveConcurrentUiMutationAfterCommit(
     level: "error",
     title: "Proiecție externă oprită în siguranță",
     message,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
   host.setGlobalStatus(message, "error");
@@ -915,7 +915,7 @@ function preserveUninitializedExternalMonitor(
     level: "error",
     title: "Baseline extern neverificat",
     message,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
   host.setGlobalStatus(message, "error");
@@ -928,8 +928,8 @@ function preserveProjectionFailureAfterCommit(
   error: unknown,
 ) {
   const message =
-    `Nucleul a reconciliat disk-ul, dar proiecția UI nu s-a încheiat: ${errorMessage(error)}. ` +
-    "Workspace-ul rămâne blocat până la reîncărcarea explicită de pe disk.";
+    `Nucleul a reconciliat discul, dar proiecția interfeței nu s-a încheiat: ${errorMessage(error)}. ` +
+    "Spațiul de lucru rămâne blocat până la reîncărcarea explicită de pe disc.";
   host.externalDiskState = {
     ...host.externalDiskState,
     changed: true,
@@ -944,9 +944,9 @@ function preserveProjectionFailureAfterCommit(
   host.notify({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "error",
-    title: "Proiecția externă necesită recovery",
+    title: "Proiecția externă necesită recuperare",
     message,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
   host.setGlobalStatus(message, "error");
@@ -973,7 +973,7 @@ function preserveBlockedReceipt(
     level: "warning",
     title: "Reconciliere externă blocată",
     message: receipt.verdictReason,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
     secondaryActionLabel: "Păstrează sesiunea",
     secondaryActionId: EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,
@@ -1003,7 +1003,7 @@ function preserveReloadRequiredReceipt(
       level: "info",
       title: "Se aplică modificările AI",
       message:
-        "Manifestul autorizat schimbă structura proiectului. Pană Studio reconstruiește automat proiecția din disk.",
+        "Manifestul autorizat schimbă structura proiectului. Pană Studio reconstruiește automat proiecția de pe disc.",
     });
     host.setGlobalStatus(
       "Structura declarată de AI a fost detectată; se reconstruiește automat ProjectSession.",
@@ -1016,7 +1016,7 @@ function preserveReloadRequiredReceipt(
     level: "warning",
     title: "Structura proiectului s-a schimbat",
     message: receipt.verdictReason,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
     secondaryActionLabel: "Păstrează sesiunea",
     secondaryActionId: EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,
@@ -1031,7 +1031,7 @@ function notifyBlockedExternalChange(host: ExternalDiskControllerHost, changedFi
     title: "Fișiere modificate din exterior",
     message:
       `Am detectat schimbări pe disk (${formatChangedFiles(changedFiles)}), dar sesiunea Pană Studio are modificări nesalvate. Salvează sau reîncarcă manual înainte de a continua.`,
-    actionLabel: "Reîncarcă de pe disk",
+    actionLabel: "Reîncarcă de pe disc",
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
     secondaryActionLabel: "Păstrează sesiunea",
     secondaryActionId: EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,

@@ -273,6 +273,6 @@ export async function applyTagChange(host: HtmlEditControllerHost): Promise<Edit
     return noopAction("Nu există o schimbare de tag pending.");
   }
   return blockedAction(
-    "Schimbarea de tag este încă pending sau a eșuat; Save nu o poate declara aplicată fără un commit kernel confirmat.",
+    "Schimbarea etichetei este încă în așteptare sau a eșuat; salvarea nu o poate declara aplicată fără un commit confirmat de nucleul Rust.",
   );
 }

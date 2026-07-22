@@ -31,7 +31,7 @@
 
   const visibleFiles = $derived(snapshot?.files.filter((file) => file.status !== "clean").slice(0, 24) ?? []);
   const summaryTone = $derived(snapshot?.summary.status ?? "clean");
-  const summaryLabel = $derived(snapshot?.summary.verdictReason ?? "Disk Conflict Snapshot indisponibil.");
+  const summaryLabel = $derived(snapshot?.summary.verdictReason ?? "Instantaneul conflictelor pe disc este indisponibil.");
 
   $effect(() => {
     if (!projectKey) return;
@@ -76,9 +76,9 @@
   }
 
   function diskRefreshReasonLabel(reason: "project" | "workspace" | "manual") {
-    if (reason === "project") return "ProjectSession";
-    if (reason === "workspace") return "ProjectWorkspace";
-    return "refresh manual";
+    if (reason === "project") return "Sesiunea proiectului";
+    if (reason === "workspace") return "Spațiul de lucru";
+    return "actualizare manuală";
   }
 
   function errorMessage(error: unknown) {
@@ -86,21 +86,21 @@
   }
 
   function statusLabel(file: KernelDiskConflictFileSnapshot) {
-    if (file.kind === "dirty_only") return "dirty";
-    if (file.kind === "metadata_changed") return "metadata";
-    if (file.kind === "disk_changed") return "disk changed";
-    if (file.kind === "missing_on_disk") return "missing";
-    if (file.kind === "readonly") return "readonly";
-    if (file.kind === "not_file") return "not file";
-    if (file.kind === "oversized") return "oversized";
-    if (file.kind === "unreadable") return "unreadable";
-    if (file.kind === "invalid_path") return "invalid path";
-    return "clean";
+    if (file.kind === "dirty_only") return "modificat";
+    if (file.kind === "metadata_changed") return "metadate";
+    if (file.kind === "disk_changed") return "schimbat pe disc";
+    if (file.kind === "missing_on_disk") return "lipsește";
+    if (file.kind === "readonly") return "doar citire";
+    if (file.kind === "not_file") return "nu este fișier";
+    if (file.kind === "oversized") return "prea mare";
+    if (file.kind === "unreadable") return "necitibil";
+    if (file.kind === "invalid_path") return "cale invalidă";
+    return "curat";
   }
 
   function baselineLabel(file: KernelDiskConflictFileSnapshot) {
     const diskHash = file.disk?.hash ?? "absent";
-    return `baseline ${file.baseline.hash} · disk ${diskHash}`;
+    return `referință ${file.baseline.hash} · disc ${diskHash}`;
   }
 </script>
 
@@ -124,15 +124,15 @@
         <IconAlertTriangle size={17} stroke={1.9} />
       {/if}
       <div>
-        <strong id="kernel-disk-conflict-title">Disk Conflict Snapshot</strong>
-        <span>{loading ? `Se verifică disk-ul${syncReason ? ` după ${syncReason}` : ""}...` : summaryLabel}</span>
+        <strong id="kernel-disk-conflict-title">Instantaneu conflicte pe disc</strong>
+        <span>{loading ? `Se verifică discul${syncReason ? ` după ${syncReason}` : ""}...` : summaryLabel}</span>
       </div>
     </div>
 
     <button
       type="button"
       class="disk-refresh"
-      title="Recitește Disk Conflict Snapshot"
+      title="Recitește instantaneul conflictelor pe disc"
       onclick={() => void refreshDiskConflicts("manual")}
       disabled={loading}
     >
@@ -143,7 +143,7 @@
   {#if staleReason}
     <div class="disk-note warning" role="alert">
       <IconAlertTriangle size={15} stroke={1.9} />
-      <span>Disk Conflict afișează ultimul snapshot valid; refresh-ul după {staleReason} a eșuat.</span>
+      <span>Conflictele pe disc afișează ultimul instantaneu valid; actualizarea după {staleReason} a eșuat.</span>
     </div>
   {/if}
 
@@ -152,31 +152,31 @@
   {/if}
 
   {#if snapshot}
-    <div class="disk-metrics" aria-label="Metrice Disk Conflict">
+    <div class="disk-metrics" aria-label="Metrice conflicte pe disc">
       <span>
-        <em>TRACKED</em>
+        <em>URMĂRITE</em>
         <strong>{snapshot.summary.trackedFileCount}</strong>
       </span>
       <span>
-        <em>CONFLICT</em>
+        <em>CONFLICTE</em>
         <strong>{snapshot.summary.conflictCount}</strong>
       </span>
       <span>
-        <em>DIRTY</em>
+        <em>MODIFICATE</em>
         <strong>{snapshot.summary.dirtyOnlyCount}</strong>
       </span>
       <span>
-        <em>CHANGED</em>
+        <em>SCHIMBATE</em>
         <strong>{snapshot.summary.diskChangedCount}</strong>
       </span>
       <span>
-        <em>READONLY</em>
+        <em>DOAR CITIRE</em>
         <strong>{snapshot.summary.readonlyCount}</strong>
       </span>
     </div>
 
     {#if visibleFiles.length}
-      <div class="disk-file-list" aria-label="Fișiere cu semnal Disk Conflict">
+      <div class="disk-file-list" aria-label="Fișiere cu semnal de conflict pe disc">
         {#each visibleFiles as file (file.relativePath)}
           <article class={`disk-file ${file.status}`}>
             <header>
@@ -190,9 +190,9 @@
             <p>{file.message}</p>
             <div class="disk-file-meta">
               <span title={baselineLabel(file)}>{baselineLabel(file)}</span>
-              <span>{formatBytes(file.baseline.size)} baseline</span>
-              <span>{file.disk ? `${formatBytes(file.disk.size)} disk` : "disk absent"}</span>
-              <span>{file.hasDraft ? "draft" : "fără draft"}</span>
+              <span>{formatBytes(file.baseline.size)} referință</span>
+              <span>{file.disk ? `${formatBytes(file.disk.size)} disc` : "absent pe disc"}</span>
+              <span>{file.hasDraft ? "ciornă" : "fără ciornă"}</span>
             </div>
           </article>
         {/each}
@@ -200,13 +200,13 @@
     {:else}
       <div class="empty-disk-state">
         <IconCircleCheck size={17} stroke={1.9} />
-        <span>Nu există fișiere cu semnal Disk Conflict în snapshotul curent.</span>
+        <span>Nu există fișiere cu semnal de conflict în instantaneul curent.</span>
       </div>
     {/if}
   {:else if !loading && !loadError}
     <div class="empty-disk-state">
       <IconDeviceFloppy size={17} stroke={1.9} />
-      <span>Disk Conflict Snapshot nu este încă disponibil pentru sesiunea curentă.</span>
+      <span>Instantaneul conflictelor pe disc nu este încă disponibil pentru sesiunea curentă.</span>
     </div>
   {/if}
 </section>
@@ -346,7 +346,7 @@
   .disk-metrics em {
     overflow: hidden;
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: 12px;
     font-style: normal;
     font-weight: 900;
     text-overflow: ellipsis;
@@ -409,7 +409,7 @@
 
   .disk-file header span {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
   }
 
@@ -426,7 +426,7 @@
     border-radius: 999px;
     color: var(--text-muted);
     background: var(--surface-4);
-    font-size: 9px;
+    font-size: 12px;
     font-style: normal;
     font-weight: 950;
   }
@@ -434,7 +434,7 @@
   .disk-file p {
     margin: 0;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.45;
   }
 
@@ -452,7 +452,7 @@
     border-radius: 7px;
     color: var(--text);
     background: var(--surface-3);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     text-overflow: ellipsis;
     white-space: nowrap;

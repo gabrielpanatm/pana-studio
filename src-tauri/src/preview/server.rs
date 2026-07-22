@@ -491,14 +491,14 @@ fn serve_request(
         let workbench = generation
             .workbench_content
             .read()
-            .map_err(|_| "Registrul Template Workbench este indisponibil.".to_string())?;
+            .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?;
         if let Some(content) = workbench.get(decoded.as_ref()) {
             return render_content(content, "HTTP/1.1 200 OK", surface, port, head_only);
         }
         return Ok(plain_response(
             "HTTP/1.1 404 Not Found",
             "text/plain; charset=utf-8",
-            b"Template Workbench view not published for this preview revision",
+            b"Context de template view not published for this preview revision",
             head_only,
         ));
     }

@@ -62,7 +62,7 @@
     { value: "inline",       icon: IconMinus,       title: "Inline"       },
     { value: "inline-flex",  icon: IconDots,        title: "Inline Flex"  },
     { value: "inline-grid",  icon: IconLayoutGridAdd, title: "Inline Grid"},
-    { value: "none",         icon: IconEyeOff,      title: "None"         },
+    { value: "none",         icon: IconEyeOff,      title: "Niciuna"         },
   ];
 
   const flexDirectionOpts = [
@@ -180,7 +180,7 @@
 
 <style>
   .row-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
   }

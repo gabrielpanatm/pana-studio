@@ -37,7 +37,7 @@
     <div class="section-head"><span>WAAPI</span></div>
     <div class="field-grid">
       <label><span>Delay</span><input type="number" value={waapi.playback.delay} oninput={(event) => patchPlayback({ delay: numberValue(event.currentTarget.value) })} /></label>
-      <label><span>Duration</span><input type="number" value={waapi.playback.duration} oninput={(event) => patchPlayback({ duration: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Durată</span><input type="number" value={waapi.playback.duration} oninput={(event) => patchPlayback({ duration: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Iterations</span><input type="number" value={waapi.iterations} oninput={(event) => patch({ iterations: numberValue(event.currentTarget.value) })} /></label>
       <label>
         <span>Direction</span>
@@ -100,7 +100,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -137,7 +137,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
   }
 
   input,
@@ -159,7 +159,7 @@
   }
 
   button {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

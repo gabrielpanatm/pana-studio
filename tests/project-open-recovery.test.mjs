@@ -65,6 +65,6 @@ test("motivul înlocuirii rădăcinii este prezentat separat de driftul de conț
   assert.equal(projectOpenRecoveryReasonLabel(assessment()), "dosar fizic înlocuit");
   assert.equal(
     projectOpenRecoveryReasonLabel(assessment({ conflictReason: "disk_baseline_changed" })),
-    "conținut schimbat pe disk",
+    "conținut schimbat pe disc",
   );
 });

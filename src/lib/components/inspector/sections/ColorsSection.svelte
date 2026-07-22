@@ -262,7 +262,7 @@
   />
 
   <!-- Background Type -->
-  <div class="row-label">Background Type</div>
+  <div class="row-label">Tip fundal</div>
   <SegmentedControl
     options={BG_TYPE_OPTS}
     value={bgType}
@@ -308,7 +308,7 @@
 
     <div class="row-2">
       <div class="col">
-        <div class="row-label">BG Position</div>
+        <div class="row-label">Poziție fundal</div>
         <TextWithOptions
           label="P"
           value={getValue("background-position")}
@@ -468,7 +468,7 @@
   {#if bgType === "image" || bgType === "gradient"}
     <div class="row-2">
       <div class="col">
-        <div class="row-label">Blend Mode</div>
+        <div class="row-label">Mod de amestecare</div>
         <SelectControl
           value={getValue("background-blend-mode")}
           placeholder="normal (implicit)"
@@ -494,7 +494,7 @@
 
 <style>
   .row-label {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
     margin-top: 2px;
   }
@@ -502,7 +502,7 @@
   .complex-value-note {
     margin: 0;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.35;
   }
 
@@ -542,7 +542,7 @@
     border-radius: 6px;
     background: var(--surface-8);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     outline: none;
     text-align: right;
@@ -552,7 +552,7 @@
   .angle-input:focus { border-color: var(--brand); }
 
   .angle-unit {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     white-space: nowrap;
   }
@@ -619,7 +619,7 @@
     border-radius: 6px;
     background: var(--surface-8);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", monospace;
     text-align: right;
     outline: none;
@@ -629,7 +629,7 @@
   .opacity-input:focus { border-color: var(--brand); }
 
   .opacity-unit {
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
     white-space: nowrap;
   }

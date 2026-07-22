@@ -161,6 +161,6 @@ test("CSS panel presents session staging and Save as the only disk boundary", ()
     new URL("../src/lib/components/InspectorPane.svelte", import.meta.url),
     "utf8",
   );
-  assert.match(source, /este în ProjectWorkspace — Ctrl\+S persistă pe disc/);
+  assert.match(source, /este în sesiunea proiectului — Ctrl\+S persistă pe disc/);
   assert.doesNotMatch(source, /acceptedDiskGeneration|acceptedManifest|InternalWriteEvidence/);
 });

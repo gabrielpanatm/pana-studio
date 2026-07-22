@@ -47,7 +47,7 @@
     border-radius: 6px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
     white-space: nowrap;
@@ -68,7 +68,7 @@
     border-radius: 999px;
     background: var(--brand);
     color: white;
-    font-size: 9px;
+    font-size: 12px;
     line-height: 14px;
   }
 </style>

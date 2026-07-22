@@ -133,7 +133,7 @@ test("cache-ul Preview deduplică numai cu dovada exactă a tranzacției Canvas"
       expectedWorkspaceRevision: 7,
       expectedWorkspaceTransactionId: "workspace-străin",
     }),
-    /nu dovedește tranzacția ProjectWorkspace/,
+    /nu dovedește tranzacția așteptată a sesiunii proiectului/,
   );
   assert.equal(projections, 1);
 });
@@ -385,7 +385,7 @@ test("an unmounted Canvas defers the workspace revision and projects it once a s
   });
 
   await projectLatestProjectWorkspacePreview(target, {
-    reason: "site-workspace",
+    reason: "workspace-mutation",
     minimumWorkspaceRevision: 16,
     requestedPaths: ["sursa/content/despre.md", "sursa/templates/despre.html"],
   });

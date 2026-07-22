@@ -70,7 +70,7 @@
     border: 1px solid transparent;
     border-radius: 5px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     background: transparent;
     cursor: pointer;
     line-height: 1;

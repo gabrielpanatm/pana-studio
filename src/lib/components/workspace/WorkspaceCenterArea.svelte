@@ -1,18 +1,28 @@
 <script lang="ts">
-  import { tick, type Component } from "svelte";
+  import type { Component } from "svelte";
   import type { TerminalPaneProps } from "$lib/components/TerminalPane.svelte";
   import EditorShell from "$lib/components/EditorShell.svelte";
+  import AuditWorkspace from "$lib/components/audit/AuditWorkspace.svelte";
+  import ContentWorkspace from "$lib/components/content/ContentWorkspace.svelte";
+  import AssetsWorkspace from "$lib/components/creation/AssetsWorkspace.svelte";
+  import ComponentsWorkspace from "$lib/components/creation/ComponentsWorkspace.svelte";
+  import DesignSystemWorkspace from "$lib/components/creation/DesignSystemWorkspace.svelte";
   import MoodBoardCanvas from "$lib/components/canvas/MoodBoardCanvas.svelte";
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
-  import SiteWorkspace from "$lib/components/site-workspace/SiteWorkspace.svelte";
-  import MotionTimelinePanel from "$lib/components/workspace/MotionTimelinePanel.svelte";
+  import PublishWorkspace from "$lib/components/publish/PublishWorkspace.svelte";
+  import SiteOverviewWorkspace from "$lib/components/site/SiteOverviewWorkspace.svelte";
+  import VersionControlWorkspace from "$lib/components/versioning/VersionControlWorkspace.svelte";
   import StartupState from "$lib/components/workspace/StartupState.svelte";
+  import WorkbenchBottomPanel from "$lib/components/workbench/WorkbenchBottomPanel.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type { MoodBoardRequestIdentity } from "$lib/mood-board/io";
-  import { requireCurrentPreviewStructuralSession } from "$lib/kernel/preview-structural-lane";
-  import { syncCommittedSiteStructurePreview } from "$lib/source-graph/template-actions";
-  import type { TerminalQuickTask } from "$lib/terminal/runtime";
+  import type {
+    CenterView,
+    WorkbenchDocumentSnapshot,
+    WorkbenchGroupId,
+    WorkbenchSurface,
+  } from "$lib/types";
 
   let {
     app,
@@ -26,16 +36,30 @@
     openWorkspaceSource: (path: string) => void | Promise<void>;
   } = $props();
 
-  let motionTimelineExpanded = $state(false);
-  let motionTimelineMountReady = $state(false);
-
-  const motionTimelineAvailable = $derived(
-    app.centerView === "preview"
-      && app.activeInspectorTab === "js"
-      && !app.rightPaneCollapsed
-      && Boolean(app.scannedProject?.isZola),
+  const bottomPanelOpen = $derived(
+    Boolean(app.workbenchSnapshot?.bottomPanel.open),
   );
-  const motionTimelineOpen = $derived(motionTimelineAvailable && motionTimelineExpanded);
+  const dirtyWorkbenchPaths = $derived(
+    app.projectWorkspaceSnapshot?.documents.files
+      .filter((file) => file.dirty)
+      .map((file) => file.relativePath)
+      ?? [],
+  );
+  const activeWorkbenchActivity = $derived(
+    app.workbenchSnapshot?.activeActivity ?? "editor",
+  );
+  const responsiveBreakpoints = $derived([
+    {
+      id: "mobile",
+      label: "Mobil",
+      widthPx: Number.parseFloat(breakpointValue("bp-mobil", "768px")) || 768,
+    },
+    {
+      id: "tablet",
+      label: "Tabletă",
+      widthPx: Number.parseFloat(breakpointValue("bp-tableta", "1024px")) || 1_024,
+    },
+  ]);
   const moodBoardSessionIdentity = $derived.by((): MoodBoardRequestIdentity | null => {
     if (
       app.projectTransitionFrontendLeaseActive
@@ -63,64 +87,83 @@
       && app.moodBoardLoadedForSessionId === identity.expectedSessionId;
   }
 
-  $effect(() => {
-    if (motionTimelineAvailable) return;
-    motionTimelineExpanded = false;
-  });
-
-  function clearTransientInteractionLocks() {
-    document.body.classList.remove("is-resizing", "is-col-resizing", "is-row-resizing", "motion-timeline-dragging");
-    document.documentElement.style.userSelect = "";
+  function centerViewForSurface(surface: WorkbenchSurface): CenterView {
+    if (surface === "code") return "code";
+    if (surface === "markdown") return "markdown";
+    return "preview";
   }
 
-  function openMotionTimeline() {
-    clearTransientInteractionLocks();
-    motionTimelineExpanded = true;
+  async function showWorkbenchDocument(document: WorkbenchDocumentSnapshot) {
+    const file = app.scannedProject?.files.find(
+      (candidate) => candidate.relativePath === document.relativePath,
+    );
+    if (!file) {
+      app.setGlobalStatus(
+        `Documentul spațiului de lucru nu mai există în proiect: ${document.relativePath}`,
+        "error",
+      );
+      return;
+    }
+    await app.loadScannedProjectFile(file);
+    await app.setCenterView(centerViewForSurface(document.surface));
   }
 
-  async function closeMotionTimeline() {
+  async function activateWorkbenchDocument(
+    groupId: WorkbenchGroupId,
+    document: WorkbenchDocumentSnapshot,
+  ) {
     try {
-      await app.flushInteractiveEditorDrafts("template-switch");
+      await app.applyWorkbenchIntent({
+        kind: "activate_document",
+        documentId: document.documentId,
+        groupId,
+      });
+      await showWorkbenchDocument(document);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      app.setGlobalStatus(`Închiderea Timeline a fost blocată: ${message}`, "error");
-      return;
+      app.setGlobalStatus(
+        `Documentul nu a putut fi activat: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
     }
-    motionTimelineExpanded = false;
   }
 
-  $effect(() => {
-    if (!motionTimelineOpen) {
-      motionTimelineMountReady = false;
-      return;
-    }
-
-    clearTransientInteractionLocks();
-    motionTimelineMountReady = false;
-    let secondFrame = 0;
-    let readyTimer = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        readyTimer = window.setTimeout(() => {
-          motionTimelineMountReady = true;
-        }, 0);
+  async function closeWorkbenchDocument(
+    groupId: WorkbenchGroupId,
+    document: WorkbenchDocumentSnapshot,
+  ) {
+    const wasActive = app.workbenchSnapshot?.groups
+      .find((group) => group.groupId === groupId)
+      ?.activeDocumentId === document.documentId;
+    try {
+      const receipt = await app.applyWorkbenchIntent({
+        kind: "close_document",
+        documentId: document.documentId,
+        groupId,
       });
-    });
+      if (!wasActive) return;
+      const nextGroup = receipt.snapshot.groups.find((group) => group.groupId === groupId);
+      const nextDocument = nextGroup?.documents.find(
+        (candidate) => candidate.documentId === nextGroup.activeDocumentId,
+      );
+      if (nextDocument) await showWorkbenchDocument(nextDocument);
+    } catch (error) {
+      app.setGlobalStatus(
+        `Documentul nu a putut fi închis: ${error instanceof Error ? error.message : String(error)}`,
+        "error",
+      );
+    }
+  }
 
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      if (secondFrame) window.cancelAnimationFrame(secondFrame);
-      if (readyTimer) window.clearTimeout(readyTimer);
-    };
-  });
+  async function setWorkbenchSurface(surface: WorkbenchSurface) {
+    await app.setCenterView(centerViewForSurface(surface));
+  }
+
 </script>
 
 <section
-  class:terminal-open={app.terminalPaneOpen}
-  class:motion-timeline-open={motionTimelineAvailable}
-  class:motion-timeline-expanded={motionTimelineOpen}
+  class:bottom-panel-open={bottomPanelOpen}
   class="center-stack"
-  style={`--terminal-pane-height: ${app.terminalPaneHeight}px; --motion-timeline-pane-height: ${app.motionTimelinePaneHeight}px;`}
+  style={`--terminal-pane-height: ${app.terminalPaneHeight}px;`}
   aria-label="Zona centrala"
 >
   <div
@@ -136,6 +179,20 @@
         openProjectFolder={() => app.openProjectFolder()}
         initZolaProject={() => app.initZolaProject()}
       />
+    {:else if activeWorkbenchActivity === "components"}
+      <ComponentsWorkspace {app} {openWorkspaceSource} />
+    {:else if activeWorkbenchActivity === "design_system"}
+      <DesignSystemWorkspace {app} {openWorkspaceSource} />
+    {:else if activeWorkbenchActivity === "assets"}
+      <AssetsWorkspace {app} />
+    {:else if activeWorkbenchActivity === "content"}
+      <ContentWorkspace {app} {openWorkspaceSource} />
+    {:else if activeWorkbenchActivity === "versioning"}
+      <VersionControlWorkspace {app} />
+    {:else if activeWorkbenchActivity === "publish"}
+      <PublishWorkspace {app} />
+    {:else if activeWorkbenchActivity === "audit"}
+      <AuditWorkspace {app} {openWorkspaceSource} />
     {:else if app.centerView === "kernel"}
       <KernelWorkspace
         currentProjectPath={app.currentProjectPath}
@@ -148,48 +205,7 @@
         onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
       />
     {:else if app.centerView === "site"}
-      <SiteWorkspace
-        currentProjectPath={app.currentProjectPath}
-        runtimeSessionId={app.kernelProjectSessionId}
-        projectSessionEpoch={app.projectSessionEpoch}
-        projectTransitionFrontendLeaseActive={app.projectTransitionFrontendLeaseActive || app.aiEditLeaseFrontendLockActive}
-        kernelUndoRedoFrontendLeaseActive={app.kernelUndoRedoFrontendLeaseActive}
-        activePath={app.activeScannedPath}
-        selectedSourceId={app.selectedTemplateSourceId ?? app.selectedElement?.sourceId ?? null}
-        refreshToken={app.refreshToken}
-        previewSrc={app.previewSrc}
-        previewDocumentMarkup={app.previewDocumentMarkup}
-        previewDevice={app.previewDevice}
-        previewZoom={app.previewZoom}
-        tabletPreviewWidth={breakpointValue("bp-tableta", "1024px")}
-        mobilePreviewWidth={breakpointValue("bp-mobil", "768px")}
-        sourceCache={app.sourceCache}
-        openFile={openWorkspaceSource}
-        openExternalRun={(route) => app.openCurrentProjectInBrowser(route)}
-        onActiveRouteChange={(route) => { app.browserPreviewRoute = route; }}
-        beginPreviewStructuralWriteBoundary={() => app.beginPreviewStructuralWriteBoundary()}
-        endPreviewStructuralWriteBoundary={() => app.endPreviewStructuralWriteBoundary()}
-        projectCommittedSiteStructure={async (lease, touchedFiles, workspaceRevision, preferredRelativePath) => {
-          requireCurrentPreviewStructuralSession(app, lease);
-          await app.rescanCurrentProjectWithinStructuralLane(
-            lease,
-            preferredRelativePath ?? app.activeScannedPath,
-            { strict: true, deferPreviewRefresh: true },
-          );
-          requireCurrentPreviewStructuralSession(app, lease);
-          // Loading the newly created source can replace SiteWorkspace with
-          // EditorShell. Wait for its Design Safe iframe binding before asking
-          // the Canvas coordinator to confirm the new workspace revision.
-          await tick();
-          requireCurrentPreviewStructuralSession(app, lease);
-          await syncCommittedSiteStructurePreview(app, lease, touchedFiles, workspaceRevision);
-          return app.sourceGraph;
-        }}
-        loopDefinitions={app.loopDefinitions}
-        onRegisterLoop={(definition) => app.registerLoopDefinition(definition)}
-        onRemoveLoop={(id) => app.removeLoopDefinition(id)}
-        onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
-      />
+      <SiteOverviewWorkspace {app} {openWorkspaceSource} />
     {:else if app.centerView === "canvas"}
       {#if moodBoardSessionIdentity}
         {#key `${moodBoardSessionIdentity.expectedProjectRoot}\u0000${moodBoardSessionIdentity.expectedSessionId}`}
@@ -235,10 +251,12 @@
         bind:previewFrame={app.previewFrame}
         bind:codeEditorHost={app.codeEditorHost}
         centerView={app.centerView}
-        previewDevice={app.previewDevice}
         previewZoom={app.previewZoom}
-        tabletPreviewWidth={breakpointValue("bp-tableta", "1024px")}
-        mobilePreviewWidth={breakpointValue("bp-mobil", "768px")}
+        previewCanvasMode={app.previewCanvasMode}
+        previewCanvasPreset={app.previewCanvasPreset}
+        previewWidthPx={app.previewWidthPx}
+        previewRulers={app.previewRulers}
+        {responsiveBreakpoints}
         previewDocumentMarkup={app.previewDocumentMarkup}
         previewSrc={app.previewSrc}
         interactivePreviewEnabled={app.interactivePreviewEnabled && !app.aiEditLeaseFrontendLockActive}
@@ -249,11 +267,19 @@
         templateWorkbenchPlan={app.templateWorkbenchPlan}
         refreshToken={app.refreshToken}
         editorReadOnly={app.projectTransitionFrontendLeaseActive || app.kernelUndoRedoFrontendLeaseActive || app.aiEditLeaseFrontendLockActive}
+        workbenchSnapshot={app.workbenchSnapshot}
+        {dirtyWorkbenchPaths}
+        {activateWorkbenchDocument}
+        {closeWorkbenchDocument}
+        {setWorkbenchSurface}
+        setWorkbenchSplit={async (split) => { await app.setSynchronizedWorkbenchSplit(split); }}
+        setWorkbenchSplitRatio={async (ratioBasisPoints) => { await app.setWorkbenchSplitRatio(ratioBasisPoints); }}
+        setCanvasViewport={async (viewport) => { await app.setWorkbenchCanvasViewport(viewport); }}
         attachPreviewInspector={() => app.attachPreviewInspector()}
         exitTemplateWorkbench={() => app.exitTemplateWorkbench()}
         setInteractivePreviewEnabled={(enabled) => app.setInteractivePreviewEnabled(enabled)}
         onInteractiveLifecycleError={(message) => app.setGlobalStatus(
-          `Interactive Preview: ${message}`,
+          `Previzualizare interactivă: ${message}`,
           "error",
         )}
         onInteractiveDomSnapshot={(nodes) => app.acceptInteractivePreviewDomSnapshot(nodes)}
@@ -281,108 +307,24 @@
     {/if}
   </div>
 
-  {#if motionTimelineAvailable}
-    {#if !motionTimelineExpanded}
-      <section class="motion-timeline-launcher" aria-label="Timeline Motion" inert={app.aiEditLeaseFrontendLockActive ? true : undefined}>
-        <button type="button" onclick={openMotionTimeline}>
-          Deschide timeline
-        </button>
-        <span>Editarea Timeline este disponibilă; redarea JS rulează numai în Run extern.</span>
-      </section>
-    {:else}
-    <WorkspaceResizeHandle
-      kind="motionTimeline"
-      active={app.activeResizeKind === "motionTimeline"}
-      ariaLabel="Redimensioneaza timeline-ul Motion"
-      onDrag={(event) => app.startResizeDrag("motionTimeline", event)}
-      onReset={() => { void closeMotionTimeline(); }}
-    />
-
-    {#if motionTimelineMountReady}
-      <div inert={app.aiEditLeaseFrontendLockActive ? true : undefined}>
-      <MotionTimelinePanel
-        activeTemplatePath={app.activeRenderedTemplatePath}
-        projectRoot={app.sessionProjectRoot}
-        runtimeSessionId={app.kernelProjectSessionId}
-        refreshToken={app.jsRefreshToken}
-        onPendingChange={(pending) => app.setInspectorPending("js", pending, "motion-timeline")}
-      />
-      </div>
-    {:else}
-      <section class="motion-timeline-loading" aria-label="Timeline Motion se încarcă">
-        <strong>Timeline</strong>
-        <span>Se pregătește editorul Timeline…</span>
-      </section>
-    {/if}
-    {/if}
-  {/if}
-
-  {#if app.terminalPaneOpen}
+  {#if bottomPanelOpen}
     <WorkspaceResizeHandle
       kind="terminal"
       active={app.activeResizeKind === "terminal"}
-      ariaLabel="Redimensioneaza terminalul"
+      ariaLabel="Redimensionează panoul inferior"
       onDrag={(event) => app.startResizeDrag("terminal", event)}
       onReset={() => app.resetResize("terminal")}
     />
 
-    {#if TerminalPaneComponent}
-      <TerminalPaneComponent
-        bind:terminalHost={app.terminalHost}
-        terminalTabs={app.terminalTabs}
-        activeTerminalTabId={app.activeTerminalTabId}
-        quickTasks={app.terminalQuickTasks}
-        openTab={() => app.openTerminalTab()}
-        selectTab={(id: string) => app.selectTerminalTab(id)}
-        closeTab={(id: string) => app.closeTerminalTab(id)}
-        runQuickTask={(task: TerminalQuickTask) => app.runTerminalQuickTask(task)}
-        clearActiveTerminal={() => app.clearActiveTerminal()}
-      />
-    {:else}
-      <section class="terminal-loading" aria-label="Terminalul se încarcă">
-        <span>Se încarcă terminalul…</span>
-      </section>
-    {/if}
+    <WorkbenchBottomPanel
+      {app}
+      {TerminalPaneComponent}
+      {openWorkspaceSource}
+    />
   {/if}
 </section>
 
 <style>
-  .motion-timeline-launcher {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    min-width: 0;
-    min-height: 0;
-    padding: 8px 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--surface-2) 84%, var(--brand-soft));
-    box-shadow: var(--shadow);
-    color: var(--text-muted);
-    font-size: 11px;
-  }
-
-  .motion-timeline-launcher button {
-    flex: 0 0 auto;
-    min-height: 28px;
-    border: 1px solid var(--brand);
-    border-radius: 7px;
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-    font-size: 11px;
-    font-weight: 900;
-    cursor: pointer;
-  }
-
-  .motion-timeline-launcher span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .motion-timeline-loading,
   .mood-board-loading {
     display: flex;
     align-items: center;
@@ -396,10 +338,9 @@
     background: color-mix(in srgb, var(--surface-2) 88%, var(--brand-soft));
     box-shadow: var(--shadow);
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
   }
 
-  .motion-timeline-loading strong,
   .mood-board-loading strong {
     color: var(--text);
     font-size: 12px;

@@ -189,7 +189,6 @@ export type ProjectControllerHost = {
   beginPreviewStructuralWriteBoundary: () => Promise<void>;
   endPreviewStructuralWriteBoundary: () => void;
   historyPanelOpen: boolean;
-  versionsPanelOpen: boolean;
   settingsPanelOpen: boolean;
   activeVersionPreview: unknown | null;
   reattachCurrentProjectSession?: () => Promise<boolean>;
@@ -204,8 +203,10 @@ export type ProjectControllerHost = {
       skipDraftFlush?: boolean;
       deferPreviewRefresh?: boolean;
       activateTemplateWorkbench?: boolean;
+      syncWorkbench?: boolean;
     },
   ) => Promise<void>;
+  restoreWorkbenchState?: () => Promise<unknown>;
   updateTemplateWorkbenchContext: (
     project: ProjectScan,
     templateFile: ProjectFile,
@@ -279,7 +280,7 @@ export async function openProjectFolder(host: ProjectControllerHost) {
     await tick();
     await openProjectRoot(host, selected);
   } catch (error) {
-    const message = `Open Folder a esuat: ${errorMessage(error)}`;
+    const message = `Deschiderea dosarului a eșuat: ${errorMessage(error)}`;
     host.projectStatus = message;
     host.setGlobalStatus(message, "error");
     host.notify({
@@ -380,7 +381,7 @@ async function projectPublishedSessionIntoFrontend(
     || fileBuffers.projectRoot !== project.root
     || fileBuffers.runtimeSessionId !== host.kernelProjectSessionId
   ) {
-    throw new Error("ProjectWorkspace nu corespunde sesiunii Rust publicate.");
+    throw new Error("Sesiunea proiectului nu corespunde sesiunii Rust publicate.");
   }
   const dirtyWorkspacePaths = fileBuffers.files
     .filter((file) => file.dirty)
@@ -390,11 +391,11 @@ async function projectPublishedSessionIntoFrontend(
 
   host.projectStatus = openPlan.projectStatus;
   if (project.previewWarning) {
-    host.setGlobalStatus(`Preview indisponibil: ${project.previewWarning}`, "error");
+    host.setGlobalStatus(`Previzualizare indisponibilă: ${project.previewWarning}`, "error");
     host.notify({
       id: "project.preview.warning",
       level: "warning",
-      title: "Preview indisponibil",
+      title: "Previzualizare indisponibilă",
       message: project.previewWarning,
     });
   }
@@ -417,6 +418,7 @@ async function projectPublishedSessionIntoFrontend(
       // Source selection is established now; Workbench may only be requested
       // after the canonical Preview generation has been mounted and accepted.
       activateTemplateWorkbench: false,
+      syncWorkbench: false,
     });
   }
   if (mode === "reattach" && !project.previewWarning) {
@@ -429,7 +431,7 @@ async function projectPublishedSessionIntoFrontend(
     );
     host.clearNotification("project.preview.warning");
   } else if (!restoredDirtySession && !project.previewWarning) {
-    host.setGlobalStatus("Proiect încărcat din fișierele de pe disk.", "restored");
+    host.setGlobalStatus("Proiect încărcat din fișierele de pe disc.", "restored");
     host.clearNotification("project.preview.warning");
   }
   host.scssVariables = await getScssVariables(
@@ -468,6 +470,7 @@ export async function reattachCurrentProjectSession(host: ProjectControllerHost)
     host.endProjectTransitionFrontendLease?.();
   }
   if (previewIdentity) await startPreviewAfterOpen(host, previewIdentity);
+  await host.restoreWorkbenchState?.();
   return true;
 }
 
@@ -551,7 +554,7 @@ async function openProjectRoot(
         }
       } else if (options.recoveryDecision) {
         throw new Error(
-          "Decizia de abandonare nu mai corespunde recovery-ului inspectat.",
+          "Decizia de abandonare nu mai corespunde recuperării inspectate.",
         );
       }
     } catch (error) {
@@ -560,7 +563,7 @@ async function openProjectRoot(
     }
   } else if (options.recoveryDecision) {
     host.endProjectTransitionFrontendLease?.();
-    throw new Error("Reload Project nu acceptă o decizie project-open recovery.");
+    throw new Error("Reîncărcarea proiectului nu acceptă o decizie de recuperare de la deschidere.");
   }
   try {
     await host.invalidateExternalReconcileForProjectTransition?.();
@@ -592,6 +595,7 @@ async function openProjectRoot(
     host.endProjectTransitionFrontendLease?.();
   }
   if (previewIdentity) await startPreviewAfterOpen(host, previewIdentity);
+  await host.restoreWorkbenchState?.();
 }
 
 async function prepareProjectTransitionForTarget(
@@ -655,7 +659,7 @@ export async function continueProjectTransitionWithOperatorDecision(
     throw new Error("Decizia operator nu mai corespunde tranziției curente.");
   }
   host.projectStatus = "Se înregistrează decizia operator și se reia tranziția...";
-  host.setGlobalStatus("Se înregistrează decizia operator pentru Project Transition.", "saving");
+  host.setGlobalStatus("Se înregistrează decizia operatorului pentru tranziția proiectului.", "saving");
   try {
     const receipt = await recordProjectTransitionOperatorDecision(
       request.targetRoot,
@@ -678,13 +682,13 @@ export async function continueProjectTransitionWithOperatorDecision(
       await openProjectRoot(host, request.targetRoot, { operatorDecisionId: receipt.decision.id });
     }
   } catch (error) {
-    const message = `Project Transition nu poate continua: ${errorMessage(error)}`;
+    const message = `Tranziția proiectului nu poate continua: ${errorMessage(error)}`;
     host.projectStatus = message;
     host.setGlobalStatus(message, "error");
     host.notify({
       id: PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID,
       level: "error",
-      title: "Project Transition refuzat",
+      title: "Tranziția proiectului a fost refuzată",
       message,
     });
     throw error;
@@ -698,7 +702,7 @@ export function cancelProjectOpenRecoveryDecision(
   if (host.projectOpenRecoveryDecisionRequest?.id !== requestId) return;
   host.projectOpenRecoveryDecisionRequest = null;
   host.clearNotification(PROJECT_OPEN_RECOVERY_NOTIFICATION_ID);
-  host.projectStatus = "Deschiderea dosarului a fost anulată; recovery-ul vechi a fost păstrat.";
+  host.projectStatus = "Deschiderea dosarului a fost anulată; recuperarea veche a fost păstrată.";
   host.setGlobalStatus("Recovery păstrat. Dosarul nu a fost deschis.", "restored");
 }
 
@@ -708,13 +712,13 @@ export async function continueProjectOpenWithRecoveryAbandonment(
 ) {
   const request = host.projectOpenRecoveryDecisionRequest;
   if (!request || request.id !== requestId) {
-    throw new Error("Decizia de recovery nu mai corespunde deschiderii curente.");
+    throw new Error("Decizia de recuperare nu mai corespunde deschiderii curente.");
   }
   const decision = projectOpenRecoveryAbandonDecision(request);
   host.projectOpenRecoveryDecisionRequest = null;
   host.clearNotification(PROJECT_OPEN_RECOVERY_NOTIFICATION_ID);
   host.projectStatus = "Se deschide dosarul actual fără drafturile sesiunii vechi...";
-  host.setGlobalStatus("Se aplică decizia explicită de abandonare a recovery-ului.", "saving");
+  host.setGlobalStatus("Se aplică decizia explicită de abandonare a recuperării.", "saving");
   try {
     await openProjectRoot(host, request.targetRoot, {
       operatorDecisionId: request.operatorDecisionId,
@@ -727,7 +731,7 @@ export async function continueProjectOpenWithRecoveryAbandonment(
     host.notify({
       id: PROJECT_OPEN_RECOVERY_NOTIFICATION_ID,
       level: "error",
-      title: "Decizia de recovery nu a putut fi aplicată",
+      title: "Decizia de recuperare nu a putut fi aplicată",
       message,
     });
     throw error;
@@ -767,7 +771,7 @@ export async function startPreviewAfterOpen(
     const rawReceipt = await dependencies.start(identity);
     if (!isProjectPreviewRequestIdentityCurrent(host, identity)) return stale();
     if (!rawReceipt) {
-      throw new Error("Preview-ul Zola nu a publicat nicio generație Canvas.");
+      throw new Error("Previzualizarea Zola nu a publicat nicio generație Canvas.");
     }
     const receipt = requireProjectPreviewStartReceipt(identity, rawReceipt);
     startedPreviewUrl = receipt.url;
@@ -789,7 +793,7 @@ export async function startPreviewAfterOpen(
       ?? currentProject.files.find((file) => file.role === "page")
       ?? null;
     if (activeFile && activeFile.role !== "template") {
-      await host.loadScannedProjectFile(activeFile);
+      await host.loadScannedProjectFile(activeFile, { syncWorkbench: false });
     }
     if (canvasConfirmation) {
       const revision = receipt.canvasProjection.identity.previewRevision;
@@ -820,10 +824,11 @@ export async function startPreviewAfterOpen(
         strict: true,
         skipDraftFlush: true,
         activateTemplateWorkbench: true,
+        syncWorkbench: false,
       });
     }
     host.clearNotification("project.preview.warning");
-    host.setGlobalStatus("Preview Zola pornit.", "restored");
+    host.setGlobalStatus("Previzualizare Zola pornită.", "restored");
     host.scheduleZolaValidation?.("project-open");
     return {
       status: "canonical",
@@ -847,10 +852,10 @@ export async function startPreviewAfterOpen(
     host.notify({
       id: "project.preview.warning",
       level: "warning",
-      title: "Preview indisponibil",
+      title: "Previzualizare indisponibilă",
       message,
     });
-    host.setGlobalStatus(`Preview indisponibil: ${message}`, "error");
+    host.setGlobalStatus(`Previzualizare indisponibilă: ${message}`, "error");
     return {
       status: "degraded",
       projectSessionId: identity.expectedSessionId,
@@ -891,7 +896,6 @@ export function resetProjectScopedState(
   host.cachebustAssets = false;
   host.diskState = createDiskState();
   host.historyPanelOpen = false;
-  host.versionsPanelOpen = false;
   host.settingsPanelOpen = false;
   host.activeVersionPreview = null;
   host.setSessionProjectRoot();
@@ -999,7 +1003,7 @@ async function projectCurrentProjectRescan(
     const previewRefreshed = await host.requestPreviewRefresh("project-rescan");
     requireCurrent();
     if (options.strict && !previewRefreshed) {
-      throw new Error("Preview-ul nu a confirmat proiecția rescan-ului strict.");
+      throw new Error("Previzualizarea nu a confirmat proiecția rescanării stricte.");
     }
   }
   host.startExternalDiskPolling?.();
@@ -1239,18 +1243,18 @@ async function reloadCurrentProjectFromDisk(
     return {
       status: "cancelled",
       projectSessionId: null,
-      message: "Project Transition nu a autorizat reîncărcarea.",
+      message: "Tranziția proiectului nu a autorizat reîncărcarea.",
     };
   }
 
   const isDiscard = options.mode === "discard";
   host.projectStatus = isDiscard
-    ? "Se aruncă sesiunea nesalvată și se reîncarcă proiectul de pe disk..."
-    : "Se șterge sesiunea curentă și se reîncarcă proiectul de pe disk...";
+    ? "Se aruncă sesiunea nesalvată și se reîncarcă proiectul de pe disc..."
+    : "Se șterge sesiunea curentă și se reîncarcă proiectul de pe disc...";
   host.saveState = "saving";
   host.saveStatus = isDiscard
-    ? "Se revine la starea fișierelor de pe disk..."
-    : "Se reconstruiește sesiunea proiectului din disk...";
+    ? "Se revine la starea fișierelor de pe disc..."
+    : "Se reconstruiește sesiunea proiectului de pe disc...";
   let rustSessionSwapped = false;
   let publishedProjectSessionId: string | null = null;
   let previewIdentity: ProjectPreviewRequestIdentity | null = null;
@@ -1304,13 +1308,13 @@ async function reloadCurrentProjectFromDisk(
       status: "completed",
       projectSessionId: publishedProjectSessionId ?? host.kernelProjectSessionId,
       previewStatus: "degraded",
-      message: "Sesiunea nu are o suprafață Preview Zola.",
+      message: "Sesiunea nu are o suprafață de previzualizare Zola.",
     };
   }
 
   const previewOutcome = await startPreviewAfterOpen(host, previewIdentity);
   if (previewOutcome.status === "stale") {
-    const message = "Proiecția Preview a fost înlocuită de altă ProjectSession.";
+    const message = "Proiecția de previzualizare a fost înlocuită de altă sesiune de proiect.";
     host.setGlobalStatus(message, "error");
     return {
       status: "failed",
@@ -1322,8 +1326,8 @@ async function reloadCurrentProjectFromDisk(
   if (previewOutcome.status === "canonical") {
     host.setGlobalStatus(
       isDiscard
-        ? "Sesiunea autosave a fost aruncată. Sursele și Preview-ul provin din disk."
-        : "Purge complet: sursele și Preview-ul au fost reconstruite din disk.",
+        ? "Sesiunea salvată automat a fost aruncată. Sursele și previzualizarea provin de pe disc."
+        : "Curățare completă: sursele și previzualizarea au fost reconstruite de pe disc.",
       "restored",
     );
   }
@@ -1361,12 +1365,26 @@ export async function createContentPage(host: ProjectControllerHost) {
   }
   const rawTitle = window.prompt("Titlul paginii noi:");
   if (rawTitle === null) return;
-  const pagePlan = planContentPageCreation(rawTitle, host.activeScannedPath);
+  return createContentPageFromInput(host, { title: rawTitle });
+}
+
+export async function createContentPageFromInput(
+  host: ProjectControllerHost,
+  input: { title: string; slug?: string | null; section?: string | null },
+): Promise<string | null> {
+  if (!host.scannedProject) {
+    host.projectStatus = "Crearea de pagini este disponibila doar pentru un proiect Zola real.";
+    return null;
+  }
+  const pagePlan = planContentPageCreation(input.title, host.activeScannedPath, {
+    slug: input.slug,
+    section: input.section,
+  });
   if (!pagePlan.ok) {
     host.projectStatus = pagePlan.status;
-    return;
+    return null;
   }
-  await runInPreviewStructuralLane(host, async (lease) => {
+  return await runInPreviewStructuralLane(host, async (lease): Promise<string | null> => {
     host.projectStatus = pagePlan.creatingStatus;
     try {
       const identity = previewStructuralCommandIdentity(lease);
@@ -1385,9 +1403,11 @@ export async function createContentPage(host: ProjectControllerHost) {
       requireCurrentPreviewStructuralSession(host, lease);
       host.saveState = "unsaved";
       host.saveStatus = `Pagina nouă este în sesiune: ${relativePath}. Ctrl+S persistă pe disc.`;
+      return relativePath;
     } catch (error) {
-      if (!previewStructuralSessionLeaseMatches(host, lease)) return;
+      if (!previewStructuralSessionLeaseMatches(host, lease)) return null;
       host.projectStatus = `Nu am putut crea pagina: ${errorMessage(error)}`;
+      return null;
     }
   });
 }
@@ -1519,10 +1539,10 @@ function captureTemplateWorkbenchUiLease(
   );
   const templatePath = templateFile.relativePath.trim();
   if (!templatePath) {
-    throw new Error("Template Workbench cere un template Zola explicit.");
+    throw new Error("Context de template cere un template Zola explicit.");
   }
   if (project.root !== identity.expectedProjectRoot) {
-    throw new Error("Template Workbench a refuzat un ProjectScan din altă sesiune.");
+    throw new Error("Context de template a refuzat un ProjectScan din altă sesiune.");
   }
   host.templateWorkbenchRequestSerial += 1;
   return {
@@ -1575,7 +1595,7 @@ export async function updateTemplateWorkbenchContext(
       || workspace.runtimeSessionId !== lease.identity.expectedSessionId
     ) {
       throw new Error(
-        "Template Workbench nu a putut captura revizia ProjectWorkspace a sesiunii active.",
+        "Contextul de template nu a putut captura revizia sesiunii active a proiectului.",
       );
     }
     const minimumRevision = options.minimumWorkspaceRevision;
@@ -1583,11 +1603,11 @@ export async function updateTemplateWorkbenchContext(
       minimumRevision !== undefined
       && (!Number.isSafeInteger(minimumRevision) || minimumRevision < 0)
     ) {
-      throw new Error("Template Workbench a primit o revizie minimă invalidă.");
+      throw new Error("Context de template a primit o revizie minimă invalidă.");
     }
     if (minimumRevision !== undefined && workspace.revision < minimumRevision) {
       throw new Error(
-        `ProjectWorkspace este la revizia ${workspace.revision}, sub revizia minimă ${minimumRevision} cerută de Template Workbench.`,
+        `ProjectWorkspace este la revizia ${workspace.revision}, sub revizia minimă ${minimumRevision} cerută de Context de template.`,
       );
     }
 
@@ -1611,7 +1631,7 @@ export async function updateTemplateWorkbenchContext(
       || receipt.plan.activeTemplate.file !== lease.templatePath
     ) {
       throw new Error(
-        "Template Workbench a primit un receipt pentru altă revizie, sesiune sau sursă.",
+        "Context de template a primit un receipt pentru altă revizie, sesiune sau sursă.",
       );
     }
 
@@ -1622,7 +1642,7 @@ export async function updateTemplateWorkbenchContext(
     host.templateWorkbenchTarget = lease.templatePath;
     host.templateWorkbenchPlan = receipt.plan;
     host.templateWorkbenchPreferredPagePath = receipt.plan.selectedContext?.pageFile ?? null;
-    host.activePreviewPath = `Template Workbench: ${lease.templatePath}`;
+    host.activePreviewPath = `Context de template: ${lease.templatePath}`;
     host.previewDocumentMarkup = null;
     if (receipt.canvasProjection.phase === "prepared") {
       const reconciled = await host.reconcileTemplateWorkbenchPreviewDocument(
@@ -1631,7 +1651,7 @@ export async function updateTemplateWorkbenchContext(
       );
       if (!reconciled) {
         throw new Error(
-          "Template Workbench nu a confirmat candidatul Canvas al aceleiași revizii.",
+          "Context de template nu a confirmat candidatul Canvas al aceleiași revizii.",
         );
       }
     } else {
@@ -1640,7 +1660,7 @@ export async function updateTemplateWorkbenchContext(
     }
     if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;
     host.setGlobalStatus(
-      `Template Workbench activ: ${receipt.plan.activeTemplate.name}.`,
+      `Context de template activ: ${receipt.plan.activeTemplate.name}.`,
       "restored",
     );
     const selectedPageFile = receipt.plan.selectedContext?.pageFile ?? null;
@@ -1652,7 +1672,7 @@ export async function updateTemplateWorkbenchContext(
   } catch (error) {
     if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;
     if (options.strict) throw error;
-    host.setGlobalStatus(`Template Workbench indisponibil: ${errorMessage(error)}`, "error");
+    host.setGlobalStatus(`Context de template indisponibil: ${errorMessage(error)}`, "error");
     return null;
   }
 }
@@ -1688,5 +1708,5 @@ export async function exitTemplateWorkbench(
       await host.refreshRenderedPreviewDocument();
     }
   }
-  host.setGlobalStatus("Template Workbench închis. Preview-ul site-ului este activ.", "idle");
+  host.setGlobalStatus("Context de template închis. Previzualizarea site-ului este activă.", "idle");
 }

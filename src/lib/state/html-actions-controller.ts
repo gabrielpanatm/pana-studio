@@ -463,7 +463,7 @@ async function executeSelectedHtmlAttributes(
       && receipt.workspaceMutation.revisionAfter === receipt.workspaceMutation.revisionBefore
     ) {
       await project(patch, target);
-      return noopAction("Atributele coincid deja cu ProjectWorkspace.");
+      return noopAction("Atributele coincid deja cu sesiunea proiectului.");
     }
     await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
       cacheCommittedHtmlPatch(host, patch);
@@ -527,11 +527,11 @@ async function executeSelectedHtmlText(
       && receipt.workspaceMutation.revisionAfter === receipt.workspaceMutation.revisionBefore
     ) {
       await project(patch, target);
-      return noopAction("Textul coincide deja cu ProjectWorkspace.");
+      return noopAction("Textul coincide deja cu sesiunea proiectului.");
     }
     if (options.deferCanonicalProjection) {
       if (!previewStructuralSessionLeaseMatches(host, lease)) {
-        return cancelledAction("Draftul de text aparține unei sesiuni Preview închise.");
+        return cancelledAction("Ciorna de text aparține unei sesiuni de previzualizare închise.");
       }
       const mutation = receipt.workspaceMutation;
       if (
@@ -540,7 +540,7 @@ async function executeSelectedHtmlText(
         && mutation.revisionAfter === mutation.revisionBefore
       ) {
         await project(patch, target);
-        return noopAction("Draftul de text coincide deja cu ProjectWorkspace.");
+        return noopAction("Ciorna de text coincide deja cu sesiunea proiectului.");
       }
       if (
         !mutation?.changed
@@ -548,7 +548,7 @@ async function executeSelectedHtmlText(
         || !mutation.transactionId?.trim()
       ) {
         throw new Error(
-          "Confirmarea draftului de text nu conține o tranziție ProjectWorkspace validă.",
+          "Confirmarea ciornei de text nu conține o tranziție validă a sesiunii proiectului.",
         );
       }
       cacheCommittedHtmlPatch(host, patch);
@@ -750,7 +750,7 @@ async function insertPaletteElementAtTargetInLane(
     sessionId: request.targetSessionId,
   });
   if (!host.canEditHtmlStructure && !targetLocation) {
-    host.structureStatus = "Comută pe Preview ca să adaugi elemente vizual.";
+    host.structureStatus = "Comută pe Previzualizare ca să adaugi elemente vizual.";
     host.setGlobalStatus(host.structureStatus, "error");
     return;
   }
@@ -964,7 +964,7 @@ async function insertNodeRelativeInLane(
     return;
   }
   if (!canEditHtmlStructure) {
-    host.structureStatus = "Comuta pe Preview sau pe codul HTML al paginii active.";
+    host.structureStatus = "Comută pe Previzualizare sau pe codul HTML al paginii active.";
     return;
   }
   if (position === "child" && !canAddChild) {
@@ -1305,7 +1305,7 @@ export async function applyTextContentToCapturedHtmlTarget(
         && host.textContentValue === committedText
       ) {
         host.textStatus = options.deferCanonicalProjection
-          ? "Text confirmat recuperabil în ProjectWorkspace."
+          ? "Text confirmat și recuperabil în sesiunea proiectului."
           : "Text aplicat prin kernel.";
         if (!options.deferCanonicalProjection) {
           host.textEditOriginalKey = null;

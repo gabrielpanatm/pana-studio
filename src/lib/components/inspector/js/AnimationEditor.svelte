@@ -290,7 +290,7 @@
     <div class="field-grid">
       <label><span>Autoplay</span><SelectControl value={animation.playback.autoplay ? "yes" : "no"} options={yesNoOptions} ariaLabel="Autoplay animație" onchange={(value) => patchPlayback({ autoplay: value === "yes" })} /></label>
       <label><span>Delay</span><input type="number" min="0" step="50" value={animation.playback.delay} oninput={(event) => patchPlayback({ delay: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
-      <label><span>Duration</span><input type="number" min="0" step="50" value={animation.playback.duration} oninput={(event) => patchPlayback({ duration: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
+      <label><span>Durată</span><input type="number" min="0" step="50" value={animation.playback.duration} oninput={(event) => patchPlayback({ duration: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
       <label><span>Ease</span><SelectControl value={animation.playback.playbackEase} options={easingOptions} ariaLabel="Ease animație" onchange={(value) => patchPlayback({ playbackEase: value })} /></label>
       <label><span>Loop</span><input type="number" value={animation.playback.loop} placeholder="-1 infinit" oninput={(event) => patchPlayback({ loop: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
       <label><span>Loop delay</span><input type="number" min="0" step="50" value={animation.playback.loopDelay} oninput={(event) => patchPlayback({ loopDelay: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
@@ -320,7 +320,7 @@
     <div class="field-grid">
       <label><span>Activ</span><SelectControl value={animation.stagger.enabled ? "yes" : "no"} options={[{ value: "no", label: "nu" }, { value: "yes", label: "da" }]} ariaLabel="Stagger activ" onchange={(value) => patchStagger({ enabled: value === "yes" })} /></label>
       <label><span>Each</span><input type="number" value={animation.stagger.each} oninput={(event) => patchStagger({ each: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
-      <label><span>Start</span><input type="number" value={animation.stagger.start} oninput={(event) => patchStagger({ start: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
+      <label><span>Început</span><input type="number" value={animation.stagger.start} oninput={(event) => patchStagger({ start: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
       <label><span>From</span><input value={animation.stagger.from} placeholder="first, center, last, index" oninput={(event) => patchStagger({ from: event.currentTarget.value })} /></label>
       <label><span>Ease</span><input class="mono" value={animation.stagger.ease} oninput={(event) => patchStagger({ ease: event.currentTarget.value })} /></label>
       <label><span>Grid</span><input class="mono" value={animation.stagger.grid} placeholder="3,4" oninput={(event) => patchStagger({ grid: event.currentTarget.value })} /></label>
@@ -372,9 +372,9 @@
           <button type="button" class="danger" onclick={() => removeKeyframe(keyframe.id)}>șterge</button>
         </div>
         <div class="field-grid">
-          <label><span>Label</span><input value={keyframe.label} oninput={(event) => updateKeyframe(keyframe.id, { label: event.currentTarget.value })} /></label>
+          <label><span>Etichetă</span><input value={keyframe.label} oninput={(event) => updateKeyframe(keyframe.id, { label: event.currentTarget.value })} /></label>
           <label><span>At</span><input class="mono" value={keyframe.at} placeholder="50% pentru percentage keyframes" oninput={(event) => updateKeyframe(keyframe.id, { at: event.currentTarget.value })} /></label>
-          <label><span>Duration</span><input type="number" min="0" step="50" value={keyframe.duration} oninput={(event) => updateKeyframe(keyframe.id, { duration: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
+          <label><span>Durată</span><input type="number" min="0" step="50" value={keyframe.duration} oninput={(event) => updateKeyframe(keyframe.id, { duration: parseInt(event.currentTarget.value, 10) || 0 })} /></label>
           <label><span>Ease</span><input class="mono" value={keyframe.ease} oninput={(event) => updateKeyframe(keyframe.id, { ease: event.currentTarget.value })} /></label>
         </div>
         <div class="section-head compact">
@@ -465,7 +465,7 @@
     </div>
     <div class="field-grid">
       <label>
-        <span>Value mode</span>
+        <span>Mod valoare</span>
         <SelectControl value={property.value.mode} options={valueModes} ariaLabel="Mod valoare Anime" onchange={(value) => updateValue({ mode: value as PanaMotionValue["mode"] })} />
       </label>
       <label>
@@ -478,7 +478,7 @@
       {:else if property.value.mode === "expression" || property.value.mode === "function"}
         <label class="span-2"><span>Expression</span><textarea value={property.value.expression} placeholder="(target, i, total) => i * 100" oninput={(event) => updateValue({ expression: event.currentTarget.value })}></textarea></label>
       {:else}
-        <label><span>Value</span><input value={property.value.value} placeholder={valuePlaceholder(property.value.mode)} oninput={(event) => updateValue({ value: event.currentTarget.value })} /></label>
+        <label><span>Valoare</span><input value={property.value.value} placeholder={valuePlaceholder(property.value.mode)} oninput={(event) => updateValue({ value: event.currentTarget.value })} /></label>
         <label><span>Unit</span><input value={property.value.unit} placeholder={unitPlaceholder(property.value.mode)} disabled={property.value.mode === "cssVariable" || property.value.mode === "color" || property.value.mode === "random"} oninput={(event) => updateValue({ unit: event.currentTarget.value })} /></label>
       {/if}
     </div>
@@ -544,7 +544,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -565,7 +565,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }
@@ -605,7 +605,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -660,7 +660,7 @@
 
   .hint {
     margin: 0;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 </style>

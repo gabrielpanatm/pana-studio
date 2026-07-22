@@ -152,7 +152,7 @@
       {codexLoading
         ? "Se configurează..."
         : codexRecoveryBlocked
-          ? "Recovery necesar"
+          ? "Recuperare necesară"
           : codexStatus?.configExists && !codexStatus.securePermissions
             ? "Necesită 0600"
           : codexStatus?.configured
@@ -255,7 +255,7 @@
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 850;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -266,7 +266,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }

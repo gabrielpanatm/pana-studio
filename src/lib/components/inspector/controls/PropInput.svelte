@@ -158,7 +158,7 @@
     padding: 0 5px;
     border-right: 1px solid var(--border-4);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 24px;
     white-space: nowrap;
@@ -181,7 +181,7 @@
     padding: 0;
     border: 1px solid var(--border-4);
     border-radius: 4px;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     background: var(--surface-4);
     cursor: pointer;

@@ -292,7 +292,7 @@
     color: var(--text);
     background: transparent;
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     outline: none;
   }
 
@@ -359,7 +359,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .asset-name {
@@ -378,7 +378,7 @@
     border-radius: 999px;
     color: var(--text-muted);
     background: var(--surface-4);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
   }
 </style>

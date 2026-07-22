@@ -96,7 +96,7 @@
   }
 
   .group-label {
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -146,7 +146,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 850;
   }
 
@@ -159,7 +159,7 @@
     border-radius: 999px;
     background: var(--brand);
     color: white;
-    font-size: 9px;
+    font-size: 12px;
     font-style: normal;
     line-height: 15px;
     text-align: center;
@@ -186,13 +186,13 @@
   }
 
   .advanced-toggle span {
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     text-transform: uppercase;
   }
 
   .advanced-toggle strong {
-    font-size: 11px;
+    font-size: 12px;
   }
 </style>

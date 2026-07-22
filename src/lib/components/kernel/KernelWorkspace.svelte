@@ -34,7 +34,7 @@
 
   const projectName = $derived(currentProjectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? "Proiect");
   const dirtyLabel = $derived(dirtyAreas.length ? dirtyAreas.join(", ") : "curat");
-  const statusLabel = $derived(projectStatus || "ProjectWorkspace activ");
+  const statusLabel = $derived(projectStatus || "Sesiunea proiectului este activă");
 
   function refreshKernelSurfaces() {
     recoveryRefreshToken += 1;
@@ -49,17 +49,17 @@
   <header class="kernel-header">
     <div>
       <span class="kicker">Autoritate unică</span>
-      <h1>ProjectWorkspace</h1>
+      <h1>Nucleul proiectului</h1>
       <p>
-        HTML, CSS/SCSS, Page JS, Code, Preview și History proiectează aceeași revizie din memorie.
-        Numai Save trece prin verificarea de conflict și granița de scriere pe disk.
+        HTML, CSS/SCSS, JavaScript, codul, previzualizarea și istoricul proiectează aceeași revizie din memorie.
+        Numai salvarea trece prin verificarea de conflict și granița de scriere pe disc.
       </p>
     </div>
     <dl>
       <div><dt>Proiect</dt><dd title={currentProjectPath}>{projectName}</dd></div>
       <div><dt>Fișiere</dt><dd>{projectFileCount}</dd></div>
-      <div><dt>Source nodes</dt><dd>{sourceNodeCount}</dd></div>
-      <div><dt>Workspace</dt><dd class:warning={canSave}>{dirtyLabel}</dd></div>
+      <div><dt>Noduri sursă</dt><dd>{sourceNodeCount}</dd></div>
+      <div><dt>Sesiune</dt><dd class:warning={canSave}>{dirtyLabel}</dd></div>
     </dl>
   </header>
 
@@ -73,22 +73,22 @@
       <IconGitBranch size={18} stroke={1.8} />
       <div>
         <h2 id="authority-flow-title">Contractul de editare</h2>
-        <p>O singură stare autoritativă, două tipuri clare de efect: proiecție și Save.</p>
+        <p>O singură stare autoritativă, două tipuri clare de efect: proiecție și salvare.</p>
       </div>
     </div>
     <div class="flow">
       <span>Intenție UI</span>
-      <span>ProjectWorkspace</span>
-      <span>Revizie + History</span>
-      <span>Preview / panouri</span>
-      <span>Save verificat</span>
-      <span>Disk</span>
+      <span>Sesiunea proiectului</span>
+      <span>Revizie + istoric</span>
+      <span>Previzualizare / panouri</span>
+      <span>Salvare verificată</span>
+      <span>Disc</span>
     </div>
     <div class="invariants">
-      <span><IconActivity size={15} stroke={1.9} /> Editările nu scriu pe disk</span>
-      <span><IconActivity size={15} stroke={1.9} /> Undo/Redo schimbă workspace-ul</span>
-      <span><IconActivity size={15} stroke={1.9} /> Preview-ul este derivat din revizia curentă</span>
-      <span><IconActivity size={15} stroke={1.9} /> Save verifică baseline-ul și jurnalizează atomic</span>
+      <span><IconActivity size={15} stroke={1.9} /> Editările nu scriu pe disc</span>
+      <span><IconActivity size={15} stroke={1.9} /> Anularea și refacerea schimbă sesiunea</span>
+      <span><IconActivity size={15} stroke={1.9} /> Previzualizarea este derivată din revizia curentă</span>
+      <span><IconActivity size={15} stroke={1.9} /> Salvarea verifică baza și jurnalizează atomic</span>
     </div>
   </section>
 
@@ -121,12 +121,12 @@
 <style>
   .kernel-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
   .kernel-header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 500px); gap: 24px; padding: 22px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
-  .kicker { color: var(--brand-strong); font-size: 10px; font-weight: 850; text-transform: uppercase; }
+  .kicker { color: var(--brand-strong); font-size: 12px; font-weight: 850; text-transform: uppercase; }
   h1 { margin: 7px 0 0; color: var(--text-strong); font-size: 30px; }
   .kernel-header p { max-width: 760px; margin: 9px 0 0; color: var(--text-muted); font-size: 13px; line-height: 1.5; }
   dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
   dl div { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-4); }
-  dt { color: var(--text-muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
+  dt { color: var(--text-muted); font-size: 12px; font-weight: 800; text-transform: uppercase; }
   dd { margin: 5px 0 0; overflow: hidden; color: var(--text-strong); font-size: 12px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
   dd.warning { color: #d97706; }
   .kernel-alert { display: flex; align-items: center; gap: 8px; padding: 10px 22px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
@@ -134,11 +134,11 @@
   .authority-flow { display: grid; gap: 12px; margin: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-3); }
   .section-title { display: flex; align-items: center; gap: 9px; }
   h2 { margin: 0; font-size: 14px; }
-  .section-title p { margin: 3px 0 0; color: var(--text-muted); font-size: 11px; }
+  .section-title p { margin: 3px 0 0; color: var(--text-muted); font-size: 12px; }
   .flow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
-  .flow span { padding: 9px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-strong); font-size: 11px; font-weight: 750; text-align: center; }
+  .flow span { padding: 9px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-strong); font-size: 12px; font-weight: 750; text-align: center; }
   .invariants { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-  .invariants span { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+  .invariants span { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
   .kernel-grid { display: grid; gap: 12px; padding: 0 14px 14px; }
   :global(.kernel-grid > *) { min-width: 0; }
   @media (max-width: 980px) {

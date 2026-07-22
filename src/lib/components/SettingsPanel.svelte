@@ -1,28 +1,20 @@
 <script lang="ts">
-  import { IconSettings, IconX } from "@tabler/icons-svelte";
-  import DeployPane from "$lib/components/DeployPane.svelte";
+  import { IconChevronRight, IconRocket, IconSettings, IconX } from "@tabler/icons-svelte";
   import AiIntegrationPane from "$lib/components/settings/AiIntegrationPane.svelte";
   import type { AiContextStatus } from "$lib/types";
+  import { UI_TERMS } from "$lib/i18n/ui-terms";
 
   let {
     open = false,
-    scannedProject = false,
-    isZola = false,
-    isEmpty = false,
-    cachebustAssets = false,
     aiContextStatus = null,
     onStatusUpdate = undefined as ((text: string, kind: string) => void) | undefined,
-    onCachebustAssetsChange = undefined as ((value: boolean) => void) | undefined,
+    openPublishCenter,
     close,
   }: {
     open?: boolean;
-    scannedProject?: boolean;
-    isZola?: boolean;
-    isEmpty?: boolean;
-    cachebustAssets?: boolean;
     aiContextStatus?: AiContextStatus | null;
     onStatusUpdate?: (text: string, kind: string) => void;
-    onCachebustAssetsChange?: (value: boolean) => void;
+    openPublishCenter: () => void | Promise<void>;
     close: () => void;
   } = $props();
 </script>
@@ -32,27 +24,27 @@
   <aside class="settings-panel" aria-label="Setări proiect">
     <header class="settings-header">
       <div>
-        <p class="eyebrow">Settings</p>
-        <h2>Proiect</h2>
+        <p class="eyebrow">{UI_TERMS.settings}</p>
+        <h2>Pană Studio</h2>
       </div>
       <button type="button" class="icon-button" title="Închide" onclick={close}>
         <IconX size={16} stroke={1.9} />
       </button>
     </header>
 
-    <section class="settings-section" aria-label="Deploy">
+    <section class="settings-section" aria-label="Construire și publicare">
       <div class="section-heading">
-        <IconSettings size={15} stroke={1.8} />
-        <h3>Setări</h3>
+        <IconRocket size={15} stroke={1.8} />
+        <h3>Construire și publicare</h3>
       </div>
-      <DeployPane
-        {scannedProject}
-        {isZola}
-        {isEmpty}
-        {cachebustAssets}
-        {onStatusUpdate}
-        {onCachebustAssetsChange}
-      />
+      <button
+        type="button"
+        class="settings-route"
+        onclick={() => { close(); void openPublishCenter(); }}
+      >
+        <span><strong>Deschide centrul de publicare</strong><small>Configurație Zola, optimizare, verificare, construire și livrare.</small></span>
+        <IconChevronRight size={16} stroke={1.9} />
+      </button>
     </section>
 
     <section class="settings-section" aria-label="AI și MCP">
@@ -113,7 +105,7 @@
 
   .eyebrow {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -151,12 +143,34 @@
     min-width: 0;
   }
 
+  .settings-route {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 62px;
+    padding: 10px;
+    border: 1px solid var(--wb-border-subtle, var(--border-2));
+    border-radius: 8px;
+    color: var(--wb-text-primary, var(--text));
+    background: var(--wb-surface-chrome, var(--surface-2));
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .settings-route:hover { border-color: var(--wb-accent, var(--brand)); }
+  .settings-route:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--brand-strong)); outline-offset: 1px; }
+  .settings-route span { display: grid; gap: 4px; }
+  .settings-route strong { color: var(--text-strong); font-size: 12px; }
+  .settings-route small { color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+
   .section-heading {
     color: var(--text-muted);
   }
 
   .section-heading h3 {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.08em;
     text-transform: uppercase;

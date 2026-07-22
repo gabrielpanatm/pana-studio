@@ -872,7 +872,7 @@
 
   .file-tree-title {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -1070,7 +1070,7 @@
     border-radius: 4px;
     color: var(--text);
     background: var(--surface-3);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     cursor: pointer;
   }
@@ -1092,7 +1092,7 @@
     padding: 1px 5px;
     border-radius: 999px;
     color: var(--brand-strong);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     line-height: 1.3;
     text-transform: uppercase;
@@ -1146,7 +1146,7 @@
     border-radius: 3px;
     color: var(--text);
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     background: var(--surface);
     outline: none;
   }
@@ -1162,7 +1162,7 @@
     border: 1px solid var(--brand);
     border-radius: 3px;
     color: #ffffff;
-    font-size: 11px;
+    font-size: 12px;
     background: var(--brand);
     cursor: pointer;
   }
@@ -1184,7 +1184,7 @@
   .create-error {
     margin: 2px 0 0;
     color: #cf4a4a;
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .file-drag-hint {
@@ -1195,7 +1195,7 @@
     border: 1px solid color-mix(in srgb, var(--brand) 48%, var(--border-3));
     border-radius: 7px;
     color: var(--text-strong);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     line-height: 1.25;
     pointer-events: none;
@@ -1267,7 +1267,7 @@
 
   .delete-modal-body strong {
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     overflow-wrap: anywhere;
   }
 

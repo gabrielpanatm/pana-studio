@@ -19,7 +19,9 @@ export type PageFrontmatterField =
   | "ogTitle"
   | "ogDescription"
   | "ogImage"
-  | "ogType";
+  | "ogType"
+  | "tags"
+  | "categories";
 
 export type PageFrontmatterValues = Omit<Record<PageFrontmatterField, string>, "draft"> & {
   draft: boolean;
@@ -46,6 +48,8 @@ const defaultPageFrontmatterValues: PageFrontmatterValues = {
   ogDescription: "",
   ogImage: "",
   ogType: "",
+  tags: "",
+  categories: "",
 };
 
 const fieldToTomlKey: Record<PageFrontmatterField, string> = {
@@ -64,7 +68,11 @@ const fieldToTomlKey: Record<PageFrontmatterField, string> = {
   ogDescription: "extra.og_description",
   ogImage: "extra.og_image",
   ogType: "extra.og_type",
+  tags: "taxonomies.tags",
+  categories: "taxonomies.categories",
 };
+
+const tomlArrayKeys = new Set(["taxonomies.tags", "taxonomies.categories"]);
 
 function tomlString(value: string) {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
@@ -74,18 +82,27 @@ function parseTomlScalar(value: string): string | boolean {
   const trimmed = value.trim().replace(/,$/, "");
   if (trimmed === "true") return true;
   if (trimmed === "false") return false;
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return [...trimmed.matchAll(/["']((?:\\.|[^"'])*)["']/g)]
+      .map((match) => match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"))
+      .join(", ");
+  }
   const quoted = trimmed.match(/^["']([\s\S]*)["']$/);
   return quoted ? quoted[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\") : trimmed;
 }
 
 function readTomlValue(frontmatter: string, key: string) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = frontmatter.match(new RegExp(`(?:^|\\s)${escaped}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s]+)`, "m"));
+  const match = frontmatter.match(new RegExp(`(?:^|\\s)${escaped}\\s*=\\s*(\\[[^\\]]*\\]|"[^"]*"|'[^']*'|[^\\s]+)`, "m"));
   return match ? parseTomlScalar(match[1]) : undefined;
 }
 
 function replaceOrAppendTomlValue(frontmatter: string, key: string, value: string | boolean) {
-  const rendered = typeof value === "boolean" ? String(value) : tomlString(value);
+  const rendered = typeof value === "boolean"
+    ? String(value)
+    : tomlArrayKeys.has(key)
+      ? `[${value.split(",").map((entry) => entry.trim()).filter(Boolean).map(tomlString).join(", ")}]`
+      : tomlString(value);
   const line = `${key} = ${rendered}`;
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`^\\s*${escaped}\\s*=\\s*.+$`, "m");

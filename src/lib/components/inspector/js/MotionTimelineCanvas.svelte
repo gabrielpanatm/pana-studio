@@ -131,7 +131,7 @@
 <div
   class="timeline-shell"
   role="group"
-  aria-label="Suprafață de editare Timeline"
+  aria-label="Suprafață de editare a cronologiei"
   draggable="false"
   ondragstart={preventNativeClipDrag}
   onselectstart={preventNativeClipSelection}
@@ -272,7 +272,7 @@
     top: 4px;
     left: 4px;
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     color: var(--text-muted);
   }
 
@@ -294,7 +294,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: "JetBrains Mono", monospace;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     color: color-mix(in srgb, #f59e0b 72%, var(--text));
   }
@@ -329,7 +329,7 @@
     background: var(--motion-accent);
     color: var(--surface-2);
     font-family: "JetBrains Mono", monospace;
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .timeline-lane {
@@ -351,7 +351,7 @@
     background: color-mix(in srgb, var(--surface-5) 86%, transparent);
     color: color-mix(in srgb, var(--lane-color, var(--text-muted)) 56%, var(--text));
     font-family: "JetBrains Mono", monospace;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -474,12 +474,12 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
   }
 
   .clip-meta {
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     opacity: 0.75;
     flex-shrink: 0;
@@ -524,6 +524,6 @@
     justify-content: center;
     min-height: 76px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
   }
 </style>

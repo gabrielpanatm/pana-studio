@@ -42,7 +42,7 @@ export async function reconcilePageAssetContracts(
     });
     projectPageContractReceipt(host, projectionLease, templateRelativePath, fallbackScssPath, receipt);
     if (receipt.plan.template.changed) {
-      host.setGlobalStatus("Contractul CSS a fost actualizat în sesiunea ProjectWorkspace.", "unsaved");
+      host.setGlobalStatus("Contractul CSS a fost actualizat în sesiunea proiectului.", "unsaved");
     }
     return receipt;
   });

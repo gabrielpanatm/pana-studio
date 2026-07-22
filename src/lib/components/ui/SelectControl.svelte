@@ -245,7 +245,7 @@
     background: var(--surface-8);
     color: var(--text);
     font: inherit;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1;
     cursor: pointer;
     text-align: left;
@@ -312,7 +312,7 @@
     color: var(--text);
     text-align: left;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.15;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   }
@@ -328,7 +328,7 @@
   .select-option small {
     flex-shrink: 0;
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .select-group-label {
@@ -337,7 +337,7 @@
     height: 24px;
     padding: 4px 8px 2px;
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     text-transform: uppercase;

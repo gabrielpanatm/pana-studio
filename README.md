@@ -24,6 +24,12 @@ local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 - recovery tranzacțional și protecții pentru conflictele dintre editor, disk și
   operațiile externe.
 
+Interfața este organizată în activități dedicate — Editor, Site, Componente,
+Sistem de design, Resurse, Conținut, Control versiuni, Probleme și audit și
+Publicare. Navigarea restaurabilă, documentele, split-urile, viewport-ul și
+panoul inferior sunt proiectate dintr-o stare canonică administrată de nucleul
+Rust; frontendul Svelte nu păstrează un al doilea model al proiectului.
+
 Pană Studio include motorul și binarul Zola `0.22.1`, fixate la revizia upstream
 `29540e9897dbe8aca388b13f7bdf615985f6ca2c`. Nu este necesară instalarea
 separată a Zola pentru funcțiile oferite de aplicație. Binarul Linux x86_64 este
@@ -122,6 +128,9 @@ după verificarea și publicarea manuală a draftului.
 
 Arhitectura versionării Git este descrisă în
 [`docs/git-versioning-architecture.md`](docs/git-versioning-architecture.md).
+Reconstrucția Workbench-ului, principiile Rust-first și verificările de livrare
+sunt documentate în
+[`docs/ux-reconstruction.md`](docs/ux-reconstruction.md).
 
 ## Siguranța datelor
 

@@ -224,7 +224,7 @@ export async function resolveMoodBoardImageSrc(
     });
     requireCurrentMoodBoardIdentity(identity, isCurrent);
     const verified = requireMoodBoardAssetReceipt(receipt, identity, normalizedPath);
-    if (!verified.dataUrl) throw new Error("Preview-ul imaginii Mood Board este gol.");
+    if (!verified.dataUrl) throw new Error("Previzualizarea imaginii din planșa vizuală este goală.");
     return verified.dataUrl;
   }).catch((error) => {
     imagePreviewCache.delete(cacheKey);

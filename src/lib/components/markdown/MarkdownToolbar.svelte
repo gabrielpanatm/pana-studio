@@ -326,7 +326,7 @@
     border: 1px solid transparent;
     border-radius: 6px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     list-style: none;
     cursor: pointer;

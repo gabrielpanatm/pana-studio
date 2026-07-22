@@ -82,7 +82,7 @@
     border-radius: 5px;
     color: var(--text-muted);
     background: color-mix(in srgb, var(--surface) 88%, transparent);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     opacity: 0;
     pointer-events: none;

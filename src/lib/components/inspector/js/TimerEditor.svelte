@@ -54,7 +54,7 @@
     <div class="section-head"><span>Playback</span></div>
     <div class="field-grid">
       <label><span>Delay</span><input type="number" value={timer.playback.delay} oninput={(event) => patchPlayback({ delay: numberValue(event.currentTarget.value) })} /></label>
-      <label><span>Duration</span><input type="number" value={timer.playback.duration} oninput={(event) => patchPlayback({ duration: numberValue(event.currentTarget.value) })} /></label>
+      <label><span>Durată</span><input type="number" value={timer.playback.duration} oninput={(event) => patchPlayback({ duration: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Loop</span><input type="number" value={timer.playback.loop} oninput={(event) => patchPlayback({ loop: Number(event.currentTarget.value) || 0 })} /></label>
       <label><span>Loop delay</span><input type="number" value={timer.playback.loopDelay} oninput={(event) => patchPlayback({ loopDelay: numberValue(event.currentTarget.value) })} /></label>
       <label><span>Frame rate</span><input type="number" value={timer.playback.frameRate} oninput={(event) => patchPlayback({ frameRate: numberValue(event.currentTarget.value) })} /></label>
@@ -111,7 +111,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -145,7 +145,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
@@ -167,7 +167,7 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

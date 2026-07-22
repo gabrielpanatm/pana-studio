@@ -25,7 +25,6 @@ export type PreviewRefreshReason =
   | "tera-structural"
   | "html-structural"
   | "history-restore"
-  | "site-workspace"
   | "after-save"
   | "unknown";
 
@@ -53,7 +52,7 @@ export function createControlledPreviewState(): ControlledPreviewState {
   return {
     freshness: "idle",
     validation: "idle",
-    message: "Preview pregătit.",
+    message: "Previzualizare pregătită.",
     validationMessage: "Zola nevalidat în această sesiune.",
     lastLiveAt: null,
     lastSavedAt: null,
@@ -66,7 +65,7 @@ export function createControlledPreviewState(): ControlledPreviewState {
 
 export function markPreviewLive(
   state: ControlledPreviewState,
-  message = "Preview live actualizat de Pană Studio.",
+  message = "Previzualizare live actualizată de Pană Studio.",
 ): ControlledPreviewState {
   return {
     ...state,
@@ -78,7 +77,7 @@ export function markPreviewLive(
 
 export function markPreviewSaved(
   state: ControlledPreviewState,
-  message = "Fișiere salvate pe disk. Preview-ul live rămâne activ.",
+  message = "Fișiere salvate pe disc. Previzualizarea live rămâne activă.",
 ): ControlledPreviewState {
   return {
     ...state,
@@ -182,19 +181,19 @@ export function markZolaInvalid(
 export function previewFreshnessLabel(state: ControlledPreviewState) {
   switch (state.freshness) {
     case "live":
-      return "Preview live";
+      return "Previzualizare live";
     case "saved":
-      return "Salvat pe disk";
+      return "Salvat pe disc";
     case "refreshing":
-      return "Refresh Zola";
+      return "Reîmprospătare Zola";
     case "canonical":
       return "Randare Zola";
     case "stale":
-      return "Preview nevalidat";
+      return "Previzualizare nevalidată";
     case "error":
-      return "Preview eroare";
+      return "Eroare de previzualizare";
     default:
-      return "Preview";
+      return "Previzualizare";
   }
 }
 
@@ -224,21 +223,19 @@ export function previewRefreshReasonShortLabel(reason: PreviewRefreshReason) {
     case "project-rescan":
       return "proiect";
     case "discard":
-      return "disk";
+      return "disc";
     case "external-change":
       return "schimbări externe";
     case "workspace-mutation":
-      return "ProjectWorkspace";
+      return "sesiune";
     case "tera-structural":
       return "Tera";
     case "html-structural":
       return "HTML";
     case "history-restore":
-      return "History";
-    case "site-workspace":
-      return "Site Editor";
+      return "istoric";
     case "after-save":
-      return "după Save";
+      return "după salvare";
     default:
       return "necunoscut";
   }

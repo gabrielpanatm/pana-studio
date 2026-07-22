@@ -116,7 +116,7 @@
     document.body.classList.toggle("layers-dragging", dragActive);
   }
 
-  function toggleNodeCollapse(selector: string, event: MouseEvent) {
+  function toggleNodeCollapse(selector: string, event: Event) {
     event.stopPropagation();
     const next = new Set(collapsedNodes);
     if (next.has(selector)) next.delete(selector);
@@ -474,6 +474,23 @@
     selectPageSection(node);
   }
 
+  function handleRowKeydown(node: LayerNode, event: KeyboardEvent) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleRowClick(node);
+      return;
+    }
+    if (!node.hasChildren) return;
+    if (event.key === "ArrowRight" && collapsedNodes.has(node.selector)) {
+      event.preventDefault();
+      toggleNodeCollapse(node.selector, event);
+    }
+    if (event.key === "ArrowLeft" && !collapsedNodes.has(node.selector)) {
+      event.preventDefault();
+      toggleNodeCollapse(node.selector, event);
+    }
+  }
+
   function handleRowMouseEnter(node: LayerNode) {
     hoverPageSection(node);
   }
@@ -526,6 +543,12 @@
       return;
     }
     selectTeraSource(row.section, row.id);
+  }
+
+  function handleTeraRowKeydown(row: TeraLayerNode, event: KeyboardEvent) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    handleTeraRowClick(row);
   }
 
   function handleTeraRowMouseEnter(row: TeraLayerNode) {
@@ -582,9 +605,9 @@
 {#if pageSections.length === 0}
   <div class="tab-empty-state">Selectează o pagină pentru a vedea structura.</div>
 {:else}
-  <div class="layers-tree">
+  <div class="layers-tree" role="tree" aria-label="Structura paginii">
     {#if templateWorkbenchPlan}
-      <div class="workbench-source-chain" aria-label="Ierarhie Template Workbench">
+      <div class="workbench-source-chain" aria-label="Ierarhia contextului de template">
         {#each templateWorkbenchPlan.navigator as entry, index}
           <button
             type="button"
@@ -612,7 +635,7 @@
     {/if}
     {#each visibleRows as row}
       {#if row.kind === "tera"}
-        <button
+        <div
           class="tree-row tera-node"
           class:selected={isTeraRowSelected(row)}
           class:source-local={row.origin === "local"}
@@ -628,9 +651,13 @@
           data-layer-selector={row.selector}
           data-tera-source-id={row.id}
           style="--depth: {row.depth};"
-          type="button"
+          role="treeitem"
+          tabindex="0"
+          aria-level={row.depth + 1}
+          aria-selected={isTeraRowSelected(row)}
           title={`${row.kindLabel}: ${row.label}`}
           onclick={() => handleTeraRowClick(row)}
+          onkeydown={(event) => handleTeraRowKeydown(row, event)}
           oncontextmenu={(event) => openTeraLayerContextMenu(row, event)}
           onmouseenter={() => handleTeraRowMouseEnter(row)}
           onmouseleave={handleRowMouseLeave}
@@ -645,45 +672,33 @@
           </span>
           {#if isTeraRowActionTarget(row)}
             <span class="tree-actions" aria-label="Acțiuni Tera">
-              <span
+              <button
+                type="button"
                 class="tree-action-btn"
-                role="button"
-                tabindex="-1"
                 title="Editează HTML vizual"
                 onclick={handleTeraEditClick}
                 onpointerdown={(event) => event.stopPropagation()}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") handleTeraEditClick(event);
-                }}
               >
                 <IconEdit size={11} stroke={2.1} />
-              </span>
-              <span
+              </button>
+              <button
+                type="button"
                 class="tree-action-btn"
-                role="button"
-                tabindex="-1"
                 title="Deschide sursa"
                 onclick={handleTeraSourceClick}
                 onpointerdown={(event) => event.stopPropagation()}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") handleTeraSourceClick(event);
-                }}
               >
                 <IconCode size={11} stroke={2.1} />
-              </span>
-              <span
+              </button>
+              <button
+                type="button"
                 class="tree-action-btn danger"
-                role="button"
-                tabindex="-1"
                 title="Șterge nodul Tera"
                 onclick={handleTeraDeleteClick}
                 onpointerdown={(event) => event.stopPropagation()}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") handleTeraDeleteClick(event);
-                }}
               >
                 <IconTrash size={11} stroke={2.1} />
-              </span>
+              </button>
             </span>
           {/if}
           {#if dragTargetKey === teraRowKey(row.id) && dragDropPosition && !dragDropInvalid}
@@ -692,10 +707,10 @@
             <span class="tree-drop-label invalid">Interzis</span>
           {/if}
           <small class="tree-source-badge">Tera</small>
-        </button>
+        </div>
       {:else}
         {@const node = row.node}
-      <button
+      <div
         class="tree-row"
         class:selected={isLayerSelected(node)}
         class:source-current={layerSourceTone(node) === "current"}
@@ -711,9 +726,14 @@
         data-layer-row="html"
         data-layer-selector={node.selector}
         style="--depth: {row.depth};"
-        type="button"
+        role="treeitem"
+        tabindex="0"
+        aria-level={row.depth + 1}
+        aria-selected={isLayerSelected(node)}
+        aria-expanded={node.hasChildren ? !collapsedNodes.has(node.selector) : undefined}
         title={rowTitle(node)}
         onclick={() => handleRowClick(node)}
+        onkeydown={(event) => handleRowKeydown(node, event)}
         oncontextmenu={(event) => openHtmlLayerContextMenu(node, event)}
         onmouseenter={() => handleRowMouseEnter(node)}
         onmouseleave={handleRowMouseLeave}
@@ -722,20 +742,20 @@
         <span class="tree-gutter" style="width: {row.depth * 14}px;"></span>
         <span class="tree-toggle">
           {#if node.hasChildren}
-            <span
+            <button
+              type="button"
               class="toggle-btn"
-              role="button"
-              tabindex="-1"
+              aria-label={collapsedNodes.has(node.selector) ? `Extinde ${node.label}` : `Restrânge ${node.label}`}
+              aria-expanded={!collapsedNodes.has(node.selector)}
               onclick={(event) => toggleNodeCollapse(node.selector, event)}
               onpointerdown={(event) => event.stopPropagation()}
-              onkeydown={() => {}}
             >
               {#if collapsedNodes.has(node.selector)}
                 <IconChevronRight size={10} stroke={2.2} />
               {:else}
                 <IconChevronDown size={10} stroke={2.2} />
               {/if}
-            </span>
+            </button>
           {:else}
             <span class="toggle-dot"></span>
           {/if}
@@ -765,66 +785,51 @@
         {/if}
         {#if isLayerTeraActionTarget(node)}
           <span class="tree-actions" aria-label="Acțiuni Tera">
-            <span
+            <button
+              type="button"
               class="tree-action-btn"
-              role="button"
-              tabindex="-1"
               title="Editează HTML vizual"
               onclick={handleTeraEditClick}
               onpointerdown={(event) => event.stopPropagation()}
-              onkeydown={(event) => {
-                if (event.key === "Enter" || event.key === " ") handleTeraEditClick(event);
-              }}
             >
               <IconEdit size={11} stroke={2.1} />
-            </span>
-            <span
+            </button>
+            <button
+              type="button"
               class="tree-action-btn"
-              role="button"
-              tabindex="-1"
               title="Deschide sursa"
               onclick={handleTeraSourceClick}
               onpointerdown={(event) => event.stopPropagation()}
-              onkeydown={(event) => {
-                if (event.key === "Enter" || event.key === " ") handleTeraSourceClick(event);
-              }}
             >
               <IconCode size={11} stroke={2.1} />
-            </span>
-            <span
+            </button>
+            <button
+              type="button"
               class="tree-action-btn danger"
-              role="button"
-              tabindex="-1"
               title="Șterge nodul Tera"
               onclick={handleTeraDeleteClick}
               onpointerdown={(event) => event.stopPropagation()}
-              onkeydown={(event) => {
-                if (event.key === "Enter" || event.key === " ") handleTeraDeleteClick(event);
-              }}
             >
               <IconTrash size={11} stroke={2.1} />
-            </span>
+            </button>
           </span>
         {/if}
-        <span
+        <button
+          type="button"
           class="tree-delete-btn"
           class:disabled={!canDeleteNode(node)}
-          role="button"
-          tabindex="-1"
+          disabled={!canDeleteNode(node)}
           title={canDeleteNode(node) ? "Șterge element" : "Zona selectată este un gate Tera; folosește acțiunile Tera din Straturi sau Inspector."}
           onclick={(event) => handleDeleteClick(node, event)}
           onpointerdown={(event) => event.stopPropagation()}
-          onkeydown={(event) => {
-            if (event.key === "Enter" || event.key === " ") handleDeleteClick(node, event);
-          }}
         >
           <IconTrash size={11} stroke={2.1} />
-        </span>
+        </button>
         <small class="tree-tag">{node.tag}</small>
         {#if isLayerTeraSelected(node)}
           <small class="tree-source-badge">Tera</small>
         {/if}
-      </button>
+      </div>
       {/if}
     {/each}
   </div>
@@ -914,20 +919,20 @@
   }
   .workbench-source-copy small {
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 0.05em;
     text-transform: uppercase;
   }
   .workbench-source-copy strong {
     overflow: hidden;
-    font-size: 11px;
+    font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .workbench-source-origin {
     color: var(--source-tone);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
   }
 
@@ -939,7 +944,7 @@
     align-items: center;
     gap: 4px;
     width: 100%;
-    min-height: 24px;
+    min-height: 32px;
     padding: 0 4px 0 0;
     border: 1px solid transparent;
     border-radius: 5px;
@@ -998,7 +1003,7 @@
   }
 
   .tree-row.tera-node {
-    min-height: 25px;
+    min-height: 32px;
     cursor: pointer;
   }
 
@@ -1089,8 +1094,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    flex: 0 0 16px;
-    height: 16px;
+    flex: 0 0 32px;
+    height: 32px;
     color: var(--text-muted);
   }
 
@@ -1098,8 +1103,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
+    width: 32px;
+    height: 32px;
     border-radius: 3px;
     color: var(--text-muted);
     cursor: pointer;
@@ -1153,7 +1158,7 @@
   .tree-kicker {
     margin-right: 5px;
     color: color-mix(in srgb, var(--layer-origin) 78%, var(--text-muted));
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     text-transform: uppercase;
   }
@@ -1164,7 +1169,7 @@
     padding: 1px 5px;
     border-radius: 999px;
     color: var(--brand-strong);
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 800;
     line-height: 1.3;
     text-transform: uppercase;
@@ -1187,8 +1192,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: 32px;
+    height: 32px;
     border-radius: 5px;
     color: color-mix(in srgb, var(--layer-origin) 82%, var(--text-muted));
     cursor: pointer;
@@ -1213,9 +1218,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex: 0 0 18px;
-    width: 18px;
-    height: 18px;
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
     border-radius: 5px;
     color: color-mix(in srgb, #cf4a4a 82%, var(--text-muted));
     opacity: 0;
@@ -1245,7 +1250,7 @@
     border-radius: 4px;
     color: var(--text-muted);
     font-family: "JetBrains Mono", monospace;
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     background: var(--surface-3);
   }
@@ -1256,7 +1261,7 @@
     border: 1px solid color-mix(in srgb, var(--layer-origin) 34%, var(--border-3));
     border-radius: 4px;
     color: color-mix(in srgb, var(--layer-origin) 88%, var(--text-strong));
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     line-height: 1.45;
     text-transform: uppercase;
@@ -1277,7 +1282,7 @@
     border: 1px solid color-mix(in srgb, var(--brand) 48%, var(--border-3));
     border-radius: 7px;
     color: var(--text-strong);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     line-height: 1.25;
     pointer-events: none;

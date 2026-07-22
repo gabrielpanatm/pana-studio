@@ -61,9 +61,9 @@ export const MOTION_FAMILIES: MotionFamilyDefinition[] = [
   },
   {
     type: "timeline",
-    label: "Timeline pagină",
-    shortLabel: "Timeline",
-    description: "Ordonează animații, timer-e, callback-uri, setări, labels și sync pe pagina curentă.",
+    label: "Cronologia paginii",
+    shortLabel: "Cronologie",
+    description: "Ordonează animații, temporizatoare, callback-uri, setări, repere și sincronizări pe pagina curentă.",
     role: "Regizorul paginii. Nu țintește direct un element, ci orchestrează pași.",
     when: "Folosește când mai multe animații trebuie să pornească într-o ordine controlată.",
     mentalModel: "Scena: așază actorii pe timp.",

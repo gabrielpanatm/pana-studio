@@ -4,8 +4,9 @@
     parseInteractivePreviewMessage,
     type InteractivePreviewDomNode,
   } from "$lib/preview/interactive";
+  import type { WorkbenchCanvasMode } from "$lib/types";
+  import { UI_TERMS } from "$lib/i18n/ui-terms";
 
-  type PreviewDevice = "desktop" | "tablet" | "mobile";
   type FrameSlot = {
     id: number;
     url: string;
@@ -14,10 +15,9 @@
   };
 
   export let desiredUrl = "";
-  export let previewDevice: PreviewDevice = "desktop";
+  export let canvasMode: WorkbenchCanvasMode = "fit";
+  export let canvasWidthPx = 1_440;
   export let previewZoom = 100;
-  export let tabletPreviewWidth = "1024px";
-  export let mobilePreviewWidth = "768px";
   export let onDomSnapshot: (nodes: InteractivePreviewDomNode[]) => void = () => {};
   export let onLifecycleError: (message: string) => void = () => {};
   export let onRealmRestarted: (previewRevision: string, durationMs: number) => void = () => {};
@@ -27,7 +27,7 @@
   let activeId: number | null = null;
   let observedDesiredUrl = "";
   let nextId = 1;
-  let status = "Interactive Preview se pregătește…";
+  let status = `${UI_TERMS.interactivePreview} se pregătește…`;
   const frameNodes = new Map<number, HTMLIFrameElement>();
   const timeouts = new Map<number, number>();
 
@@ -47,14 +47,14 @@
   function stageDesiredUrl(url: string) {
     if (!url) {
       clearAllFrames();
-      status = "Interactive Preview indisponibil.";
+      status = `${UI_TERMS.interactivePreview} este indisponibilă.`;
       return;
     }
     const active = frames.find((slot) => slot.id === activeId);
     if (active?.url === url || frames.some((slot) => slot.id !== activeId && slot.url === url)) return;
     const previewRevision = previewRevisionFromUrl(url);
     if (!previewRevision) {
-      status = "Interactive Preview a refuzat un URL fără revizie canonică.";
+      status = `${UI_TERMS.interactivePreview} a refuzat un URL fără revizie canonică.`;
       return;
     }
 
@@ -62,13 +62,13 @@
     const slot = { id: nextId++, url, previewRevision, startedAt: performance.now() };
     frames = [...frames.filter((entry) => entry.id === activeId), slot];
     status = activeId === null
-      ? "Interactive Preview pornește într-un realm izolat…"
+      ? `${UI_TERMS.interactivePreview} pornește într-un mediu izolat…`
       : "Se verifică noua revizie interactivă…";
     const timeout = window.setTimeout(() => {
       if (slot.id === activeId) return;
       removeFrame(slot.id);
       status = activeId === null
-        ? "Interactive Preview nu a confirmat pornirea în 15 secunde."
+        ? `${UI_TERMS.interactivePreview} nu a confirmat pornirea în 15 secunde.`
         : "Noua revizie JS a eșuat; ultima revizie interactivă validă rămâne activă.";
       onRealmFailed(
         slot.previewRevision,
@@ -104,7 +104,7 @@
     if (message.type === "ready") {
       clearFrameTimeout(slot.id);
       activeId = slot.id;
-      status = "Interactive Preview activ · JS izolat";
+      status = `${UI_TERMS.interactivePreview} activă · JavaScript izolat`;
       onRealmRestarted(
         slot.previewRevision,
         Math.max(0, performance.now() - slot.startedAt),
@@ -155,17 +155,19 @@
   onDestroy(clearAllFrames);
 </script>
 
-<div class="interactive-stage" aria-label="Interactive Preview izolat">
+<div
+  class:canvas-fit={canvasMode === "fit"}
+  class:canvas-fixed={canvasMode === "fixed"}
+  class="interactive-stage"
+  style={`--preview-zoom-scale: ${previewZoom / 100}; --canvas-width-px: ${canvasWidthPx}px;`}
+  aria-label="Previzualizare interactivă izolată"
+>
   {#each frames as slot (slot.id)}
     <iframe
       use:registerFrame={slot.id}
       class:active={slot.id === activeId}
-      class:desktop={previewDevice === "desktop"}
-      class:tablet={previewDevice === "tablet"}
-      class:mobile={previewDevice === "mobile"}
       class="interactive-frame"
-      style={`--preview-zoom-scale: ${previewZoom / 100}; --tablet-preview-width: ${tabletPreviewWidth}; --mobile-preview-width: ${mobilePreviewWidth};`}
-      title="Interactive Preview izolat"
+      title="Previzualizare interactivă izolată"
       src={slot.url}
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
@@ -190,12 +192,11 @@
     position: absolute;
     inset: 0;
     z-index: 1;
-    width: calc(100% / var(--preview-zoom-scale));
-    height: calc(100% / var(--preview-zoom-scale));
+    width: 100%;
+    height: 100%;
     border: 0;
     opacity: 0;
     pointer-events: none;
-    transform: scale(var(--preview-zoom-scale));
     transform-origin: top left;
     background: transparent;
   }
@@ -206,14 +207,10 @@
     pointer-events: auto;
   }
 
-  .interactive-frame.tablet {
-    width: var(--tablet-preview-width);
-    max-width: calc(100% / var(--preview-zoom-scale));
-  }
-
-  .interactive-frame.mobile {
-    width: var(--mobile-preview-width);
-    max-width: calc(100% / var(--preview-zoom-scale));
+  .canvas-fixed .interactive-frame {
+    width: var(--canvas-width-px);
+    height: calc(100% / var(--preview-zoom-scale));
+    transform: scale(var(--preview-zoom-scale));
   }
 
   .interactive-status,

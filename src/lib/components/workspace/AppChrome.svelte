@@ -5,10 +5,10 @@
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import Topbar from "$lib/components/Topbar.svelte";
-  import VersionsPanel from "$lib/components/VersionsPanel.svelte";
+  import CommandCenter from "$lib/components/workbench/CommandCenter.svelte";
   import { contextMenu } from "$lib/context-menu/store.svelte";
   import type { AppState } from "$lib/state/app.svelte";
-  import type { SaveState } from "$lib/types";
+  import type { CommandCenterAction, SaveState } from "$lib/types";
   import type { Snippet } from "svelte";
 
   let {
@@ -21,6 +21,10 @@
     statusSourceValue = "",
     statusSourceOpenable = false,
     openStatusSource,
+    commandCenterOpen = false,
+    openCommandCenter = () => {},
+    closeCommandCenter = () => {},
+    executeCommandCenterAction = () => {},
     children,
   }: {
     app: AppState;
@@ -32,8 +36,24 @@
     statusSourceValue?: string;
     statusSourceOpenable?: boolean;
     openStatusSource: () => void | Promise<void>;
+    commandCenterOpen?: boolean;
+    openCommandCenter?: () => void;
+    closeCommandCenter?: () => void;
+    executeCommandCenterAction?: (action: CommandCenterAction) => void | Promise<void>;
     children?: Snippet;
   } = $props();
+
+  const activeWorkbenchActivity = $derived(
+    app.workbenchSnapshot?.activeActivity ?? "editor",
+  );
+  const showPreviewZoom = $derived(
+    (activeWorkbenchActivity === "editor"
+      && (app.centerView === "preview" || app.workbenchSnapshot?.split !== "none")
+      && app.previewCanvasMode === "fixed")
+      || activeWorkbenchActivity === "site"
+      || activeWorkbenchActivity === "content"
+      || activeWorkbenchActivity === "design_system",
+  );
 
   async function toggleRightInspectorPane() {
     if (!app.rightPaneCollapsed) {
@@ -49,81 +69,73 @@
   }
 </script>
 
+<div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
 <Topbar
   currentProjectPath={app.currentProjectPath}
   canUndo={topbarCanUndo}
   inspectorHasPending={app.saveHasPending}
   canRedo={topbarCanRedo}
-  previewDevice={app.previewDevice}
-  centerView={app.centerView}
-  sourceLanguage={app.sourceLanguage}
   uiTheme={app.uiTheme}
   noProject={!app.scannedProject}
-  canPreviewCurrentSource={app.canPreviewCurrentSource}
   leftPaneCollapsed={app.leftPaneCollapsed}
   rightPaneCollapsed={app.rightPaneCollapsed}
   terminalPaneOpen={app.terminalPaneOpen}
+  sidebarsAvailable={activeWorkbenchActivity === "editor"}
   historyPanelOpen={app.historyPanelOpen}
-  settingsPanelOpen={app.settingsPanelOpen}
-  versionsPanelOpen={app.versionsPanelOpen}
   openProjectFolder={() => app.openProjectFolder()}
-  closeCurrentProject={async () => { await app.closeCurrentProject(); }}
   openCurrentProjectInBrowser={() => app.openCurrentProjectInBrowser()}
-  rescanCurrentProject={() => app.rescanCurrentProject()}
-  refreshCurrentSession={() => app.refreshCurrentSession()}
-  validateZola={async () => { await app.runZolaValidation("manual"); }}
   canOpenInBrowser={app.scannedProject?.isZola ?? false}
   saveActiveFile={() => app.saveActiveFile()}
   undoAction={undoAction}
   redoAction={redoAction}
-  setPreviewDevice={(device) => (app.previewDevice = device)}
-  setCenterView={(view) => { void app.setCenterView(view); }}
   toggleUiTheme={() => app.toggleUiTheme()}
   toggleLeftPane={() => { app.leftPaneCollapsed = !app.leftPaneCollapsed; }}
   toggleRightPane={toggleRightInspectorPane}
-  toggleTerminalPane={() => { app.terminalPaneOpen = !app.terminalPaneOpen; }}
+  toggleTerminalPane={() => { void app.toggleTerminalPane(); }}
   toggleHistoryPanel={() => {
     const next = !app.historyPanelOpen;
     app.historyPanelOpen = next;
     if (next) {
       app.settingsPanelOpen = false;
-      app.versionsPanelOpen = false;
     }
   }}
-  toggleVersionsPanel={() => {
-    const next = !app.versionsPanelOpen;
-    app.versionsPanelOpen = next;
-    if (next) {
-      app.historyPanelOpen = false;
-      app.settingsPanelOpen = false;
-    }
-  }}
-  toggleSettingsPanel={() => {
-    const next = !app.settingsPanelOpen;
-    app.settingsPanelOpen = next;
-    if (next) {
-      app.historyPanelOpen = false;
-      app.versionsPanelOpen = false;
-    }
-  }}
+  {openCommandCenter}
 />
+</div>
 
 {#if children}
+  <div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
   {@render children()}
+  </div>
 {/if}
 
+<div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
 <StatusBar
   saveState={app.saveState}
   saveStatus={app.saveStatus}
   controlledPreview={app.controlledPreview}
   canvasPatchPerformance={app.canvasPatchPerformance}
   previewZoom={app.previewZoom}
+  {showPreviewZoom}
   setPreviewZoom={(value) => app.setPreviewZoom(value)}
+  commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
   resetPreviewZoom={() => app.resetPreviewZoom()}
   sourceLabel={statusSourceLabel}
   sourceValue={statusSourceValue}
   sourceOpenable={statusSourceOpenable}
   openSource={openStatusSource}
+  aiCoordinationSnapshot={app.aiCoordinationSnapshot}
+  externalReconciling={app.externalDiskState.reconciling}
+  projectionRecoveryRequired={app.externalDiskState.workspaceProjectionRecoveryRequired}
+/>
+</div>
+
+<CommandCenter
+  open={commandCenterOpen}
+  projectRoot={app.sessionProjectRoot}
+  runtimeSessionId={app.kernelProjectSessionId}
+  close={closeCommandCenter}
+  execute={executeCommandCenterAction}
 />
 
 <NotificationStack
@@ -135,13 +147,9 @@
 
 <SettingsPanel
   open={app.settingsPanelOpen}
-  scannedProject={!!app.scannedProject}
-  isZola={app.scannedProject?.isZola ?? false}
-  isEmpty={app.scannedProject?.isEmpty ?? false}
-  cachebustAssets={app.cachebustAssets}
   aiContextStatus={app.aiContextStatus}
   onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as SaveState)}
-  onCachebustAssetsChange={(value) => { app.cachebustAssets = value; }}
+  openPublishCenter={async () => { await app.setWorkbenchActivity("publish"); }}
   close={() => { app.settingsPanelOpen = false; }}
 />
 
@@ -154,32 +162,10 @@
   close={() => { app.historyPanelOpen = false; }}
 />
 
-<VersionsPanel
-  open={app.versionsPanelOpen}
-  projectRoot={app.sessionProjectRoot}
-  sessionId={app.kernelProjectSessionId}
-  workspace={app.projectWorkspaceSnapshot}
-  onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
-  activePreviewCommitOid={app.activeVersionPreview?.commitOid ?? null}
-  showPreview={async (receipt) => { await app.showVersionPreview(receipt); }}
-  returnToLivePreview={async () => { await app.returnToLivePreview(); }}
-  afterRestore={async (receipt) => {
-    if (receipt.workspace) app.projectWorkspaceSnapshot = receipt.workspace;
-    await app.rescanCurrentProject(app.activeScannedPath, { strict: true });
-  }}
-  afterRecovery={async (receipt) => {
-    if (receipt.workspace) app.projectWorkspaceSnapshot = receipt.workspace;
-    await app.rescanCurrentProject(app.activeScannedPath, { strict: true });
-  }}
-  afterIntegration={async (receipt) => {
-    if (receipt.workspace) app.projectWorkspaceSnapshot = receipt.workspace;
-    await app.rescanCurrentProject(app.activeScannedPath, { strict: true });
-  }}
-  afterIntegrationRecovery={async (receipt) => {
-    if (receipt.workspace) app.projectWorkspaceSnapshot = receipt.workspace;
-    await app.rescanCurrentProject(app.activeScannedPath, { strict: true });
-  }}
-  close={() => { app.versionsPanelOpen = false; }}
-/>
+<style>
+  .chrome-inert-layer {
+    display: contents;
+  }
+</style>
 
 <ContextMenuLayer state={contextMenu} />

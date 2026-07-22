@@ -8,7 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::kernel::{
     ai_coordination::AiCoordinationRuntime, context_hub::ContextHubRuntime,
-    project_workspace::ProjectWorkspace, recovery_coordinator::RecoveryCoordinatorScan,
+    project_workspace::ProjectWorkspace, publish_operation::PublishOperationControl,
+    recovery_coordinator::RecoveryCoordinatorScan, workbench::WorkbenchRuntime,
 };
 use crate::preview::{PersistentZolaPreviewEngine, SourceBrowserEngine};
 use crate::versioning::VersionNetworkOperationControl;
@@ -61,6 +62,8 @@ pub struct AppState {
     pub mcp_access_token: Mutex<Option<String>>,
     pub current_root: Mutex<Option<PathBuf>>,
     pub project_workspace: Mutex<Option<ProjectWorkspace>>,
+    pub workbench: WorkbenchRuntime,
+    pub publish_operation: Mutex<Option<PublishOperationControl>>,
     pub versioning_operation: Mutex<()>,
     pub versioning_network_operation: Mutex<Option<VersionNetworkOperationControl>>,
     pub recovery_coordinator_scan: Mutex<Option<RecoveryCoordinatorScan>>,
@@ -82,6 +85,8 @@ impl Default for AppState {
             mcp_access_token: Mutex::new(None),
             current_root: Mutex::new(None),
             project_workspace: Mutex::new(None),
+            workbench: WorkbenchRuntime::default(),
+            publish_operation: Mutex::new(None),
             versioning_operation: Mutex::new(()),
             versioning_network_operation: Mutex::new(None),
             recovery_coordinator_scan: Mutex::new(None),

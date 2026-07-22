@@ -112,7 +112,7 @@
     background: transparent;
     text-align: left;
     cursor: pointer;
-    font-size: 11px;
+    font-size: 12px;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     white-space: nowrap;
     overflow: hidden;

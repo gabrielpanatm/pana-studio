@@ -143,7 +143,7 @@
         timelineDraftTarget = null;
         timelineConfigLoadState = tpl ? "error" : "idle";
         timelineLoadError = tpl
-          ? "ProjectSession nu este disponibilă pentru citirea Page JS."
+          ? "Sesiunea proiectului nu este disponibilă pentru citirea JavaScript-ului paginii."
           : "";
       }
     }).catch((error) => {
@@ -268,7 +268,7 @@
       const workspaceState = pageJsCommandPayload(
         receipt,
         identity,
-        "Citirea Page JS din Timeline",
+        "Citirea JavaScript-ului paginii din cronologie",
       );
       baseConfig = normalizePageJsConfig(workspaceState.accepted);
       config = normalizePageJsConfig(workspaceState.current);
@@ -505,7 +505,7 @@
       markTimelineDraftDirty(task.templatePath);
       return;
     }
-    throw new Error("Motion Timeline nu a putut compune stepTiming peste configurația aflată în schimbare.");
+    throw new Error("Cronologia animațiilor nu a putut compune sincronizarea pasului peste configurația aflată în schimbare.");
   }
 
   function updateStep(nextStep: PanaMotionTimelineStep) {
@@ -581,32 +581,32 @@
 
 </script>
 
-<section class="motion-timeline-pane-shell" aria-label="Motion Timeline">
+<section class="motion-timeline-pane-shell" aria-label="Cronologie Motion">
   <div class="motion-design-safe-note" role="status">
-    <strong>Design Safe</strong>
-    <span>Playback și seek JS sunt oprite în editor; Run extern execută animația completă.</span>
+    <strong>Editare sigură</strong>
+    <span>Redarea și navigarea JavaScript sunt oprite în editor; deschiderea externă execută animația completă.</span>
   </div>
   {#if timelineConfigLoadState === "error"}
     <div class="motion-empty-state motion-error-state" role="alert">
       <strong>JS-ul paginii nu a putut fi încărcat</strong>
-      <span>{timelineLoadError || "Citirea configurației Motion Timeline a eșuat."}</span>
+      <span>{timelineLoadError || "Citirea cronologiei Motion a eșuat."}</span>
       <button type="button" onclick={retryTimelineLoad}>Reîncearcă</button>
     </div>
   {:else if !templatePath}
     <div class="motion-empty-state">
-      <strong>Motion Timeline</strong>
+      <strong>Cronologie Motion</strong>
       <span>Nu există un template activ.</span>
     </div>
   {:else if !isCurrentConfigReady()}
     <div class="motion-empty-state" aria-live="polite">
-      <strong>Anime Timeline</strong>
+      <strong>Cronologie Anime</strong>
       <span>Se citește JS-ul paginii curente…</span>
     </div>
   {:else if !activeTimeline}
     <div class="motion-empty-state">
-      <strong>Anime Timeline</strong>
-      <span>Creează un timeline pentru pagina curentă.</span>
-      <button type="button" onclick={createTimeline}>Creează timeline</button>
+      <strong>Cronologie Anime</strong>
+      <span>Creează o cronologie pentru pagina curentă.</span>
+      <button type="button" onclick={createTimeline}>Creează cronologia</button>
     </div>
   {:else}
     <MotionTimeline
@@ -645,7 +645,7 @@
     border: 1px solid var(--border-2);
     border-radius: 7px;
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     background: var(--surface-3);
   }
 
@@ -684,7 +684,7 @@
     border-radius: 6px;
     background: var(--brand-soft);
     color: var(--brand-strong);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     cursor: pointer;
   }

@@ -5,7 +5,9 @@
     type ControlledPreviewState,
   } from "$lib/preview/controlled";
   import type { SaveState } from "$lib/types";
+  import type { AiCoordinationSnapshot } from "$lib/types";
   import type { CanvasPatchPerformanceSnapshot } from "$lib/editor-runtime/preview-runtime";
+  import AiEditAuthorityIndicator from "$lib/components/ai/AiEditAuthorityIndicator.svelte";
 
   let {
     saveState = "idle",
@@ -13,10 +15,15 @@
     controlledPreview = undefined,
     canvasPatchPerformance = undefined,
     previewZoom = 100,
+    showPreviewZoom = true,
     sourceLabel = "",
     sourceValue = "",
     sourceOpenable = false,
+    aiCoordinationSnapshot = null,
+    externalReconciling = false,
+    projectionRecoveryRequired = false,
     setPreviewZoom = () => {},
+    commitPreviewZoom = () => {},
     resetPreviewZoom = () => {},
     openSource = () => {},
   }: {
@@ -25,15 +32,20 @@
     controlledPreview?: ControlledPreviewState;
     canvasPatchPerformance?: CanvasPatchPerformanceSnapshot;
     previewZoom?: number;
+    showPreviewZoom?: boolean;
     sourceLabel?: string;
     sourceValue?: string;
     sourceOpenable?: boolean;
+    aiCoordinationSnapshot?: AiCoordinationSnapshot | null;
+    externalReconciling?: boolean;
+    projectionRecoveryRequired?: boolean;
     setPreviewZoom?: (value: number) => void;
+    commitPreviewZoom?: (value: number) => void | Promise<void>;
     resetPreviewZoom?: () => void;
     openSource?: () => void | Promise<void>;
   } = $props();
 
-  const zoomProgress = $derived(Math.max(0, Math.min(100, ((previewZoom - 10) / 240) * 100)));
+  const zoomProgress = $derived(Math.max(0, Math.min(100, ((previewZoom - 25) / 175) * 100)));
   const previewLabel = $derived(controlledPreview ? previewFreshnessLabel(controlledPreview) : "");
   const zolaLabel = $derived(controlledPreview ? zolaValidationLabel(controlledPreview) : "");
 </script>
@@ -45,6 +57,9 @@
   class:saved={saveState === "saved"}
   class:restored={saveState === "restored"}
   class:error={saveState === "error"}
+  class:without-zoom={!showPreviewZoom}
+  role="status"
+  aria-live="polite"
 >
   <div class="status-left" title={saveStatus || undefined}>
     <span class="dot"></span>
@@ -55,23 +70,31 @@
     {/if}
   </div>
 
-  <div class="zoom-control" aria-label="Zoom preview">
-    <button type="button" class="zoom-reset" onclick={resetPreviewZoom}>Restabilește</button>
-    <input
-      class="zoom-slider"
-      type="range"
-      min="10"
-      max="250"
-      step="5"
-      value={previewZoom}
-      style={`--zoom-progress: ${zoomProgress}%`}
-      title={`Zoom preview ${previewZoom}%`}
-      oninput={(event) => setPreviewZoom(Number(event.currentTarget.value))}
-    />
-    <span class="zoom-value">{previewZoom}%</span>
-  </div>
+  {#if showPreviewZoom}
+    <div class="zoom-control" aria-label="Zoom previzualizare">
+      <button type="button" class="zoom-reset" onclick={resetPreviewZoom}>Restabilește</button>
+      <input
+        class="zoom-slider"
+        type="range"
+        min="25"
+        max="200"
+        step="5"
+        value={previewZoom}
+        style={`--zoom-progress: ${zoomProgress}%`}
+        title={`Zoom previzualizare ${previewZoom}%`}
+        oninput={(event) => setPreviewZoom(Number(event.currentTarget.value))}
+        onchange={(event) => { void commitPreviewZoom(Number(event.currentTarget.value)); }}
+      />
+      <span class="zoom-value">{previewZoom}%</span>
+    </div>
+  {/if}
 
   <div class="status-right">
+    <AiEditAuthorityIndicator
+      snapshot={aiCoordinationSnapshot}
+      {externalReconciling}
+      {projectionRecoveryRequired}
+    />
     {#if controlledPreview}
       <span
         class={`preview-chip preview-${controlledPreview.freshness}`}
@@ -119,11 +142,11 @@
     align-items: center;
     gap: 10px;
     padding: 0 10px;
-    height: 20px;
+    height: 36px;
     flex-shrink: 0;
     border-top: 1px solid var(--border);
     background: var(--surface-2);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--text-muted);
     user-select: none;
@@ -133,6 +156,10 @@
   .status-right,
   .zoom-control {
     min-width: 0;
+  }
+
+  .status-bar.without-zoom {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .status-left {
@@ -147,6 +174,10 @@
     gap: 6px;
     justify-content: flex-end;
     overflow: hidden;
+  }
+
+  .status-right > :global(.ai-authority) {
+    flex: 0 1 auto;
   }
 
   .patch-performance.patch-budget-ok {
@@ -182,12 +213,13 @@
   }
 
   .zoom-reset {
-    padding: 0;
+    min-height: 32px;
+    padding: 0 4px;
     border: 0;
     border-radius: 0;
     color: inherit;
     background: transparent;
-    font-size: 10px;
+    font-size: 12px;
     cursor: pointer;
   }
 
@@ -197,7 +229,7 @@
 
   .zoom-slider {
     width: 160px;
-    height: 16px;
+    height: 32px;
     padding: 0;
     appearance: none;
     -webkit-appearance: none;
@@ -261,13 +293,13 @@
     gap: 5px;
     max-width: 100%;
     min-width: 0;
-    height: 16px;
+    min-height: 22px;
     padding: 0 6px;
     border: 1px solid var(--border-3);
     border-radius: 999px;
     color: var(--text-muted);
     background: color-mix(in srgb, var(--surface-4) 70%, transparent);
-    font-size: 10px;
+    font-size: 12px;
     white-space: nowrap;
   }
 
@@ -276,14 +308,14 @@
     align-items: center;
     flex-shrink: 0;
     max-width: 118px;
-    height: 16px;
+    height: 22px;
     padding: 0 6px;
     border: 1px solid var(--border-3);
     border-radius: 999px;
     overflow: hidden;
     color: var(--text-muted);
     background: color-mix(in srgb, var(--surface-3) 74%, transparent);
-    font-size: 10px;
+    font-size: 12px;
     white-space: nowrap;
     text-overflow: ellipsis;
   }
@@ -321,6 +353,7 @@
   }
 
   button.source-chip {
+    min-height: 32px;
     cursor: pointer;
   }
 
@@ -344,7 +377,7 @@
 
   .text.idle {
     opacity: 0.4;
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 0.04em;
   }
 
@@ -362,4 +395,10 @@
 
   .error .dot   { background: #ef4444; }
   .error        { color: #ef4444; }
+
+  button:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--brand));
+    outline-offset: 2px;
+  }
 </style>

@@ -70,7 +70,7 @@
       readyRefreshToken = null;
       pageJsLoadState = tpl ? "error" : "idle";
       pageJsLoadError = tpl
-        ? "ProjectSession nu este disponibilă pentru citirea Page JS."
+        ? "Sesiunea proiectului nu este disponibilă pentru citirea JavaScript-ului paginii."
         : "";
       baseConfig = emptyPageJsConfig();
       config = emptyPageJsConfig();
@@ -131,7 +131,7 @@
       const workspaceState = pageJsCommandPayload(
         receipt,
         identity,
-        "Citirea Page JS din Inspector",
+        "Citirea JavaScript-ului paginii din Inspector",
       );
       nextBaseConfig = normalizePageJsConfig(workspaceState.accepted);
       config = normalizePageJsConfig(workspaceState.current);
@@ -247,11 +247,11 @@
     </div>
     <div class="jp-context-note">
       <strong>Efecte element</strong>
-      <span>Elementul selectat primește efecte proprii; timeline-ul paginii rămâne sub preview.</span>
+      <span>Elementul selectat primește efecte proprii; cronologia paginii rămâne sub previzualizare.</span>
     </div>
     <div class="jp-design-safe-note" role="status">
-      <strong>Design Safe · JS oprit</strong>
-      <span>Editarea și salvarea rămân active. Folosește Run extern pentru execuția efectelor.</span>
+      <strong>Editare sigură · JavaScript oprit</strong>
+      <span>Editarea și salvarea rămân active. Folosește deschiderea externă pentru execuția efectelor.</span>
     </div>
 
     <MotionStudioPanel
@@ -279,7 +279,7 @@
 
   .jp-hint code {
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     color: var(--text);
   }
 
@@ -304,7 +304,7 @@
     gap: 6px;
     margin: 16px 12px;
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.45;
     text-align: center;
   }
@@ -321,7 +321,7 @@
     border-radius: 6px;
     background: var(--brand-soft);
     color: var(--brand-strong);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 900;
     cursor: pointer;
   }
@@ -340,7 +340,7 @@
   }
 
   .jp-target-label {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     color: var(--text-muted);
     text-transform: uppercase;
@@ -349,7 +349,7 @@
 
   .jp-target-value {
     font-family: "JetBrains Mono", monospace;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     color: var(--brand-strong);
   }
@@ -364,13 +364,13 @@
   }
 
   .jp-context-note strong {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     color: var(--text);
   }
 
   .jp-context-note span {
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.35;
     color: var(--text-muted);
   }
@@ -386,13 +386,13 @@
 
   .jp-design-safe-note strong {
     color: var(--brand-strong);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
   }
 
   .jp-design-safe-note span {
     color: var(--text-muted);
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.35;
   }
 </style>

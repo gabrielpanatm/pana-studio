@@ -40,7 +40,7 @@
   const hasValues = $derived(PROPS.some((p) => getValue(p) !== ""));
 
   const borderStyleOpts = [
-    { value: "none",   label: "—",    title: "None"   },
+    { value: "none",   label: "—",    title: "Niciuna"   },
     { value: "solid",  label: "─",    title: "Solid"  },
     { value: "dashed", label: "- -",  title: "Dashed" },
     { value: "dotted", label: "···",  title: "Dotted" },
@@ -136,12 +136,12 @@
 </InspectorSection>
 
 <style>
-  .row-label { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .row-label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
   .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; } .row-2 > * { min-width: 0; overflow: hidden; }
   .col { display: flex; flex-direction: column; gap: 4px;
   min-width: 0; }
   .sub-header { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
-  .conflict-note { color: var(--text-muted); font-size: 10px; line-height: 1.3; }
+  .conflict-note { color: var(--text-muted); font-size: 12px; line-height: 1.3; }
   .expand-btn {
     display: flex; align-items: center; justify-content: center;
     width: 20px; height: 20px; padding: 0;

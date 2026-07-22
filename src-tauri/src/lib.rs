@@ -38,6 +38,8 @@ use commands::{
         complete_ai_reconciliation_recovery_reload, read_ai_coordination_state,
     },
     app_home::read_app_home,
+    audit::read_project_audit,
+    command_center::search_command_center,
     config::{
         read_project_app_config, read_project_env, read_zola_base_url, read_zola_project_settings,
         save_project_app_config, save_project_env, save_zola_base_url, save_zola_project_settings,
@@ -48,7 +50,8 @@ use commands::{
         resolve_page_css_target, set_css_rule, set_css_rule_at_viewport,
         set_page_css_rule_at_viewport, set_scss_variable,
     },
-    deploy::{deploy_to_bunny, zola_build, zola_check},
+    deploy::{cancel_publish_operation, deploy_to_bunny, zola_build, zola_check},
+    design_system::{read_design_class_inventory, rename_design_class},
     external_disk::reconcile_clean_external_project_files,
     fonts::{download_google_font_family, get_font_inventory, search_google_fonts},
     js::{
@@ -122,6 +125,7 @@ use commands::{
         unstage_all_versioning, unstage_versioning_paths,
     },
     window::reset_main_webview_zoom,
+    workbench::{apply_workbench_intent, read_workbench_state},
     workspace_entries::{
         workspace_create_content_page, workspace_create_project_text_file,
         workspace_delete_project_entry, workspace_move_project_entry,

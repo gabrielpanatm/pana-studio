@@ -58,7 +58,16 @@ export type ContentPagePlan =
       status: string;
     };
 
-export function planContentPageCreation(rawTitle: string, activeScannedPath: string | null): ContentPagePlan {
+export type ContentPagePlanOptions = {
+  section?: string | null;
+  slug?: string | null;
+};
+
+export function planContentPageCreation(
+  rawTitle: string,
+  activeScannedPath: string | null,
+  options: ContentPagePlanOptions = {},
+): ContentPagePlan {
   const title = rawTitle.trim();
 
   if (!title) {
@@ -68,7 +77,7 @@ export function planContentPageCreation(rawTitle: string, activeScannedPath: str
     };
   }
 
-  const slug = slugifyPageTitle(title);
+  const slug = slugifyPageTitle(options.slug?.trim() || title);
 
   if (!slug) {
     return {
@@ -77,9 +86,20 @@ export function planContentPageCreation(rawTitle: string, activeScannedPath: str
     };
   }
 
+  const section = options.section === undefined || options.section === null
+    ? currentContentSection(activeScannedPath)
+    : options.section.trim().replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+
+  if (section.split("/").some((segment) => segment === "." || segment === "..")) {
+    return {
+      ok: false,
+      status: "Secțiunea de conținut nu poate ieși din folderul content/.",
+    };
+  }
+
   return {
     ok: true,
-    section: currentContentSection(activeScannedPath),
+    section,
     slug,
     title,
     creatingStatus: `Se creeaza pagina ${slug}.md...`,

@@ -1,8 +1,11 @@
 pub mod ai_coordination;
 pub mod app_home;
+pub mod audit;
+pub mod command_center;
 pub mod config;
 pub mod css;
 pub mod deploy;
+pub mod design_system;
 pub mod external_disk;
 pub mod fonts;
 pub mod js;
@@ -21,4 +24,5 @@ pub mod project_model;
 pub mod source_graph;
 pub mod versioning;
 pub mod window;
+pub mod workbench;
 pub mod workspace_entries;

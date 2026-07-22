@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-design-class-inventory"
+description = "Enables the read_design_class_inventory command without any pre-configured scope."
+commands.allow = ["read_design_class_inventory"]
+
+[[permission]]
+identifier = "deny-read-design-class-inventory"
+description = "Denies the read_design_class_inventory command without any pre-configured scope."
+commands.deny = ["read_design_class_inventory"]

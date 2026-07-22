@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     IconFileText,
     IconFiles,
     IconHierarchy2,
-    IconStack2,
     IconPlus,
+    IconX,
   } from "@tabler/icons-svelte";
   import type {
     PageSection,
@@ -49,9 +50,73 @@
   export let pageSource = "";
 
   let projectPaneTab: ProjectPaneTab = "layers";
+  let elementPaletteOpen = false;
+  let elementPaletteTrigger: HTMLButtonElement;
+  let elementPaletteClose: HTMLButtonElement;
+  let elementPaletteDialog: HTMLElement;
   let fileCollapsedDirs = new Set<string>();
   let fileKnownDirPaths = new Set<string>();
   let fileTreeMemoryProjectRoot: string | null = null;
+  $: projectPaneTitle = projectPaneTab === "files"
+    ? "Fișiere"
+    : projectPaneTab === "page"
+      ? "Pagină"
+      : "Straturi";
+
+  async function setElementPaletteOpen(open: boolean, restoreFocus = true) {
+    elementPaletteOpen = open;
+    await tick();
+    if (open) elementPaletteClose?.focus();
+    else if (restoreFocus) elementPaletteTrigger?.focus();
+  }
+
+  function handleElementPaletteKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void setElementPaletteOpen(false);
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const focusable = Array.from(
+      elementPaletteDialog?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
+
+  function selectProjectPaneTab(tab: ProjectPaneTab) {
+    projectPaneTab = tab;
+    if (elementPaletteOpen) void setElementPaletteOpen(false, false);
+  }
+
+  const projectPaneTabs: ProjectPaneTab[] = ["layers", "files", "page"];
+  async function focusProjectPaneTab(tab: ProjectPaneTab) {
+    selectProjectPaneTab(tab);
+    await tick();
+    document.getElementById(`project-pane-tab-${tab}`)?.focus();
+  }
+
+  function handleProjectPaneTabKeydown(event: KeyboardEvent, tab: ProjectPaneTab) {
+    const index = projectPaneTabs.indexOf(tab);
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % projectPaneTabs.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + projectPaneTabs.length) % projectPaneTabs.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = projectPaneTabs.length - 1;
+    else return;
+    event.preventDefault();
+    void focusProjectPaneTab(projectPaneTabs[nextIndex]);
+  }
 
   $: if (fileTreeMemoryProjectRoot !== projectRoot) {
     fileCollapsedDirs = new Set<string>();
@@ -82,37 +147,59 @@
 
 </script>
 
-<aside class="project-pane" aria-label="Project browser">
+<aside class="project-pane" aria-label="Navigator proiect">
   <div class="pane-title">
     <div class="pane-title-main">
-      <IconStack2 size={16} stroke={1.8} />
-      <h2>Straturi</h2>
+      {#if projectPaneTab === "files"}
+        <IconFiles size={16} stroke={1.8} />
+      {:else if projectPaneTab === "page"}
+        <IconFileText size={16} stroke={1.8} />
+      {:else if projectPaneTab === "layers"}
+        <IconHierarchy2 size={16} stroke={1.8} />
+      {/if}
+      <h2>{projectPaneTitle}</h2>
     </div>
     <div class="pane-title-actions">
-      <button class="pane-action-btn" class:active={projectPaneTab === "structure"} type="button" title="Adaugă element HTML"
-        onclick={() => { projectPaneTab = projectPaneTab === "structure" ? "layers" : "structure"; }}>
-        <IconPlus size={14} stroke={1.9} />
-      </button>
+      {#if projectPaneTab === "layers"}
+        <button
+          bind:this={elementPaletteTrigger}
+          class="ui-icon-button pane-action-btn"
+          class:active={elementPaletteOpen}
+          type="button"
+          title="Deschide panoul Adaugă element"
+          aria-label="Adaugă element"
+          aria-haspopup="dialog"
+          aria-expanded={elementPaletteOpen}
+          aria-controls="element-palette-dialog"
+          onclick={() => { void setElementPaletteOpen(!elementPaletteOpen); }}
+        >
+          <IconPlus size={14} stroke={1.9} />
+        </button>
+      {/if}
     </div>
   </div>
 
-  <nav class="pane-tabs" aria-label="Taburi panou proiect">
-    <button class="tab-btn" class:active={projectPaneTab === "layers"} type="button" title="Straturi"
-      onclick={() => { projectPaneTab = "layers"; }}>
+  <div class="ui-tabs pane-tabs" role="tablist" aria-label="Zonele panoului de proiect">
+    <button id="project-pane-tab-layers" class="ui-tab tab-btn" class:active={projectPaneTab === "layers"} type="button" role="tab" title="Straturi"
+      aria-selected={projectPaneTab === "layers"} aria-controls="project-pane-panel-layers" tabindex={projectPaneTab === "layers" ? 0 : -1}
+      onclick={() => selectProjectPaneTab("layers")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "layers")}>
       <IconHierarchy2 size={14} stroke={1.8} /><span>Straturi</span>
     </button>
-    <button class="tab-btn" class:active={projectPaneTab === "files"} type="button" title="Fișiere"
-      onclick={() => { projectPaneTab = "files"; }}>
+    <button id="project-pane-tab-files" class="ui-tab tab-btn" class:active={projectPaneTab === "files"} type="button" role="tab" title="Fișiere"
+      aria-selected={projectPaneTab === "files"} aria-controls="project-pane-panel-files" tabindex={projectPaneTab === "files" ? 0 : -1}
+      onclick={() => selectProjectPaneTab("files")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "files")}>
       <IconFiles size={14} stroke={1.8} /><span>Fișiere</span>
     </button>
-    <button class="tab-btn" class:active={projectPaneTab === "page"} type="button" title="Pagină Markdown"
-      onclick={() => { projectPaneTab = "page"; }}>
+    <button id="project-pane-tab-page" class="ui-tab tab-btn" class:active={projectPaneTab === "page"} type="button" role="tab" title="Pagină Markdown"
+      aria-selected={projectPaneTab === "page"} aria-controls="project-pane-panel-page" tabindex={projectPaneTab === "page" ? 0 : -1}
+      onclick={() => selectProjectPaneTab("page")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "page")}>
       <IconFileText size={14} stroke={1.8} /><span>Pagină</span>
     </button>
-  </nav>
+  </div>
 
   <!-- ── LAYERS TAB ── -->
   {#if projectPaneTab === "layers"}
+    <div class="pane-tab-panel" id="project-pane-panel-layers" role="tabpanel" aria-labelledby="project-pane-tab-layers">
     <ProjectLayersTab
       {pageSections}
       {selectedElement}
@@ -135,10 +222,12 @@
       {openSelectedTeraSource}
       {openTemplateWorkbenchSource}
     />
+    </div>
   {/if}
 
   <!-- ── FILES TAB ── -->
   {#if projectPaneTab === "files"}
+    <div class="pane-tab-panel" id="project-pane-panel-files" role="tabpanel" aria-labelledby="project-pane-tab-files">
     <ProjectFilesTab
       {scannedProject}
       {projectRoot}
@@ -159,21 +248,12 @@
       {renameProjectFile}
       {deleteProjectFile}
     />
-  {/if}
-
-  <!-- ── STRUCTURE TAB ── -->
-  {#if projectPaneTab === "structure"}
-      <ProjectStructureTab
-        {selectedElement}
-        {sourceGraph}
-        {loopPaletteItems}
-        {startElementPaletteDrag}
-        {startTeraPaletteDrag}
-      />
+    </div>
   {/if}
 
   <!-- ── PAGE SETTINGS TAB ── -->
   {#if projectPaneTab === "page"}
+    <div class="pane-tab-panel" id="project-pane-panel-page" role="tabpanel" aria-labelledby="project-pane-tab-page">
     <ProjectPageSettingsTab
       {activeScannedPath}
       {scannedPages}
@@ -182,6 +262,47 @@
       {pageSource}
       {updatePageFrontmatterSource}
     />
+    </div>
+  {/if}
+
+  {#if elementPaletteOpen}
+    <div
+      bind:this={elementPaletteDialog}
+      id="element-palette-dialog"
+      class="element-palette-dialog"
+      role="dialog"
+      tabindex="-1"
+      aria-modal="false"
+      aria-labelledby="element-palette-title"
+      aria-describedby="element-palette-description"
+      onkeydown={handleElementPaletteKeydown}
+    >
+      <header class="element-palette-header">
+        <div>
+          <h2 id="element-palette-title">Adaugă element</h2>
+          <p id="element-palette-description">Trage un element HTML, o componentă sau o structură Tera în suprafața vizuală.</p>
+        </div>
+        <button
+          bind:this={elementPaletteClose}
+          type="button"
+          class="ui-icon-button pane-action-btn"
+          title="Închide panoul Adaugă element"
+          aria-label="Închide panoul Adaugă element"
+          onclick={() => { void setElementPaletteOpen(false); }}
+        >
+          <IconX size={16} stroke={1.9} />
+        </button>
+      </header>
+      <div class="element-palette-body">
+        <ProjectStructureTab
+          {selectedElement}
+          {sourceGraph}
+          {loopPaletteItems}
+          {startElementPaletteDrag}
+          {startTeraPaletteDrag}
+        />
+      </div>
+    </div>
   {/if}
 
 </aside>
@@ -207,6 +328,7 @@
   .pane-title-main { display: inline-flex; align-items: center; gap: 6px; }
   .pane-title-main :global(svg) { display: block; flex: 0 0 auto; }
   .pane-title-actions { display: inline-flex; align-items: center; gap: 4px; }
+  .pane-tab-panel { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
   .pane-action-btn {
     display: inline-flex; align-items: center; justify-content: center;
     width: 24px; height: 24px; padding: 0;
@@ -217,6 +339,8 @@
   .pane-action-btn :global(svg) { display: block; }
   .pane-action-btn:hover { color: var(--text); border-color: var(--border-4); }
   .pane-action-btn.active { border-color: var(--brand); color: var(--brand-strong); background: var(--brand-soft); }
+  .pane-action-btn:focus-visible,
+  .tab-btn:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--brand-strong)); outline-offset: 1px; }
   /* ── Tabs ── */
   .pane-tabs {
     position: relative;
@@ -230,13 +354,42 @@
     display: inline-flex; align-items: center; justify-content: center; gap: 5px;
     width: 100%; min-height: 26px; padding: 0 5px;
     border: 1px solid transparent; border-radius: 6px;
-    color: var(--text-muted); font-size: 11px; font-weight: 600;
+    color: var(--text-muted); font-size: 12px; font-weight: 600;
     background: transparent; cursor: pointer;
     transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
   }
   .tab-btn :global(svg) { display: block; flex: 0 0 auto; }
   .tab-btn.active { border-color: var(--border-4); color: var(--text-strong); background: var(--surface-5); }
   .tab-btn:hover:not(.active) { color: var(--text); }
+
+  .element-palette-dialog {
+    position: absolute;
+    z-index: 12;
+    inset: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
+    border-radius: inherit;
+    overflow: hidden;
+    background: var(--surface);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, .24);
+  }
+
+  .element-palette-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+
+  .element-palette-header > div { display: grid; gap: 4px; min-width: 0; }
+  .element-palette-header h2 { margin: 0; color: var(--text-strong); font-size: 14px; }
+  .element-palette-header p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
+  .element-palette-body { min-height: 0; padding: 8px; overflow: auto; }
 
   button:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

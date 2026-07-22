@@ -70,6 +70,7 @@ import type {
   ProjectDiskManifest,
   ProjectHtmlMoveIntent,
   ProjectHtmlMovePlan,
+  ProjectAuditSnapshot,
   ProjectModelSnapshot,
   TemplateWorkbenchPlan,
   ProjectOpenRecoveryAssessment,
@@ -88,6 +89,9 @@ import type {
   KernelExternalDiskReconcileInput,
   KernelExternalDiskReconcileReceipt,
   WorkspaceEntryMutationReceipt,
+  DesignClassInventorySnapshot,
+  DesignClassRenameReceipt,
+  PublishOperationCancelReceipt,
   KernelLogLevel,
   KernelObservabilityLogSnapshot,
   KernelObservabilityLogSourceFilter,
@@ -109,12 +113,6 @@ import type {
   RecoveryCoordinatorScan,
   ScssVariable,
   SourceGraph,
-  SiteArchiveStructureReceipt,
-  SitePageStructureReceipt,
-  SitePartialIncludeReceipt,
-  SitePartialStructureReceipt,
-  SiteSingleStructureReceipt,
-  SiteStructureAuthorityReceipt,
   ZolaProjectSettings,
   UiQuiescenceAcknowledgement,
   VersionDiffInput,
@@ -140,7 +138,12 @@ import type {
   VersionRestoreRecoveryResolutionReceipt,
   VersionRestoreRecoveryScan,
 } from "$lib/types";
-import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/types";
+import {
+  DESIGN_CLASS_INVENTORY_SCHEMA_VERSION,
+  DESIGN_CLASS_RENAME_SCHEMA_VERSION,
+  PROJECT_AUDIT_SCHEMA_VERSION,
+  PROJECT_WORKSPACE_SCHEMA_VERSION,
+} from "$lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -827,139 +830,55 @@ export function readSourceGraph(
   return invoke<SourceGraph>("read_source_graph", { identity });
 }
 
-export function createSitePageStructure(input: {
-  title: string;
-  slug: string;
-  pageTemplateName: string;
-  draft: boolean;
-  targetOrigin?: "local" | "theme";
-  targetThemeName?: string | null;
-}, identity: PreviewStructuralCommandIdentity): Promise<SitePageStructureReceipt> {
-  return invokeBoundSiteStructure("create_site_page_structure", input, identity);
-}
-
-export function createSiteArchiveStructure(input: {
-  title: string;
-  slug: string;
-  archiveTemplateName: string;
-  targetOrigin?: "local" | "theme";
-  targetThemeName?: string | null;
-}, identity: PreviewStructuralCommandIdentity): Promise<SiteArchiveStructureReceipt> {
-  return invokeBoundSiteStructure("create_site_archive_structure", input, identity);
-}
-
-export function createSiteSingleStructure(input: {
-  sectionSlug: string;
-  title: string;
-  slug: string;
-  singleTemplateName: string;
-  targetOrigin?: "local" | "theme";
-  targetThemeName?: string | null;
-}, identity: PreviewStructuralCommandIdentity): Promise<SiteSingleStructureReceipt> {
-  return invokeBoundSiteStructure("create_site_single_structure", input, identity);
-}
-
-export function createSitePartialStructure(input: {
-  name: string;
-  preset?: "cta" | "header" | "footer" | "generic";
-  targetOrigin?: "local" | "theme";
-  targetThemeName?: string | null;
-}, identity: PreviewStructuralCommandIdentity): Promise<SitePartialStructureReceipt> {
-  return invokeBoundSiteStructure("create_site_partial_structure", input, identity);
-}
-
-export function includeSitePartial(input: {
-  targetFile: string;
-  partialTemplateName: string;
-  ensurePartial?: {
-    name: string;
-    preset?: "cta" | "header" | "footer" | "generic";
-    targetOrigin?: "local" | "theme";
-    targetThemeName?: string | null;
-  } | null;
-}, identity: PreviewStructuralCommandIdentity): Promise<SitePartialIncludeReceipt> {
-  return invokeBoundSiteStructure("include_site_partial", input, identity);
-}
-
-type SiteStructureCommandReceipt = {
-  workspaceMutation: SitePageStructureReceipt["workspaceMutation"];
-  authority: SiteStructureAuthorityReceipt;
-};
-
-async function invokeBoundSiteStructure<T extends SiteStructureCommandReceipt>(
-  command: string,
-  input: Record<string, unknown>,
-  identity: PreviewStructuralCommandIdentity,
-): Promise<T> {
-  if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
-    throw new Error(
-      "[site_structure_identity_invalid] Site Structure cere ProjectRoot și runtime session ID.",
-    );
-  }
-  const receipt = await invoke<T>(command, { input, identity });
-  validateSiteStructureAuthorityReceipt(command, receipt, identity);
-  return receipt;
-}
-
-function validateSiteStructureAuthorityReceipt(
-  command: string,
-  receipt: SiteStructureCommandReceipt,
-  identity: PreviewStructuralCommandIdentity,
-) {
-  const authority = receipt.authority;
-  const mutation = receipt.workspaceMutation;
-  if (
-    authority.schemaVersion !== 1
-    || !authority.operationId.trim()
-    || authority.projectRoot !== identity.expectedProjectRoot
-    || authority.sessionId !== identity.expectedSessionId
-    || !Number.isSafeInteger(authority.revisionBefore)
-    || !Number.isSafeInteger(authority.revisionAfter)
-    || authority.revisionBefore < 0
-    || authority.revisionAfter < authority.revisionBefore
-    || !canonicalProjectPathsMatch(authority.touchedFiles)
-  ) {
-    throw new Error("[site_structure_invalid_authority_receipt] " + command + " a returnat autoritate ProjectWorkspace invalidă.");
-  }
-  if (authority.status === "noop") {
-    if (
-      mutation !== null
-      || authority.touchedFiles.length !== 0
-      || authority.revisionAfter !== authority.revisionBefore
-      || authority.dirty
-    ) {
-      throw new Error("[site_structure_invalid_authority_receipt] " + command + " noop a declarat o mutație.");
-    }
-    return;
-  }
-  if (
-    authority.status !== "staged"
-    || !mutation
-    || !mutation.changed
-    || mutation.revisionBefore !== authority.revisionBefore
-    || mutation.revisionAfter !== authority.revisionAfter
-    || mutation.dirty !== authority.dirty
-    || JSON.stringify(mutation.touchedFiles) !== JSON.stringify(authority.touchedFiles)
-  ) {
-    throw new Error("[site_structure_invalid_authority_receipt] " + command + " nu confirmă exact mutația ProjectWorkspace.");
-  }
-}
-
-function canonicalProjectPathsMatch(paths: string[]) {
-  const canonical = [...new Set(paths.map((path) => path.trim().replace(/^\/+/, "")))].sort();
-  if (JSON.stringify(paths) !== JSON.stringify(canonical)) return false;
-  return paths.every((path) =>
-    Boolean(path)
-    && !path.includes("\\")
-    && path.split("/").every((segment) =>
-      Boolean(segment) && segment !== "." && segment !== ".."));
-}
-
 export function readProjectModel(draftSources?: Record<string, string>): Promise<ProjectModelSnapshot> {
   if (draftSources && Object.keys(draftSources).length > 0) {
     return invoke<ProjectModelSnapshot>("read_project_model_with_drafts", { draftSources });
   }
   return invoke<ProjectModelSnapshot>("read_project_model");
+}
+
+export async function readProjectAudit(): Promise<ProjectAuditSnapshot> {
+  const snapshot = await invoke<ProjectAuditSnapshot>("read_project_audit");
+  if (snapshot.schemaVersion !== PROJECT_AUDIT_SCHEMA_VERSION) {
+    throw new Error(
+      `Audit schema incompatibilă: ${snapshot.schemaVersion}; așteptat ${PROJECT_AUDIT_SCHEMA_VERSION}.`,
+    );
+  }
+  return snapshot;
+}
+
+export async function readDesignClassInventory(): Promise<DesignClassInventorySnapshot> {
+  const snapshot = await invoke<DesignClassInventorySnapshot>("read_design_class_inventory");
+  if (snapshot.schemaVersion !== DESIGN_CLASS_INVENTORY_SCHEMA_VERSION) {
+    throw new Error(
+      `Design Class schema incompatibilă: ${snapshot.schemaVersion}; așteptat ${DESIGN_CLASS_INVENTORY_SCHEMA_VERSION}.`,
+    );
+  }
+  return snapshot;
+}
+
+export async function renameDesignClass(
+  oldName: string,
+  newName: string,
+  identity: FileBufferRequestIdentity,
+): Promise<DesignClassRenameReceipt> {
+  const receipt = await invoke<DesignClassRenameReceipt>("rename_design_class", {
+    oldName,
+    newName,
+    identity,
+  });
+  if (receipt.schemaVersion !== DESIGN_CLASS_RENAME_SCHEMA_VERSION) {
+    throw new Error(
+      `Design Class rename schema incompatibilă: ${receipt.schemaVersion}; așteptat ${DESIGN_CLASS_RENAME_SCHEMA_VERSION}.`,
+    );
+  }
+  return receipt;
+}
+
+export function cancelPublishOperation(
+  identity: FileBufferRequestIdentity,
+): Promise<PublishOperationCancelReceipt> {
+  return invoke<PublishOperationCancelReceipt>("cancel_publish_operation", { identity });
 }
 
 export function resolveTemplateWorkbenchPlan(
@@ -1234,7 +1153,7 @@ export function createProjectPreviewRequestIdentity(
   const expectedProjectRoot = projectRoot.trim();
   const expectedSessionId = runtimeSessionId.trim();
   if (!expectedProjectRoot || !expectedSessionId) {
-    throw new Error("Preview workspace cere root-ul și identitatea runtime a ProjectSession.");
+    throw new Error("Spațiul de previzualizare cere rădăcina și identitatea Rust a sesiunii proiectului.");
   }
   return { expectedProjectRoot, expectedSessionId };
 }
@@ -1267,7 +1186,7 @@ export function requireProjectPreviewStartReceipt(
     || (plan.phase !== "prepared" && plan.phase !== "canonicalVerified")
   ) {
     throw new Error(
-      "Rust a returnat un start Preview pentru altă revizie Canvas sau ProjectSession.",
+      "Rust a pornit previzualizarea pentru altă revizie Canvas sau altă sesiune a proiectului.",
     );
   }
   return receipt;

@@ -31,7 +31,7 @@
       <label><span>Speed</span><input type="number" step="0.1" value={engine.speed} oninput={(event) => patch({ speed: numberValue(event.currentTarget.value, 1) })} /></label>
       <label><span>FPS</span><input type="number" value={engine.fps} oninput={(event) => patch({ fps: numberValue(event.currentTarget.value, 120) })} /></label>
       <label><span>Precision</span><input type="number" value={engine.precision} oninput={(event) => patch({ precision: numberValue(event.currentTarget.value, 3) })} /></label>
-      <label><span>Default priority</span><input type="number" value={engine.priority} oninput={(event) => patch({ priority: numberValue(event.currentTarget.value, 1) })} /></label>
+      <label><span>Prioritate implicită</span><input type="number" value={engine.priority} oninput={(event) => patch({ priority: numberValue(event.currentTarget.value, 1) })} /></label>
     </div>
     <div class="toggle-grid">
       <button type="button" class:active={engine.pauseOnDocumentHidden} onclick={() => patch({ pauseOnDocumentHidden: !engine.pauseOnDocumentHidden })}>pause hidden</button>
@@ -61,7 +61,7 @@
   .section-head span,
   label span {
     display: block;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.07em;
     color: var(--text-muted);
@@ -96,12 +96,12 @@
     border-radius: 5px;
     background: var(--surface-5);
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     padding: 0 6px;
   }
 
   button {
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 800;
     cursor: pointer;
   }

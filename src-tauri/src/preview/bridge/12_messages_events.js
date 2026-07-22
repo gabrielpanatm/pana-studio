@@ -70,7 +70,7 @@
   }
 
   window.addEventListener("message", function (event) {
-    // The Design Safe document has a single trusted controller: the mounted
+    // The Editare sigură document has a single trusted controller: the mounted
     // Pană Studio parent frame. A matching `source` field is only protocol
     // data and must not let sibling/self windows drive live DOM mutations.
     if (event.source !== window.parent) {

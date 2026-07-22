@@ -122,7 +122,7 @@
     border: 1px solid color-mix(in srgb, var(--source-origin-theme, #d97706) 34%, transparent);
     border-radius: 6px;
     color: var(--source-origin-theme, #d97706);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 900;
     text-transform: uppercase;
     background: var(--surface);
@@ -143,7 +143,7 @@
 
   .tera-meta dt {
     color: var(--text-muted);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
   }
 
@@ -151,7 +151,7 @@
     min-width: 0;
     margin: 0;
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     line-height: 1.35;
     overflow-wrap: anywhere;
   }
@@ -173,7 +173,7 @@
     border: 1px solid var(--border-4);
     border-radius: 7px;
     color: var(--text);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
     background: var(--surface-4);
     cursor: pointer;

@@ -138,7 +138,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 10px;
+    font-size: 12px;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   }
 

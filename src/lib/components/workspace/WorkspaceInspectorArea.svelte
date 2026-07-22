@@ -19,10 +19,12 @@
         .filter((file) => (file.kind === "CSS" || file.kind === "SCSS") && file.role === "style")
         .map((file) => file.relativePath)
     : []);
-  const centerUsesFullWorkspace = $derived(app.centerView === "site" || app.centerView === "kernel");
+  const activityUsesFullWorkspace = $derived(
+    (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
+  );
 </script>
 
-{#if !app.rightPaneCollapsed && !centerUsesFullWorkspace}
+{#if !app.rightPaneCollapsed && !activityUsesFullWorkspace}
   <WorkspaceResizeHandle
     kind="right"
     active={app.activeResizeKind === "right"}
@@ -32,7 +34,7 @@
   />
 {/if}
 
-{#if !app.rightPaneCollapsed && !centerUsesFullWorkspace}
+{#if !app.rightPaneCollapsed && !activityUsesFullWorkspace}
   <div
     class="inspector-pane-shell"
     inert={app.aiEditLeaseFrontendLockActive ? true : undefined}

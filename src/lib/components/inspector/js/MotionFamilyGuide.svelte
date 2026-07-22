@@ -45,7 +45,7 @@
 
   .guide-row span {
     padding-top: 1px;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
     letter-spacing: 0.06em;
     color: var(--brand-strong);
@@ -54,7 +54,7 @@
 
   .guide-row p {
     margin: 0;
-    font-size: 10px;
+    font-size: 12px;
     line-height: 1.45;
     color: var(--text);
   }

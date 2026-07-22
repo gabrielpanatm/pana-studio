@@ -1,67 +1,6 @@
-* {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  height: 100%;
-  min-height: 100%;
-  overflow: hidden;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #e7ede9;
-  background: #111315;
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
+@import "./design-system.css";
 
 .app-shell {
-  --app-bg: #111315;
-  --app-bg-overlay: rgba(41, 104, 89, 0.12);
-  --surface: #171a1d;
-  --surface-2: #121518;
-  --surface-3: #14181b;
-  --surface-4: #191c1f;
-  --surface-5: #171c1f;
-  --surface-6: #101512;
-  --surface-7: #0f1113;
-  --surface-8: #0d0f11;
-  --surface-9: #15191c;
-  --border: #24282c;
-  --border-2: #262b2f;
-  --border-3: #2a3134;
-  --border-4: #2f373b;
-  --border-5: #2c3338;
-  --text: #e7ede9;
-  --text-muted: #8b9790;
-  --text-strong: #eef5f0;
-  --brand: #1d7f6a;
-  --brand-strong: #2faa8c;
-  --brand-soft: rgba(29, 127, 106, 0.18);
-  --source-origin-local: #3b82f6;
-  --source-origin-local-soft: color-mix(in srgb, var(--source-origin-local) 13%, var(--surface-4));
-  --source-origin-theme: #d97706;
-  --source-origin-theme-soft: color-mix(in srgb, var(--source-origin-theme) 14%, var(--surface-4));
-  --source-origin-current: #64748b;
-  --source-origin-current-soft: color-mix(in srgb, var(--source-origin-current) 13%, var(--surface-4));
-  --source-origin-unknown: var(--brand);
-  --source-origin-unknown-soft: var(--brand-soft);
-  --chip-bg: #18201d;
-  --chip-border: #30463f;
-  --selector-bg: #29332f;
-  --code-bg: rgba(29, 127, 106, 0.18);
-  --code-text: #bfe5d9;
-  --terminal-shell-bg: #121816;
-  --terminal-shell-border: color-mix(in srgb, var(--border-3) 74%, transparent);
-  --terminal-shell-ring: rgba(47, 170, 140, 0.16);
-  --status-bg: #171c1f;
-  --shadow: 0 18px 40px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -107,47 +46,12 @@ select {
   cursor: pointer;
 }
 
-.app-shell.light-theme {
-  --app-bg: #edf1ee;
-  --app-bg-overlay: rgba(59, 130, 110, 0.08);
-  --surface: #f9fbfa;
-  --surface-2: #ffffff;
-  --surface-3: #f5f7f6;
-  --surface-4: #ffffff;
-  --surface-5: #ffffff;
-  --surface-6: #f4f7f5;
-  --surface-7: #f7faf8;
-  --surface-8: #eef3f0;
-  --surface-9: #f3f7f5;
-  --border: #d8e0db;
-  --border-2: #dde5e0;
-  --border-3: #cfd8d3;
-  --border-4: #c7d0ca;
-  --border-5: #ccd5cf;
-  --text: #1d2521;
-  --text-muted: #5f6c65;
-  --text-strong: #141916;
-  --brand: #1d7f6a;
-  --brand-strong: #2faa8c;
-  --brand-soft: rgba(29, 127, 106, 0.12);
-  --source-origin-local: #2563eb;
-  --source-origin-local-soft: color-mix(in srgb, var(--source-origin-local) 10%, var(--surface-4));
-  --source-origin-theme: #b45309;
-  --source-origin-theme-soft: color-mix(in srgb, var(--source-origin-theme) 11%, var(--surface-4));
-  --source-origin-current: #64748b;
-  --source-origin-current-soft: color-mix(in srgb, var(--source-origin-current) 10%, var(--surface-4));
-  --source-origin-unknown: var(--brand);
-  --source-origin-unknown-soft: var(--brand-soft);
-  --chip-bg: #edf8f4;
-  --chip-border: #b7d8ce;
-  --selector-bg: #213a33;
-  --code-bg: rgba(29, 127, 106, 0.12);
-  --code-text: #155444;
-  --terminal-shell-bg: #f4f8f6;
-  --terminal-shell-border: color-mix(in srgb, var(--border-3) 78%, transparent);
-  --terminal-shell-ring: rgba(29, 127, 106, 0.12);
-  --status-bg: #ffffff;
-  --shadow: 0 14px 32px rgba(22, 34, 28, 0.08);
+.workbench-frame {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .workspace {
@@ -160,7 +64,7 @@ select {
   gap: 8px;
   min-height: 0;
   flex: 1;
-  padding: 8px;
+  padding: 6px 8px 7px;
   overflow: hidden;
 }
 
@@ -188,24 +92,8 @@ select {
   min-height: 0;
 }
 
-.center-stack.terminal-open {
+.center-stack.bottom-panel-open {
   grid-template-rows: minmax(0, 1fr) var(--terminal-pane-height);
-}
-
-.center-stack.motion-timeline-open {
-  grid-template-rows: minmax(0, 1fr) 46px;
-}
-
-.center-stack.motion-timeline-open.motion-timeline-expanded {
-  grid-template-rows: minmax(0, 1fr) var(--motion-timeline-pane-height);
-}
-
-.center-stack.motion-timeline-open.terminal-open {
-  grid-template-rows: minmax(0, 1fr) 46px var(--terminal-pane-height);
-}
-
-.center-stack.motion-timeline-open.motion-timeline-expanded.terminal-open {
-  grid-template-rows: minmax(0, 1fr) var(--motion-timeline-pane-height) var(--terminal-pane-height);
 }
 
 .project-pane-shell,

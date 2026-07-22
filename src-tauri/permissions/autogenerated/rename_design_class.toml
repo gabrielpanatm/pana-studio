@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-rename-design-class"
+description = "Enables the rename_design_class command without any pre-configured scope."
+commands.allow = ["rename_design_class"]
+
+[[permission]]
+identifier = "deny-rename-design-class"
+description = "Denies the rename_design_class command without any pre-configured scope."
+commands.deny = ["rename_design_class"]

@@ -4,7 +4,7 @@
 
 Pană Studio versionează numai site-ul efectiv. Repository-ul acceptat are
 rădăcina canonică exactă în `ProjectSession.zola_root`, adică în
-`proiect/sursa/`. Un repository dintr-un director părinte nu acordă autoritate
+`proiect/`. Un repository dintr-un director părinte nu acordă autoritate
 Git aplicației.
 
 Versionarea Git este distinctă de celelalte două istorice ale aplicației:
@@ -45,8 +45,8 @@ merge.
 ## Invariante de autoritate
 
 1. Calea repository-ului nu este furnizată liber de frontend. Backendul o
-   derivă din ProjectSession și cere `zola_root == project_root/sursa`.
-2. `.git` trebuie să fie un director real aflat direct în `sursa/`. Un fișier
+   derivă din ProjectSession și cere `zola_root == project_root`.
+2. `.git` trebuie să fie un director real aflat direct în rădăcina Zola. Un fișier
    `.git`, un symlink sau un gitdir extern este clasificat ca nesuportat.
 3. Root-ul și directorul metadata raportate de Git trebuie să fie identice cu
    `zola_root` și `zola_root/.git`. `commondir`, object alternates, symlink-uri

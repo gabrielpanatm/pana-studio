@@ -5,7 +5,6 @@ pub(crate) mod inject;
 mod process;
 mod server;
 mod source_browser;
-mod zola;
 
 pub mod preprocess;
 
@@ -30,7 +29,6 @@ pub(crate) use source_browser::{
 pub(crate) use source_browser::{
     start_version_source_browser, stop_source_browser, stop_version_source_browser,
 };
-pub use zola::resolve_zola_binary_path;
 
 pub fn stop_project_preview<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,

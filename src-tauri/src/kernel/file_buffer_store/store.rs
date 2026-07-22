@@ -720,10 +720,10 @@ impl FileBufferStore {
 }
 
 fn role_for_session_resource(relative_path: &str, language: TextBufferLanguage) -> TextBufferRole {
-    if relative_path.starts_with("sursa/templates/") {
+    if relative_path.starts_with("templates/") {
         return TextBufferRole::Template;
     }
-    if relative_path.starts_with("sursa/content/") {
+    if relative_path.starts_with("content/") {
         return TextBufferRole::Page;
     }
     if matches!(language, TextBufferLanguage::Css | TextBufferLanguage::Scss) {
@@ -869,7 +869,7 @@ mod save_cas_tests {
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
-    const RELATIVE_PATH: &str = "sursa/templates/index.html";
+    const RELATIVE_PATH: &str = "templates/index.html";
 
     #[test]
     fn dirty_save_snapshot_binds_revision_hash_bytes_and_dirty_state() {
@@ -987,7 +987,7 @@ mod save_cas_tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(root.join(RELATIVE_PATH), baseline).unwrap();
         let root = root.canonicalize().unwrap();
         let mut store = FileBufferStore::new(

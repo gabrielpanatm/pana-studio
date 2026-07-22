@@ -120,6 +120,7 @@ const MAINTENANCE_CAPABILITY_ADAPTERS: &[(&str, &[&str])] = &[
         "capability_capture_subprocess_directory",
         &["project/init.rs"],
     ),
+    ("ZolaArtifactPublicationLease", &["deploy/zola.rs"]),
 ];
 
 const DECLARED_WRITE_RUNTIME_FILES: &[&str] = &[

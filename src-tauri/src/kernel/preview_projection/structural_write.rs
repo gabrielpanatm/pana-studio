@@ -104,6 +104,7 @@ pub(crate) fn stage_preview_structural_write(
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashMap,
         fs,
         sync::atomic::{AtomicU64, Ordering},
     };
@@ -121,6 +122,13 @@ mod tests {
             project_workspace::ProjectWorkspace,
         },
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
+        project_model::{
+            build_project_model,
+            zola_image_engine::{
+                apply_zola_image_contract, ProjectZolaImageIntent, ZolaImageFormat,
+                ZolaImageOperation,
+            },
+        },
     };
 
     use super::*;
@@ -135,9 +143,9 @@ mod tests {
             std::process::id(),
             NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
-        let relative_path = "sursa/templates/index.html";
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let relative_path = "templates/index.html";
         let before = "<main>before</main>\n";
         let after = "<main>after</main>\n";
         fs::write(root.join(relative_path), before).unwrap();
@@ -268,13 +276,137 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn zola_image_contract_is_one_undoable_workspace_transaction() {
+        let root = std::env::temp_dir().join(format!(
+            "pana-preview-zola-image-workspace-{}-{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("static/images")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = 'Test'\ntemplate = 'index.html'\n+++\n",
+        )
+        .unwrap();
+        fs::write(root.join("static/images/hero.jpg"), b"image").unwrap();
+        let relative_path = "templates/index.html";
+        let before = "<img src=\"/images/hero.jpg\" alt=\"Hero\">\n";
+        fs::write(root.join(relative_path), before).unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let contract = apply_zola_image_contract(
+            &model,
+            relative_path,
+            before,
+            0,
+            &ProjectZolaImageIntent {
+                enabled: true,
+                source_url: Some("/images/hero.jpg".to_string()),
+                source_path: Some("static/images/hero.jpg".to_string()),
+                width: Some(960),
+                height: None,
+                operation: Some(ZolaImageOperation::FitWidth),
+                format: Some(ZolaImageFormat::Webp),
+                quality: Some(82),
+            },
+        )
+        .unwrap();
+
+        let session = test_session(&root);
+        let runtime_session_id = session.runtime_instance_id();
+        let manifest = read_project_disk_manifest(&root).unwrap();
+        let accepted = AcceptedProjectDiskManifest::new(
+            runtime_session_id.clone(),
+            session.project_root.clone(),
+            manifest,
+        );
+        let mut documents = FileBufferStore::new(
+            runtime_session_id,
+            session.project_root.clone(),
+            1,
+            FileBufferStoreLimits {
+                max_files: 16,
+                max_file_bytes: 1024 * 1024,
+                max_total_bytes: 4 * 1024 * 1024,
+            },
+        );
+        documents.files.insert(
+            relative_path.to_string(),
+            FileBufferEntry {
+                relative_path: relative_path.to_string(),
+                absolute_path: root.join(relative_path).to_string_lossy().into_owned(),
+                language: TextBufferLanguage::Html,
+                role: TextBufferRole::Template,
+                baseline: FileBufferBaseline {
+                    hash: hash_text(before),
+                    modified_ms: 1,
+                    size: before.len() as u64,
+                    readonly: false,
+                },
+                baseline_text: before.to_string(),
+                draft: None,
+                revision: 0,
+            },
+        );
+        let page_js = PageJsDraftStore::new(&session);
+        let mut workspace =
+            ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
+
+        let committed = stage_preview_structural_write(
+            &root,
+            &mut workspace,
+            PreviewStructuralWrite::new("Imagine Zola", relative_path, &contract.contents)
+                .with_coalesce_key(Some("preview.html.attributes:image".to_string())),
+        )
+        .unwrap();
+        assert!(committed.workspace_mutation.changed);
+        assert!(workspace
+            .documents
+            .text_for(relative_path)
+            .unwrap()
+            .contains("pana-studio:zola-image"));
+        assert_eq!(
+            fs::read_to_string(root.join(relative_path)).unwrap(),
+            before
+        );
+
+        let undo_identity = ProjectWorkspaceIdentity {
+            expected_project_root: workspace.session.project_root.clone(),
+            expected_session_id: workspace.runtime_session_id(),
+            expected_revision: workspace.revision,
+        };
+        workspace.undo(&undo_identity, 2).unwrap();
+        assert_eq!(
+            workspace.documents.text_for(relative_path),
+            Some(before.to_string())
+        );
+        let redo_identity = ProjectWorkspaceIdentity {
+            expected_project_root: workspace.session.project_root.clone(),
+            expected_session_id: workspace.runtime_session_id(),
+            expected_revision: workspace.revision,
+        };
+        workspace.redo(&redo_identity, 3).unwrap();
+        assert_eq!(
+            workspace.documents.text_for(relative_path),
+            Some(contract.contents)
+        );
+        assert_eq!(
+            fs::read_to_string(root.join(relative_path)).unwrap(),
+            before
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn test_session(root: &Path) -> ProjectSessionSnapshot {
         let root_text = root.to_string_lossy().into_owned();
         ProjectSessionSnapshot {
             schema_version: 1,
             id: "session".to_string(),
             project_root: root_text.clone(),
-            zola_root: root.join("sursa").to_string_lossy().into_owned(),
+            zola_root: root.to_path_buf().to_string_lossy().into_owned(),
             session_dir: root.join(".session").to_string_lossy().into_owned(),
             manifest_path: root
                 .join(".session/manifest.json")

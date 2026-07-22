@@ -293,7 +293,7 @@ pub fn workspace_create_content_page(
     let workspace = slot
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    let active_theme = ["sursa/zola.toml", "sursa/config.toml"]
+    let active_theme = ["zola.toml", "config.toml"]
         .iter()
         .find_map(|path| workspace.documents.text_for(path))
         .and_then(|source| active_theme_from_source(&source));
@@ -304,7 +304,7 @@ pub fn workspace_create_content_page(
         &title,
         active_theme,
     )?;
-    let relative_path = format!("sursa/{}", draft.relative_path);
+    let relative_path = draft.relative_path;
     let receipt_path = relative_path.clone();
     finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
         candidate.stage_resource_texts(

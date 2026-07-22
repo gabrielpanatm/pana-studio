@@ -96,19 +96,11 @@ pub fn plan_page_asset_contract(request: PageAssetContractRequest) -> PageAssetC
 }
 
 fn normalize_template_path(path: &str) -> String {
-    path.trim()
-        .trim_start_matches('/')
-        .strip_prefix("sursa/")
-        .unwrap_or_else(|| path.trim().trim_start_matches('/'))
-        .to_string()
+    path.trim().trim_start_matches('/').to_string()
 }
 
 fn to_project_relative_path(path: &str) -> String {
-    if path.starts_with("sursa/") {
-        path.to_string()
-    } else {
-        format!("sursa/{path}")
-    }
+    path.to_string()
 }
 
 fn attribute_values(

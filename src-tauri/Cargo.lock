@@ -4427,7 +4427,6 @@ dependencies = [
  "gdk",
  "getrandom 0.3.4",
  "gtk",
- "image",
  "mime_guess",
  "percent-encoding",
  "relative-path",

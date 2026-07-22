@@ -1302,17 +1302,6 @@ pub fn close_project(
 }
 
 #[tauri::command]
-pub fn get_zola_binary_path(state: State<AppState>) -> Result<String, String> {
-    state
-        .zola_binary_path
-        .lock()
-        .map_err(|_| "Nu am putut accesa binary-ul Zola.".to_string())?
-        .clone()
-        .map(|path| path.to_string_lossy().to_string())
-        .ok_or_else(|| "Binary-ul Zola nu a fost găsit.".to_string())
-}
-
-#[tauri::command]
 pub fn inspect_project_open_recovery(
     path: String,
     app: AppHandle,
@@ -1554,15 +1543,8 @@ pub fn open_project(
 }
 
 #[tauri::command]
-pub fn zola_init(path: String, app: AppHandle, state: State<AppState>) -> Result<String, String> {
-    let binary = state
-        .zola_binary_path
-        .lock()
-        .map_err(|_| "Nu am putut accesa binary-ul Zola.".to_string())?
-        .clone()
-        .ok_or_else(|| "Binary-ul Zola nu a fost găsit.".to_string())?;
-
-    init_project_with_starter(&app, &binary, &PathBuf::from(path))
+pub fn zola_init(path: String, app: AppHandle) -> Result<String, String> {
+    init_project_with_starter(&app, &PathBuf::from(path))
 }
 
 #[tauri::command]

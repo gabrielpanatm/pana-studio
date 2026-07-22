@@ -38,7 +38,7 @@ function authority(status, revisionBefore, revisionAfter, overrides = {}) {
     revisionAfter,
     dirty: status === "staged",
     consumedSources: [],
-    touchedFiles: status === "staged" ? ["sursa/templates/index.html"] : [],
+    touchedFiles: status === "staged" ? ["templates/index.html"] : [],
     ...overrides,
   };
 }
@@ -50,7 +50,7 @@ function workspaceMutation(revisionBefore, revisionAfter) {
     revisionBefore,
     revisionAfter,
     dirty: true,
-    touchedFiles: ["sursa/templates/index.html"],
+    touchedFiles: ["templates/index.html"],
   };
 }
 
@@ -58,7 +58,7 @@ function componentReceipt(overrides = {}) {
   return {
     plan: {
       templatePath: "templates/index.html",
-      stylesheetPath: "sursa/sass/pagini/index.scss",
+      stylesheetPath: "sass/pagini/index.scss",
       stylesheetHref: "/pagini/index.css",
       activeComponentIds: ["counter"],
       template: { changed: true, contents: "<main><div data-component=\"counter\"></div></main>" },
@@ -79,7 +79,7 @@ function assetNoopReceipt() {
   return {
     plan: {
       templatePath: "templates/index.html",
-      stylesheetPath: "sursa/sass/pagini/index.scss",
+      stylesheetPath: "sass/pagini/index.scss",
       stylesheetHref: "/pagini/index.css",
       activeDataAnimIds: [],
       activeGeneratedClasses: [],
@@ -99,8 +99,8 @@ function contractHost() {
   setFileBufferDraftSyncSession("/project", "session:runtime");
   setPageJsDraftSyncSession("/project", "session:runtime");
   return {
-    sourceCache: { "sursa/templates/index.html": "<main></main>" },
-    activeScannedPath: "sursa/templates/index.html",
+    sourceCache: { "templates/index.html": "<main></main>" },
+    activeScannedPath: "templates/index.html",
     source: "<main></main>",
     sessionProjectRoot: "/project",
     kernelProjectSessionId: "session:runtime",
@@ -125,13 +125,13 @@ test("a Page Contract receipt cannot overwrite text edited while Rust is in flig
   });
   const host = contractHost();
   const operation = reconcilePageComponentContracts(host, {
-    file: "sursa/templates/index.html",
+    file: "templates/index.html",
     line: 1,
     column: 1,
   });
   await started.promise;
   host.source = "<main><h1>editare concurentă</h1></main>";
-  host.sourceCache["sursa/templates/index.html"] = host.source;
+  host.sourceCache["templates/index.html"] = host.source;
   gate.resolve();
   await operation;
 
@@ -155,7 +155,7 @@ test("a receipt from project A has zero effects after same-root runtime replacem
   });
   const host = contractHost();
   const operation = reconcilePageComponentContracts(host, {
-    file: "sursa/templates/index.html",
+    file: "templates/index.html",
     line: 1,
     column: 1,
   });
@@ -177,7 +177,7 @@ test("Page Asset sends intent only and accepts an exact workspace no-op", async 
   });
   const host = contractHost();
   await reconcilePageAssetContracts(host, {
-    file: "sursa/templates/index.html",
+    file: "templates/index.html",
     line: 1,
     column: 1,
   });
@@ -201,7 +201,7 @@ test("Page Contract rejects impossible workspace authority before UI projection"
   const host = contractHost();
   await assert.rejects(
     reconcilePageComponentContracts(host, {
-      file: "sursa/templates/index.html",
+      file: "templates/index.html",
       line: 1,
       column: 1,
     }),

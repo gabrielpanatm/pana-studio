@@ -28,7 +28,7 @@ function manifest(versionToken = "v1", truncated = false) {
   return {
     root: "/project",
     files: [{
-      relativePath: "sursa/templates/index.html",
+      relativePath: "templates/index.html",
       modifiedMs: 1,
       size: 20,
       versionToken,
@@ -59,7 +59,7 @@ function host(overrides = {}) {
       acceptedDiskGeneration: 3,
       acceptedDiskManifest: manifest(),
     },
-    activeScannedPath: "sursa/templates/index.html",
+    activeScannedPath: "templates/index.html",
     source: "old",
     sourceCache: {},
     editorMutationEpoch: 0,
@@ -100,7 +100,7 @@ test("Save advances the external monitor baseline before polling resumes", () =>
     ...activeHost.externalDiskState,
     baseline: manifest("v1"),
     changed: true,
-    changedFiles: ["sursa/templates/index.html"],
+    changedFiles: ["templates/index.html"],
     blockedByDirtySession: true,
   };
   const accepted = manifest("v2");
@@ -195,21 +195,21 @@ test("external reconcile manifest advances only for applied or noop Rust receipt
 
 test("external source projection applies exact Rust text and preserves unrelated cache", () => {
   const receipt = {
-    invalidatedPaths: ["sursa/templates/index.html"],
-    activeFile: { relativePath: "sursa/templates/index.html", text: "new" },
+    invalidatedPaths: ["templates/index.html"],
+    activeFile: { relativePath: "templates/index.html", text: "new" },
   };
   const projection = projectExternalReconcileSources(
     {
-      "scanned:sursa/templates/index.html": "old",
-      "scanned:sursa/templates/other.html": "keep",
+      "scanned:templates/index.html": "old",
+      "scanned:templates/other.html": "keep",
     },
     receipt,
-    "sursa/templates/index.html",
+    "templates/index.html",
     true,
   );
   assert.equal(projection.activeSource, "new");
-  assert.equal(projection.sourceCache["scanned:sursa/templates/index.html"], "new");
-  assert.equal(projection.sourceCache["scanned:sursa/templates/other.html"], "keep");
+  assert.equal(projection.sourceCache["scanned:templates/index.html"], "new");
+  assert.equal(projection.sourceCache["scanned:templates/other.html"], "keep");
 });
 
 test("external UI lease detects project, runtime, edit and selection races", () => {
@@ -217,7 +217,7 @@ test("external UI lease detects project, runtime, edit and selection races", () 
     projectRoot: "/project",
     kernelSessionId: "session:runtime",
     projectSessionEpoch: 2,
-    activeRelativePath: "sursa/templates/index.html",
+    activeRelativePath: "templates/index.html",
     editorMutationEpoch: 4,
     selectionEpoch: 5,
   };

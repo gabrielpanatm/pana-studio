@@ -499,7 +499,7 @@ mod tests {
             Some(key.to_string()),
             at_ms,
             vec![WorkspaceDocumentTransition {
-                relative_path: "sursa/content/index.md".to_string(),
+                relative_path: "content/index.md".to_string(),
                 before: before.to_string(),
                 after: after.to_string(),
             }],
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn edit_after_undo_starts_a_new_coalescing_group() {
-        let key = "document:sursa/content/index.md";
+        let key = "document:content/index.md";
         let mut history = WorkspaceHistory::default();
         history.record(entry_with_text(key, 100, "", "a"));
         history.record(entry_with_text("other-document", 101, "a", "other"));
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn coalescing_that_returns_to_the_original_text_drops_the_history_entry() {
-        let key = "document:sursa/content/index.md";
+        let key = "document:content/index.md";
         let mut history = WorkspaceHistory::default();
         history.record(entry_with_text(key, 100, "", "a"));
         history.record(entry_with_text(key, 101, "a", ""));
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn edit_after_redo_does_not_merge_into_the_replayed_entry() {
-        let key = "document:sursa/content/index.md";
+        let key = "document:content/index.md";
         let mut history = WorkspaceHistory::default();
         history.record(entry_with_text(key, 100, "", "a"));
         let undone = history.pop_undo().unwrap();

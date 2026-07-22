@@ -87,7 +87,7 @@ fn dirty_workspace_blocks_before_ui_quiescence() {
     let evidence = ProjectCoordinationEvidence::dirty(
         PROJECT_SESSION,
         3,
-        vec!["sursa/templates/index.html".to_string()],
+        vec!["templates/index.html".to_string()],
     );
     let receipt = runtime
         .request_edit_lease(request("request-dirty", 3), &evidence, NOW + 1)
@@ -139,7 +139,7 @@ fn frontend_dirty_ack_returns_authority_to_user() {
             acknowledge(
                 "request-race",
                 5,
-                vec!["sursa/sass/pagini/index.scss".to_string()],
+                vec!["sass/pagini/index.scss".to_string()],
             ),
             &evidence,
             NOW + 2,
@@ -210,10 +210,10 @@ fn release_requires_reconciliation_before_user_control() {
             ReleaseEditLeaseInput {
                 client_session_id: CLIENT_SESSION.to_string(),
                 lease_id: lease_id.clone(),
-                expected_changed_files: vec!["sursa/templates/index.html".to_string()],
+                expected_changed_files: vec!["templates/index.html".to_string()],
                 summary: Some("Titlu actualizat".to_string()),
             },
-            &evidence_with_disk_changes(8, vec!["sursa/templates/index.html"]),
+            &evidence_with_disk_changes(8, vec!["templates/index.html"]),
             NOW + 3,
         )
         .unwrap();
@@ -225,7 +225,7 @@ fn release_requires_reconciliation_before_user_control() {
                 lease_id,
                 project_session_id: PROJECT_SESSION.to_string(),
                 project_revision: 9,
-                observed_changed_files: vec!["sursa/templates/index.html".to_string()],
+                observed_changed_files: vec!["templates/index.html".to_string()],
                 conflict_files: Vec::new(),
             },
             NOW + 4,
@@ -244,10 +244,10 @@ fn reconciliation_holds_conflict_when_observed_files_differ_from_ai_declaration(
             ReleaseEditLeaseInput {
                 client_session_id: CLIENT_SESSION.to_string(),
                 lease_id: lease_id.clone(),
-                expected_changed_files: vec!["sursa/templates/index.html".to_string()],
+                expected_changed_files: vec!["templates/index.html".to_string()],
                 summary: None,
             },
-            &evidence_with_disk_changes(18, vec!["sursa/templates/index.html"]),
+            &evidence_with_disk_changes(18, vec!["templates/index.html"]),
             NOW + 3,
         )
         .unwrap();
@@ -258,7 +258,7 @@ fn reconciliation_holds_conflict_when_observed_files_differ_from_ai_declaration(
                 lease_id,
                 project_session_id: PROJECT_SESSION.to_string(),
                 project_revision: 19,
-                observed_changed_files: vec!["sursa/sass/site.scss".to_string()],
+                observed_changed_files: vec!["sass/site.scss".to_string()],
                 conflict_files: Vec::new(),
             },
             NOW + 4,
@@ -269,8 +269,8 @@ fn reconciliation_holds_conflict_when_observed_files_differ_from_ai_declaration(
     assert_eq!(
         receipt.dirty_files,
         vec![
-            "sursa/sass/site.scss".to_string(),
-            "sursa/templates/index.html".to_string()
+            "sass/site.scss".to_string(),
+            "templates/index.html".to_string()
         ]
     );
     assert!(matches!(receipt.authority, EditAuthority::Conflict { .. }));
@@ -285,10 +285,10 @@ fn release_detects_unknown_disk_writer_and_user_can_accept_reconciliation() {
             ReleaseEditLeaseInput {
                 client_session_id: CLIENT_SESSION.to_string(),
                 lease_id: lease_id.clone(),
-                expected_changed_files: vec!["sursa/templates/index.html".to_string()],
+                expected_changed_files: vec!["templates/index.html".to_string()],
                 summary: None,
             },
-            &evidence_with_disk_changes(20, vec!["sursa/sass/site.scss"]),
+            &evidence_with_disk_changes(20, vec!["sass/site.scss"]),
             NOW + 3,
         )
         .unwrap();
@@ -378,10 +378,7 @@ fn orphaned_lease_adopts_the_current_stable_disk_only_after_explicit_recovery() 
     runtime.expire(NOW + 2 + DEFAULT_EDIT_LEASE_TTL_MS).unwrap();
     let evidence = evidence_with_disk_changes(
         18,
-        vec![
-            "sursa/content/portofoliu.md",
-            "sursa/templates/portofoliu.html",
-        ],
+        vec!["content/portofoliu.md", "templates/portofoliu.html"],
     );
 
     let receipt = runtime
@@ -400,8 +397,8 @@ fn orphaned_lease_adopts_the_current_stable_disk_only_after_explicit_recovery() 
             ..
         } if recovered_lease == &lease_id
             && expected_changed_files == &vec![
-                "sursa/content/portofoliu.md".to_string(),
-                "sursa/templates/portofoliu.html".to_string(),
+                "content/portofoliu.md".to_string(),
+                "templates/portofoliu.html".to_string(),
             ]
             && observed_changed_files == expected_changed_files
     ));
@@ -615,7 +612,7 @@ fn projection_recovery_reload_is_refused_for_dirty_workspace() {
             &ProjectCoordinationEvidence::dirty(
                 PROJECT_SESSION,
                 19,
-                vec!["sursa/templates/index.html".to_string()],
+                vec!["templates/index.html".to_string()],
             ),
             NOW + 4,
         )
@@ -632,13 +629,13 @@ fn projection_recovery_reload_is_refused_for_dirty_workspace() {
 fn topology_reload_is_authorized_when_disk_still_matches_the_ai_manifest() {
     let runtime = runtime();
     let lease_id = grant(&runtime, "request-topology-reload", 20);
-    let evidence = evidence_with_disk_changes(20, vec!["sursa/content/servicii.md"]);
+    let evidence = evidence_with_disk_changes(20, vec!["content/servicii.md"]);
     runtime
         .release_edit_lease(
             ReleaseEditLeaseInput {
                 client_session_id: CLIENT_SESSION.to_string(),
                 lease_id,
-                expected_changed_files: vec!["sursa/content/servicii.md".to_string()],
+                expected_changed_files: vec!["content/servicii.md".to_string()],
                 summary: None,
             },
             &evidence,
@@ -669,20 +666,17 @@ fn topology_reload_becomes_conflict_when_disk_changes_again_after_release() {
             ReleaseEditLeaseInput {
                 client_session_id: CLIENT_SESSION.to_string(),
                 lease_id,
-                expected_changed_files: vec!["sursa/content/servicii.md".to_string()],
+                expected_changed_files: vec!["content/servicii.md".to_string()],
                 summary: None,
             },
-            &evidence_with_disk_changes(21, vec!["sursa/content/servicii.md"]),
+            &evidence_with_disk_changes(21, vec!["content/servicii.md"]),
             NOW + 3,
         )
         .unwrap();
 
     let receipt = runtime
         .authorize_reconciliation_recovery_reload(
-            &evidence_with_disk_changes(
-                21,
-                vec!["sursa/content/servicii.md", "sursa/date/meniu.toml"],
-            ),
+            &evidence_with_disk_changes(21, vec!["content/servicii.md", "date/meniu.toml"]),
             NOW + 4,
         )
         .unwrap();

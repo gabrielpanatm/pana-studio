@@ -4,8 +4,7 @@ export function normalizePageJsTemplatePath(templatePath: string | null | undefi
   return String(templatePath ?? "")
     .trim()
     .replaceAll("\\", "/")
-    .replace(/^\.\//, "")
-    .replace(/^sursa\//, "");
+    .replace(/^\.\//, "");
 }
 
 export function templateToPageJsSlug(templatePath: string) {
@@ -17,5 +16,5 @@ export function templateToPageJsSlug(templatePath: string) {
 }
 
 export function pageJsRelativePath(templatePath: string) {
-  return `sursa/static/js/${templateToPageJsSlug(templatePath)}.js`;
+  return `static/js/${templateToPageJsSlug(templatePath)}.js`;
 }

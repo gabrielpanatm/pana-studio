@@ -366,9 +366,7 @@
     relativePath: string,
     surface: WorkbenchSurface,
   ) {
-    const candidatePaths = relativePath.startsWith("sursa/")
-      ? [relativePath]
-      : [relativePath, "sursa/" + relativePath];
+    const candidatePaths = [relativePath];
     const file = app.scannedProject?.files.find(
       (candidate) => candidatePaths.includes(candidate.relativePath),
     );
@@ -567,7 +565,7 @@
   }
 
   async function openWorkspaceSource(path: string) {
-    const candidatePaths = path.startsWith("sursa/") ? [path] : [path, `sursa/${path}`];
+    const candidatePaths = [path];
     const file = app.scannedProject?.files.find((item) => candidatePaths.includes(item.relativePath));
     if (!file) {
       app.setGlobalStatus(`Fișierul nu este în scanarea proiectului: ${path}`, "error");

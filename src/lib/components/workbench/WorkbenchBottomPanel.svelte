@@ -298,7 +298,7 @@
             <span><strong>{problemCount} {problemCount === 1 ? "problemă" : "probleme"}</strong>Sesiunea proiectului, construirea și validarea Zola curentă.</span>
           {/if}
           <div>
-            <button type="button" onclick={() => { void app.runZolaValidation("manual"); }}>Rulează Zola check</button>
+            <button type="button" onclick={() => { void app.runZolaValidation("manual"); }}>Validează cu Zola embedded</button>
             <button type="button" onclick={() => { void app.setWorkbenchActivity("audit"); }}>
               Deschide Audit <IconExternalLink size={13} stroke={1.9} />
             </button>

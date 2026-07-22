@@ -317,12 +317,12 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
 }
 
 fn accepted_disk_path_affects_preview(path: &str) -> bool {
-    path.starts_with("sursa/content/")
-        || path.starts_with("sursa/templates/")
-        || path.starts_with("sursa/themes/")
-        || path.starts_with("sursa/sass/")
-        || path.starts_with("sursa/static/")
-        || matches!(path, "sursa/zola.toml" | "sursa/config.toml")
+    path.starts_with("content/")
+        || path.starts_with("templates/")
+        || path.starts_with("themes/")
+        || path.starts_with("sass/")
+        || path.starts_with("static/")
+        || matches!(path, "zola.toml" | "config.toml")
 }
 
 fn external_reconcile_project_state_blocker(

@@ -74,8 +74,7 @@ impl PreviewImpact {
             kinds.insert(PreviewImpactKind::FullDocument);
         }
 
-        for path in &normalized {
-            let zola_path = path.strip_prefix("sursa/").unwrap_or(path);
+        for zola_path in &normalized {
             if zola_path.ends_with(".js") {
                 kinds.insert(PreviewImpactKind::Scripts);
                 continue;
@@ -402,11 +401,7 @@ fn canvas_runtime_node(
 }
 
 fn normalized_project_path(path: &str) -> String {
-    path.trim()
-        .trim_start_matches('/')
-        .strip_prefix("sursa/")
-        .unwrap_or_else(|| path.trim().trim_start_matches('/'))
-        .replace('\\', "/")
+    path.trim().trim_start_matches('/').replace('\\', "/")
 }
 
 fn collect_render_nodes(
@@ -992,10 +987,10 @@ mod tests {
     fn impact_classifies_html_css_js_and_full_routes() {
         let impact = PreviewImpact::from_projected_paths(
             &[
-                "sursa/templates/index.html".to_string(),
-                "sursa/sass/pagini/index.scss".to_string(),
-                "sursa/static/js/index.js".to_string(),
-                "sursa/content/_index.md".to_string(),
+                "templates/index.html".to_string(),
+                "sass/pagini/index.scss".to_string(),
+                "static/js/index.js".to_string(),
+                "content/_index.md".to_string(),
             ],
             false,
         );
@@ -1018,18 +1013,12 @@ mod tests {
             revision: 3,
             workspace_transaction_id: Some("canvas-test-3".to_string()),
             source_texts: HashMap::from([
-                (
-                    "sursa/zola.toml".to_string(),
-                    "base_url = '/'\n".to_string(),
-                ),
-                (
-                    "sursa/templates/index.html".to_string(),
-                    template.to_string(),
-                ),
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
+                ("templates/index.html".to_string(), template.to_string()),
             ]),
             resource_bytes: HashMap::new(),
             deleted_sources: HashSet::new(),
-            changed_paths: HashSet::from(["sursa/templates/index.html".to_string()]),
+            changed_paths: HashSet::from(["templates/index.html".to_string()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
                 session,
                 canonical.clone(),
@@ -1091,18 +1080,12 @@ mod tests {
             revision: 30,
             workspace_transaction_id: Some("canvas-large-30".to_string()),
             source_texts: HashMap::from([
-                (
-                    "sursa/zola.toml".to_string(),
-                    "base_url = '/'\n".to_string(),
-                ),
-                (
-                    "sursa/templates/index.html".to_string(),
-                    template.to_string(),
-                ),
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
+                ("templates/index.html".to_string(), template.to_string()),
             ]),
             resource_bytes: HashMap::new(),
             deleted_sources: HashSet::new(),
-            changed_paths: HashSet::from(["sursa/templates/index.html".to_string()]),
+            changed_paths: HashSet::from(["templates/index.html".to_string()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
                 session,
                 canonical.clone(),
@@ -1159,29 +1142,29 @@ mod tests {
             workspace_transaction_id: Some("canvas-runtime-4".to_string()),
             source_texts: HashMap::from([
                 (
-                    "sursa/zola.toml".to_string(),
+                    "zola.toml".to_string(),
                     "base_url = '/'\n".to_string(),
                 ),
                 (
-                    "sursa/templates/index.html".to_string(),
+                    "templates/index.html".to_string(),
                     "<main>Home</main><script src='/js/index.js'></script><script src='/js/custom.js'></script>".to_string(),
                 ),
                 (
-                    "sursa/static/js/index.js".to_string(),
+                    "static/js/index.js".to_string(),
                     "// @pana-motion {\"version\":1,\"motion\":{\"items\":[{\"id\":\"hero-motion\",\"type\":\"animation\"}]}}\n// @pana-component id=accordion\n"
                         .to_string(),
                 ),
                 (
-                    "sursa/static/js/custom.js".to_string(),
+                    "static/js/custom.js".to_string(),
                     "window.customRuntime = true;".to_string(),
                 ),
             ]),
             resource_bytes: HashMap::new(),
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from([
-                "sursa/templates/index.html".to_string(),
-                "sursa/static/js/index.js".to_string(),
-                "sursa/static/js/custom.js".to_string(),
+                "templates/index.html".to_string(),
+                "static/js/index.js".to_string(),
+                "static/js/custom.js".to_string(),
             ]),
             accepted_disk: AcceptedProjectDiskManifest::new(
                 session,
@@ -1289,7 +1272,7 @@ mod tests {
             9,
             "preview-9",
             Some("workspace-edit-9".to_string()),
-            PreviewImpact::from_projected_paths(&["sursa/templates/index.html".to_string()], false),
+            PreviewImpact::from_projected_paths(&["templates/index.html".to_string()], false),
             graph,
             resources,
         )
@@ -1446,7 +1429,7 @@ mod tests {
             std::process::id(),
             now_ms(),
         ));
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         root
     }
 }

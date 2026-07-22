@@ -20,8 +20,19 @@
     projectAssetOriginLabel,
     projectAssetPublicUrl,
   } from "$lib/project/assets";
+  import {
+    createZolaImageIntent,
+    resolveZolaImageSource,
+  } from "$lib/html/zola-image";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
-  import type { SelectionInfo, EditableAttributes, ProjectFile } from "$lib/types";
+  import type {
+    SelectionInfo,
+    EditableAttributes,
+    ProjectFile,
+    ProjectZolaImageIntent,
+    ZolaImageFormat,
+    ZolaImageOperation,
+  } from "$lib/types";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
 
   let {
@@ -49,6 +60,7 @@
     generateClassForSelectedHtml,
     generateDataAnimForSelectedHtml,
     setImageSourceValue,
+    applyZolaImageProcessingToHtml,
     cancelHtmlAttributeDraft,
     deleteHtmlElement,
     changeElementTag,
@@ -77,6 +89,7 @@
     generateClassForSelectedHtml: () => void | Promise<EditorActionOutcome>;
     generateDataAnimForSelectedHtml: () => void | Promise<EditorActionOutcome>;
     setImageSourceValue: (value: string) => void;
+    applyZolaImageProcessingToHtml: (intent: ProjectZolaImageIntent) => void | Promise<EditorActionOutcome>;
     cancelHtmlAttributeDraft: (expectedContextKey?: string) => void;
     deleteHtmlElement: () => void | Promise<void>;
     changeElementTag: (tag: string) => void;
@@ -96,6 +109,14 @@
   let fieldStatusText = $state("");
   let fieldStatusKind = $state<"info" | "success" | "error">("info");
   let fieldCommitSerial = 0;
+  let zolaWidthText = $state("1200");
+  let zolaHeightText = $state("800");
+  let zolaOperation = $state<ZolaImageOperation>("fit_width");
+  let zolaFormat = $state<ZolaImageFormat>("webp");
+  let zolaQualityText = $state("82");
+  let zolaSourceDraft = $state("");
+  let zolaImagePending = $state(false);
+  let zolaDraftSelectionKey = "";
 
   const canEdit = $derived(canEditHtml);
   const tag = $derived(pendingTag ?? selectedElement?.tag ?? "");
@@ -111,6 +132,20 @@
     selectedElement?.domPath ?? "",
     tag,
   ].join("::"));
+  const zolaImageEnabled = $derived(Boolean(selectedElement?.zolaImage));
+
+  $effect(() => {
+    const presentation = selectedElement?.zolaImage ?? null;
+    const nextKey = `${assetContextKey}::${JSON.stringify(presentation)}`;
+    if (nextKey === zolaDraftSelectionKey) return;
+    zolaDraftSelectionKey = nextKey;
+    zolaWidthText = String(presentation?.width ?? positiveInteger(getAttr("width")) ?? 1200);
+    zolaHeightText = String(presentation?.height ?? positiveInteger(getAttr("height")) ?? 800);
+    zolaOperation = presentation?.operation ?? "fit_width";
+    zolaFormat = presentation?.format ?? "webp";
+    zolaQualityText = String(presentation?.quality ?? 82);
+    zolaSourceDraft = presentation?.sourceUrl ?? imageSourceValue ?? getAttr("src");
+  });
 
   // ── Attribute helpers ────────────────────────────────────────────────────
 
@@ -209,6 +244,66 @@
     commitAttribute(name, value);
   }
 
+  function positiveInteger(value: string): number | null {
+    const parsed = Number(value.trim());
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  function currentZolaSourceUrl() {
+    return (zolaSourceDraft || selectedElement?.zolaImage?.sourceUrl || imageSourceValue || getAttr("src")).trim();
+  }
+
+  async function commitZolaImage(enabled: boolean) {
+    if (zolaImagePending) return;
+    let intent: ProjectZolaImageIntent;
+    try {
+      if (!enabled) {
+        intent = createZolaImageIntent({ enabled: false });
+      } else {
+        const source = resolveZolaImageSource(currentZolaSourceUrl(), scannedAssets);
+        const width = positiveInteger(zolaWidthText);
+        const height = positiveInteger(zolaHeightText);
+        const quality = positiveInteger(zolaQualityText);
+        if (!width || width > 16384) throw new Error("Lățimea trebuie să fie între 1 și 16384px.");
+        if (zolaOperation !== "fit_width" && (!height || height > 16384)) {
+          throw new Error("Operația selectată necesită o înălțime între 1 și 16384px.");
+        }
+        if (!quality || quality > 100) throw new Error("Calitatea trebuie să fie între 1 și 100.");
+        intent = createZolaImageIntent({
+          enabled: true,
+          source,
+          width,
+          height: zolaOperation === "fit_width" ? null : height,
+          operation: zolaOperation,
+          format: zolaFormat,
+          quality,
+        });
+      }
+    } catch (error) {
+      setFieldStatus("zola-image", error instanceof Error ? error.message : String(error), "error");
+      return;
+    }
+
+    zolaImagePending = true;
+    setFieldStatus("zola-image", enabled ? "Se scrie contractul resize_image…" : "Se restaurează atributele originale…", "info");
+    try {
+      const result = await applyZolaImageProcessingToHtml(intent);
+      if (result && (result.status === "failed" || result.status === "blocked")) {
+        setFieldStatus("zola-image", result.reason || "Procesarea Zola a fost blocată.", "error");
+      } else {
+        setFieldStatus(
+          "zola-image",
+          enabled ? "Imaginea este procesată declarativ de Zola." : "Atributele originale au fost restaurate.",
+          "success",
+        );
+      }
+    } catch (error) {
+      setFieldStatus("zola-image", error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      zolaImagePending = false;
+    }
+  }
+
   function commitTagDraft(nextValue: string) {
     const nextTag = nextValue.trim();
     if (!nextTag || nextTag === tag) return;
@@ -279,6 +374,12 @@
   const iframeLoadingOptions = [{ value: "", label: "implicit (eager)" }, "lazy", "eager"];
   const decodingOptions = [{ value: "", label: "implicit (auto)" }, "async", "sync", "auto"];
   const priorityOptions = ["auto", "high", "low"];
+  const zolaOperationOptions = [
+    { value: "fit_width", label: "Potrivește lățimea" },
+    { value: "fit", label: "Încadrează" },
+    { value: "fill", label: "Umple și decupează" },
+  ];
+  const zolaFormatOptions = ["webp", "avif", "auto", "jpg", "png"];
   const buttonTypeOptions = [{ value: "", label: "implicit (submit)" }, "button", "submit", "reset"];
   const inputTypeOptions = ["text", "email", "password", "number", "tel", "url", "search", "date", "time", "datetime-local", "month", "week", "checkbox", "radio", "file", "color", "range", "hidden", "submit", "reset", "button"];
   const methodOptions = ["get", "post", "dialog"];
@@ -369,6 +470,8 @@
 
   const ext = (a: ProjectFile) => a.relativePath.split(".").pop()?.toLowerCase() ?? "";
   const imageAssets = $derived(scannedAssets.filter(a => a.kind === "IMAGE" || ["svg","webp","avif","png","jpg","jpeg","gif"].includes(ext(a))));
+  const processableImageAssets = $derived(imageAssets.filter(a => ["webp","avif","png","jpg","jpeg"].includes(ext(a))));
+  const zolaSourceResolution = $derived(resolveZolaImageSource(currentZolaSourceUrl(), scannedAssets));
   const videoAssets = $derived(scannedAssets.filter(a => ["mp4","webm","ogv","mov"].includes(ext(a))));
   const audioAssets = $derived(scannedAssets.filter(a => ["mp3","wav","ogg","m4a"].includes(ext(a))));
 
@@ -545,18 +648,29 @@
   </InspectorSection>
 
 {:else if tag === "img"}
-  <InspectorSection title="Image" hasValues={hasElementSpecific}>
+  <InspectorSection title="Image" hasValues={hasElementSpecific || zolaImageEnabled}>
     {#snippet icon()}<IconPhoto size={13} stroke={1.7} />{/snippet}
     <div class="hf-sublabel-row"><span class="hf-sublabel">src</span></div>
     <AssetPicker
-      value={imageSourceValue || getAttr("src")}
-      assets={imageAssets}
+      value={zolaImageEnabled ? zolaSourceDraft : (imageSourceValue || getAttr("src"))}
+      assets={zolaImageEnabled ? processableImageAssets : imageAssets}
       assetUrl={projectAssetPublicUrl}
       assetMeta={projectAssetOriginLabel}
       contextKey={assetContextKey}
       disabled={!canEditAttribute("src")}
-      oninput={(v) => { setImageSourceValue(v); setAttr("src", v); }}
-      oncommit={(v) => { setImageSourceValue(v); commitField("src", v); }}
+      oninput={(v) => {
+        if (zolaImageEnabled) zolaSourceDraft = v;
+        else { setImageSourceValue(v); setAttr("src", v); }
+      }}
+      oncommit={(v) => {
+        if (zolaImageEnabled) {
+          zolaSourceDraft = v;
+          void commitZolaImage(true);
+        } else {
+          setImageSourceValue(v);
+          commitField("src", v);
+        }
+      }}
       oncancel={(_baseline, context) => cancelHtmlAttributeDraft(context)}
       commitOnInputMs={450}
     />
@@ -565,18 +679,93 @@
       <input class="hf-input" type="text" placeholder="Descriere imagine" value={getAttr("alt")} disabled={!canEdit}
         oninput={(e) => setAttr("alt", e.currentTarget.value)} onblur={() => commitField("alt")} />
     </div>
-    <div class="hf-row-2">
+    <div class="zola-image-box">
       <div class="hf-row">
-        <span class="hf-label">w</span>
-        <input class="hf-input" type="text" placeholder="800" value={getAttr("width")} disabled={!canEdit}
-          oninput={(e) => setAttr("width", e.currentTarget.value)} onblur={() => commitField("width")} />
+        <span class="hf-label">Procesează cu Zola</span>
+        <button
+          type="button"
+          class="hf-toggle"
+          class:active={zolaImageEnabled}
+          disabled={!canEdit || zolaImagePending || (!zolaImageEnabled && !zolaSourceResolution.eligible)}
+          onclick={() => { void commitZolaImage(!zolaImageEnabled); }}
+        >{zolaImageEnabled ? "on" : "off"}</button>
       </div>
-      <div class="hf-row">
-        <span class="hf-label">h</span>
-        <input class="hf-input" type="text" placeholder="600" value={getAttr("height")} disabled={!canEdit}
-          oninput={(e) => setAttr("height", e.currentTarget.value)} onblur={() => commitField("height")} />
-      </div>
+      {#if !zolaImageEnabled && !zolaSourceResolution.eligible}
+        <p class="hf-zola-note error">{zolaSourceResolution.reason}</p>
+      {:else if !zolaImageEnabled}
+        <p class="hf-zola-note">Zola va genera imaginea procesată și dimensiunile reale la build.</p>
+      {/if}
+      {#if zolaImageEnabled}
+        <div class="hf-row">
+          <span class="hf-label">operație</span>
+          <SelectControl
+            value={zolaOperation}
+            options={zolaOperationOptions}
+            disabled={!canEdit || zolaImagePending}
+            ariaLabel="Operație resize_image"
+            onchange={(value) => {
+              zolaOperation = value as ZolaImageOperation;
+              void commitZolaImage(true);
+            }}
+          />
+        </div>
+        <div class="hf-row-2">
+          <div class="hf-row">
+            <span class="hf-label">w</span>
+            <input class="hf-input" type="number" min="1" max="16384" value={zolaWidthText}
+              disabled={!canEdit || zolaImagePending}
+              oninput={(event) => { zolaWidthText = event.currentTarget.value; }}
+              onblur={() => { void commitZolaImage(true); }} />
+          </div>
+          {#if zolaOperation !== "fit_width"}
+            <div class="hf-row">
+              <span class="hf-label">h</span>
+              <input class="hf-input" type="number" min="1" max="16384" value={zolaHeightText}
+                disabled={!canEdit || zolaImagePending}
+                oninput={(event) => { zolaHeightText = event.currentTarget.value; }}
+                onblur={() => { void commitZolaImage(true); }} />
+            </div>
+          {/if}
+        </div>
+        <div class="hf-row">
+          <span class="hf-label">format</span>
+          <SelectControl
+            value={zolaFormat}
+            options={zolaFormatOptions}
+            disabled={!canEdit || zolaImagePending}
+            ariaLabel="Format imagine Zola"
+            onchange={(value) => {
+              zolaFormat = value as ZolaImageFormat;
+              void commitZolaImage(true);
+            }}
+          />
+        </div>
+        {#if zolaFormat !== "png"}
+          <div class="hf-row">
+            <span class="hf-label">calitate</span>
+            <input class="hf-input" type="number" min="1" max="100" value={zolaQualityText}
+              disabled={!canEdit || zolaImagePending}
+              oninput={(event) => { zolaQualityText = event.currentTarget.value; }}
+              onblur={() => { void commitZolaImage(true); }} />
+          </div>
+        {/if}
+        <p class="hf-zola-note"><code>src</code>, <code>width</code> și <code>height</code> sunt administrate de contractul Zola.</p>
+      {:else}
+        <div class="hf-row-2">
+          <div class="hf-row">
+            <span class="hf-label">w</span>
+            <input class="hf-input" type="text" placeholder="800" value={getAttr("width")} disabled={!canEdit}
+              oninput={(e) => setAttr("width", e.currentTarget.value)} onblur={() => commitField("width")} />
+          </div>
+          <div class="hf-row">
+            <span class="hf-label">h</span>
+            <input class="hf-input" type="text" placeholder="600" value={getAttr("height")} disabled={!canEdit}
+              oninput={(e) => setAttr("height", e.currentTarget.value)} onblur={() => commitField("height")} />
+          </div>
+        </div>
+      {/if}
     </div>
+    {@render fieldFeedback(["zola-image"], imageStatus)}
     <div class="hf-row">
       <span class="hf-label">loading</span>
       <SelectControl value={getAttr("loading")} options={loadingOptions} disabled={!canEditAttribute("loading")} ariaLabel="Image loading" onchange={(value) => commitField("loading", value)} />
@@ -1104,6 +1293,26 @@
   .hf-toggle:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .zola-image-box {
+    display: grid;
+    gap: 7px;
+    padding: 8px;
+    border: 1px solid var(--border-3);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--brand-soft) 28%, var(--surface-4));
+  }
+
+  .hf-zola-note {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .hf-zola-note.error {
+    color: var(--danger, #cf4a4a);
   }
 
   /* ── Bool chips ────────────────────────────────────────────────────────── */

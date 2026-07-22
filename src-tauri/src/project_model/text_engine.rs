@@ -530,9 +530,9 @@ mod tests {
     fn plan_html_text_resolves_active_html_by_direct_location() {
         let root = unique_test_dir();
         write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
         fs::write(
-            root.join("sursa/static/plain.html"),
+            root.join("static/plain.html"),
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -550,7 +550,7 @@ mod tests {
             &ProjectHtmlTextIntent {
                 target_source_id: None,
                 target_location: Some(ProjectSourceEditLocation {
-                    file: "sursa/static/plain.html".to_string(),
+                    file: "static/plain.html".to_string(),
                     line: 4,
                     column: 3,
                 }),
@@ -564,11 +564,8 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "sursa/static/plain.html");
-        assert_eq!(
-            patch.resolved_target_id,
-            "location:sursa/static/plain.html:4:3"
-        );
+        assert_eq!(patch.file, "static/plain.html");
+        assert_eq!(patch.resolved_target_id, "location:static/plain.html:4:3");
         assert!(patch.contents.contains("<p id=\"lead\">Text nou</p>"));
         assert_eq!(patch.source_start_line, 4);
     }
@@ -606,19 +603,19 @@ mod tests {
     }
 
     fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

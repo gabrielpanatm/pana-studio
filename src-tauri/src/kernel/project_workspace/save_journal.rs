@@ -23,7 +23,7 @@ use crate::{
 
 use super::save::{ProjectWorkspaceSavePlan, ProjectWorkspaceSavePlannedFile};
 
-pub const PROJECT_WORKSPACE_SAVE_JOURNAL_SCHEMA_VERSION: u32 = 2;
+pub const PROJECT_WORKSPACE_SAVE_JOURNAL_SCHEMA_VERSION: u32 = 3;
 const PROJECT_WORKSPACE_SAVE_JOURNAL_MAX_BYTES: u64 = 192 * 1024 * 1024;
 const PROJECT_WORKSPACE_SAVE_JOURNAL_MAX_COUNT: usize = 128;
 const PROJECT_WORKSPACE_SAVE_JOURNAL_SCAN_MAX_TOTAL_BYTES: u64 = 384 * 1024 * 1024;
@@ -901,7 +901,7 @@ mod tests {
         let before = vec![0, 159, 146, 150, 255];
         let after = vec![0x77, 0x4f, 0x46, 0x32];
         let write = ProjectWorkspacePlannedBinaryWrite {
-            relative_path: "sursa/static/fonturi/test.woff2".to_string(),
+            relative_path: "static/fonturi/test.woff2".to_string(),
             existed_before: true,
             before_bytes: before.clone(),
             new_bytes: after.clone(),

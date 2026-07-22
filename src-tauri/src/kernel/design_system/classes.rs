@@ -373,7 +373,7 @@ mod tests {
     fn model(files: Vec<ProjectModelFile>) -> ProjectModel {
         ProjectModel {
             project_root: PathBuf::from("/tmp/design-system-test"),
-            zola_root: PathBuf::from("/tmp/design-system-test/sursa"),
+            zola_root: PathBuf::from("/tmp/design-system-test"),
             revision: "revision".to_string(),
             files,
             source_graph: SourceGraph {
@@ -414,12 +414,12 @@ mod tests {
     fn inventory_combines_markup_and_style_occurrences() {
         let model = model(vec![
             file(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 ProjectModelFileKind::Template,
                 r#"<main class="hero hero-wide {{ dynamic }}"></main>"#,
             ),
             file(
-                "sursa/sass/main.scss",
+                "sass/main.scss",
                 ProjectModelFileKind::Style,
                 ".hero, .hero-wide:hover { color: red; } // .ignored\n/* .also-ignored */",
             ),
@@ -440,12 +440,12 @@ mod tests {
     fn rename_changes_only_exact_class_tokens() {
         let model = model(vec![
             file(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 ProjectModelFileKind::Template,
                 r#"<div class="card card-large"></div><div data-class="card"></div>"#,
             ),
             file(
-                "sursa/sass/main.scss",
+                "sass/main.scss",
                 ProjectModelFileKind::Style,
                 ".card { &.active {} } .card-large {} content: \".card\";",
             ),
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn rename_refuses_existing_destination_class() {
         let model = model(vec![file(
-            "sursa/sass/main.scss",
+            "sass/main.scss",
             ProjectModelFileKind::Style,
             ".old {} .existing {}",
         )]);

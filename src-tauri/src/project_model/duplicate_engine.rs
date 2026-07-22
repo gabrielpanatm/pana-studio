@@ -17,6 +17,7 @@ use super::move_engine::{
     resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
     source_location_at_offset, source_missing_message, ProjectSourceEditLocation, Span,
 };
+use super::zola_image_engine::{contains_zola_image_contract, zola_image_contract_start};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +58,7 @@ pub struct ProjectHtmlDuplicatePatch {
     pub component_ids: Vec<String>,
     pub data_anim_count: usize,
     pub duplicate_id_count: usize,
+    pub zola_image_contract: bool,
 }
 
 struct DuplicateHtml {
@@ -174,13 +176,17 @@ fn plan_html_duplicate_from_source_node(
         .range
         .as_ref()
         .ok_or_else(|| "Sursa nu are range stabil în Source Graph.".to_string())?;
-    let source_span = resolve_html_element_span(&file.contents, source_range.start)?;
+    let mut source_span = resolve_html_element_span(&file.contents, source_range.start)?;
+    if let Some(contract_start) = zola_image_contract_start(&file.contents, source_range.start)? {
+        source_span.start = contract_start;
+    }
 
     plan_html_duplicate_for_span(
         model,
         file,
         &source_node.file,
         source_span,
+        source_range.start,
         source_node.id.clone(),
         source_node.label.clone(),
     )
@@ -235,6 +241,7 @@ fn plan_html_duplicate_from_direct_location(
         file,
         &file.relative_path,
         source_span,
+        tag.start,
         resolved_source_id,
         format!("<{}>", tag.tag),
     )
@@ -245,6 +252,7 @@ fn plan_html_duplicate_for_span(
     file: &ProjectModelFile,
     file_path: &str,
     source_span: Span,
+    opening_start: usize,
     resolved_source_id: String,
     duplicated_label: String,
 ) -> Result<ProjectHtmlDuplicatePatch, String> {
@@ -252,10 +260,11 @@ fn plan_html_duplicate_for_span(
         .contents
         .get(source_span.start..source_span.end)
         .ok_or_else(|| "Range sursă invalid pentru duplicare.".to_string())?;
-    let tag = parse_html_tag_at(&file.contents, source_span.start)
+    let tag = parse_html_tag_at(&file.contents, opening_start)
         .map(|tag| tag.tag)
         .ok_or_else(|| "Nu am putut citi tag-ul HTML pentru duplicare.".to_string())?;
     let duplicate = prepare_duplicated_html(model, &tag, source_html);
+    let zola_image_contract = contains_zola_image_contract(source_html);
     let applied =
         apply_html_duplicate_after(&file.contents, file_path, source_span, &duplicate.html)?;
 
@@ -278,6 +287,7 @@ fn plan_html_duplicate_for_span(
         component_ids: duplicate.component_ids,
         data_anim_count: duplicate.data_anim_count,
         duplicate_id_count: duplicate.duplicate_id_count,
+        zola_image_contract,
     })
 }
 
@@ -919,9 +929,9 @@ mod tests {
     fn plan_html_duplicate_resolves_active_html_by_direct_location() {
         let root = unique_test_dir();
         write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
         fs::write(
-            root.join("sursa/static/plain.html"),
+            root.join("static/plain.html"),
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -941,7 +951,7 @@ mod tests {
             &ProjectHtmlDuplicateIntent {
                 source_source_id: None,
                 source_location: Some(ProjectSourceEditLocation {
-                    file: "sursa/static/plain.html".to_string(),
+                    file: "static/plain.html".to_string(),
                     line: 4,
                     column: 3,
                 }),
@@ -954,11 +964,8 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "sursa/static/plain.html");
-        assert_eq!(
-            patch.resolved_source_id,
-            "location:sursa/static/plain.html:4:3"
-        );
+        assert_eq!(patch.file, "static/plain.html");
+        assert_eq!(patch.resolved_source_id, "location:static/plain.html:4:3");
         assert_eq!(patch.tag, "section");
         assert!(patch.html.contains("id=\"hero-copy\""));
         assert!(patch.html.contains("id=\"cta-copy\""));
@@ -993,19 +1000,19 @@ mod tests {
     }
 
     fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

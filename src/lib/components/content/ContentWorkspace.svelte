@@ -77,7 +77,7 @@
   );
 
   function contentSection(file: string) {
-    const normalized = file.replaceAll("\\", "/").replace(/^sursa\/content\/?/, "");
+    const normalized = file.replaceAll("\\", "/").replace(/^content\/?/, "");
     const slash = normalized.lastIndexOf("/");
     return slash < 0 ? "" : normalized.slice(0, slash);
   }

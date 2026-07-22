@@ -13,6 +13,9 @@ use super::move_engine::{
     parse_html_tag_at, resolve_html_node_for_anchor, same_model_path, source_location_at_offset,
     source_missing_message, ProjectSourceEditLocation,
 };
+use super::zola_image_engine::{
+    apply_zola_image_contract, inspect_zola_image_at, ProjectZolaImageIntent, ZolaImagePresentation,
+};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +24,10 @@ pub struct ProjectHtmlAttributeIntent {
     pub target_location: Option<ProjectSourceEditLocation>,
     pub target_tag: Option<String>,
     pub target_selector: Option<String>,
+    #[serde(default)]
     pub attributes: Vec<ProjectHtmlAttributeMutation>,
+    #[serde(default)]
+    pub zola_image: Option<ProjectZolaImageIntent>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -67,6 +73,8 @@ pub struct ProjectHtmlAttributePatch {
     pub source_start_line: usize,
     pub tag: String,
     pub attributes: BTreeMap<String, Option<String>>,
+    pub zola_image_contract: bool,
+    pub zola_image: Option<ZolaImagePresentation>,
 }
 
 struct AttributeApplication {
@@ -101,7 +109,16 @@ fn plan_html_attributes_inner(
     intent: &ProjectHtmlAttributeIntent,
     aliases: &HashMap<String, String>,
 ) -> Result<ProjectHtmlAttributePatch, String> {
-    let attributes = normalize_attribute_mutations(&intent.attributes)?;
+    if intent.zola_image.is_some() && !intent.attributes.is_empty() {
+        return Err(
+            "Contractul imaginii Zola nu poate fi combinat cu mutații HTML generice.".to_string(),
+        );
+    }
+    let attributes = if intent.zola_image.is_some() {
+        BTreeMap::new()
+    } else {
+        normalize_attribute_mutations(&intent.attributes)?
+    };
 
     if let Some(target_node) = resolve_html_node_for_anchor(
         model,
@@ -164,6 +181,29 @@ fn plan_html_attributes_from_source_node(
         .ok_or_else(|| "Ținta nu are range stabil în Source Graph.".to_string())?;
     let target_tag = html_tag_at(&file.contents, target_range.start)?;
     validate_target_tag(intent, &target_tag)?;
+    if let Some(zola_image) = intent.zola_image.as_ref() {
+        let applied = apply_zola_image_contract(
+            model,
+            &target_node.file,
+            &file.contents,
+            target_range.start,
+            zola_image,
+        )?;
+        return Ok(ProjectHtmlAttributePatch {
+            file: target_node.file.clone(),
+            resolved_target_id: target_node.id.clone(),
+            before_revision: file.revision.clone(),
+            after_revision: content_revision(&applied.contents),
+            contents: applied.contents,
+            target_location: applied.target_location,
+            source_start_line: applied.source_start_line,
+            tag: target_tag,
+            attributes,
+            zola_image_contract: true,
+            zola_image: applied.presentation,
+        });
+    }
+    validate_zola_managed_attributes(&file.contents, target_range.start, &attributes)?;
     validate_schema_attributes(&target_tag, &attributes)?;
     let applied = apply_html_attributes(
         &file.contents,
@@ -182,6 +222,8 @@ fn plan_html_attributes_from_source_node(
         source_start_line: applied.source_start_line,
         tag: target_tag,
         attributes,
+        zola_image_contract: false,
+        zola_image: None,
     })
 }
 
@@ -197,6 +239,45 @@ fn plan_html_attributes_from_direct_location(
         .find(|file| same_model_path(&file.relative_path, &location.file))
         .ok_or_else(|| format!("Nu am găsit fișierul {} în Project Model.", location.file))?;
 
+    if let Some(zola_image) = intent.zola_image.as_ref() {
+        if file.kind != ProjectModelFileKind::Template {
+            return Err(
+                "Procesarea Zola resize_image este activă numai în template-uri Tera.".to_string(),
+            );
+        }
+        let offset = offset_for_source_location(&file.contents, location)?;
+        let tag = parse_html_tag_at(&file.contents, offset).ok_or_else(|| {
+            "Locația nu indică începutul unui tag <img> pentru procesarea Zola.".to_string()
+        })?;
+        validate_target_tag(intent, &tag.tag)?;
+        let applied = apply_zola_image_contract(
+            model,
+            &file.relative_path,
+            &file.contents,
+            tag.start,
+            zola_image,
+        )?;
+        let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
+            format!(
+                "location:{}:{}:{}",
+                location.file, location.line, location.column
+            )
+        });
+        return Ok(ProjectHtmlAttributePatch {
+            file: file.relative_path.clone(),
+            resolved_target_id,
+            before_revision: file.revision.clone(),
+            after_revision: content_revision(&applied.contents),
+            contents: applied.contents,
+            target_location: applied.target_location,
+            source_start_line: applied.source_start_line,
+            tag: tag.tag,
+            attributes,
+            zola_image_contract: true,
+            zola_image: applied.presentation,
+        });
+    }
+
     if !is_direct_html_attribute_file(file) {
         return Err(
             "Atributele prin locație directă sunt active doar pentru fișiere HTML 1:1 din proiect, nu pentru template-uri Tera.".to_string(),
@@ -210,6 +291,7 @@ fn plan_html_attributes_from_direct_location(
         return Err("Locația indică un tag de închidere, nu un element mutabil.".to_string());
     }
     validate_target_tag(intent, &tag.tag)?;
+    validate_zola_managed_attributes(&file.contents, tag.start, &attributes)?;
     validate_schema_attributes(&tag.tag, &attributes)?;
     let applied =
         apply_html_attributes(&file.contents, &file.relative_path, tag.start, &attributes)?;
@@ -230,6 +312,8 @@ fn plan_html_attributes_from_direct_location(
         source_start_line: applied.source_start_line,
         tag: tag.tag,
         attributes,
+        zola_image_contract: false,
+        zola_image: None,
     })
 }
 
@@ -342,6 +426,25 @@ fn validate_schema_attributes(
     Ok(())
 }
 
+fn validate_zola_managed_attributes(
+    source: &str,
+    opening_start: usize,
+    attributes: &BTreeMap<String, Option<String>>,
+) -> Result<(), String> {
+    let Some(_) = inspect_zola_image_at(source, opening_start)? else {
+        return Ok(());
+    };
+    if let Some(name) = ["src", "width", "height"]
+        .into_iter()
+        .find(|name| attributes.contains_key(*name))
+    {
+        return Err(format!(
+            "Atributul {name} este administrat de contractul resize_image; actualizează-l prin controalele Zola."
+        ));
+    }
+    Ok(())
+}
+
 fn is_valid_attribute_name(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
@@ -373,7 +476,7 @@ fn is_html_path(path: &str) -> bool {
     lower.ends_with(".html") || lower.ends_with(".htm")
 }
 
-fn remove_tag_attribute(tag: &str, attr: &str) -> String {
+pub(crate) fn remove_tag_attribute(tag: &str, attr: &str) -> String {
     let mut next = tag.to_string();
     for attribute in find_tag_attributes(&next, attr).into_iter().rev() {
         let remove_start = previous_whitespace_start(&next, attribute.attr_start);
@@ -382,7 +485,7 @@ fn remove_tag_attribute(tag: &str, attr: &str) -> String {
     next
 }
 
-fn set_tag_attribute_value(tag: &str, attr: &str, value: &str) -> String {
+pub(crate) fn set_tag_attribute_value(tag: &str, attr: &str, value: &str) -> String {
     let mut next = tag.to_string();
     let matches = find_tag_attributes(&next, attr);
     for duplicate in matches.iter().skip(1).rev() {
@@ -468,6 +571,62 @@ struct ParsedTagAttribute {
     value_end: usize,
     attr_end: usize,
     value_style: TagAttributeValueStyle,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RawTagAttribute {
+    pub(crate) name: String,
+    pub(crate) raw: String,
+    pub(crate) value: Option<String>,
+}
+
+pub(crate) fn raw_tag_attributes(tag: &str) -> Vec<RawTagAttribute> {
+    parse_tag_attributes(tag)
+        .into_iter()
+        .filter_map(|attribute| {
+            let name = tag
+                .get(attribute.name_start..attribute.name_end)?
+                .to_ascii_lowercase();
+            let raw = tag
+                .get(attribute.attr_start..attribute.attr_end)?
+                .to_string();
+            let value =
+                (!matches!(attribute.value_style, TagAttributeValueStyle::Minimized)).then(|| {
+                    tag.get(attribute.value_start..attribute.value_end)
+                        .unwrap_or("")
+                        .to_string()
+                });
+            Some(RawTagAttribute { name, raw, value })
+        })
+        .collect()
+}
+
+pub(crate) fn insert_raw_tag_attribute(
+    tag: &str,
+    expected_name: &str,
+    raw: &str,
+) -> Result<String, String> {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.contains(['\n', '\r', '\0']) {
+        return Err("Atributul original al imaginii Zola este invalid.".to_string());
+    }
+    let probe = format!("<img {raw}>");
+    let parsed = raw_tag_attributes(&probe);
+    if parsed.len() != 1 || parsed[0].raw != raw || parsed[0].name != expected_name {
+        return Err(
+            "Atributul original al imaginii Zola nu mai are o reprezentare HTML sigură."
+                .to_string(),
+        );
+    }
+    Ok(insert_raw_tag_attribute_unchecked(tag, raw))
+}
+
+fn insert_raw_tag_attribute_unchecked(tag: &str, raw: &str) -> String {
+    let insert_at = tag
+        .rfind("/>")
+        .or_else(|| tag.rfind('>'))
+        .unwrap_or(tag.len());
+    format!("{} {}{}", &tag[..insert_at], raw, &tag[insert_at..])
 }
 
 fn parse_tag_attributes(tag: &str) -> Vec<ParsedTagAttribute> {
@@ -679,7 +838,10 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::project_model::build_project_model;
+    use crate::project_model::{
+        build_project_model,
+        zola_image_engine::{ProjectZolaImageIntent, ZolaImageFormat, ZolaImageOperation},
+    };
 
     use super::*;
 
@@ -716,6 +878,7 @@ mod tests {
                     ProjectHtmlAttributeMutation::remove("title"),
                     ProjectHtmlAttributeMutation::set("data-anim", "ps-hero-abc123"),
                 ],
+                zola_image: None,
             },
             &HashMap::new(),
         );
@@ -735,9 +898,9 @@ mod tests {
     fn plan_html_attributes_resolves_active_html_by_direct_location() {
         let root = unique_test_dir();
         write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
         fs::write(
-            root.join("sursa/static/plain.html"),
+            root.join("static/plain.html"),
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -755,7 +918,7 @@ mod tests {
             &ProjectHtmlAttributeIntent {
                 target_source_id: None,
                 target_location: Some(ProjectSourceEditLocation {
-                    file: "sursa/static/plain.html".to_string(),
+                    file: "static/plain.html".to_string(),
                     line: 4,
                     column: 3,
                 }),
@@ -765,6 +928,7 @@ mod tests {
                     ProjectHtmlAttributeMutation::set("src", "nou.jpg"),
                     ProjectHtmlAttributeMutation::set("alt", "Imagine nouă"),
                 ],
+                zola_image: None,
             },
             &HashMap::new(),
         );
@@ -772,11 +936,8 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "sursa/static/plain.html");
-        assert_eq!(
-            patch.resolved_target_id,
-            "location:sursa/static/plain.html:4:3"
-        );
+        assert_eq!(patch.file, "static/plain.html");
+        assert_eq!(patch.resolved_target_id, "location:static/plain.html:4:3");
         assert!(patch.contents.contains(r#"src="nou.jpg""#));
         assert!(patch.contents.contains(r#"alt="Imagine nouă""#));
         assert_eq!(patch.source_start_line, 4);
@@ -872,20 +1033,106 @@ mod tests {
         );
     }
 
+    #[test]
+    fn managed_zola_image_attributes_cannot_be_overwritten_generically() {
+        let root = unique_test_dir();
+        write_project(&root, "<img src=\"/images/hero.jpg\" alt=\"Inițial\">\n");
+        fs::create_dir_all(root.join("static/images")).unwrap();
+        fs::write(root.join("static/images/hero.jpg"), b"image").unwrap();
+        let before = build_project_model(&root, &HashMap::new()).unwrap();
+        let image = before
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<img>")
+            .expect("missing img");
+        let enable = plan_html_attributes(
+            &before,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(image.id.clone()),
+                target_location: None,
+                target_tag: Some("img".to_string()),
+                target_selector: None,
+                attributes: Vec::new(),
+                zola_image: Some(ProjectZolaImageIntent {
+                    enabled: true,
+                    source_url: Some("/images/hero.jpg".to_string()),
+                    source_path: Some("static/images/hero.jpg".to_string()),
+                    width: Some(800),
+                    height: None,
+                    operation: Some(ZolaImageOperation::FitWidth),
+                    format: Some(ZolaImageFormat::Webp),
+                    quality: Some(82),
+                }),
+            },
+            &HashMap::new(),
+        );
+        assert!(enable.allowed, "{:?}", enable.diagnostic);
+        let enabled = enable.patch.unwrap();
+        let projected = build_project_model(
+            &root,
+            &HashMap::from([(enabled.file.clone(), enabled.contents.clone())]),
+        )
+        .unwrap();
+        let projected_image = projected
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<img>")
+            .expect("missing projected img");
+
+        let overwrite = plan_html_attributes(
+            &projected,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(projected_image.id.clone()),
+                target_location: None,
+                target_tag: Some("img".to_string()),
+                target_selector: None,
+                attributes: vec![ProjectHtmlAttributeMutation::set("src", "/other.jpg")],
+                zola_image: None,
+            },
+            &HashMap::new(),
+        );
+        assert!(!overwrite.allowed);
+        assert!(overwrite
+            .diagnostic
+            .as_deref()
+            .is_some_and(|message| message.contains("administrat")));
+
+        let alt = plan_html_attributes(
+            &projected,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(projected_image.id.clone()),
+                target_location: None,
+                target_tag: Some("img".to_string()),
+                target_selector: None,
+                attributes: vec![ProjectHtmlAttributeMutation::set("alt", "Nou")],
+                zola_image: None,
+            },
+            &HashMap::new(),
+        );
+        fs::remove_dir_all(root).unwrap();
+        assert!(alt.allowed, "{:?}", alt.diagnostic);
+        let alt_contents = alt.patch.unwrap().contents;
+        assert!(alt_contents.contains("alt=\"Nou\""));
+        assert!(alt_contents.contains("pana-studio:zola-image"));
+        assert!(alt_contents.contains(".url | safe"));
+    }
+
     fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

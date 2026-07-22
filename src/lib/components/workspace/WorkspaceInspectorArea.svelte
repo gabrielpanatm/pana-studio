@@ -81,6 +81,7 @@
       generateClassForSelectedHtml={() => app.generateClassForSelectedHtml()}
       generateDataAnimForSelectedHtml={() => app.generateDataAnimForSelectedHtml()}
       setImageSourceValue={(value) => (app.imageSourceValue = value)}
+      applyZolaImageProcessingToHtml={(intent) => app.applyZolaImageProcessingToHtml(intent)}
       cancelHtmlAttributeDraft={(expectedContextKey) => app.cancelHtmlAttributeDraft(expectedContextKey)}
       deleteHtmlElement={async () => {
         await app.deleteHtmlElement();

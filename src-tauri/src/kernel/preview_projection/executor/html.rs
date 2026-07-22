@@ -360,6 +360,7 @@ pub fn execute_preview_html_attributes(
     let canvas_patch = if html_attribute_canvas_patch_allowed(
         commit.workspace_mutation.changed,
         &patch.attributes,
+        patch.zola_image_contract,
     ) {
         Some(issue_canvas_patch(
             session,
@@ -638,20 +639,24 @@ pub fn execute_preview_html_duplicate(
         commit,
     } = committed;
     let alias_updates = html_identity_aliases(&before_model, &commit.after_model);
-    let canvas_patch = issue_canvas_patch(
-        session,
-        &commit.workspace_mutation,
-        &patch.before_revision,
-        &patch.after_revision,
-        CanvasPatchOperation::Duplicate {
-            source: CanvasPatchAnchor::source(
-                &patch.resolved_source_id,
-                input.duplicate_intent.source_selector.as_deref(),
-                input.duplicate_intent.source_tag.as_deref(),
-            ),
-            html: patch.html.clone(),
-        },
-    )?;
+    let canvas_patch = if patch.zola_image_contract {
+        None
+    } else {
+        Some(issue_canvas_patch(
+            session,
+            &commit.workspace_mutation,
+            &patch.before_revision,
+            &patch.after_revision,
+            CanvasPatchOperation::Duplicate {
+                source: CanvasPatchAnchor::source(
+                    &patch.resolved_source_id,
+                    input.duplicate_intent.source_selector.as_deref(),
+                    input.duplicate_intent.source_tag.as_deref(),
+                ),
+                html: patch.html.clone(),
+            },
+        )?)
+    };
     let receipt = committed_html_duplicate_receipt(
         intent_receipt,
         commit.after_model.revision.clone(),
@@ -773,8 +778,11 @@ fn issue_canvas_patch(
 fn html_attribute_canvas_patch_allowed(
     workspace_changed: bool,
     attributes: &BTreeMap<String, Option<String>>,
+    zola_image_contract: bool,
 ) -> bool {
     workspace_changed
+        && !zola_image_contract
+        && !attributes.is_empty()
         && attributes
             .keys()
             .all(|name| is_live_projectable_attribute(name))
@@ -861,36 +869,41 @@ mod tests {
     #[test]
     fn html_attribute_canvas_patch_requires_a_real_live_projectable_transition() {
         let live = BTreeMap::from([("href".to_string(), Some("/despre".to_string()))]);
-        assert!(html_attribute_canvas_patch_allowed(true, &live));
-        assert!(!html_attribute_canvas_patch_allowed(false, &live));
+        assert!(html_attribute_canvas_patch_allowed(true, &live, false));
+        assert!(!html_attribute_canvas_patch_allowed(false, &live, false));
 
         let source_only = BTreeMap::from([("download".to_string(), Some(String::new()))]);
-        assert!(!html_attribute_canvas_patch_allowed(true, &source_only));
+        assert!(!html_attribute_canvas_patch_allowed(
+            true,
+            &source_only,
+            false
+        ));
 
         let mixed = BTreeMap::from([
             ("href".to_string(), Some("/despre".to_string())),
             ("target".to_string(), Some("_blank".to_string())),
         ]);
-        assert!(!html_attribute_canvas_patch_allowed(true, &mixed));
+        assert!(!html_attribute_canvas_patch_allowed(true, &mixed, false));
+        assert!(!html_attribute_canvas_patch_allowed(true, &live, true));
     }
 
     #[test]
     fn consecutive_attribute_commands_resolve_identity_changed_by_first_commit() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<main>\n",
@@ -914,6 +927,7 @@ mod tests {
                 target_tag: Some("h1".to_string()),
                 target_selector: Some("main > h1".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::remove("data-anim")],
+                zola_image: None,
             },
             &HashMap::new(),
         );
@@ -943,6 +957,7 @@ mod tests {
                 target_tag: Some("h1".to_string()),
                 target_selector: Some("main > h1".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::set("data-anim", "ps-new")],
+                zola_image: None,
             },
             &aliases,
         );
@@ -957,6 +972,7 @@ mod tests {
                 target_tag: Some("h1".to_string()),
                 target_selector: Some("main > h1".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::set("data-anim", "ps-new")],
+                zola_image: None,
             },
             &cyclic_aliases,
         );
@@ -983,6 +999,7 @@ mod tests {
                     "title",
                     "Selecție persistentă",
                 )],
+                zola_image: None,
             },
             &chained_aliases,
         );
@@ -1009,20 +1026,20 @@ mod tests {
     #[test]
     fn same_tag_sibling_move_receipt_identity_resolves_exact_moved_node() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<main>\n",

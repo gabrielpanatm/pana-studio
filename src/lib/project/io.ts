@@ -810,10 +810,6 @@ export async function chooseProjectFolder(): Promise<string | null> {
   return selected;
 }
 
-export function getZolaBinaryPath(): Promise<string> {
-  return invoke<string>("get_zola_binary_path");
-}
-
 export function scanProject(path: string): Promise<ProjectScan> {
   return invoke<ProjectScan>("scan_project", { path });
 }
@@ -1524,10 +1520,6 @@ export function readProjectAppConfig(): Promise<ProjectAppConfig> {
 
 export function saveProjectAppConfig(config: {
   cachebustAssets: boolean;
-  optimizeImagesOnBuild: boolean;
-  imageMaxDimension: number;
-  imageExcludeSuffix: string;
-  imageReplaceOnlyIfSmaller: boolean;
 }): Promise<ProjectAppConfig> {
   return invoke<ProjectAppConfig>("save_project_app_config", { config });
 }
@@ -1624,6 +1616,10 @@ export function zolaBuild(): Promise<string> {
 
 export function zolaCheck(): Promise<string> {
   return invoke<string>("zola_check");
+}
+
+export function zolaCheckWorkspace(): Promise<string> {
+  return invoke<string>("zola_check_workspace");
 }
 
 export function deployToBunny(): Promise<string> {

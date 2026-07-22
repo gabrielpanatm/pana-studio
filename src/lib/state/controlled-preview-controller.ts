@@ -1,4 +1,4 @@
-import { zolaCheck } from "$lib/project/io";
+import { zolaCheck, zolaCheckWorkspace } from "$lib/project/io";
 import {
   markPreviewCanonical,
   markPreviewRefreshError,
@@ -102,19 +102,25 @@ export async function runZolaValidation(
 
   const serial = ++host.zolaValidationSerial;
   host.controlledPreview = markZolaRunning(host.controlledPreview, reason);
-  host.setGlobalStatus("Se rulează zola check în fundal...", "saving");
+  const validatesCanonicalDisk = reason === "manual";
+  host.setGlobalStatus(
+    validatesCanonicalDisk
+      ? "Se validează sursele salvate cu motorul Zola embedded..."
+      : "Se confirmă revizia ProjectWorkspace în motorul Zola embedded...",
+    "saving",
+  );
   try {
-    const log = await zolaCheck();
+    const log = validatesCanonicalDisk ? await zolaCheck() : await zolaCheckWorkspace();
     if (serial !== host.zolaValidationSerial) return false;
     const firstLine = log.split("\n").find((line) => line.trim().length > 0)?.trim();
-    const message = firstLine || "Zola check a trecut.";
+    const message = firstLine || "Validarea Zola embedded a trecut.";
     host.controlledPreview = markZolaValid(
       host.controlledPreview,
       reason,
       message,
     );
     host.projectStatus = host.controlledPreview.validationMessage;
-    host.setGlobalStatus(`Zola check finalizat: proiect valid. ${message}`, "saved");
+    host.setGlobalStatus(`Validare Zola embedded finalizată: proiect valid. ${message}`, "saved");
     return true;
   } catch (error) {
     if (serial !== host.zolaValidationSerial) return false;
@@ -124,7 +130,7 @@ export async function runZolaValidation(
       reason,
       message,
     );
-    host.projectStatus = `Zola check a eșuat: ${message}`;
+    host.projectStatus = `Validarea Zola embedded a eșuat: ${message}`;
     host.setGlobalStatus(host.projectStatus, "error");
     return false;
   }

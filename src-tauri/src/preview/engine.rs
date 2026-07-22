@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -30,9 +30,8 @@ use crate::{
         model::ProjectModel,
         template_workbench::{TemplateWorkbenchPlan, TemplateWorkbenchRenderMode},
     },
+    zola_engine::{with_zola_engine, zola_config_file},
 };
-
-static ZOLA_RENDER_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PersistentPreviewOwner {
@@ -177,12 +176,9 @@ impl PersistentZolaPreviewEngine {
         })?;
         let model =
             build_project_model_from_workspace_projection(Path::new(&lease.project_root), lease)?;
-        let (rendered, canvas_route) = {
-            let _render = ZOLA_RENDER_LOCK
-                .lock()
-                .map_err(|_| "Motorul Zola embedded este indisponibil.".to_string())?;
-            render_template_workbench_document(site, &self.raw_content, &model, plan)?
-        };
+        let (rendered, canvas_route) = with_zola_engine("Context de template Preview", || {
+            render_template_workbench_document(site, &self.raw_content, &model, plan)
+        })?;
         let annotated = CanvasGraph::annotate_rendered_document(&model, &canvas_route, &rendered)?;
         let mut prepared = prepare_design_safe_html(&annotated, &generation.preview_revision)?;
         bind_canvas_identity_to_editor_html(
@@ -342,58 +338,53 @@ impl PersistentZolaPreviewEngine {
         let previous_assets_root = self
             .active_generation()?
             .map(|generation| generation.assets_root.clone());
-        let rendered = {
-            let _render = ZOLA_RENDER_LOCK
-                .lock()
-                .map_err(|_| "Motorul Zola embedded este indisponibil.".to_string())?;
-            match impact {
-                ProjectionRenderImpact::Full => build_new_official_zola_site(
-                    &update.projection_root,
-                    artifact_root,
-                    &base_url,
-                    lease.revision,
-                    DraftRenderPolicy::Include,
-                )
-                .map(|(site, rendered)| {
-                    self.site = Some(site);
-                    rendered
+        let rendered = with_zola_engine("randare Preview persistentă", || match impact {
+            ProjectionRenderImpact::Full => build_new_official_zola_site(
+                &update.projection_root,
+                artifact_root,
+                &base_url,
+                lease.revision,
+                DraftRenderPolicy::Include,
+            )
+            .map(|(site, rendered)| {
+                self.site = Some(site);
+                rendered
+            }),
+            ProjectionRenderImpact::Templates => self
+                .site
+                .as_mut()
+                .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
+                .and_then(|site| {
+                    if let Some(previous_assets_root) = previous_assets_root.as_deref() {
+                        seed_persistent_preview_artifacts(
+                            app,
+                            &self.session_root,
+                            previous_assets_root,
+                            artifact_root,
+                        )?;
+                    }
+                    site.set_base_url(base_url.clone());
+                    site.set_output_path(artifact_root);
+                    clear_site_content()?;
+                    site.reload_templates().map_err(|error| {
+                        format!(
+                            "Zola 0.22.1 nu a putut reîncărca template-urile reviziei {}: {error}",
+                            lease.revision
+                        )
+                    })?;
+                    capture_site_content()
                 }),
-                ProjectionRenderImpact::Templates => self
-                    .site
-                    .as_mut()
-                    .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
-                    .and_then(|site| {
-                        if let Some(previous_assets_root) = previous_assets_root.as_deref() {
-                            seed_persistent_preview_artifacts(
-                                app,
-                                &self.session_root,
-                                previous_assets_root,
-                                artifact_root,
-                            )?;
-                        }
-                        site.set_base_url(base_url.clone());
-                        site.set_output_path(artifact_root);
-                        clear_site_content()?;
-                        site.reload_templates().map_err(|error| {
-                            format!(
-                                "Zola 0.22.1 nu a putut reîncărca template-urile reviziei {}: {error}",
-                                lease.revision
-                            )
-                        })?;
-                        capture_site_content()
-                    }),
-                ProjectionRenderImpact::AssetsOnly => self
-                    .site
-                    .as_mut()
-                    .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
-                    .and_then(|site| {
-                        site.set_base_url(base_url.clone());
-                        site.set_output_path(artifact_root);
-                        materialize_official_zola_assets(site, lease.revision)?;
-                        Ok(self.raw_content.clone())
-                    }),
-            }
-        };
+            ProjectionRenderImpact::AssetsOnly => self
+                .site
+                .as_mut()
+                .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
+                .and_then(|site| {
+                    site.set_base_url(base_url.clone());
+                    site.set_output_path(artifact_root);
+                    materialize_official_zola_assets(site, lease.revision)?;
+                    Ok(self.raw_content.clone())
+                }),
+        });
         let rendered = match rendered {
             Ok(rendered) => rendered,
             Err(error) => {
@@ -894,7 +885,7 @@ fn template_workbench_context(
 
 fn normalized_content_file(path: &str) -> String {
     let path = path.trim().trim_start_matches('/').replace('\\', "/");
-    path.strip_prefix("sursa/content/")
+    path.strip_prefix("content/")
         .or_else(|| path.strip_prefix("content/"))
         .unwrap_or(&path)
         .to_string()
@@ -997,9 +988,7 @@ fn projection_render_impact(
     }
     let mut templates = false;
     for project_relative in &update.projected_paths {
-        let Some(relative) = project_relative.strip_prefix("sursa/") else {
-            continue;
-        };
+        let relative = project_relative.as_str();
         if relative == "config.toml"
             || relative == "zola.toml"
             || relative.starts_with("content/")
@@ -1029,17 +1018,16 @@ fn render_official_zola_memory(
     base_url: &str,
     workspace_revision: u64,
 ) -> Result<HashMap<String, String>, String> {
-    let _render = ZOLA_RENDER_LOCK
-        .lock()
-        .map_err(|_| "Motorul Zola embedded este indisponibil.".to_string())?;
-    build_new_official_zola_site(
-        projection_root,
-        artifact_root,
-        base_url,
-        workspace_revision,
-        DraftRenderPolicy::Exclude,
-    )
-    .map(|(_, rendered)| rendered)
+    with_zola_engine("randare Preview în memorie", || {
+        build_new_official_zola_site(
+            projection_root,
+            artifact_root,
+            base_url,
+            workspace_revision,
+            DraftRenderPolicy::Exclude,
+        )
+        .map(|(_, rendered)| rendered)
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1085,17 +1073,16 @@ pub(crate) fn render_official_zola_disk_generation(
     base_url: &str,
     disk_generation: u64,
 ) -> Result<HashMap<String, String>, String> {
-    let _render = ZOLA_RENDER_LOCK
-        .lock()
-        .map_err(|_| "Motorul Zola embedded este indisponibil.".to_string())?;
-    build_new_official_zola_site(
-        zola_root,
-        artifact_root,
-        base_url,
-        disk_generation,
-        DraftRenderPolicy::Exclude,
-    )
-    .map(|(_, rendered)| rendered)
+    with_zola_engine("randare Source Browser", || {
+        build_new_official_zola_site(
+            zola_root,
+            artifact_root,
+            base_url,
+            disk_generation,
+            DraftRenderPolicy::Exclude,
+        )
+        .map(|(_, rendered)| rendered)
+    })
 }
 
 fn capture_site_content() -> Result<HashMap<String, String>, String> {
@@ -1176,19 +1163,6 @@ fn prepare_rendered_content(
     }
 }
 
-fn zola_config_file(root: &Path) -> Result<&'static Path, String> {
-    if root.join("zola.toml").is_file() {
-        Ok(Path::new("zola.toml"))
-    } else if root.join("config.toml").is_file() {
-        Ok(Path::new("config.toml"))
-    } else {
-        Err(format!(
-            "Proiecția Preview persistentă nu conține zola.toml sau config.toml: {}.",
-            root.display()
-        ))
-    }
-}
-
 fn next_preview_revision(workspace_revision: u64) -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1202,7 +1176,6 @@ mod tests {
     use std::{
         collections::{BTreeMap, HashMap, HashSet},
         env, fs,
-        process::Command,
     };
 
     use crate::{
@@ -1212,6 +1185,7 @@ mod tests {
         },
         preview::read_http_document,
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
+        zola_engine::acquire_zola_engine_for_test,
     };
 
     use super::*;
@@ -1238,11 +1212,11 @@ mod tests {
     fn workbench_renders_page_partial_orphan_and_macro_with_declared_contexts() {
         let fixture = parity_fixture("template-workbench-render-matrix");
         let project = fixture.join("project");
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         let artifacts = fixture.join("artifacts");
         create_workbench_render_project(&zola_root);
         let model = crate::project_model::build_project_model(&project, &HashMap::new()).unwrap();
-        let _render_guard = ZOLA_RENDER_LOCK.lock().unwrap();
+        let _render_guard = acquire_zola_engine_for_test();
         let (site, canonical) = build_new_official_zola_site(
             &zola_root,
             &artifacts,
@@ -1255,7 +1229,7 @@ mod tests {
         let index_plan = crate::project_model::template_workbench::resolve_template_workbench_plan(
             &model,
             &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
-                template_path: "sursa/templates/index.html".to_string(),
+                template_path: "templates/index.html".to_string(),
                 preferred_page_path: None,
             },
         )
@@ -1271,7 +1245,7 @@ mod tests {
             crate::project_model::template_workbench::resolve_template_workbench_plan(
                 &model,
                 &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
-                    template_path: "sursa/templates/partials/wrapper.html".to_string(),
+                    template_path: "templates/partials/wrapper.html".to_string(),
                     preferred_page_path: None,
                 },
             )
@@ -1292,7 +1266,7 @@ mod tests {
             crate::project_model::template_workbench::resolve_template_workbench_plan(
                 &model,
                 &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
-                    template_path: "sursa/templates/orphan.html".to_string(),
+                    template_path: "templates/orphan.html".to_string(),
                     preferred_page_path: None,
                 },
             )
@@ -1305,7 +1279,7 @@ mod tests {
         let macro_plan = crate::project_model::template_workbench::resolve_template_workbench_plan(
             &model,
             &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
-                template_path: "sursa/templates/macros/card.html".to_string(),
+                template_path: "templates/macros/card.html".to_string(),
                 preferred_page_path: None,
             },
         )
@@ -1324,7 +1298,7 @@ mod tests {
     fn workbench_fragment_extraction_keeps_only_top_level_nodes_owned_by_active_source() {
         let fixture = parity_fixture("template-workbench-owned-fragment");
         let project = fixture.join("project");
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         create_workbench_render_project(&zola_root);
         let model = crate::project_model::build_project_model(&project, &HashMap::new()).unwrap();
         let article = model
@@ -1342,12 +1316,9 @@ mod tests {
             article.id, article.id
         );
 
-        let fragment = extract_template_owned_fragment(
-            &rendered,
-            "sursa/templates/partials/card.html",
-            &model,
-        )
-        .unwrap();
+        let fragment =
+            extract_template_owned_fragment(&rendered, "templates/partials/card.html", &model)
+                .unwrap();
 
         assert!(fragment.contains("class=\"card\""));
         assert!(fragment.contains("Owned child"));
@@ -1451,7 +1422,7 @@ Conținut draft vizibil în editor.
         )
         .unwrap();
 
-        let _render = ZOLA_RENDER_LOCK.lock().unwrap();
+        let _render = acquire_zola_engine_for_test();
         let (_, workspace_rendered) = build_new_official_zola_site(
             &project,
             &workspace_output,
@@ -1501,15 +1472,15 @@ Conținut draft vizibil în editor.
             baseline_rebuilt,
         };
         assert_eq!(
-            projection_render_impact(&update(&["sursa/templates/index.html"], false), true, true),
+            projection_render_impact(&update(&["templates/index.html"], false), true, true),
             ProjectionRenderImpact::Templates
         );
         assert_eq!(
-            projection_render_impact(&update(&["sursa/sass/pages/index.scss"], false), true, true),
+            projection_render_impact(&update(&["sass/pages/index.scss"], false), true, true),
             ProjectionRenderImpact::AssetsOnly
         );
         assert_eq!(
-            projection_render_impact(&update(&["sursa/content/about.md"], false), true, true),
+            projection_render_impact(&update(&["content/about.md"], false), true, true),
             ProjectionRenderImpact::Full
         );
         assert_eq!(
@@ -1519,11 +1490,11 @@ Conținut draft vizibil în editor.
     }
 
     #[test]
-    fn embedded_renderer_matches_bundled_official_zola_0_22_1() {
+    fn embedded_memory_renderer_matches_fresh_embedded_disk_generation() {
         let fixture = parity_fixture("official-render-parity");
         let project = fixture.join("project");
         let embedded_output = fixture.join("embedded-output");
-        let cli_output = fixture.join("cli-output");
+        let disk_output = fixture.join("disk-output");
         create_parity_project(&project);
         fs::create_dir_all(&embedded_output).unwrap();
 
@@ -1531,51 +1502,22 @@ Conținut draft vizibil în editor.
         let embedded = render_official_zola_memory(&project, &embedded_output, base_url, 7)
             .expect("embedded Zola build");
 
-        let zola = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/zola");
-        let version = Command::new(&zola)
-            .arg("--version")
-            .output()
-            .expect("bundled official Zola binary");
-        assert!(version.status.success());
-        assert_eq!(
-            String::from_utf8_lossy(&version.stdout).trim(),
-            "zola 0.22.1"
-        );
-
-        let build = Command::new(&zola)
-            .args([
-                "--root",
-                project.to_str().unwrap(),
-                "build",
-                "--force",
-                "--base-url",
-                base_url,
-                "--output-dir",
-                cli_output.to_str().unwrap(),
-            ])
-            .output()
-            .expect("official Zola CLI build");
-        assert!(
-            build.status.success(),
-            "official Zola CLI build failed: {}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
+        run_fresh_embedded_disk_build(&project, &disk_output, base_url);
 
         assert!(!embedded.is_empty());
         for (route, body) in embedded {
-            let cli_path = cli_path_for_memory_route(&cli_output, &route);
+            let disk_path = disk_path_for_memory_route(&disk_output, &route);
             assert_eq!(
                 body.as_bytes(),
-                fs::read(&cli_path)
-                    .unwrap_or_else(|error| panic!("{}: {error}", cli_path.display())),
+                fs::read(&disk_path)
+                    .unwrap_or_else(|error| panic!("{}: {error}", disk_path.display())),
                 "rendered route differs: {route}"
             );
         }
         for relative in ["site.css", "asset.txt"] {
             assert_eq!(
                 fs::read(embedded_output.join(relative)).unwrap(),
-                fs::read(cli_output.join(relative)).unwrap(),
+                fs::read(disk_output.join(relative)).unwrap(),
                 "derived/static asset differs: {relative}"
             );
         }
@@ -1584,21 +1526,21 @@ Conținut draft vizibil în editor.
     }
 
     #[test]
-    fn retained_site_template_and_sass_updates_keep_official_cli_parity() {
+    fn retained_site_template_and_sass_updates_keep_fresh_disk_parity() {
         let fixture = parity_fixture("persistent-site-parity");
         let project = fixture.join("project");
         let first_output = fixture.join("first-output");
         let template_output = fixture.join("template-output");
         let sass_output = fixture.join("sass-output");
-        let template_cli = fixture.join("template-cli");
-        let sass_cli = fixture.join("sass-cli");
+        let template_fresh = fixture.join("template-fresh");
+        let sass_fresh = fixture.join("sass-fresh");
         create_parity_project(&project);
         fs::create_dir_all(&first_output).unwrap();
         fs::create_dir_all(&template_output).unwrap();
         fs::create_dir_all(&sass_output).unwrap();
         let base_url = "https://preview.pana.invalid";
 
-        let _render = ZOLA_RENDER_LOCK.lock().unwrap();
+        let _render = acquire_zola_engine_for_test();
         let (mut site, _) = build_new_official_zola_site(
             &project,
             &first_output,
@@ -1629,17 +1571,17 @@ Conținut draft vizibil în editor.
         let sass_rendered = template_rendered.clone();
         drop(_render);
 
-        run_official_cli_build(&project, &template_cli, base_url);
-        assert_rendered_matches_cli(&template_rendered, &template_cli);
-        run_official_cli_build(&project, &sass_cli, base_url);
-        assert_rendered_matches_cli(&sass_rendered, &sass_cli);
+        run_fresh_embedded_disk_build(&project, &template_fresh, base_url);
+        assert_rendered_matches_disk(&template_rendered, &template_fresh);
+        run_fresh_embedded_disk_build(&project, &sass_fresh, base_url);
+        assert_rendered_matches_disk(&sass_rendered, &sass_fresh);
         assert_eq!(
             fs::read(sass_output.join("site.css")).unwrap(),
-            fs::read(sass_cli.join("site.css")).unwrap()
+            fs::read(sass_fresh.join("site.css")).unwrap()
         );
         assert_eq!(
             fs::read(sass_output.join("asset.txt")).unwrap(),
-            fs::read(sass_cli.join("asset.txt")).unwrap()
+            fs::read(sass_fresh.join("asset.txt")).unwrap()
         );
 
         fs::remove_dir_all(fixture).unwrap();
@@ -1652,7 +1594,7 @@ Conținut draft vizibil în editor.
         let fixture = parity_fixture("runtime-transaction");
         let _env = TestEnvGuard::from_root(&fixture.join("app-home"));
         let project = fixture.join("project");
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         create_parity_project(&zola_root);
 
         let app = tauri::test::mock_builder()
@@ -1677,23 +1619,23 @@ Conținut draft vizibil în editor.
         .unwrap();
         let mut source_texts = HashMap::from([
             (
-                "sursa/config.toml".to_string(),
+                "config.toml".to_string(),
                 fs::read_to_string(zola_root.join("config.toml")).unwrap(),
             ),
             (
-                "sursa/content/_index.md".to_string(),
+                "content/_index.md".to_string(),
                 fs::read_to_string(zola_root.join("content/_index.md")).unwrap(),
             ),
             (
-                "sursa/templates/index.html".to_string(),
+                "templates/index.html".to_string(),
                 fs::read_to_string(zola_root.join("templates/index.html")).unwrap(),
             ),
             (
-                "sursa/sass/site.scss".to_string(),
+                "sass/site.scss".to_string(),
                 fs::read_to_string(zola_root.join("sass/site.scss")).unwrap(),
             ),
             (
-                "sursa/static/asset.txt".to_string(),
+                "static/asset.txt".to_string(),
                 fs::read_to_string(zola_root.join("static/asset.txt")).unwrap(),
             ),
         ]);
@@ -1724,7 +1666,7 @@ Conținut draft vizibil în editor.
         assert!(first_document.contains(&first_revision));
         assert!(!first_document.contains("data-draft=\"two\""));
 
-        let template_path = "sursa/templates/index.html".to_string();
+        let template_path = "templates/index.html".to_string();
         source_texts.insert(
             template_path.clone(),
             source_texts[&template_path].replace("<main>", "<main data-draft=\"two\">"),
@@ -1779,7 +1721,7 @@ Conținut draft vizibil în editor.
             .unwrap()
             .contains("data-draft=\"two\""));
 
-        let sass_path = "sursa/sass/site.scss".to_string();
+        let sass_path = "sass/site.scss".to_string();
         source_texts.insert(
             sass_path.clone(),
             "$accent: #a32952; body { color: $accent; main { display: flex; } }\n".to_string(),
@@ -1931,7 +1873,7 @@ Conținut **Markdown** randat de Zola.
         fs::write(root.join("static/asset.txt"), "Pană Studio\n").unwrap();
     }
 
-    fn cli_path_for_memory_route(output: &Path, route: &str) -> PathBuf {
+    fn disk_path_for_memory_route(output: &Path, route: &str) -> PathBuf {
         if route.is_empty() {
             output.join("index.html")
         } else if route.ends_with('/') {
@@ -1941,36 +1883,25 @@ Conținut **Markdown** randat de Zola.
         }
     }
 
-    fn run_official_cli_build(project: &Path, output: &Path, base_url: &str) {
-        let zola = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/zola");
-        let build = Command::new(&zola)
-            .args([
-                "--root",
-                project.to_str().unwrap(),
-                "build",
-                "--force",
-                "--base-url",
-                base_url,
-                "--output-dir",
-                output.to_str().unwrap(),
-            ])
-            .output()
-            .expect("official Zola CLI build");
-        assert!(
-            build.status.success(),
-            "official Zola CLI build failed: {}{}",
-            String::from_utf8_lossy(&build.stdout),
-            String::from_utf8_lossy(&build.stderr)
-        );
+    fn run_fresh_embedded_disk_build(project: &Path, output: &Path, base_url: &str) {
+        with_zola_engine("test disk parity", || {
+            let config = zola_config_file(project)?;
+            let mut site = Site::new(project, config).map_err(|error| error.to_string())?;
+            site.set_base_url(base_url.to_string());
+            site.set_output_path(output);
+            site.load().map_err(|error| error.to_string())?;
+            site.build().map_err(|error| error.to_string())
+        })
+        .expect("fresh embedded Zola disk build");
     }
 
-    fn assert_rendered_matches_cli(rendered: &HashMap<String, String>, cli_output: &Path) {
+    fn assert_rendered_matches_disk(rendered: &HashMap<String, String>, disk_output: &Path) {
         for (route, body) in rendered {
-            let cli_path = cli_path_for_memory_route(cli_output, route);
+            let disk_path = disk_path_for_memory_route(disk_output, route);
             assert_eq!(
                 body.as_bytes(),
-                fs::read(&cli_path)
-                    .unwrap_or_else(|error| panic!("{}: {error}", cli_path.display())),
+                fs::read(&disk_path)
+                    .unwrap_or_else(|error| panic!("{}: {error}", disk_path.display())),
                 "rendered route differs: {route}"
             );
         }

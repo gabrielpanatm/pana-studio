@@ -5,7 +5,6 @@
     IconPhoto,
     IconPhotoCheck,
     IconSearch,
-    IconSettings,
   } from "@tabler/icons-svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type { SourceGraphAsset } from "$lib/types";
@@ -183,12 +182,6 @@
         <button class="secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(sourceValue(selectedAsset)); }}>
           Deschide asset-ul <IconExternalLink size={13} stroke={1.9} />
         </button>
-        {#if assetKind(selectedAsset) === "image"}
-          <button class="secondary-action" type="button" onclick={() => { void app.setWorkbenchActivity("publish"); }}>
-            Configurează optimizarea la construire <IconSettings size={13} stroke={1.9} />
-          </button>
-          <p class="optimizer-note">Optimizarea rulează numai pe rezultatul Zola după construire; sursa acestei resurse rămâne neatinsă.</p>
-        {/if}
       {:else}
         <div class="workspace-state">Selectează un asset pentru detalii și utilizări.</div>
       {/if}
@@ -239,7 +232,6 @@
   .target-card span { overflow: hidden; color: var(--wb-text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .primary-action, .secondary-action { justify-content: center; gap: 6px; width: 100%; min-height: 32px; margin-top: 8px; border: 1px solid var(--wb-accent); border-radius: 6px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); font-size: 12px; font-weight: 800; }
   .secondary-action { border-color: var(--wb-border-subtle); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .optimizer-note { margin: 8px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
   button:disabled { opacity: .5; }
   button:not(:disabled) { cursor: pointer; }
   button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }

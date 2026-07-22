@@ -1,4 +1,5 @@
 use crate::preview::preprocess::annotate::index::SourceIdIndex;
+use crate::project_model::zola_image_engine::encode_preview_presentation;
 
 const SKIP_TAGS: &[&str] = &[
     "html", "head", "body", "script", "style", "meta", "link", "base", "title", "br", "hr",
@@ -335,6 +336,11 @@ fn inject_tpl_src_on_line_with_state(
                 format!(" data-pana-template-source-id=\"{}\"", template_source_id),
             ));
             has_pana_source_marker = true;
+        }
+        if let Some(presentation) = source_ids.and_then(|index| index.zola_image_for(&src_value)) {
+            if let Ok(payload) = encode_preview_presentation(presentation) {
+                insertions.push((insert_at, format!(" data-pana-zola-image=\"{}\"", payload)));
+            }
         }
         if let Some(revision) = preview_revision {
             if has_pana_source_marker {

@@ -21,7 +21,6 @@ use workspace::{
     read_current_project_text_from_state, workspace_mutation_input, zola_to_project_relative_path,
 };
 
-pub(crate) use app_config::read_project_app_config_for_root;
 pub use model::{ProjectAppConfig, ProjectAppConfigInput, ZolaProjectSettings};
 
 #[tauri::command]
@@ -58,7 +57,7 @@ fn save_project_app_config_impl(
             cachebust_assets,
         )?;
         Ok((
-            workspace_mutation_input("Rewrite project asset links", "sursa/templates", changes),
+            workspace_mutation_input("Rewrite project asset links", "templates", changes),
             (),
         ))
     })?;

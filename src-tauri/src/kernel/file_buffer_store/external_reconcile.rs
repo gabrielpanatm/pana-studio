@@ -1029,13 +1029,13 @@ fn operation_id(session_id: &str, started_at_ms: u128) -> String {
 }
 
 fn preview_relevant(path: &str) -> bool {
-    path == "sursa/zola.toml"
-        || path == "sursa/config.toml"
-        || path.starts_with("sursa/content/")
-        || path.starts_with("sursa/templates/")
-        || path.starts_with("sursa/themes/")
-        || path.starts_with("sursa/sass/")
-        || path.starts_with("sursa/static/")
+    path == "zola.toml"
+        || path == "config.toml"
+        || path.starts_with("content/")
+        || path.starts_with("templates/")
+        || path.starts_with("themes/")
+        || path.starts_with("sass/")
+        || path.starts_with("static/")
         || path.ends_with(".html")
         || path.ends_with(".css")
         || path.ends_with(".scss")
@@ -1059,10 +1059,10 @@ mod tests {
     #[test]
     fn clean_external_content_is_rebased_atomically() {
         let root = test_root("content-rebase");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let mut store = store_with_file(&root, "sursa/templates/index.html", "old");
-        write_text(&root, "sursa/templates/index.html", "new");
-        let input = input_for(&root, &["sursa/templates/index.html"]);
+        write_text(&root, "templates/index.html", "old");
+        let mut store = store_with_file(&root, "templates/index.html", "old");
+        write_text(&root, "templates/index.html", "new");
+        let input = input_for(&root, &["templates/index.html"]);
 
         let plan = ready(plan_clean_external_reconcile(&store, input, 10));
         let staged = staged(read_clean_external_reconcile_plan(plan, 11));
@@ -1071,15 +1071,12 @@ mod tests {
 
         assert_eq!(receipt.status, KernelExternalDiskReconcileStatus::Applied);
         assert_eq!(receipt.reconciled_count, 1);
+        assert_eq!(receipt.invalidated_paths, vec!["templates/index.html"]);
         assert_eq!(
-            receipt.invalidated_paths,
-            vec!["sursa/templates/index.html"]
-        );
-        assert_eq!(
-            store.text_for("sursa/templates/index.html").as_deref(),
+            store.text_for("templates/index.html").as_deref(),
             Some("new")
         );
-        assert_eq!(store.files["sursa/templates/index.html"].revision, 2);
+        assert_eq!(store.files["templates/index.html"].revision, 2);
         assert_eq!(
             receipt.active_file.as_ref().map(|file| file.text.as_str()),
             Some("new")
@@ -1091,11 +1088,11 @@ mod tests {
     #[test]
     fn identical_disk_content_is_an_idempotent_noop_with_active_snapshot() {
         let root = test_root("noop");
-        write_text(&root, "sursa/templates/index.html", "same");
-        let mut store = store_with_file(&root, "sursa/templates/index.html", "same");
+        write_text(&root, "templates/index.html", "same");
+        let mut store = store_with_file(&root, "templates/index.html", "same");
         let plan = ready(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/index.html"]),
+            input_for(&root, &["templates/index.html"]),
             10,
         ));
         let staged = staged(read_clean_external_reconcile_plan(plan, 11));
@@ -1104,15 +1101,12 @@ mod tests {
 
         assert_eq!(receipt.status, KernelExternalDiskReconcileStatus::Noop);
         assert_eq!(receipt.unchanged_count, 1);
-        assert_eq!(store.files["sursa/templates/index.html"].revision, 1);
+        assert_eq!(store.files["templates/index.html"].revision, 1);
         assert_eq!(
             receipt.active_file.as_ref().map(|file| file.text.as_str()),
             Some("same")
         );
-        assert_eq!(
-            receipt.invalidated_paths,
-            vec!["sursa/templates/index.html"]
-        );
+        assert_eq!(receipt.invalidated_paths, vec!["templates/index.html"]);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1123,15 +1117,15 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let root = test_root("readonly-metadata");
-        write_text(&root, "sursa/templates/index.html", "same");
-        let mut store = store_with_file(&root, "sursa/templates/index.html", "same");
-        let path = root.join("sursa/templates/index.html");
+        write_text(&root, "templates/index.html", "same");
+        let mut store = store_with_file(&root, "templates/index.html", "same");
+        let path = root.join("templates/index.html");
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o444);
         fs::set_permissions(&path, permissions).unwrap();
         let plan = ready(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/index.html"]),
+            input_for(&root, &["templates/index.html"]),
             10,
         ));
         let staged = staged(read_clean_external_reconcile_plan(plan, 11));
@@ -1141,9 +1135,9 @@ mod tests {
 
         assert_eq!(receipt.status, KernelExternalDiskReconcileStatus::Applied);
         assert_eq!(receipt.metadata_refreshed_count, 1);
-        assert!(store.files["sursa/templates/index.html"].baseline.readonly);
+        assert!(store.files["templates/index.html"].baseline.readonly);
         assert_eq!(
-            store.text_for("sursa/templates/index.html").as_deref(),
+            store.text_for("templates/index.html").as_deref(),
             Some("same")
         );
 
@@ -1153,11 +1147,11 @@ mod tests {
     #[test]
     fn manifest_changed_after_plan_returns_stale_evidence() {
         let root = test_root("manifest-stale");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let store = store_with_file(&root, "sursa/templates/index.html", "old");
-        let input = input_for(&root, &["sursa/templates/index.html"]);
+        write_text(&root, "templates/index.html", "old");
+        let store = store_with_file(&root, "templates/index.html", "old");
+        let input = input_for(&root, &["templates/index.html"]);
         let plan = ready(plan_clean_external_reconcile(&store, input, 10));
-        write_text(&root, "sursa/templates/index.html", "new-content");
+        write_text(&root, "templates/index.html", "new-content");
 
         let receipt = terminal_read(read_clean_external_reconcile_plan(plan, 11));
 
@@ -1177,21 +1171,20 @@ mod tests {
     #[test]
     fn version_token_rejects_same_size_rewrite_with_restored_mtime() {
         let root = test_root("manifest-version-token");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let store = store_with_file(&root, "sursa/templates/index.html", "old");
-        write_text(&root, "sursa/templates/index.html", "new");
-        let path = root.join("sursa/templates/index.html");
+        write_text(&root, "templates/index.html", "old");
+        let store = store_with_file(&root, "templates/index.html", "old");
+        write_text(&root, "templates/index.html", "new");
+        let path = root.join("templates/index.html");
         let observed_modified = fs::metadata(&path).unwrap().modified().unwrap();
-        let input = input_for(&root, &["sursa/templates/index.html"]);
+        let input = input_for(&root, &["templates/index.html"]);
         let expected_entry = input.observed_manifest.files[0].clone();
         let plan = ready(plan_clean_external_reconcile(&store, input, 10));
 
-        write_text(&root, "sursa/templates/index.html", "alt");
+        write_text(&root, "templates/index.html", "alt");
         let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
         file.set_times(fs::FileTimes::new().set_modified(observed_modified))
             .unwrap();
-        let current_entry =
-            manifest_entry("sursa/templates/index.html", &fs::metadata(&path).unwrap());
+        let current_entry = manifest_entry("templates/index.html", &fs::metadata(&path).unwrap());
         assert_eq!(current_entry.size, expected_entry.size);
         assert_eq!(current_entry.modified_ms, expected_entry.modified_ms);
         assert_ne!(current_entry.version_token, expected_entry.version_token);
@@ -1212,13 +1205,13 @@ mod tests {
     #[test]
     fn oversized_and_non_utf8_files_block_without_partial_commit() {
         let root = test_root("bounded-read");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let store = store_with_file(&root, "sursa/templates/index.html", "old");
+        write_text(&root, "templates/index.html", "old");
+        let store = store_with_file(&root, "templates/index.html", "old");
 
-        write_text(&root, "sursa/templates/index.html", &"x".repeat(1025));
+        write_text(&root, "templates/index.html", &"x".repeat(1025));
         let oversized_plan = ready(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/index.html"]),
+            input_for(&root, &["templates/index.html"]),
             10,
         ));
         let oversized = terminal_read(read_clean_external_reconcile_plan(oversized_plan, 11));
@@ -1228,10 +1221,10 @@ mod tests {
             .iter()
             .any(|item| item.code == "disk_target_oversized"));
 
-        fs::write(root.join("sursa/templates/index.html"), [0xff, 0xfe]).unwrap();
+        fs::write(root.join("templates/index.html"), [0xff, 0xfe]).unwrap();
         let utf8_plan = ready(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/index.html"]),
+            input_for(&root, &["templates/index.html"]),
             12,
         ));
         let invalid_utf8 = terminal_read(read_clean_external_reconcile_plan(utf8_plan, 13));
@@ -1244,7 +1237,7 @@ mod tests {
             .iter()
             .any(|item| item.code == "disk_target_unreadable"));
         assert_eq!(
-            store.text_for("sursa/templates/index.html").as_deref(),
+            store.text_for("templates/index.html").as_deref(),
             Some("old")
         );
 
@@ -1254,13 +1247,13 @@ mod tests {
     #[test]
     fn duplicate_paths_are_deduplicated_deterministically() {
         let root = test_root("dedupe");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let mut store = store_with_file(&root, "sursa/templates/index.html", "old");
-        write_text(&root, "sursa/templates/index.html", "new");
-        let mut input = input_for(&root, &["sursa/templates/index.html"]);
+        write_text(&root, "templates/index.html", "old");
+        let mut store = store_with_file(&root, "templates/index.html", "old");
+        write_text(&root, "templates/index.html", "new");
+        let mut input = input_for(&root, &["templates/index.html"]);
         input.relative_paths = vec![
-            "sursa/templates/index.html".to_string(),
-            "sursa/templates/index.html".to_string(),
+            "templates/index.html".to_string(),
+            "templates/index.html".to_string(),
         ];
         let plan = ready(plan_clean_external_reconcile(&store, input, 10));
         let staged = staged(read_clean_external_reconcile_plan(plan, 11));
@@ -1269,7 +1262,7 @@ mod tests {
 
         assert_eq!(receipt.requested_count, 1);
         assert_eq!(receipt.reconciled_count, 1);
-        assert_eq!(receipt.requested_paths, vec!["sursa/templates/index.html"]);
+        assert_eq!(receipt.requested_paths, vec!["templates/index.html"]);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1277,12 +1270,12 @@ mod tests {
     #[test]
     fn session_identity_change_between_read_and_commit_fails_cas() {
         let root = test_root("session-cas");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let mut store = store_with_file(&root, "sursa/templates/index.html", "old");
-        write_text(&root, "sursa/templates/index.html", "new");
+        write_text(&root, "templates/index.html", "old");
+        let mut store = store_with_file(&root, "templates/index.html", "old");
+        write_text(&root, "templates/index.html", "new");
         let plan = ready(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/index.html"]),
+            input_for(&root, &["templates/index.html"]),
             10,
         ));
         let staged = staged(read_clean_external_reconcile_plan(plan, 11));
@@ -1295,7 +1288,7 @@ mod tests {
             KernelExternalDiskReconcileStatus::StaleEvidence
         );
         assert_eq!(
-            store.text_for("sursa/templates/index.html").as_deref(),
+            store.text_for("templates/index.html").as_deref(),
             Some("old")
         );
 
@@ -1305,13 +1298,13 @@ mod tests {
     #[test]
     fn mixed_batch_with_missing_file_requires_reload_without_mutation() {
         let root = test_root("missing-batch");
-        write_text(&root, "sursa/templates/a.html", "old-a");
-        write_text(&root, "sursa/templates/b.html", "old-b");
-        let mut store = store_with_file(&root, "sursa/templates/a.html", "old-a");
-        store.insert_loaded_file(entry(&root, "sursa/templates/b.html", "old-b"));
-        write_text(&root, "sursa/templates/a.html", "new-a");
-        fs::remove_file(root.join("sursa/templates/b.html")).unwrap();
-        let input = input_for(&root, &["sursa/templates/a.html", "sursa/templates/b.html"]);
+        write_text(&root, "templates/a.html", "old-a");
+        write_text(&root, "templates/b.html", "old-b");
+        let mut store = store_with_file(&root, "templates/a.html", "old-a");
+        store.insert_loaded_file(entry(&root, "templates/b.html", "old-b"));
+        write_text(&root, "templates/a.html", "new-a");
+        fs::remove_file(root.join("templates/b.html")).unwrap();
+        let input = input_for(&root, &["templates/a.html", "templates/b.html"]);
 
         let receipt = terminal(plan_clean_external_reconcile(&store, input, 10));
 
@@ -1319,11 +1312,8 @@ mod tests {
             receipt.status,
             KernelExternalDiskReconcileStatus::ReloadRequired
         );
-        assert_eq!(
-            store.text_for("sursa/templates/a.html").as_deref(),
-            Some("old-a")
-        );
-        assert_eq!(store.files["sursa/templates/a.html"].revision, 1);
+        assert_eq!(store.text_for("templates/a.html").as_deref(), Some("old-a"));
+        assert_eq!(store.files["templates/a.html"].revision, 1);
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1331,26 +1321,23 @@ mod tests {
     #[test]
     fn draft_anywhere_blocks_entire_batch() {
         let root = test_root("dirty-block");
-        write_text(&root, "sursa/templates/a.html", "a");
-        write_text(&root, "sursa/templates/b.html", "b");
-        let mut store = store_with_file(&root, "sursa/templates/a.html", "a");
-        store.insert_loaded_file(entry(&root, "sursa/templates/b.html", "b"));
+        write_text(&root, "templates/a.html", "a");
+        write_text(&root, "templates/b.html", "b");
+        let mut store = store_with_file(&root, "templates/a.html", "a");
+        store.insert_loaded_file(entry(&root, "templates/b.html", "b"));
         store
-            .set_draft("sursa/templates/b.html", "draft".to_string(), 2)
+            .set_draft("templates/b.html", "draft".to_string(), 2)
             .unwrap();
-        write_text(&root, "sursa/templates/a.html", "new-a");
+        write_text(&root, "templates/a.html", "new-a");
 
         let receipt = terminal(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/a.html"]),
+            input_for(&root, &["templates/a.html"]),
             10,
         ));
 
         assert_eq!(receipt.status, KernelExternalDiskReconcileStatus::Blocked);
-        assert_eq!(
-            store.text_for("sursa/templates/a.html").as_deref(),
-            Some("a")
-        );
+        assert_eq!(store.text_for("templates/a.html").as_deref(), Some("a"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1358,17 +1345,17 @@ mod tests {
     #[test]
     fn cas_blocks_draft_created_after_disk_read() {
         let root = test_root("cas-draft");
-        write_text(&root, "sursa/templates/index.html", "old");
-        let mut store = store_with_file(&root, "sursa/templates/index.html", "old");
-        write_text(&root, "sursa/templates/index.html", "new");
+        write_text(&root, "templates/index.html", "old");
+        let mut store = store_with_file(&root, "templates/index.html", "old");
+        write_text(&root, "templates/index.html", "new");
         let plan = ready(plan_clean_external_reconcile(
             &store,
-            input_for(&root, &["sursa/templates/index.html"]),
+            input_for(&root, &["templates/index.html"]),
             10,
         ));
         let staged = staged(read_clean_external_reconcile_plan(plan, 11));
         store
-            .set_draft("sursa/templates/index.html", "local".to_string(), 12)
+            .set_draft("templates/index.html", "local".to_string(), 12)
             .unwrap();
 
         let receipt = commit_clean_external_reconcile(&mut store, staged, 13);
@@ -1378,7 +1365,7 @@ mod tests {
             KernelExternalDiskReconcileStatus::StaleEvidence
         );
         assert_eq!(
-            store.text_for("sursa/templates/index.html").as_deref(),
+            store.text_for("templates/index.html").as_deref(),
             Some("local")
         );
 
@@ -1392,19 +1379,18 @@ mod tests {
 
         let root = test_root("symlink-leaf");
         let outside = test_root("symlink-outside");
-        write_text(&root, "sursa/templates/index.html", "old");
+        write_text(&root, "templates/index.html", "old");
         write_text(&outside, "secret.html", "secret");
-        let store = store_with_file(&root, "sursa/templates/index.html", "old");
-        fs::remove_file(root.join("sursa/templates/index.html")).unwrap();
+        let store = store_with_file(&root, "templates/index.html", "old");
+        fs::remove_file(root.join("templates/index.html")).unwrap();
         symlink(
             outside.join("secret.html"),
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
         )
         .unwrap();
-        let mut input = input_for(&root, &["sursa/templates/index.html"]);
-        let metadata = fs::metadata(root.join("sursa/templates/index.html")).unwrap();
-        input.observed_manifest.files =
-            vec![manifest_entry("sursa/templates/index.html", &metadata)];
+        let mut input = input_for(&root, &["templates/index.html"]);
+        let metadata = fs::metadata(root.join("templates/index.html")).unwrap();
+        input.observed_manifest.files = vec![manifest_entry("templates/index.html", &metadata)];
         let plan = ready(plan_clean_external_reconcile(&store, input, 10));
 
         let receipt = terminal_read(read_clean_external_reconcile_plan(plan, 11));

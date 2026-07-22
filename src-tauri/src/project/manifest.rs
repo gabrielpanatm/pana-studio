@@ -5,20 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::scope::is_derived_or_internal_dir;
 
 const MAX_MANIFEST_FILES: usize = 1000;
-const TRACKED_ROOT_DIRS: &[&str] = &["sursa", "resurse"];
-const TRACKED_ROOT_FILES: &[&str] = &[
-    "AGENTS.md",
-    "brief.md",
-    "structura.md",
-    "readme.md",
-    "README.md",
-    "VIZIUNE.md",
-    "ARHITECTURA.md",
-    "STRATEGIE.md",
-    "JURNAL.md",
-];
-
-pub const ACCEPTED_PROJECT_DISK_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const ACCEPTED_PROJECT_DISK_MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,8 +195,15 @@ pub fn read_project_disk_manifest(root: &Path) -> Result<ProjectDiskManifest, St
         .map_err(|error| format!("Nu am putut rezolva rădăcina proiectului: {}", error))?;
     let mut files = Vec::new();
     let mut truncated = false;
+    let output_root = crate::deploy::resolve_artifact_root(&root, &root).ok();
 
-    collect_manifest_entries(&root, &root, &mut files, &mut truncated)?;
+    collect_manifest_entries(
+        &root,
+        &root,
+        &mut files,
+        &mut truncated,
+        output_root.as_deref(),
+    )?;
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
 
     Ok(ProjectDiskManifest {
@@ -266,6 +260,7 @@ fn collect_manifest_entries(
     current: &Path,
     files: &mut Vec<ProjectDiskManifestEntry>,
     truncated: &mut bool,
+    output_root: Option<&Path>,
 ) -> Result<(), String> {
     if files.len() >= MAX_MANIFEST_FILES {
         *truncated = true;
@@ -305,10 +300,10 @@ fn collect_manifest_entries(
         }
 
         if file_type.is_dir() {
-            if should_skip_dir(&path, &relative_path) {
+            if should_skip_dir(&path, output_root) {
                 continue;
             }
-            collect_manifest_entries(root, &path, files, truncated)?;
+            collect_manifest_entries(root, &path, files, truncated, output_root)?;
             continue;
         }
 
@@ -349,27 +344,16 @@ fn relative_project_path(root: &Path, path: &Path) -> Result<String, String> {
         .replace('\\', "/"))
 }
 
-fn should_skip_dir(path: &Path, relative_path: &str) -> bool {
+fn should_skip_dir(path: &Path, output_root: Option<&Path>) -> bool {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    if is_derived_or_internal_dir(name) {
-        return true;
-    }
-    if relative_path.is_empty() {
-        return false;
-    }
-    let first_segment = relative_path.split('/').next().unwrap_or("");
-    !TRACKED_ROOT_DIRS.contains(&first_segment)
+    is_derived_or_internal_dir(name) || output_root.is_some_and(|output| output == path)
 }
 
 fn should_track_file(relative_path: &str) -> bool {
-    if TRACKED_ROOT_FILES.contains(&relative_path) {
-        return true;
-    }
-    let first_segment = relative_path.split('/').next().unwrap_or("");
-    TRACKED_ROOT_DIRS.contains(&first_segment)
+    !relative_path.is_empty()
 }
 
 /// Returns whether a regular project-relative file belongs to the same
@@ -413,7 +397,7 @@ mod tests {
     #[test]
     fn metadata_version_token_changes_for_same_size_rewrite() {
         let root = test_root("same-size-rewrite");
-        let path = root.join("sursa/templates/index.html");
+        let path = root.join("templates/index.html");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "old!").unwrap();
         let before = fs::metadata(&path).unwrap();
@@ -435,17 +419,17 @@ mod tests {
 
         let root = test_root("symlink-root");
         let outside = test_root("symlink-outside");
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/templates/local.html"), "local").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("templates/local.html"), "local").unwrap();
         fs::create_dir_all(outside.join("nested")).unwrap();
         fs::write(outside.join("secret.html"), "secret").unwrap();
         fs::write(outside.join("nested/secret.html"), "nested").unwrap();
         symlink(
             outside.join("secret.html"),
-            root.join("sursa/templates/linked.html"),
+            root.join("templates/linked.html"),
         )
         .unwrap();
-        symlink(&outside, root.join("sursa/external-dir")).unwrap();
+        symlink(&outside, root.join("external-dir")).unwrap();
 
         let manifest = read_project_disk_manifest(&root).unwrap();
 
@@ -455,7 +439,7 @@ mod tests {
                 .iter()
                 .map(|entry| entry.relative_path.as_str())
                 .collect::<Vec<_>>(),
-            vec!["sursa/templates/local.html"]
+            vec!["templates/local.html"]
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -463,11 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn manifest_leaves_retired_design_tree_outside_runtime_authority() {
+    fn manifest_tracks_regular_files_anywhere_in_the_zola_root() {
         let root = test_root("retired-design-tree");
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::create_dir_all(root.join("design")).unwrap();
-        fs::write(root.join("sursa/templates/index.html"), "active").unwrap();
+        fs::write(root.join("templates/index.html"), "active").unwrap();
         fs::write(root.join("design/legacy.json"), "{}\n").unwrap();
 
         let manifest = read_project_disk_manifest(&root).unwrap();
@@ -478,17 +462,48 @@ mod tests {
                 .iter()
                 .map(|entry| entry.relative_path.as_str())
                 .collect::<Vec<_>>(),
-            vec!["sursa/templates/index.html"]
+            vec!["design/legacy.json", "templates/index.html"]
         );
 
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
+    fn manifest_never_tracks_default_or_configured_build_output() {
+        for (label, config, output) in [
+            ("default-public", "base_url = '/'\n", "public"),
+            (
+                "custom-output",
+                "base_url = '/'\noutput_dir = 'generated/site'\n",
+                "generated/site",
+            ),
+        ] {
+            let root = test_root(label);
+            fs::create_dir_all(root.join("content")).unwrap();
+            fs::create_dir_all(root.join(output)).unwrap();
+            fs::write(root.join("zola.toml"), config).unwrap();
+            fs::write(root.join("content/_index.md"), "+++\n+++").unwrap();
+            fs::write(root.join(output).join("index.html"), "generated").unwrap();
+
+            let manifest = read_project_disk_manifest(&root).unwrap();
+
+            assert!(manifest.files.iter().all(|entry| {
+                entry.relative_path != output
+                    && !entry.relative_path.starts_with(&format!("{output}/"))
+            }));
+            assert!(manifest
+                .files
+                .iter()
+                .any(|entry| entry.relative_path == "content/_index.md"));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn accepted_manifest_is_session_bound_and_advances_checked_generation() {
         let root = test_root("accepted-generation");
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/templates/index.html"), "before").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("templates/index.html"), "before").unwrap();
         let root = root.canonicalize().unwrap();
         let root_string = root.to_string_lossy().to_string();
         let before = read_project_disk_manifest(&root).unwrap();
@@ -499,11 +514,11 @@ mod tests {
             .require_live_complete("runtime/one", &root_string, &root)
             .unwrap();
 
-        fs::write(root.join("sursa/templates/index.html"), "after").unwrap();
+        fs::write(root.join("templates/index.html"), "after").unwrap();
         let after = read_project_disk_manifest(&root).unwrap();
         assert_eq!(
             project_disk_manifest_changed_paths(&before, &after).unwrap(),
-            vec!["sursa/templates/index.html".to_string()]
+            vec!["templates/index.html".to_string()]
         );
         assert!(accepted
             .require_live_complete("runtime/one", &root_string, &root)

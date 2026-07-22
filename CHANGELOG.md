@@ -20,6 +20,9 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
   publicare anulabile și legate de sesiunea proiectului;
 - teste de contract pentru shell, terminologie, densitate, Command Center,
   prezentarea generală a site-ului și integrarea Git în Workbench.
+- contract de optimizare Zola pentru elementele `<img>`, configurabil direct
+  din inspector și păstrat de operațiile structurale de mutare, duplicare și
+  ștergere.
 
 ### Changed
 
@@ -38,6 +41,14 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
   din Activity Rail, prezentarea Site și Command Center, nu un drawer local;
 - fluxul de Publicare reunește verificarea, build-ul, jurnalul, anularea și
   deploy-ul într-o singură operație Rust urmărită.
+- dosarul selectat este acum chiar rădăcina proiectului Zola, fără structura
+  intermediară `sursa`; output-ul implicit revine la `public`, iar build-ul și
+  deploy-ul urmează exact `output_dir` configurat de utilizator, inclusiv o
+  locație externă permisă;
+- Preview, Source Browser, validarea și build-ul folosesc un singur motor Rust
+  Zola 0.22.1 embedded, fixat la o revizie oficială și serializat printr-o
+  autoritate comună; inițializarea aplică starterul direct prin
+  `ProjectBootstrapLease`/`WriteAuthority`.
 
 ### Removed
 
@@ -48,6 +59,9 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - grupurile redundante de comenzi din topbar și vechiul overlay Git;
 - căile frontend directe care duplicau operațiile semantice mutate în nucleul
   Rust.
+- optimizarea bulk a imaginilor și rescrierea globală a output-ului;
+- binarul Zola inclus, checksum-ul, sidecar-ul, fallback-urile CLI/PATH,
+  expunerea căii executabilului și vechiul scaffold exterior proiectului Zola.
 
 ## [0.1.0] - 2026-07-19
 

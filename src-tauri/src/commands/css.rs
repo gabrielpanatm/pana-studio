@@ -158,11 +158,7 @@ fn to_zola_relative_paths(paths: &[String]) -> Vec<String> {
 }
 
 fn to_project_relative_path(path: &str) -> String {
-    if path.starts_with("sursa/") {
-        path.to_string()
-    } else {
-        format!("sursa/{path}")
-    }
+    path.to_string()
 }
 
 fn read_current_project_text(

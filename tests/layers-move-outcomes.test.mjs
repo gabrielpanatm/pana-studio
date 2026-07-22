@@ -22,7 +22,7 @@ function section(selector, sourceId, line) {
     sourceId,
     templateSourceId: "template:index",
     sessionId: `preview:${sourceId}`,
-    sourceLocation: { file: "sursa/templates/index.html", line, column: 1 },
+    sourceLocation: { file: "templates/index.html", line, column: 1 },
   };
 }
 
@@ -49,7 +49,7 @@ function workspaceMutation() {
     revisionAfter: 5,
     dirty: true,
     transactionId: "workspace-move-5",
-    touchedFiles: ["sursa/templates/index.html"],
+    touchedFiles: ["templates/index.html"],
   };
 }
 
@@ -86,20 +86,20 @@ function committedReceipt(overrides = {}) {
     message: "committed",
     modelRevision: "model:after",
     projectedSourceId: "sg_2222222222222222",
-    touchedFiles: ["sursa/templates/index.html"],
+    touchedFiles: ["templates/index.html"],
     diagnostics: [],
     workspaceMutation: workspaceMutation(),
     canvasPatch: canvasPatch(),
     patch: {
-      file: "sursa/templates/index.html",
+      file: "templates/index.html",
       resolvedSourceId: "sg_aaaaaaaaaaaaaaaa",
       resolvedTargetId: "sg_bbbbbbbbbbbbbbbb",
       sourceLabel: "<section>",
       beforeRevision: "before",
       afterRevision: "after",
       contents: "<main><section>B</section><section>A</section></main>",
-      sourceLocation: { file: "sursa/templates/index.html", line: 2, column: 1 },
-      targetLocation: { file: "sursa/templates/index.html", line: 5, column: 1 },
+      sourceLocation: { file: "templates/index.html", line: 2, column: 1 },
+      targetLocation: { file: "templates/index.html", line: 5, column: 1 },
       sourceStartLine: 2,
       sourceEndLine: 4,
       newStartLine: 7,
@@ -131,7 +131,7 @@ function host(overrides = {}) {
       section("main > section:nth-of-type(1)", "sg_aaaaaaaaaaaaaaaa", 2),
       section("main > section:nth-of-type(2)", "sg_bbbbbbbbbbbbbbbb", 5),
     ],
-    activeScannedPath: "sursa/templates/index.html",
+    activeScannedPath: "templates/index.html",
     source: "before",
     sourceCache: {},
     pendingSelectionSelector: null,
@@ -304,7 +304,7 @@ test("pending text on another element blocks move before Rust", async () => {
       sourceId: "source:selected",
       sessionId: "selected",
       domPath: "main > h1",
-      sourceLocation: { file: "sursa/templates/index.html", line: 1, column: 1 },
+      sourceLocation: { file: "templates/index.html", line: 1, column: 1 },
     },
   });
   const result = await moveLayerElement(activeHost, moveRequest());

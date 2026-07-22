@@ -42,7 +42,7 @@
         class="settings-route"
         onclick={() => { close(); void openPublishCenter(); }}
       >
-        <span><strong>Deschide centrul de publicare</strong><small>Configurație Zola, optimizare, verificare, construire și livrare.</small></span>
+        <span><strong>Deschide centrul de publicare</strong><small>Configurație Zola, verificare, construire și livrare.</small></span>
         <IconChevronRight size={16} stroke={1.9} />
       </button>
     </section>

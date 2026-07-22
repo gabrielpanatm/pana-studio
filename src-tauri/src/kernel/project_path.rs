@@ -40,8 +40,8 @@ mod tests {
     #[test]
     fn normalizes_project_relative_paths() {
         assert_eq!(
-            normalize_project_relative_path(" ./sursa\\templates\\index.html ").unwrap(),
-            "sursa/templates/index.html"
+            normalize_project_relative_path(" ./templates\\index.html ").unwrap(),
+            "templates/index.html"
         );
     }
 

@@ -40,11 +40,7 @@ pub fn read_page_js_config(
 
 fn project_relative_zola_path(path: &str) -> String {
     let normalized = path.trim().trim_start_matches('/');
-    if normalized.starts_with("sursa/") {
-        normalized.to_string()
-    } else {
-        format!("sursa/{normalized}")
-    }
+    normalized.to_string()
 }
 
 pub(super) fn read_optional_project_text(
@@ -93,7 +89,7 @@ mod tests {
             schema_version: 1,
             id: "page-js-reader".to_string(),
             project_root: root.clone(),
-            zola_root: format!("{root}/sursa"),
+            zola_root: root.to_string(),
             session_dir: format!("{root}/session"),
             manifest_path: format!("{root}/session/session.json"),
             opened_at_ms: 1,
@@ -120,7 +116,7 @@ mod tests {
     fn missing_page_sources_are_empty_without_creating_files() {
         let root = std::env::temp_dir().join(format!("pana-page-js-reader-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
         let live = session(&root);
         let store = FileBufferStore::for_project_session(
             &live,
@@ -139,7 +135,7 @@ mod tests {
         assert!(read_page_data_anims(&root, &store, "templates/index.html")
             .unwrap()
             .is_empty());
-        assert!(!root.join("sursa/templates/index.html").exists());
+        assert!(!root.join("templates/index.html").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -150,7 +146,7 @@ mod tests {
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
         let live = session(&root);
         let store = FileBufferStore::for_project_session(
             &live,

@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
 use crate::kernel::write_authority::{
     ProjectBootstrapLease, WriteAuthority, WriteCategory, WriteIntent, WriteOperationKind,
@@ -12,21 +12,6 @@ use crate::kernel::write_authority::{
 };
 
 use super::init::starter_resource_candidates;
-
-pub fn apply_project_template<R: Runtime>(
-    app: &AppHandle<R>,
-    bootstrap: &ProjectBootstrapLease,
-) -> Result<(), String> {
-    let template_root = resolve_project_template_root(app)?;
-    copy_dir_recursive(
-        app,
-        &template_root,
-        bootstrap.root(),
-        bootstrap,
-        bootstrap.root(),
-        "project-template",
-    )
-}
 
 pub fn apply_starter<R: Runtime>(
     app: &AppHandle<R>,
@@ -45,13 +30,6 @@ pub fn apply_starter<R: Runtime>(
     )
 }
 
-fn resolve_project_template_root<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    project_template_resource_candidates(app)
-        .into_iter()
-        .find(|candidate| candidate.is_dir())
-        .ok_or_else(|| "Nu am găsit template-ul de proiect în resursele aplicației.".to_string())
-}
-
 fn resolve_starter_root<R: Runtime>(
     app: &AppHandle<R>,
     starter_name: &str,
@@ -65,28 +43,6 @@ fn resolve_starter_root<R: Runtime>(
                 starter_name
             )
         })
-}
-
-fn project_template_resource_candidates<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("resources")
-            .join("project-template"),
-    );
-
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        candidates.push(resource_dir.join("resources").join("project-template"));
-        candidates.push(resource_dir.join("project-template"));
-        candidates.push(
-            resource_dir
-                .join("src-tauri")
-                .join("resources")
-                .join("project-template"),
-        );
-    }
-
-    candidates
 }
 
 fn copy_dir_recursive<R: Runtime>(
@@ -246,6 +202,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_starter_is_a_direct_zola_root_with_native_output_default() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/starters/pana-basic");
+        assert!(root.join("zola.toml").is_file());
+        assert!(root.join("content").is_dir());
+        assert!(root.join("templates").is_dir());
+        assert!(!root.join("sursa").exists());
+        assert!(!root.join("export").exists());
+
+        let config = fs::read_to_string(root.join("zola.toml")).unwrap();
+        assert!(!config
+            .lines()
+            .any(|line| line.trim_start().starts_with("output_dir")));
+        let gitignore = fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(gitignore.lines().any(|line| line == "/public/"));
+        assert!(gitignore.lines().any(|line| line == ".env"));
+    }
+
+    #[test]
     fn project_initializer_directory_intents_have_target_specific_labels() {
         let root = std::env::temp_dir().join(format!("pana-project-intent-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -256,17 +230,17 @@ mod tests {
             &bootstrap,
             &root,
             &root,
-            "project-template",
+            "starter/pana-basic",
             WriteOperationKind::CreateDirectory,
             "directory",
         )
         .unwrap();
-        assert_eq!(root_intent.target.public_label, "project-template/root");
+        assert_eq!(root_intent.target.public_label, "starter/pana-basic/root");
 
         let source_intent = project_initializer_intent(
             &bootstrap,
             &root,
-            &root.join("sursa").join("templates"),
+            &root.join("templates"),
             "starter/pana-basic",
             WriteOperationKind::CreateDirectory,
             "directory",
@@ -274,27 +248,25 @@ mod tests {
         .unwrap();
         assert_eq!(
             source_intent.target.public_label,
-            "starter/pana-basic/sursa/templates"
+            "starter/pana-basic/templates"
         );
         assert_eq!(source_intent.category, WriteCategory::ProjectSourceWrite);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn project_template_recursion_reuses_bootstrap_root_and_creates_only_descendants() {
+    fn starter_recursion_reuses_bootstrap_root_and_creates_only_descendants() {
         let _env_lock = crate::app_home::TEST_APP_ENV_LOCK.lock().unwrap();
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let fixture = std::env::temp_dir().join(format!(
-            "pana-project-template-root-{}-{nonce}",
-            std::process::id()
-        ));
+        let fixture =
+            std::env::temp_dir().join(format!("pana-starter-root-{}-{nonce}", std::process::id()));
         let source = fixture.join("template");
         let destination = fixture.join("project");
-        fs::create_dir_all(source.join("sursa/templates")).unwrap();
-        fs::write(source.join("sursa/templates/index.html"), b"<main></main>").unwrap();
+        fs::create_dir_all(source.join("templates")).unwrap();
+        fs::write(source.join("templates/index.html"), b"<main></main>").unwrap();
         fs::create_dir_all(&destination).unwrap();
 
         let _env = TestEnvGuard::from_root(&fixture.join("app-home"));
@@ -310,12 +282,12 @@ mod tests {
             &destination,
             &bootstrap,
             &destination,
-            "project-template",
+            "starter/pana-basic",
         )
         .unwrap();
 
         assert_eq!(
-            fs::read(destination.join("sursa/templates/index.html")).unwrap(),
+            fs::read(destination.join("templates/index.html")).unwrap(),
             b"<main></main>"
         );
         drop(app);

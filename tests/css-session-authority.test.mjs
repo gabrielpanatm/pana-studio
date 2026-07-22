@@ -21,7 +21,7 @@ const runtimeB = "stable-project:runtime-b";
 afterEach(() => clearMocks());
 
 function mutation(identity, overrides = {}) {
-  const touchedFiles = ["sursa/sass/site.scss"];
+  const touchedFiles = ["sass/site.scss"];
   const contents = ".hero { color: red; }";
   const hash = hashFileBufferText(contents);
   const bytes = new TextEncoder().encode(contents).byteLength;
@@ -98,7 +98,7 @@ test("CSS mutation is staged in the captured ProjectWorkspace session", async ()
   });
 
   const receipt = await setScssVariable(
-    "sursa/sass/site.scss",
+    "sass/site.scss",
     "accent",
     "red",
     identity,
@@ -109,7 +109,7 @@ test("CSS mutation is staged in the captured ProjectWorkspace session", async ()
   assert.deepEqual(calls, [{
     command: "set_scss_variable",
     args: {
-      relativePath: "sursa/sass/site.scss",
+      relativePath: "sass/site.scss",
       name: "accent",
       value: "red",
       identity,
@@ -124,7 +124,7 @@ test("CSS mutation rejects stale and internally inconsistent authority", async (
   mockIPC((_command, _args) => mutation(identity, { sessionId: runtimeB }));
   await assert.rejects(
     setCssRuleAtViewport({
-      relativePath: "sursa/sass/site.scss",
+      relativePath: "sass/site.scss",
       selector: ".hero",
       properties: { color: "red" },
       viewport: "desktop",
@@ -135,7 +135,7 @@ test("CSS mutation rejects stale and internally inconsistent authority", async (
   clearMocks();
   mockIPC(() => mutation(identity, { revisionAfter: 7 }));
   await assert.rejects(
-    setScssVariable("sursa/sass/site.scss", "accent", "blue", identity),
+    setScssVariable("sass/site.scss", "accent", "blue", identity),
     /\[css_invalid_authority_receipt\]/,
   );
 
@@ -144,7 +144,7 @@ test("CSS mutation rejects stale and internally inconsistent authority", async (
   inconsistent.authority.documents[0].snapshot.text = ".hero { color: blue; }";
   mockIPC(() => inconsistent);
   await assert.rejects(
-    setScssVariable("sursa/sass/site.scss", "accent", "blue", identity),
+    setScssVariable("sass/site.scss", "accent", "blue", identity),
     /\[css_invalid_authority_receipt\]/,
   );
 });

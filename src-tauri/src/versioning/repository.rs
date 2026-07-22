@@ -87,7 +87,7 @@ impl VersionRepository {
             return Ok(self.terminal_snapshot(
                 VersionRepositoryState::Unsupported,
                 Some(
-                    "Pană Studio acceptă numai un director .git real aflat direct în sursa/. Worktree-urile, gitdir-urile externe și symlink-urile nu sunt suportate."
+                    "Pană Studio acceptă numai un director .git real aflat direct în rădăcina Zola. Worktree-urile, gitdir-urile externe și symlink-urile nu sunt suportate."
                         .to_string(),
                 ),
                 git_version,
@@ -164,9 +164,10 @@ impl VersionRepository {
                     ))
                 }
             };
-        let expected_root = self.repository_root.canonicalize().map_err(|error| {
-            format!("Rădăcina sursa/ nu poate fi canonizată pentru Git: {error}")
-        })?;
+        let expected_root = self
+            .repository_root
+            .canonicalize()
+            .map_err(|error| format!("Rădăcina Zola nu poate fi canonizată pentru Git: {error}"))?;
         if reported_root != expected_root {
             return Ok(self.terminal_snapshot(
                 VersionRepositoryState::Unsupported,
@@ -230,9 +231,33 @@ impl VersionRepository {
             ));
         }
 
+        let output_relative = self.configured_output_relative_path();
+        if let Some(output) = output_relative.as_deref() {
+            let tracked_output = self
+                .runner
+                .run(["ls-files", "-z", "--", output])?
+                .require_success("Verificarea output-ului Zola în indexul Git")?;
+            if !tracked_output.stdout.is_empty() {
+                return Ok(self.terminal_snapshot(
+                    VersionRepositoryState::Unsupported,
+                    Some(format!(
+                        "Output-ul Zola configurat `{output}` este deja urmărit de Git. Pană Studio nu migrează și nu versionează artefacte generate; elimină-l manual din index înainte de a continua."
+                    )),
+                    git_version,
+                ));
+            }
+        }
+
+        let mut status_args = vec![
+            OsString::from("status"),
+            OsString::from("--porcelain=v1"),
+            OsString::from("-z"),
+            OsString::from("--untracked-files=all"),
+        ];
+        append_source_pathspecs(&mut status_args, output_relative.as_deref());
         let status_output = self
             .runner
-            .run(["status", "--porcelain=v1", "-z", "--untracked-files=all"])?
+            .run(status_args)?
             .require_success("Citirea statusului Git")?;
         if status_output.stdout_truncated {
             return Err(
@@ -337,6 +362,13 @@ impl VersionRepository {
         if paths.is_empty() {
             return Err("Stage cere cel puțin un fișier.".to_string());
         }
+        if let Some(output) = self.configured_output_relative_path() {
+            if let Some(path) = paths.iter().find(|path| is_output_path(path, &output)) {
+                return Err(format!(
+                    "Stage a refuzat artefactul Zola generat `{path}` din output_dir `{output}`."
+                ));
+            }
+        }
         self.require_no_external_clean_filters(&paths)?;
         let mut args = vec![OsString::from("add"), OsString::from("--")];
         args.extend(paths.iter().map(OsString::from));
@@ -356,8 +388,10 @@ impl VersionRepository {
             .flatten()
             .collect::<Vec<_>>();
         self.require_no_external_clean_filters(&paths)?;
+        let mut args = vec![OsString::from("add"), OsString::from("-A")];
+        append_source_pathspecs(&mut args, self.configured_output_relative_path().as_deref());
         self.runner
-            .run(["add", "-A", "--", "."])?
+            .run(args)?
             .require_success("Pregătirea tuturor fișierelor Git")?;
         self.snapshot()
     }
@@ -388,6 +422,15 @@ impl VersionRepository {
             .run(args)?
             .require_success("Eliminarea fișierelor din indexul Git")?;
         self.snapshot()
+    }
+
+    fn configured_output_relative_path(&self) -> Option<String> {
+        let project_root = Path::new(&self.project_root);
+        let output =
+            crate::deploy::resolve_artifact_root(project_root, &self.repository_root).ok()?;
+        let relative = output.strip_prefix(&self.repository_root).ok()?;
+        let value = relative.to_string_lossy().replace('\\', "/");
+        (!value.is_empty()).then_some(value)
     }
 
     pub(crate) fn unstage_all(&self) -> Result<VersioningSnapshot, String> {
@@ -677,6 +720,7 @@ impl VersionRepository {
             ));
         }
 
+        let output_relative = self.configured_output_relative_path();
         let mut descriptors = Vec::with_capacity(records.len());
         for record in records {
             let tab = record
@@ -705,6 +749,20 @@ impl VersionRepository {
             }
             validate_oid(oid)?;
             let path = utf8_git_path(&record[tab + 1..])?;
+            if matches!(path.as_str(), "sursa/zola.toml" | "sursa/config.toml") {
+                return Err(
+                    "Versiunea folosește structura veche cu rădăcina Zola în `sursa/`. Pană Studio nu migrează și nu restaurează acest format."
+                        .to_string(),
+                );
+            }
+            if output_relative
+                .as_deref()
+                .is_some_and(|output| is_output_path(&path, output))
+            {
+                return Err(format!(
+                    "Versiunea conține output-ul Zola generat `{path}`. Pană Studio nu îl previzualizează, integrează sau restaurează."
+                ));
+            }
             descriptors.push((path, oid.to_string(), mode == "100755"));
         }
         descriptors.sort_by(|left, right| left.0.cmp(&right.0));
@@ -1497,6 +1555,22 @@ fn utf8_git_path(bytes: &[u8]) -> Result<String, String> {
     validate_path(&path)
 }
 
+fn append_source_pathspecs(args: &mut Vec<OsString>, output_relative: Option<&str>) {
+    args.push(OsString::from("--"));
+    args.push(OsString::from("."));
+    if let Some(output) = output_relative {
+        args.push(OsString::from(format!(":(exclude){output}")));
+        args.push(OsString::from(format!(":(exclude){output}/**")));
+    }
+}
+
+fn is_output_path(path: &str, output_relative: &str) -> bool {
+    path == output_relative
+        || path
+            .strip_prefix(output_relative)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
 fn validate_paths(paths: &[String]) -> Result<Vec<String>, String> {
     let mut normalized = paths
         .iter()
@@ -1522,7 +1596,7 @@ pub(super) fn validate_path(path: &str) -> Result<String, String> {
             .any(|component| !matches!(component, Component::Normal(_)))
         || normalized.split('/').any(|segment| segment == ".git")
     {
-        return Err(format!("Path Git în afara sursa/ sau rezervat: {path}."));
+        return Err(format!("Path Git în afara  sau rezervat: {path}."));
     }
     Ok(normalized)
 }
@@ -1936,7 +2010,7 @@ mod tests {
         let directory = TestDirectory::new("parent-root");
         let parent = repository(&directory.0);
         parent.initialize().unwrap();
-        let child = directory.0.join("sursa");
+        let child = directory.0.join("site");
         fs::create_dir_all(&child).unwrap();
 
         let snapshot = repository(&child).snapshot().unwrap();
@@ -1944,6 +2018,150 @@ mod tests {
             snapshot.repository_state,
             VersionRepositoryState::Uninitialized
         );
+    }
+
+    #[test]
+    fn generated_output_is_excluded_from_status_and_stage_all() {
+        for (label, config, output) in [
+            ("git-default-output", "base_url = '/'\n", "public"),
+            (
+                "git-custom-output",
+                "base_url = '/'\noutput_dir = 'generated/site'\n",
+                "generated/site",
+            ),
+        ] {
+            let directory = TestDirectory::new(label);
+            fs::create_dir_all(directory.0.join("templates")).unwrap();
+            fs::create_dir_all(directory.0.join(output)).unwrap();
+            fs::write(directory.0.join("zola.toml"), config).unwrap();
+            fs::write(directory.0.join("templates/index.html"), "source").unwrap();
+            fs::write(directory.0.join(output).join("index.html"), "generated").unwrap();
+            let repository = repository(&directory.0);
+            repository.initialize().unwrap();
+
+            let before = repository.snapshot().unwrap();
+            assert!(before
+                .files
+                .iter()
+                .all(|file| !is_output_path(&file.path, output)));
+            let after = repository.stage_all().unwrap();
+            assert!(after
+                .files
+                .iter()
+                .all(|file| !is_output_path(&file.path, output)));
+            let tracked = repository
+                .runner
+                .run(["ls-files", "-z", "--", output])
+                .unwrap()
+                .require_success("test ls-files")
+                .unwrap();
+            assert!(tracked.stdout.is_empty());
+        }
+    }
+
+    #[test]
+    fn already_tracked_generated_output_is_refused_without_migration() {
+        let directory = TestDirectory::new("git-tracked-output");
+        fs::create_dir_all(directory.0.join("public")).unwrap();
+        fs::write(directory.0.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(directory.0.join("public/index.html"), "generated").unwrap();
+        let repository = repository(&directory.0);
+        repository.initialize().unwrap();
+        repository
+            .runner
+            .run(["add", "-f", "--", "public/index.html"])
+            .unwrap()
+            .require_success("test force-add output")
+            .unwrap();
+
+        let snapshot = repository.snapshot().unwrap();
+
+        assert_eq!(
+            snapshot.repository_state,
+            VersionRepositoryState::Unsupported
+        );
+        assert!(snapshot
+            .diagnostic
+            .as_deref()
+            .is_some_and(|message| message.contains("nu migrează")));
+    }
+
+    #[test]
+    fn historical_legacy_layout_is_refused_instead_of_restored() {
+        let directory = TestDirectory::new("git-legacy-history");
+        let repository = repository(&directory.0);
+        repository.initialize().unwrap();
+        repository
+            .configure_identity("Pană Test", "pana@example.test")
+            .unwrap();
+        fs::create_dir_all(directory.0.join("sursa/content")).unwrap();
+        fs::write(directory.0.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        repository.stage_all().unwrap();
+        let legacy = repository.commit("Legacy", None).unwrap();
+
+        fs::remove_dir_all(directory.0.join("sursa")).unwrap();
+        fs::create_dir_all(directory.0.join("content")).unwrap();
+        fs::write(directory.0.join("zola.toml"), "base_url = '/'\n").unwrap();
+        repository.stage_all().unwrap();
+        repository
+            .commit("Direct root", Some(&legacy.commit_oid))
+            .unwrap();
+
+        let error = repository.read_tree(&legacy.commit_oid).unwrap_err();
+        assert!(error.contains("structura veche"), "{error}");
+        assert!(error.contains("nu migrează"), "{error}");
+    }
+
+    #[test]
+    fn historical_generated_output_is_refused_instead_of_restored() {
+        let directory = TestDirectory::new("git-output-history");
+        let repository = repository(&directory.0);
+        repository.initialize().unwrap();
+        repository
+            .configure_identity("Pană Test", "pana@example.test")
+            .unwrap();
+        fs::create_dir_all(directory.0.join("public")).unwrap();
+        fs::write(directory.0.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(directory.0.join("public/index.html"), "generated").unwrap();
+        repository
+            .runner
+            .run(["add", "-f", "--", "zola.toml", "public/index.html"])
+            .unwrap()
+            .require_success("test force-add historical output")
+            .unwrap();
+        repository
+            .runner
+            .run(["commit", "-m", "Historical output"])
+            .unwrap()
+            .require_success("test commit historical output")
+            .unwrap();
+        let historical_oid = repository
+            .runner
+            .run(["rev-parse", "HEAD"])
+            .unwrap()
+            .require_success("test read historical oid")
+            .unwrap()
+            .stdout_text()
+            .unwrap()
+            .trim()
+            .to_string();
+        fs::remove_file(directory.0.join("public/index.html")).unwrap();
+        repository
+            .runner
+            .run(["add", "-A", "--", "."])
+            .unwrap()
+            .require_success("test remove historical output")
+            .unwrap();
+        repository
+            .runner
+            .run(["commit", "-m", "Remove generated output"])
+            .unwrap()
+            .require_success("test commit output removal")
+            .unwrap();
+
+        let error = repository.read_tree(&historical_oid).unwrap_err();
+        assert!(error.contains("output-ul Zola generat"), "{error}");
+        assert!(error.contains("nu îl previzualizează"), "{error}");
     }
 
     #[test]

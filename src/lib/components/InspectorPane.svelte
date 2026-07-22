@@ -16,6 +16,7 @@
     InspectorPendingArea,
     PageCssTarget,
     ProjectFile,
+    ProjectZolaImageIntent,
     PreviewSelectionState,
     SaveState,
     ScssVariable,
@@ -253,6 +254,7 @@
     generateClassForSelectedHtml,
     generateDataAnimForSelectedHtml,
     setImageSourceValue,
+    applyZolaImageProcessingToHtml,
     cancelHtmlAttributeDraft,
     deleteHtmlElement,
     editSelectedTeraLayer,
@@ -316,6 +318,7 @@
     generateClassForSelectedHtml: () => void | Promise<EditorActionOutcome>;
     generateDataAnimForSelectedHtml: () => void | Promise<EditorActionOutcome>;
     setImageSourceValue: (value: string) => void;
+    applyZolaImageProcessingToHtml: (intent: ProjectZolaImageIntent) => void | Promise<EditorActionOutcome>;
     cancelHtmlAttributeDraft: (expectedContextKey?: string) => void;
     deleteHtmlElement: () => void | Promise<void>;
     editSelectedTeraLayer: () => void | Promise<void>;
@@ -1187,6 +1190,7 @@
       generateClassForSelectedHtml={generateClassForSelectedHtml}
       generateDataAnimForSelectedHtml={generateDataAnimForSelectedHtml}
       setImageSourceValue={setImageSourceValue}
+      applyZolaImageProcessingToHtml={applyZolaImageProcessingToHtml}
       cancelHtmlAttributeDraft={cancelHtmlAttributeDraft}
       deleteHtmlElement={deleteHtmlElement}
       changeElementTag={changeElementTag}

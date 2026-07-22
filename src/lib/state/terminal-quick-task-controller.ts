@@ -1,7 +1,7 @@
-import { getZolaBinaryPath } from "$lib/project/io";
-import { shellQuote } from "$lib/state/app-helpers";
+import { zolaBuild } from "$lib/project/io";
 import type { TerminalQuickTask, TerminalTab } from "$lib/terminal/runtime";
 import type { SaveState } from "$lib/types";
+import { errorMessage } from "$lib/util";
 
 type TerminalTaskController = {
   ensureSession: (tab: TerminalTab, cwd: string) => Promise<void>;
@@ -9,55 +9,40 @@ type TerminalTaskController = {
 };
 
 export type TerminalQuickTaskHost = {
-  terminalPaneOpen: boolean;
   activeTerminalTab: TerminalTab | null;
   currentProjectPath: string;
-  zolaBinaryPath: string | null;
   terminalController: TerminalTaskController;
+  runZolaValidation: (reason: "manual") => Promise<boolean>;
+  openCurrentProjectInBrowser: (route?: string | null) => Promise<void>;
   setGlobalStatus: (text: string, kind: SaveState) => void;
 };
 
-export async function terminalCommandForTask(host: TerminalQuickTaskHost, task: TerminalQuickTask) {
-  if (!task.useBundledZola) return task.command;
-  if (!host.zolaBinaryPath) {
-    host.zolaBinaryPath = await getZolaBinaryPath();
-  }
-  return `${shellQuote(host.zolaBinaryPath)} ${task.command}`;
-}
-
 export async function runTerminalQuickTask(host: TerminalQuickTaskHost, task: TerminalQuickTask) {
-  if (!host.terminalPaneOpen) host.terminalPaneOpen = true;
-  const tab = host.activeTerminalTab;
   if (!host.currentProjectPath) {
-    host.setGlobalStatus("Deschide un proiect înainte de a rula task-uri în terminal.", "error");
+    host.setGlobalStatus("Deschide un proiect înainte de a rula o operație Zola.", "error");
     return;
   }
-  if (!tab) return;
 
-  await host.terminalController.ensureSession(tab, host.currentProjectPath);
-  let command = "";
   try {
-    command = await terminalCommandForTask(host, task);
+    if (task.kind === "embedded-check") {
+      await host.runZolaValidation("manual");
+      return;
+    }
+    if (task.kind === "embedded-build") {
+      host.setGlobalStatus("Se construiește proiectul cu motorul Zola embedded...", "saving");
+      const log = await zolaBuild();
+      host.setGlobalStatus(log.split("\n")[0] || "Build Zola embedded finalizat.", "saved");
+      return;
+    }
+    await host.openCurrentProjectInBrowser();
   } catch (error) {
-    host.setGlobalStatus(
-      `Nu am putut pregăti task-ul terminal: ${error instanceof Error ? error.message : String(error)}`,
-      "error",
-    );
-    return;
+    host.setGlobalStatus(`Operația Zola embedded a eșuat: ${errorMessage(error)}`, "error");
   }
-
-  const commandWritten = host.terminalController.writeCommand(tab.id, command);
-  if (!commandWritten) {
-    host.setGlobalStatus("Terminalul nu este pregătit încă. Încearcă din nou după ce shell-ul pornește.", "error");
-    return;
-  }
-  host.setGlobalStatus(`Terminal: ${task.label}`, "idle");
 }
 
 export async function clearActiveTerminal(host: TerminalQuickTaskHost) {
   const tab = host.activeTerminalTab;
-  if (!host.currentProjectPath) return;
-  if (!tab) return;
+  if (!host.currentProjectPath || !tab) return;
 
   await host.terminalController.ensureSession(tab, host.currentProjectPath);
   const commandWritten = host.terminalController.writeCommand(tab.id, "clear");

@@ -15,7 +15,7 @@ pub fn generated_asset_definition(id: GeneratedAssetId) -> GeneratedAssetDefinit
         GeneratedAssetId::AnimeJsRuntime => GeneratedAssetDefinition {
             label: id.label(),
             zola_relative_path: "static/js/anime.min.js",
-            project_relative_path: "sursa/static/js/anime.min.js",
+            project_relative_path: "static/js/anime.min.js",
             bytes: ANIME_JS_BYTES,
         },
     }

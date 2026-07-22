@@ -4,10 +4,7 @@ use tauri::AppHandle;
 
 use crate::{
     app_home::{app_config_path, project_app_config_path, projects_config_dir},
-    commands::config::model::{
-        default_image_exclude_suffix, default_image_max_dimension, GlobalAppConfig,
-        ProjectAppConfig, ProjectAppConfigInput,
-    },
+    commands::config::model::{GlobalAppConfig, ProjectAppConfig, ProjectAppConfigInput},
     kernel::write_authority::{
         WriteAuthority, WriteCategory, WriteIntent, WriteOperationKind, WriteOwner, WritePolicy,
         WriteTarget,
@@ -39,14 +36,6 @@ pub(super) fn project_app_config_from_input(
     ProjectAppConfig {
         project_path: canonical_project_path(root),
         cachebust_assets: config.cachebust_assets,
-        optimize_images_on_build: config.optimize_images_on_build,
-        image_max_dimension: config.image_max_dimension.max(1),
-        image_exclude_suffix: if config.image_exclude_suffix.trim().is_empty() {
-            default_image_exclude_suffix()
-        } else {
-            config.image_exclude_suffix.trim().to_string()
-        },
-        image_replace_only_if_smaller: config.image_replace_only_if_smaller,
     }
 }
 
@@ -100,10 +89,6 @@ fn default_project_app_config(project_path: String) -> ProjectAppConfig {
     ProjectAppConfig {
         project_path,
         cachebust_assets: false,
-        optimize_images_on_build: false,
-        image_max_dimension: default_image_max_dimension(),
-        image_exclude_suffix: default_image_exclude_suffix(),
-        image_replace_only_if_smaller: true,
     }
 }
 

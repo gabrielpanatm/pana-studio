@@ -14,12 +14,12 @@ function detail(overrides = {}) {
     basisProjectRevision: 7,
     releasedAtMs: 100,
     expectedChangedFiles: [
-      "sursa/content/servicii.md",
-      "sursa/date/meniu.toml",
+      "content/servicii.md",
+      "date/meniu.toml",
     ],
     observedChangedFiles: [
-      "sursa/content/servicii.md",
-      "sursa/date/meniu.toml",
+      "content/servicii.md",
+      "date/meniu.toml",
     ],
     declarationReviewedByUser: false,
     recoveryReloadAuthorized: false,
@@ -34,8 +34,8 @@ function external(overrides = {}) {
     ...createExternalDiskState(),
     changed: true,
     changedFiles: [
-      "sursa/date/meniu.toml",
-      "sursa/content/servicii.md",
+      "date/meniu.toml",
+      "content/servicii.md",
     ],
     lastCheckedAt: 110,
     ...overrides,
@@ -52,7 +52,7 @@ test("AI topology changes auto-reload only when declared, released and observed 
 test("AI topology auto-reload refuses undeclared or newly changed files", () => {
   assert.equal(
     shouldAutomaticallyReloadAiReconciliation(
-      external({ changedFiles: ["sursa/content/servicii.md"] }),
+      external({ changedFiles: ["content/servicii.md"] }),
       detail(),
     ),
     false,
@@ -60,7 +60,7 @@ test("AI topology auto-reload refuses undeclared or newly changed files", () => 
   assert.equal(
     shouldAutomaticallyReloadAiReconciliation(
       external(),
-      detail({ observedChangedFiles: ["sursa/content/servicii.md"] }),
+      detail({ observedChangedFiles: ["content/servicii.md"] }),
     ),
     false,
   );

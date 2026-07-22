@@ -58,8 +58,7 @@ fn parse_zola_project_settings(source: &str, config_path: &str) -> ZolaProjectSe
         author: toml_string(source, None, "author").unwrap_or_default(),
         compile_sass: toml_bool(source, None, "compile_sass").unwrap_or(false),
         minify_html: toml_bool(source, None, "minify_html").unwrap_or(false),
-        output_dir: toml_string(source, None, "output_dir")
-            .unwrap_or_else(|| "../export".to_string()),
+        output_dir: toml_string(source, None, "output_dir").unwrap_or_else(|| "public".to_string()),
         generate_sitemap: toml_bool(source, None, "generate_sitemap").unwrap_or(true),
         generate_robots_txt: toml_bool(source, None, "generate_robots_txt").unwrap_or(true),
         exclude_paginated_pages_in_sitemap: toml_paginated_sitemap(source),

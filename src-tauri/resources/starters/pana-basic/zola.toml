@@ -3,7 +3,6 @@ theme = "pana-studio"
 title = "Proiect Pană Studio"
 description = "Un proiect Zola inițializat cu Pană Studio."
 default_language = "ro"
-output_dir = "../export"
 compile_sass = true
 build_search_index = false
 minify_html = false

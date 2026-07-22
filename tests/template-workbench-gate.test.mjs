@@ -32,12 +32,12 @@ function node(id, kind, file, parent = null, label = id) {
 
 function graphFixture() {
   const nodes = [
-    node("template-index", "template", "sursa/templates/index.html"),
-    node("block-index", "block", "sursa/templates/index.html", "template-index", "content"),
-    node("include-card", "include", "sursa/templates/index.html", "block-index", "include partials/card.html"),
-    node("template-card", "partial", "sursa/templates/partials/card.html"),
-    node("card-html", "html", "sursa/templates/partials/card.html", "template-card", "<article .card>"),
-    node("card-title", "html", "sursa/templates/partials/card.html", "card-html", "<h2>"),
+    node("template-index", "template", "templates/index.html"),
+    node("block-index", "block", "templates/index.html", "template-index", "content"),
+    node("include-card", "include", "templates/index.html", "block-index", "include partials/card.html"),
+    node("template-card", "partial", "templates/partials/card.html"),
+    node("card-html", "html", "templates/partials/card.html", "template-card", "<article .card>"),
+    node("card-title", "html", "templates/partials/card.html", "card-html", "<h2>"),
   ];
   return {
     schemaVersion: 1,
@@ -48,7 +48,7 @@ function graphFixture() {
     templates: [
       {
         nodeId: "template-index",
-        file: "sursa/templates/index.html",
+        file: "templates/index.html",
         name: "index.html",
         origin: "local",
         themeName: null,
@@ -57,7 +57,7 @@ function graphFixture() {
       },
       {
         nodeId: "template-card",
-        file: "sursa/templates/partials/card.html",
+        file: "templates/partials/card.html",
         name: "partials/card.html",
         origin: "local",
         themeName: null,
@@ -73,8 +73,8 @@ test("Tera Gate exposes an included template intentionally but never grants cros
   const closed = teraGateDropStatus(
     graph,
     {
-      activeScannedPath: "sursa/templates/index.html",
-      activeTemplateFiles: ["sursa/templates/index.html"],
+      activeScannedPath: "templates/index.html",
+      activeTemplateFiles: ["templates/index.html"],
       openedGateSourceId: null,
     },
     { targetSourceId: "card-html", targetTemplateSourceId: "template-card" },
@@ -87,8 +87,8 @@ test("Tera Gate exposes an included template intentionally but never grants cros
   const opened = teraGateDropStatus(
     graph,
     {
-      activeScannedPath: "sursa/templates/index.html",
-      activeTemplateFiles: ["sursa/templates/index.html"],
+      activeScannedPath: "templates/index.html",
+      activeTemplateFiles: ["templates/index.html"],
       openedGateSourceId: "template-card",
     },
     { targetSourceId: "card-html", targetTemplateSourceId: "template-card" },
@@ -128,12 +128,12 @@ test("an active Workbench template shows its HTML directly and hides Tera block 
   const rows = buildLayerRows(sections, nodesById, {
     sourceGraph: graph,
     gateOpenContext: {
-      activeScannedPath: "sursa/templates/partials/card.html",
-      activeTemplateFiles: ["sursa/templates/partials/card.html"],
+      activeScannedPath: "templates/partials/card.html",
+      activeTemplateFiles: ["templates/partials/card.html"],
       openedGateSourceId: null,
     },
     templateWorkbenchPlan: {
-      activeTemplate: { file: "sursa/templates/partials/card.html" },
+      activeTemplate: { file: "templates/partials/card.html" },
     },
   });
 

@@ -10,8 +10,7 @@ export type TerminalQuickTask = {
   id: string;
   label: string;
   title: string;
-  command: string;
-  useBundledZola?: boolean;
+  kind: "embedded-check" | "embedded-build" | "internal-preview";
 };
 
 export type TerminalSession = {
@@ -42,23 +41,20 @@ export const terminalQuickTasks: TerminalQuickTask[] = [
   {
     id: "zola-check",
     label: "Verificare",
-    title: "Rulează zola check în proiectul curent",
-    command: "check",
-    useBundledZola: true,
+    title: "Validează sursele salvate cu motorul Zola embedded",
+    kind: "embedded-check",
   },
   {
     id: "zola-build",
     label: "Construire",
-    title: "Rulează zola build în proiectul curent",
-    command: "build",
-    useBundledZola: true,
+    title: "Construiește proiectul cu motorul Zola embedded",
+    kind: "embedded-build",
   },
   {
-    id: "zola-serve",
-    label: "Server",
-    title: "Pornește zola serve în terminal",
-    command: "serve",
-    useBundledZola: true,
+    id: "source-browser",
+    label: "Preview",
+    title: "Deschide generația salvată în Source Browser intern",
+    kind: "internal-preview",
   },
 ];
 

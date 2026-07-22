@@ -47,13 +47,12 @@ walkdir = "2"
 mime_guess = "2"
 percent-encoding = "2"
 relative-path = "2"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # Motorul de randare Preview este exact crate-ul `site` din release-ul
 # oficial Zola 0.22.1. Commitul fix împiedică schimbarea semanticii Tera,
 # Markdown, Sass sau a rutelor fără un upgrade explicit și teste de paritate.
 zola-site = { package = "site", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
 # Workbench-ul randă un template prin aceleași API-uri și aceeași versiune
-# Tera folosite de motorul Zola embedded; nu pornește `zola serve` separat.
+# Tera folosite de motorul Zola embedded, fără niciun proces extern.
 zola-utils = { package = "utils", git = "https://github.com/getzola/zola.git", rev = "29540e9897dbe8aca388b13f7bdf615985f6ca2c" }
 tera = { version = "1.17", features = ["preserve_order", "date-locale"] }
 

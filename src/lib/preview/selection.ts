@@ -5,6 +5,7 @@ import {
   findHtmlNodeForSelection,
   parseHtmlSourceNodes,
 } from "$lib/html/parser";
+import { zolaImagePresentationFromElement } from "$lib/html/zola-image";
 import type {
   DomNodeLink,
   EditableAttributes,
@@ -638,6 +639,7 @@ export function createSelectionInfoFromSourceElement(
     variables: fallback?.variables ?? [],
     matchedRules: fallback?.matchedRules ?? [],
     imageSrc: tag === "img" ? element.getAttribute("src") : null,
+    zolaImage: tag === "img" ? zolaImagePresentationFromElement(element) : null,
     attributes: collectElementAttributes(element, selectedClass),
     parentNode: parentElement ? createDomNodeLink(parentElement) : null,
     childNodes,
@@ -708,6 +710,7 @@ export function createSelectionInfo(element: Element, previewWindow: Window, sel
     variables,
     matchedRules,
     imageSrc: tag === "img" ? element.getAttribute("src") : null,
+    zolaImage: tag === "img" ? zolaImagePresentationFromElement(element) : null,
     attributes: collectElementAttributes(element, selectedClass),
     parentNode: parentElement ? createDomNodeLink(parentElement) : null,
     childNodes,

@@ -68,8 +68,8 @@ mod tests {
             },
         );
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>Base</main>"),
@@ -79,11 +79,7 @@ mod tests {
         });
 
         let dirty = store
-            .set_draft(
-                "sursa/templates/index.html",
-                "<main>Draft</main>".to_string(),
-                2,
-            )
+            .set_draft("templates/index.html", "<main>Draft</main>".to_string(), 2)
             .unwrap();
 
         assert!(dirty.dirty);
@@ -91,11 +87,7 @@ mod tests {
         assert_eq!(store.snapshot().dirty_file_count, 1);
 
         let clean = store
-            .set_draft(
-                "sursa/templates/index.html",
-                "<main>Base</main>".to_string(),
-                3,
-            )
+            .set_draft("templates/index.html", "<main>Base</main>".to_string(), 3)
             .unwrap();
 
         assert!(!clean.dirty);
@@ -106,8 +98,8 @@ mod tests {
     fn changeset_applies_utf16_ranges_from_editor_transactions() {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("a😀b"),
@@ -119,7 +111,7 @@ mod tests {
         let result = store
             .apply_changeset(
                 FileBufferChangeSetInput {
-                    relative_path: "sursa/templates/index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
                     base_revision: Some(1),
                     base_hash: Some(hash_text("a😀b")),
                     coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
@@ -137,7 +129,7 @@ mod tests {
         assert!(result.applied);
         assert_eq!(result.previous_revision, 1);
         assert_eq!(result.revision, 2);
-        assert_eq!(store.text_for("sursa/templates/index.html").unwrap(), "axb");
+        assert_eq!(store.text_for("templates/index.html").unwrap(), "axb");
         assert!(result.file.dirty);
     }
 
@@ -145,8 +137,8 @@ mod tests {
     fn changeset_applies_multiple_ranges_in_start_document_coordinates() {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("abcdef"),
@@ -158,7 +150,7 @@ mod tests {
         store
             .apply_changeset(
                 FileBufferChangeSetInput {
-                    relative_path: "sursa/templates/index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
                     base_revision: None,
                     base_hash: None,
                     coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
@@ -180,18 +172,15 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(
-            store.text_for("sursa/templates/index.html").unwrap(),
-            "aXcdYZ"
-        );
+        assert_eq!(store.text_for("templates/index.html").unwrap(), "aXcdYZ");
     }
 
     #[test]
     fn changeset_blocks_stale_revision_before_mutating_buffer() {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("base"),
@@ -203,7 +192,7 @@ mod tests {
         let error = store
             .apply_changeset(
                 FileBufferChangeSetInput {
-                    relative_path: "sursa/templates/index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
                     base_revision: Some(3),
                     base_hash: None,
                     coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
@@ -219,18 +208,15 @@ mod tests {
             .unwrap_err();
 
         assert!(error.contains("revizia așteptată"));
-        assert_eq!(
-            store.text_for("sursa/templates/index.html").unwrap(),
-            "base"
-        );
+        assert_eq!(store.text_for("templates/index.html").unwrap(), "base");
     }
 
     #[test]
     fn changeset_blocks_stale_hash_before_mutating_buffer() {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("base"),
@@ -239,13 +225,13 @@ mod tests {
             revision: 1,
         });
         store
-            .set_draft("sursa/templates/index.html", "draft".to_string(), 2)
+            .set_draft("templates/index.html", "draft".to_string(), 2)
             .unwrap();
 
         let error = store
             .apply_changeset(
                 FileBufferChangeSetInput {
-                    relative_path: "sursa/templates/index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
                     base_revision: Some(2),
                     base_hash: Some(hash_text("base")),
                     coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
@@ -261,10 +247,7 @@ mod tests {
             .unwrap_err();
 
         assert!(error.contains("hash-ul de bază"));
-        assert_eq!(
-            store.text_for("sursa/templates/index.html").unwrap(),
-            "draft"
-        );
+        assert_eq!(store.text_for("templates/index.html").unwrap(), "draft");
     }
 
     #[test]
@@ -276,7 +259,7 @@ mod tests {
         };
         store
             .set_draft(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 "concurrent authority".to_string(),
                 2,
             )
@@ -284,7 +267,7 @@ mod tests {
 
         let error = store
             .set_draft_if_current(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 "stale frontend".to_string(),
                 &expectation,
                 3,
@@ -293,12 +276,12 @@ mod tests {
 
         assert!(error.contains(FILE_BUFFER_DRAFT_CAS_CONFLICT_CODE));
         assert_eq!(
-            store.text_for("sursa/templates/index.html").unwrap(),
+            store.text_for("templates/index.html").unwrap(),
             "concurrent authority"
         );
         assert_eq!(
             store
-                .text_snapshot("sursa/templates/index.html")
+                .text_snapshot("templates/index.html")
                 .unwrap()
                 .revision,
             2
@@ -309,28 +292,28 @@ mod tests {
     fn clear_draft_cas_blocks_stale_clear_after_concurrent_mutation() {
         let mut store = store_with_index_baseline("base");
         store
-            .set_draft("sursa/templates/index.html", "owned draft".to_string(), 2)
+            .set_draft("templates/index.html", "owned draft".to_string(), 2)
             .unwrap();
         let expectation = FileBufferMutationExpectation {
             expected_revision: 2,
             expected_hash: hash_text("owned draft"),
         };
         store
-            .set_draft("sursa/templates/index.html", "newer draft".to_string(), 3)
+            .set_draft("templates/index.html", "newer draft".to_string(), 3)
             .unwrap();
 
         let error = store
-            .clear_draft_if_current("sursa/templates/index.html", &expectation)
+            .clear_draft_if_current("templates/index.html", &expectation)
             .unwrap_err();
 
         assert!(error.contains(FILE_BUFFER_DRAFT_CAS_CONFLICT_CODE));
         assert_eq!(
-            store.text_for("sursa/templates/index.html").unwrap(),
+            store.text_for("templates/index.html").unwrap(),
             "newer draft"
         );
         assert_eq!(
             store
-                .text_snapshot("sursa/templates/index.html")
+                .text_snapshot("templates/index.html")
                 .unwrap()
                 .revision,
             3
@@ -347,7 +330,7 @@ mod tests {
 
         let first = store
             .set_draft_if_current(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 "desired".to_string(),
                 &expectation,
                 2,
@@ -355,7 +338,7 @@ mod tests {
             .unwrap();
         let retry = store
             .set_draft_if_current(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 "desired".to_string(),
                 &expectation,
                 3,
@@ -371,7 +354,7 @@ mod tests {
     fn clear_draft_cas_retry_is_idempotent_after_lost_receipt() {
         let mut store = store_with_index_baseline("base");
         let dirty = store
-            .set_draft("sursa/templates/index.html", "draft".to_string(), 2)
+            .set_draft("templates/index.html", "draft".to_string(), 2)
             .unwrap();
         let expectation = FileBufferMutationExpectation {
             expected_revision: dirty.revision,
@@ -379,10 +362,10 @@ mod tests {
         };
 
         let first = store
-            .clear_draft_if_current("sursa/templates/index.html", &expectation)
+            .clear_draft_if_current("templates/index.html", &expectation)
             .unwrap();
         let retry = store
-            .clear_draft_if_current("sursa/templates/index.html", &expectation)
+            .clear_draft_if_current("templates/index.html", &expectation)
             .unwrap();
 
         assert_eq!(first.revision, 3);
@@ -395,8 +378,8 @@ mod tests {
     fn changeset_clears_draft_when_text_returns_to_baseline() {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("base"),
@@ -405,13 +388,13 @@ mod tests {
             revision: 1,
         });
         store
-            .set_draft("sursa/templates/index.html", "draft".to_string(), 2)
+            .set_draft("templates/index.html", "draft".to_string(), 2)
             .unwrap();
 
         let result = store
             .apply_changeset(
                 FileBufferChangeSetInput {
-                    relative_path: "sursa/templates/index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
                     base_revision: None,
                     base_hash: None,
                     coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
@@ -444,8 +427,8 @@ mod tests {
             },
         );
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/new.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/new.html".to_string(),
+            relative_path: "templates/new.html".to_string(),
+            absolute_path: "/tmp/project/templates/new.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>New</main>"),
@@ -454,11 +437,9 @@ mod tests {
             revision: 1,
         });
 
-        store
-            .record_removed_file("sursa/templates/new.html")
-            .unwrap();
+        store.record_removed_file("templates/new.html").unwrap();
 
-        assert!(store.text_for("sursa/templates/new.html").is_none());
+        assert!(store.text_for("templates/new.html").is_none());
         assert_eq!(store.snapshot().loaded_file_count, 0);
     }
 
@@ -466,8 +447,8 @@ mod tests {
     fn record_moved_entry_rekeys_loaded_file() {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>Base</main>"),
@@ -478,35 +459,30 @@ mod tests {
 
         store
             .record_moved_entry(
-                "sursa/templates/index.html",
-                "sursa/templates/archive/index.html",
+                "templates/index.html",
+                "templates/archive/index.html",
                 std::path::Path::new("/tmp/project"),
             )
             .unwrap();
 
-        assert!(store.text_for("sursa/templates/index.html").is_none());
-        assert!(store
-            .text_for("sursa/templates/archive/index.html")
-            .is_some());
+        assert!(store.text_for("templates/index.html").is_none());
+        assert!(store.text_for("templates/archive/index.html").is_some());
         let snapshot = store
             .snapshot()
             .files
             .into_iter()
-            .find(|file| file.relative_path == "sursa/templates/archive/index.html")
+            .find(|file| file.relative_path == "templates/archive/index.html")
             .unwrap();
         assert_eq!(
             snapshot.absolute_path,
-            "/tmp/project/sursa/templates/archive/index.html"
+            "/tmp/project/templates/archive/index.html"
         );
     }
 
     #[test]
     fn planned_moved_entry_paths_block_destination_baseline_collision() {
         let mut store = test_store();
-        for relative_path in [
-            "sursa/templates/index.html",
-            "sursa/templates/archive/index.html",
-        ] {
+        for relative_path in ["templates/index.html", "templates/archive/index.html"] {
             store.insert_loaded_file(FileBufferEntry {
                 relative_path: relative_path.to_string(),
                 absolute_path: format!("/tmp/project/{relative_path}"),
@@ -520,10 +496,7 @@ mod tests {
         }
 
         let error = store
-            .planned_moved_entry_paths(
-                "sursa/templates/index.html",
-                "sursa/templates/archive/index.html",
-            )
+            .planned_moved_entry_paths("templates/index.html", "templates/archive/index.html")
             .unwrap_err();
 
         assert!(error.contains("există deja baseline"));
@@ -533,8 +506,8 @@ mod tests {
     fn record_trashed_entry_removes_nested_loaded_files() {
         let mut store = test_store();
         for relative_path in [
-            "sursa/templates/sections/hero.html",
-            "sursa/templates/sections/cards.html",
+            "templates/sections/hero.html",
+            "templates/sections/cards.html",
         ] {
             store.insert_loaded_file(FileBufferEntry {
                 relative_path: relative_path.to_string(),
@@ -548,21 +521,19 @@ mod tests {
             });
         }
 
-        let touched = store.planned_trashed_entry_paths("sursa/templates/sections");
-        let removed = store.record_trashed_entry("sursa/templates/sections");
+        let touched = store.planned_trashed_entry_paths("templates/sections");
+        let removed = store.record_trashed_entry("templates/sections");
 
         assert_eq!(
             touched,
             vec![
-                "sursa/templates/sections",
-                "sursa/templates/sections/cards.html",
-                "sursa/templates/sections/hero.html",
+                "templates/sections",
+                "templates/sections/cards.html",
+                "templates/sections/hero.html",
             ]
         );
         assert_eq!(removed.len(), 2);
-        assert!(store
-            .text_for("sursa/templates/sections/hero.html")
-            .is_none());
+        assert!(store.text_for("templates/sections/hero.html").is_none());
         assert_eq!(store.snapshot().loaded_file_count, 0);
     }
 
@@ -570,8 +541,8 @@ mod tests {
     fn record_restored_entries_rehydrates_loaded_files() {
         let mut store = test_store();
         let entry = FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/old/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/old/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test("<main>Base</main>"),
@@ -588,12 +559,9 @@ mod tests {
             .snapshot()
             .files
             .into_iter()
-            .find(|file| file.relative_path == "sursa/templates/index.html")
+            .find(|file| file.relative_path == "templates/index.html")
             .unwrap();
-        assert_eq!(
-            snapshot.absolute_path,
-            "/tmp/project/sursa/templates/index.html"
-        );
+        assert_eq!(snapshot.absolute_path, "/tmp/project/templates/index.html");
         assert_eq!(snapshot.revision, 2);
     }
 
@@ -613,8 +581,8 @@ mod tests {
     fn store_with_index_baseline(baseline: &str) -> FileBufferStore {
         let mut store = test_store();
         store.insert_loaded_file(FileBufferEntry {
-            relative_path: "sursa/templates/index.html".to_string(),
-            absolute_path: "/tmp/project/sursa/templates/index.html".to_string(),
+            relative_path: "templates/index.html".to_string(),
+            absolute_path: "/tmp/project/templates/index.html".to_string(),
             language: TextBufferLanguage::Html,
             role: TextBufferRole::Template,
             baseline: clean_baseline_for_test(baseline),

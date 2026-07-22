@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn preconditions_allow_new_file_without_disk_baseline() {
-        let status = validate_save_preconditions("sursa/templates/nou.html", None, None).unwrap();
+        let status = validate_save_preconditions("templates/nou.html", None, None).unwrap();
 
         assert_eq!(status, SaveTextFileStatus::Created);
     }
@@ -632,8 +632,7 @@ mod tests {
             version_token: "test-version".to_string(),
         };
         let diagnostic =
-            validate_save_preconditions("sursa/templates/index.html", None, Some(&disk))
-                .unwrap_err();
+            validate_save_preconditions("templates/index.html", None, Some(&disk)).unwrap_err();
 
         assert_eq!(
             diagnostic.reason,
@@ -649,7 +648,7 @@ mod tests {
             version_token: "test-version".to_string(),
         };
         let diagnostic =
-            validate_save_preconditions("sursa/templates/index.html", Some(&expected), Some(&disk))
+            validate_save_preconditions("templates/index.html", Some(&expected), Some(&disk))
                 .unwrap_err();
 
         assert_eq!(diagnostic.reason, SaveConflictReason::DiskChanged);
@@ -665,7 +664,7 @@ mod tests {
             version_token: "test-version".to_string(),
         };
         let status =
-            validate_save_preconditions("sursa/templates/index.html", Some(&expected), Some(&disk))
+            validate_save_preconditions("templates/index.html", Some(&expected), Some(&disk))
                 .unwrap();
 
         assert_eq!(status, SaveTextFileStatus::Saved);
@@ -680,7 +679,7 @@ mod tests {
         };
 
         validate_remove_created_preconditions(
-            "sursa/templates/new.html",
+            "templates/new.html",
             &expected,
             &disk,
             &expected.hash,
@@ -697,7 +696,7 @@ mod tests {
         };
 
         let error = validate_remove_created_preconditions(
-            "sursa/templates/new.html",
+            "templates/new.html",
             &expected,
             &disk,
             &expected.hash,
@@ -717,8 +716,8 @@ mod tests {
         let _ = fs::remove_dir_all(&workspace);
         let _env_guard = TestEnvGuard::from_root(&workspace.join("app-home"));
         let project_root = workspace.join("project");
-        let relative_path = "sursa/templates/index.html";
-        fs::create_dir_all(project_root.join("sursa/templates")).unwrap();
+        let relative_path = "templates/index.html";
+        fs::create_dir_all(project_root.join("templates")).unwrap();
         fs::write(project_root.join(relative_path), "baseline").unwrap();
         let project_root = project_root.canonicalize().unwrap();
 

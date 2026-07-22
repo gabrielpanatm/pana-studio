@@ -5,6 +5,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::zola_image_engine::zola_image_contract_start;
 use crate::{
     project_model::model::{ProjectModel, ProjectModelFileKind},
     source_graph::{
@@ -269,8 +270,17 @@ fn plan_html_move_inner(
         .range
         .as_ref()
         .ok_or_else(|| "Destinația nu are range stabil în Source Graph.".to_string())?;
-    let source_span = resolve_html_element_span(&file.contents, source_range.start)?;
-    let target_span = resolve_html_element_span(&file.contents, target_range.start)?;
+    let mut source_span = resolve_html_element_span(&file.contents, source_range.start)?;
+    if let Some(contract_start) = zola_image_contract_start(&file.contents, source_range.start)? {
+        source_span.start = contract_start;
+    }
+    let mut target_span = resolve_html_element_span(&file.contents, target_range.start)?;
+    if intent.position == ProjectMovePosition::Before {
+        if let Some(contract_start) = zola_image_contract_start(&file.contents, target_range.start)?
+        {
+            target_span.start = contract_start;
+        }
+    }
     if source_span.start == target_span.start && source_span.end == target_span.end {
         return Err("Sursa și destinația indică același element.".to_string());
     }
@@ -439,7 +449,7 @@ fn resolve_html_node_at_location<'a>(
 }
 
 fn normalize_model_path(path: &str) -> &str {
-    path.strip_prefix("sursa/").unwrap_or(path)
+    path
 }
 
 pub(super) fn same_model_path(left: &str, right: &str) -> bool {
@@ -1039,8 +1049,8 @@ mod tests {
                     && node.label.starts_with("<section")
             })
             .unwrap();
-        let index_path = root.join("sursa/templates/index.html");
-        let partial_path = root.join("sursa/templates/partials/card.html");
+        let index_path = root.join("templates/index.html");
+        let partial_path = root.join("templates/partials/card.html");
         let index_before = fs::read_to_string(&index_path).unwrap();
         let partial_before = fs::read_to_string(&partial_path).unwrap();
 
@@ -1072,20 +1082,20 @@ mod tests {
     }
 
     fn write_project(root: &PathBuf) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "<main>\n",
                 "  <section class=\"hero\"></section>\n",
@@ -1095,7 +1105,7 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/partials/card.html"),
+            root.join("templates/partials/card.html"),
             "<article class=\"card\"><p>Card</p></article>\n",
         )
         .unwrap();

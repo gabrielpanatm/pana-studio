@@ -385,29 +385,26 @@ mod tests {
         let root = zola_project("rewrite-tera-rename");
         write_text(
             &root,
-            "sursa/templates/base.html",
+            "templates/base.html",
             r#"{% include "partials/header.html" %}
 <main>{% block content %}{% endblock content %}</main>
 "#,
         );
         write_text(
             &root,
-            "sursa/templates/partials/header.html",
+            "templates/partials/header.html",
             "<header>Header</header>",
         );
         let store = store_with_files(
             &root,
             &[
                 (
-                    "sursa/templates/base.html",
+                    "templates/base.html",
                     r#"{% include "partials/header.html" %}
 <main>{% block content %}{% endblock content %}</main>
 "#,
                 ),
-                (
-                    "sursa/templates/partials/header.html",
-                    "<header>Header</header>",
-                ),
+                ("templates/partials/header.html", "<header>Header</header>"),
             ],
         );
 
@@ -415,8 +412,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/templates/partials/header.html",
-            "sursa/templates/partials/site-header.html",
+            "templates/partials/header.html",
+            "templates/partials/site-header.html",
         )
         .unwrap();
 
@@ -425,7 +422,7 @@ mod tests {
         assert_eq!(workspace_mutation.changes.len(), 1);
         assert_eq!(
             workspace_mutation.changes[0].relative_path,
-            "sursa/templates/base.html"
+            "templates/base.html"
         );
         assert!(workspace_mutation.changes[0]
             .new_text
@@ -437,22 +434,18 @@ mod tests {
         let root = zola_project("rewrite-frontmatter");
         write_text(
             &root,
-            "sursa/content/despre.md",
+            "content/despre.md",
             "+++\ntitle = \"Despre\"\ntemplate = \"custom/despre.html\"\n+++\n",
         );
-        write_text(
-            &root,
-            "sursa/templates/custom/despre.html",
-            "<h1>Despre</h1>",
-        );
+        write_text(&root, "templates/custom/despre.html", "<h1>Despre</h1>");
         let store = store_with_files(
             &root,
             &[
                 (
-                    "sursa/content/despre.md",
+                    "content/despre.md",
                     "+++\ntitle = \"Despre\"\ntemplate = \"custom/despre.html\"\n+++\n",
                 ),
-                ("sursa/templates/custom/despre.html", "<h1>Despre</h1>"),
+                ("templates/custom/despre.html", "<h1>Despre</h1>"),
             ],
         );
 
@@ -460,8 +453,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/templates/custom/despre.html",
-            "sursa/templates/custom/prezentare.html",
+            "templates/custom/despre.html",
+            "templates/custom/prezentare.html",
         )
         .unwrap();
 
@@ -477,23 +470,23 @@ mod tests {
         let root = zola_project("rewrite-section-page-template");
         write_text(
             &root,
-            "sursa/content/blog/_index.md",
+            "content/blog/_index.md",
             "+++\ntitle = \"Blog\"\npage_template = \"blog/card.html\"\n+++\n",
         );
         write_text(
             &root,
-            "sursa/templates/blog/card.html",
+            "templates/blog/card.html",
             "<article>{{ page.title }}</article>",
         );
         let store = store_with_files(
             &root,
             &[
                 (
-                    "sursa/content/blog/_index.md",
+                    "content/blog/_index.md",
                     "+++\ntitle = \"Blog\"\npage_template = \"blog/card.html\"\n+++\n",
                 ),
                 (
-                    "sursa/templates/blog/card.html",
+                    "templates/blog/card.html",
                     "<article>{{ page.title }}</article>",
                 ),
             ],
@@ -503,8 +496,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/templates/blog/card.html",
-            "sursa/templates/blog/item.html",
+            "templates/blog/card.html",
+            "templates/blog/item.html",
         )
         .unwrap();
 
@@ -514,8 +507,8 @@ mod tests {
             .new_text
             .contains("page_template = \"blog/item.html\""));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/content/blog/_index.md"
-                && rewrite.target_relative_path == "sursa/templates/blog/card.html"
+            rewrite.relative_path == "content/blog/_index.md"
+                && rewrite.target_relative_path == "templates/blog/card.html"
                 && rewrite.relation_kind == "section_page_template"
                 && rewrite.old_reference == "blog/card.html"
                 && rewrite.new_reference == "blog/item.html"
@@ -527,20 +520,20 @@ mod tests {
         let root = zola_project("rewrite-get-page");
         write_text(
             &root,
-            "sursa/content/blog/post.md",
+            "content/blog/post.md",
             "+++\ntitle = \"Post\"\n+++\n",
         );
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set featured = get_page(path="blog/post.md") %}"#,
         );
         let store = store_with_files(
             &root,
             &[
-                ("sursa/content/blog/post.md", "+++\ntitle = \"Post\"\n+++\n"),
+                ("content/blog/post.md", "+++\ntitle = \"Post\"\n+++\n"),
                 (
-                    "sursa/templates/index.html",
+                    "templates/index.html",
                     r#"{% set featured = get_page(path="blog/post.md") %}"#,
                 ),
             ],
@@ -550,8 +543,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/content/blog/post.md",
-            "sursa/content/blog/articol.md",
+            "content/blog/post.md",
+            "content/blog/articol.md",
         )
         .unwrap();
 
@@ -561,8 +554,8 @@ mod tests {
             .new_text
             .contains(r#"get_page(path="blog/articol.md")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/content/blog/post.md"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "content/blog/post.md"
                 && rewrite.relation_kind == "gets_page"
                 && rewrite.old_reference == "blog/post.md"
                 && rewrite.new_reference == "blog/articol.md"
@@ -574,23 +567,20 @@ mod tests {
         let root = zola_project("rewrite-get-section");
         write_text(
             &root,
-            "sursa/content/blog/_index.md",
+            "content/blog/_index.md",
             "+++\ntitle = \"Blog\"\n+++\n",
         );
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set blog = get_section(path="blog/_index.md", metadata_only=true) %}"#,
         );
         let store = store_with_files(
             &root,
             &[
+                ("content/blog/_index.md", "+++\ntitle = \"Blog\"\n+++\n"),
                 (
-                    "sursa/content/blog/_index.md",
-                    "+++\ntitle = \"Blog\"\n+++\n",
-                ),
-                (
-                    "sursa/templates/index.html",
+                    "templates/index.html",
                     r#"{% set blog = get_section(path="blog/_index.md", metadata_only=true) %}"#,
                 ),
             ],
@@ -600,8 +590,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/content/blog",
-            "sursa/content/jurnal",
+            "content/blog",
+            "content/jurnal",
         )
         .unwrap();
 
@@ -611,8 +601,8 @@ mod tests {
             .new_text
             .contains(r#"get_section(path="jurnal/_index.md", metadata_only=true)"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/content/blog/_index.md"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "content/blog/_index.md"
                 && rewrite.relation_kind == "gets_section"
                 && rewrite.old_reference == "blog/_index.md"
                 && rewrite.new_reference == "jurnal/_index.md"
@@ -624,20 +614,20 @@ mod tests {
         let root = zola_project("rewrite-get-url-internal");
         write_text(
             &root,
-            "sursa/content/blog/post.md",
+            "content/blog/post.md",
             "+++\ntitle = \"Post\"\n+++\n",
         );
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"<a href="{{ get_url(path="@/blog/post.md") }}">Post</a>"#,
         );
         let store = store_with_files(
             &root,
             &[
-                ("sursa/content/blog/post.md", "+++\ntitle = \"Post\"\n+++\n"),
+                ("content/blog/post.md", "+++\ntitle = \"Post\"\n+++\n"),
                 (
-                    "sursa/templates/index.html",
+                    "templates/index.html",
                     r#"<a href="{{ get_url(path="@/blog/post.md") }}">Post</a>"#,
                 ),
             ],
@@ -647,8 +637,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/content/blog/post.md",
-            "sursa/content/blog/articol.md",
+            "content/blog/post.md",
+            "content/blog/articol.md",
         )
         .unwrap();
 
@@ -658,8 +648,8 @@ mod tests {
             .new_text
             .contains(r#"get_url(path="@/blog/articol.md")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/content/blog/post.md"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "content/blog/post.md"
                 && rewrite.relation_kind == "internal_content_link"
                 && rewrite.old_reference == "@/blog/post.md"
                 && rewrite.new_reference == "@/blog/articol.md"
@@ -671,21 +661,21 @@ mod tests {
         let root = zola_project("rewrite-load-data-content");
         write_text(
             &root,
-            "sursa/content/blog/post.md",
+            "content/blog/post.md",
             "+++\ntitle = \"Post\"\n+++\n",
         );
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set post = load_data(path="@/blog/post.md") %}
 {% set post_copy = load_data(path="content/blog/post.md") %}"#,
         );
         let store = store_with_files(
             &root,
             &[
-                ("sursa/content/blog/post.md", "+++\ntitle = \"Post\"\n+++\n"),
+                ("content/blog/post.md", "+++\ntitle = \"Post\"\n+++\n"),
                 (
-                    "sursa/templates/index.html",
+                    "templates/index.html",
                     r#"{% set post = load_data(path="@/blog/post.md") %}
 {% set post_copy = load_data(path="content/blog/post.md") %}"#,
                 ),
@@ -696,8 +686,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/content/blog/post.md",
-            "sursa/content/blog/articol.md",
+            "content/blog/post.md",
+            "content/blog/articol.md",
         )
         .unwrap();
 
@@ -710,15 +700,15 @@ mod tests {
             .new_text
             .contains(r#"load_data(path="content/blog/articol.md")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/content/blog/post.md"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "content/blog/post.md"
                 && rewrite.relation_kind == "content_data_load"
                 && rewrite.old_reference == "@/blog/post.md"
                 && rewrite.new_reference == "@/blog/articol.md"
         }));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/content/blog/post.md"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "content/blog/post.md"
                 && rewrite.relation_kind == "content_data_load"
                 && rewrite.old_reference == "content/blog/post.md"
                 && rewrite.new_reference == "content/blog/articol.md"
@@ -728,16 +718,16 @@ mod tests {
     #[test]
     fn planner_rewrites_static_asset_url_and_hash_references() {
         let root = zola_project("rewrite-static-asset");
-        write_text(&root, "sursa/static/js/app.js", "console.log('ok');");
+        write_text(&root, "static/js/app.js", "console.log('ok');");
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"<script src="{{ get_url(path="js/app.js") }}" integrity="{{ get_hash(path="static/js/app.js") }}"></script>"#,
         );
         let store = store_with_files(
             &root,
             &[(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 r#"<script src="{{ get_url(path="js/app.js") }}" integrity="{{ get_hash(path="static/js/app.js") }}"></script>"#,
             )],
         );
@@ -746,8 +736,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/static/js/app.js",
-            "sursa/static/js/site.js",
+            "static/js/app.js",
+            "static/js/site.js",
         )
         .unwrap();
 
@@ -760,15 +750,15 @@ mod tests {
             .new_text
             .contains(r#"get_hash(path="static/js/site.js")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/static/js/app.js"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "static/js/app.js"
                 && rewrite.relation_kind == "asset_url"
                 && rewrite.old_reference == "js/app.js"
                 && rewrite.new_reference == "js/site.js"
         }));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/static/js/app.js"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "static/js/app.js"
                 && rewrite.relation_kind == "asset_hash"
                 && rewrite.old_reference == "static/js/app.js"
                 && rewrite.new_reference == "static/js/site.js"
@@ -778,16 +768,16 @@ mod tests {
     #[test]
     fn planner_rewrites_load_data_static_asset_reference() {
         let root = zola_project("rewrite-load-data");
-        write_text(&root, "sursa/static/data/catalog.json", "{}");
+        write_text(&root, "static/data/catalog.json", "{}");
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set catalog = load_data(path="static/data/catalog.json") %}"#,
         );
         let store = store_with_files(
             &root,
             &[(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 r#"{% set catalog = load_data(path="static/data/catalog.json") %}"#,
             )],
         );
@@ -796,8 +786,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/static/data/catalog.json",
-            "sursa/static/data/products.json",
+            "static/data/catalog.json",
+            "static/data/products.json",
         )
         .unwrap();
 
@@ -807,8 +797,8 @@ mod tests {
             .new_text
             .contains(r#"load_data(path="static/data/products.json")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/static/data/catalog.json"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "static/data/catalog.json"
                 && rewrite.relation_kind == "data_load"
                 && rewrite.old_reference == "static/data/catalog.json"
                 && rewrite.new_reference == "static/data/products.json"
@@ -818,20 +808,16 @@ mod tests {
     #[test]
     fn planner_rewrites_load_data_zola_data_file_reference() {
         let root = zola_project("rewrite-load-data-file");
+        write_text(&root, "date/meniu.toml", "[[item]]\nlabel = \"Acasă\"\n");
         write_text(
             &root,
-            "sursa/date/meniu.toml",
-            "[[item]]\nlabel = \"Acasă\"\n",
-        );
-        write_text(
-            &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set meniu = load_data(path="date/meniu.toml") %}"#,
         );
         let store = store_with_files(
             &root,
             &[(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 r#"{% set meniu = load_data(path="date/meniu.toml") %}"#,
             )],
         );
@@ -840,8 +826,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/date/meniu.toml",
-            "sursa/date/navigatie.toml",
+            "date/meniu.toml",
+            "date/navigatie.toml",
         )
         .unwrap();
 
@@ -851,8 +837,8 @@ mod tests {
             .new_text
             .contains(r#"load_data(path="date/navigatie.toml")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/date/meniu.toml"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "date/meniu.toml"
                 && rewrite.relation_kind == "data_file_load"
                 && rewrite.old_reference == "date/meniu.toml"
                 && rewrite.new_reference == "date/navigatie.toml"
@@ -862,16 +848,16 @@ mod tests {
     #[test]
     fn planner_rewrites_get_image_metadata_static_asset_reference() {
         let root = zola_project("rewrite-image-metadata");
-        write_text(&root, "sursa/static/img/hero.png", "png");
+        write_text(&root, "static/img/hero.png", "png");
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set meta = get_image_metadata(path="static/img/hero.png") %}"#,
         );
         let store = store_with_files(
             &root,
             &[(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 r#"{% set meta = get_image_metadata(path="static/img/hero.png") %}"#,
             )],
         );
@@ -880,8 +866,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/static/img/hero.png",
-            "sursa/static/img/cover.png",
+            "static/img/hero.png",
+            "static/img/cover.png",
         )
         .unwrap();
 
@@ -891,8 +877,8 @@ mod tests {
             .new_text
             .contains(r#"get_image_metadata(path="static/img/cover.png")"#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/static/img/hero.png"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "static/img/hero.png"
                 && rewrite.relation_kind == "image_metadata"
                 && rewrite.old_reference == "static/img/hero.png"
                 && rewrite.new_reference == "static/img/cover.png"
@@ -902,16 +888,16 @@ mod tests {
     #[test]
     fn planner_rewrites_resize_image_static_asset_reference() {
         let root = zola_project("rewrite-resize-image");
-        write_text(&root, "sursa/static/img/hero.png", "png");
+        write_text(&root, "static/img/hero.png", "png");
         write_text(
             &root,
-            "sursa/templates/index.html",
+            "templates/index.html",
             r#"{% set image = resize_image(path="static/img/hero.png", width=640, op="fit_width") %}"#,
         );
         let store = store_with_files(
             &root,
             &[(
-                "sursa/templates/index.html",
+                "templates/index.html",
                 r#"{% set image = resize_image(path="static/img/hero.png", width=640, op="fit_width") %}"#,
             )],
         );
@@ -920,8 +906,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/static/img/hero.png",
-            "sursa/static/img/cover.png",
+            "static/img/hero.png",
+            "static/img/cover.png",
         )
         .unwrap();
 
@@ -931,8 +917,8 @@ mod tests {
             .new_text
             .contains(r#"resize_image(path="static/img/cover.png""#));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
-            rewrite.relative_path == "sursa/templates/index.html"
-                && rewrite.target_relative_path == "sursa/static/img/hero.png"
+            rewrite.relative_path == "templates/index.html"
+                && rewrite.target_relative_path == "static/img/hero.png"
                 && rewrite.relation_kind == "image_resize"
                 && rewrite.old_reference == "static/img/hero.png"
                 && rewrite.new_reference == "static/img/cover.png"
@@ -942,21 +928,13 @@ mod tests {
     #[test]
     fn planner_blocks_implicit_page_template_reference() {
         let root = zola_project("rewrite-implicit");
-        write_text(
-            &root,
-            "sursa/content/despre.md",
-            "+++\ntitle = \"Despre\"\n+++\n",
-        );
-        write_text(
-            &root,
-            "sursa/templates/page.html",
-            "<h1>{{ page.title }}</h1>",
-        );
+        write_text(&root, "content/despre.md", "+++\ntitle = \"Despre\"\n+++\n");
+        write_text(&root, "templates/page.html", "<h1>{{ page.title }}</h1>");
         let store = store_with_files(
             &root,
             &[
-                ("sursa/content/despre.md", "+++\ntitle = \"Despre\"\n+++\n"),
-                ("sursa/templates/page.html", "<h1>{{ page.title }}</h1>"),
+                ("content/despre.md", "+++\ntitle = \"Despre\"\n+++\n"),
+                ("templates/page.html", "<h1>{{ page.title }}</h1>"),
             ],
         );
 
@@ -964,8 +942,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/templates/page.html",
-            "sursa/templates/layouts/page.html",
+            "templates/page.html",
+            "templates/layouts/page.html",
         )
         .unwrap_err();
 
@@ -977,30 +955,27 @@ mod tests {
         let root = zola_project("rewrite-dirty");
         write_text(
             &root,
-            "sursa/templates/base.html",
+            "templates/base.html",
             r#"{% include "partials/header.html" %}"#,
         );
         write_text(
             &root,
-            "sursa/templates/partials/header.html",
+            "templates/partials/header.html",
             "<header>Header</header>",
         );
         let mut store = store_with_files(
             &root,
             &[
                 (
-                    "sursa/templates/base.html",
+                    "templates/base.html",
                     r#"{% include "partials/header.html" %}"#,
                 ),
-                (
-                    "sursa/templates/partials/header.html",
-                    "<header>Header</header>",
-                ),
+                ("templates/partials/header.html", "<header>Header</header>"),
             ],
         );
         store
             .set_draft(
-                "sursa/templates/base.html",
+                "templates/base.html",
                 r#"{% include "partials/header.html" %}<p>draft</p>"#.to_string(),
                 1,
             )
@@ -1010,8 +985,8 @@ mod tests {
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
-            "sursa/templates/partials/header.html",
-            "sursa/templates/partials/site-header.html",
+            "templates/partials/header.html",
+            "templates/partials/site-header.html",
         )
         .unwrap_err();
 
@@ -1020,11 +995,11 @@ mod tests {
 
     fn zola_project(label: &str) -> PathBuf {
         let root = unique_test_dir(label);
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/custom")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/custom")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"https://example.test\"\n",
         )
         .unwrap();

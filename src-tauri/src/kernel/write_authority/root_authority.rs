@@ -31,6 +31,7 @@ pub(super) enum DirectoryAuthorityScope {
     RecoveryTarget,
     ProjectRoot,
     ProjectBootstrap { lease_id: u64 },
+    ZolaArtifactPublication { lease_id: u64 },
     ExternalCodex { lease_id: u64 },
 }
 
@@ -630,7 +631,6 @@ fn selector_for_intent(intent: &WriteIntent) -> AuthoritySelector {
     match intent.category {
         WriteCategory::InternalAppWrite => AuthoritySelector::Application,
         WriteCategory::PreviewWorkspaceWrite => AuthoritySelector::PreviewCache,
-        WriteCategory::BuildOutputWrite => AuthoritySelector::ActiveProject,
         WriteCategory::ExternalIntegrationWrite => AuthoritySelector::ExternalCodex,
         WriteCategory::ProjectSourceWrite if intent.owner == WriteOwner::ProjectInitializer => {
             AuthoritySelector::ProjectBootstrap
@@ -726,10 +726,6 @@ impl ProjectBootstrapLease {
     pub(crate) fn verify_path_binding(&self) -> Result<(), String> {
         capability::verify_directory_authority_path(&self.authority)
     }
-
-    pub(super) fn authority(&self) -> &DirectoryAuthority {
-        &self.authority
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -778,8 +774,8 @@ mod tests {
         let root = unique_test_dir("project-publication-gate");
         let project_a = root.join("project-a");
         let project_b = root.join("project-b");
-        fs::create_dir_all(project_a.join("sursa")).unwrap();
-        fs::create_dir_all(project_b.join("sursa")).unwrap();
+        fs::create_dir_all(&project_a).unwrap();
+        fs::create_dir_all(&project_b).unwrap();
 
         let runtime = Arc::new(WriteAuthorityRuntime::default());
         let application = application_paths(&root.join("app-home"));
@@ -799,7 +795,7 @@ mod tests {
             .publish(pending_a)
             .unwrap();
 
-        let intent_a = project_intent(&project_a, "sursa/a.txt");
+        let intent_a = project_intent(&project_a, "a.txt");
         let lease_a = runtime.acquire_write_lease(&intent_a).unwrap();
         lease_a.bind_target(&intent_a.target).unwrap();
 
@@ -830,7 +826,7 @@ mod tests {
         let current_lease = runtime.acquire_write_lease(&intent_a).unwrap();
         let stale_error = current_lease.bind_target(&intent_a.target).unwrap_err();
         assert!(stale_error.contains("session-b/runtime"));
-        let intent_b = project_intent(&project_b, "sursa/b.txt");
+        let intent_b = project_intent(&project_b, "b.txt");
         current_lease.bind_target(&intent_b.target).unwrap();
         drop(current_lease);
         drop(runtime);
@@ -841,7 +837,7 @@ mod tests {
     fn same_root_reopen_rejects_target_bound_to_stale_runtime_session() {
         let root = unique_test_dir("same-root-stale-runtime-session");
         let project = root.join("project");
-        fs::create_dir_all(project.join("sursa")).unwrap();
+        fs::create_dir_all(&project).unwrap();
 
         let runtime = WriteAuthorityRuntime::default();
         let application = application_paths(&root.join("app-home"));
@@ -864,7 +860,7 @@ mod tests {
             ))
             .unwrap();
 
-        let stale_intent = project_intent(&project, "sursa/stale.txt");
+        let stale_intent = project_intent(&project, "stale.txt");
         assert_eq!(
             stale_intent.target.expected_runtime_session_id, None,
             "WriteTarget must remain backwards-compatible unless a caller opts into session CAS"
@@ -891,10 +887,10 @@ mod tests {
         assert!(error.contains("same-root/runtime-b"));
 
         let current_intent = WriteIntent {
-            target: project_intent(&project, "sursa/current.txt")
+            target: project_intent(&project, "current.txt")
                 .target
                 .with_expected_runtime_session_id("same-root/runtime-b"),
-            ..project_intent(&project, "sursa/current.txt")
+            ..project_intent(&project, "current.txt")
         };
         lease.bind_target(&current_intent.target).unwrap();
         drop(lease);
@@ -906,7 +902,7 @@ mod tests {
     fn same_root_reopen_rejects_session_bound_read_lease() {
         let root = unique_test_dir("same-root-stale-read-lease");
         let project = root.join("project");
-        fs::create_dir_all(project.join("sursa")).unwrap();
+        fs::create_dir_all(&project).unwrap();
 
         let runtime = WriteAuthorityRuntime::default();
         let application = application_paths(&root.join("app-home"));

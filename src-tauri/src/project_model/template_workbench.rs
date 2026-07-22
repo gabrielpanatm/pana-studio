@@ -409,7 +409,7 @@ fn find_template<'a>(
         file == requested
             || name == requested
             || file
-                .strip_prefix("sursa/templates/")
+                .strip_prefix("templates/")
                 .is_some_and(|relative| relative == requested)
             || file
                 .split_once("/templates/")
@@ -456,17 +456,17 @@ mod tests {
             "{% extends \"layout.html\" %}{% block content %}{% include \"partials/header.html\" %}<main></main>{% endblock %}",
         );
         fs::write(
-            root.join("sursa/templates/layout.html"),
+            root.join("templates/layout.html"),
             "{% extends \"base.html\" %}{% block body %}{% block content %}{% endblock %}{% endblock %}",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/base.html"),
+            root.join("templates/base.html"),
             "<!doctype html><body>{% block body %}{% endblock %}</body>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/partials/header.html"),
+            root.join("templates/partials/header.html"),
             "<header><h1>Brand</h1></header>",
         )
         .unwrap();
@@ -517,8 +517,8 @@ mod tests {
         let header = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
-                template_path: "sursa/templates/partials/header.html".to_string(),
-                preferred_page_path: Some("sursa/content/_index.md".to_string()),
+                template_path: "templates/partials/header.html".to_string(),
+                preferred_page_path: Some("content/_index.md".to_string()),
             },
         )
         .unwrap();
@@ -542,12 +542,12 @@ mod tests {
         let root = fixture_root("nested-cycle");
         write_fixture(&root, "{% include \"partials/shell.html\" %}<main></main>");
         fs::write(
-            root.join("sursa/templates/partials/shell.html"),
+            root.join("templates/partials/shell.html"),
             "<section>{% include \"partials/cta.html\" %}</section>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/partials/cta.html"),
+            root.join("templates/partials/cta.html"),
             "<aside>{% include \"partials/shell.html\" %}</aside>",
         )
         .unwrap();
@@ -572,12 +572,12 @@ mod tests {
         let root = fixture_root("orphan-macro");
         write_fixture(&root, "<main></main>");
         fs::write(
-            root.join("sursa/templates/partials/card.html"),
+            root.join("templates/partials/card.html"),
             "<article>Orphan</article>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/partials/macros.html"),
+            root.join("templates/partials/macros.html"),
             "{% macro card(title) %}<article>{{ title }}</article>{% endmacro %}",
         )
         .unwrap();
@@ -621,10 +621,10 @@ mod tests {
             "pana-template-workbench-{name}-{}-{nonce}",
             std::process::id()
         ));
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
@@ -633,10 +633,10 @@ mod tests {
 
     fn write_fixture(root: &PathBuf, index_template: &str) {
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), index_template).unwrap();
+        fs::write(root.join("templates/index.html"), index_template).unwrap();
     }
 }

@@ -13,7 +13,7 @@ use crate::{
     project::ProjectDiskManifest,
 };
 
-pub const PROJECT_WORKSPACE_SCHEMA_VERSION: u32 = 2;
+pub const PROJECT_WORKSPACE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 

@@ -17,7 +17,7 @@ import {
 
 if (!globalThis.window) globalThis.window = globalThis;
 
-const relativePath = "sursa/templates/index.html";
+const relativePath = "templates/index.html";
 const projectRoot = "/project";
 const sessionA = "stable-project:runtime-a";
 const sessionB = "stable-project:runtime-b";

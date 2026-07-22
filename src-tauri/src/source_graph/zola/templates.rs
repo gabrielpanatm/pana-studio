@@ -47,7 +47,7 @@ pub(crate) fn rewrite_zola_template_reference(
 
 pub(crate) fn local_zola_template_project_file_reference(relative_path: &str) -> Option<String> {
     relative_path
-        .strip_prefix("sursa/templates/")
+        .strip_prefix("templates/")
         .filter(|name| !name.is_empty() && name.ends_with(".html"))
         .map(str::to_string)
 }
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn computes_zola_template_name_for_local_and_theme_paths() {
-        let zola_root = PathBuf::from("/project/sursa");
+        let zola_root = PathBuf::from("/project");
         assert_eq!(
             zola_template_name_for_path(&zola_root, &zola_root.join("templates/index.html"), None),
             "index.html"
@@ -117,13 +117,11 @@ mod tests {
     #[test]
     fn maps_local_zola_template_project_files() {
         assert_eq!(
-            local_zola_template_project_file_reference("sursa/templates/blog/card.html").as_deref(),
+            local_zola_template_project_file_reference("templates/blog/card.html").as_deref(),
             Some("blog/card.html")
         );
         assert_eq!(
-            local_zola_template_project_file_reference(
-                "sursa/themes/base/templates/blog/card.html"
-            ),
+            local_zola_template_project_file_reference("themes/base/templates/blog/card.html"),
             None
         );
     }

@@ -204,7 +204,7 @@ mod tests {
     fn projection_failure_keeps_committed_write_evidence() {
         let receipt = write_receipt("committed");
         let error = ProjectWorkspaceDiskError::file_buffer_projection(
-            "sursa/templates/index.html",
+            "templates/index.html",
             receipt.clone(),
             "FileBufferStore projection failed",
         );
@@ -224,7 +224,7 @@ mod tests {
             category: WriteCategory::ProjectSourceWrite,
             owner: WriteOwner::ProjectWorkspace,
             operation: WriteOperationKind::WriteText,
-            target: "project/sursa/templates/index.html".to_string(),
+            target: "project/templates/index.html".to_string(),
             bytes_written: 12,
             started_at_ms: 1,
             completed_at_ms: 2,

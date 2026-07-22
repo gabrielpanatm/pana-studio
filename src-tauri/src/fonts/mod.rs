@@ -131,7 +131,7 @@ pub fn scan_font_inventory(zola_root: &Path) -> FontInventory {
     for root in roots {
         let exists = root.absolute_path.is_dir();
         public_roots.push(FontRoot {
-            relative_path: format!("sursa/{}", root.relative_path),
+            relative_path: root.relative_path.clone(),
             origin: root.origin.clone(),
             theme_name: root.theme_name.clone(),
             exists,
@@ -153,7 +153,7 @@ pub fn scan_font_inventory(zola_root: &Path) -> FontInventory {
             });
             LocalFontFamily {
                 family: family_name_from_directory(&key.directory),
-                directory: format!("sursa/{}", key.directory),
+                directory: key.directory,
                 origin: key.origin,
                 theme_name: key.theme_name,
                 files,
@@ -179,9 +179,7 @@ pub fn overlay_staged_font_resources<'a>(
     resources: impl Iterator<Item = (&'a str, usize)>,
 ) -> FontInventory {
     for (project_relative_path, size_bytes) in resources {
-        let Some(relative_zola_path) = project_relative_path.strip_prefix("sursa/") else {
-            continue;
-        };
+        let relative_zola_path = project_relative_path;
         let path = Path::new(relative_zola_path);
         if !relative_zola_path.starts_with("static/fonturi/") || !is_supported_font_file(path) {
             continue;
@@ -214,7 +212,7 @@ pub fn overlay_staged_font_resources<'a>(
             style: detect_font_style(&file_name),
             unicode_range: None,
         };
-        let public_directory = format!("sursa/{directory}");
+        let public_directory = directory;
         match inventory
             .families
             .iter_mut()
@@ -236,7 +234,7 @@ pub fn overlay_staged_font_resources<'a>(
                 }
             }
             None => inventory.families.push(LocalFontFamily {
-                family: family_name_from_directory(&directory),
+                family: family_name_from_directory(&public_directory),
                 directory: public_directory,
                 origin: FontOrigin::Local,
                 theme_name: None,
@@ -384,7 +382,7 @@ pub fn plan_google_font_family_download(
             })?
             .bytes()
             .map_err(|error| format!("Nu am putut citi fontul {}: {error}", face.url))?;
-        let project_relative = format!("sursa/static/fonturi/{family_slug}/{file_name}");
+        let project_relative = format!("static/fonturi/{family_slug}/{file_name}");
         let public_url = format!("/fonturi/{family_slug}/{file_name}");
         files.push(LocalFontFile {
             file: project_relative.clone(),
@@ -414,7 +412,7 @@ pub fn plan_google_font_family_download(
         result: GoogleFontDownloadResult {
             family: LocalFontFamily {
                 family: family.to_string(),
-                directory: format!("sursa/static/fonturi/{family_slug}"),
+                directory: format!("static/fonturi/{family_slug}"),
                 origin: FontOrigin::Local,
                 theme_name: None,
                 files,
@@ -1021,7 +1019,7 @@ fn local_font_file(path: &Path, relative_zola_path: &str) -> LocalFontFile {
         .to_ascii_lowercase();
 
     LocalFontFile {
-        file: format!("sursa/{relative_zola_path}"),
+        file: relative_zola_path.to_string(),
         file_name: file_name.clone(),
         size_bytes: path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
         extension: extension.clone(),
@@ -1251,22 +1249,19 @@ mod tests {
     fn staged_workspace_font_is_visible_without_a_disk_file() {
         let inventory = FontInventory {
             roots: vec![FontRoot {
-                relative_path: "sursa/static/fonturi".to_string(),
+                relative_path: "static/fonturi".to_string(),
                 origin: FontOrigin::Local,
                 theme_name: None,
                 exists: false,
             }],
             families: Vec::new(),
         };
-        let path = "sursa/static/fonturi/inter/inter-normal-400-1.woff2";
+        let path = "static/fonturi/inter/inter-normal-400-1.woff2";
         let projected = overlay_staged_font_resources(inventory, [(path, 127)].into_iter());
 
         assert_eq!(projected.families.len(), 1);
         assert_eq!(projected.families[0].family, "Inter");
-        assert_eq!(
-            projected.families[0].directory,
-            "sursa/static/fonturi/inter"
-        );
+        assert_eq!(projected.families[0].directory, "static/fonturi/inter");
         assert_eq!(projected.families[0].files[0].file, path);
         assert_eq!(projected.families[0].files[0].size_bytes, 127);
         assert!(projected.roots[0].exists);

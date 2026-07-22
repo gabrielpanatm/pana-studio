@@ -5,15 +5,13 @@ Licența Pană Studio nu înlocuiește și nu restrânge licențele acestor comp
 
 ## Zola 0.22.1
 
-Pană Studio integrează motorul oficial Zola pentru preview-ul tranzacțional și
-distribuie binarul oficial Zola pentru preview în browser și workflow-uri CLI.
+Pană Studio integrează motorul Rust oficial Zola pentru preview-ul
+tranzacțional, Source Browser, validare și build. Nu distribuie și nu pornește
+un executabil Zola separat.
 
 - proiect upstream: <https://github.com/getzola/zola>;
 - versiune: `0.22.1`;
 - revizie sursă: `29540e9897dbe8aca388b13f7bdf615985f6ca2c`;
-- arhivă upstream: `zola-v0.22.1-x86_64-unknown-linux-gnu.tar.gz`;
-- SHA-256 arhivă upstream: `0ca09aa40376aaa9ddfb512ff9ad963262ef95edb0d0f2d5ec6961b6f5cf22ef`;
-- SHA-256 binar distribuit: `45de6b2559aba4df42199dc6b0161acb914d37be4ccaa03297cd4a26c8e14042`;
 - pachete Cargo integrate: `site` și `utils`, redenumite local `zola-site` și
   `zola-utils`;
 - modificări aduse sursei upstream: niciuna;
@@ -25,9 +23,9 @@ Textele relevante sunt distribuite în:
 - `src-tauri/resources/licenses/ZOLA-EUPL-1.2.txt`;
 - `src-tauri/resources/licenses/ZOLA-MIT.txt`.
 
-Sursa exactă corespunzătoare motorului inclus rămâne disponibilă în repository-ul
-upstream la revizia menționată. `Cargo.toml` fixează această revizie, astfel încât
-motorul nu poate fi actualizat implicit.
+Sursa exactă corespunzătoare motorului inclus rămâne disponibilă în
+repository-ul upstream la revizia menționată. `Cargo.toml` fixează această
+revizie, astfel încât motorul nu poate fi actualizat implicit.
 
 ## Anime.js 4.4.1
 

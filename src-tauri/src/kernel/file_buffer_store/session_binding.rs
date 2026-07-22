@@ -95,7 +95,7 @@ mod tests {
             schema_version: 1,
             id: "stable-project".to_string(),
             project_root: root.to_string(),
-            zola_root: format!("{root}/sursa"),
+            zola_root: root.to_string(),
             session_dir: "/tmp/session".to_string(),
             manifest_path: "/tmp/session/manifest.json".to_string(),
             opened_at_ms,

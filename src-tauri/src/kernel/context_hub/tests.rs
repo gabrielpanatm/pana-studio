@@ -114,7 +114,7 @@ fn semantic_change_advances_context_revision() {
     let runtime = ContextHubRuntime::default();
     let first = runtime.publish(publication(1, None), 100).unwrap();
     let second = runtime
-        .publish(publication(2, Some("sursa/templates/index.html")), 200)
+        .publish(publication(2, Some("templates/index.html")), 200)
         .unwrap();
 
     assert!(second.changed);
@@ -129,6 +129,6 @@ fn stale_or_ambiguous_ui_revision_is_rejected() {
 
     assert!(runtime.publish(publication(2, None), 200).is_err());
     assert!(runtime
-        .publish(publication(3, Some("sursa/templates/index.html")), 200)
+        .publish(publication(3, Some("templates/index.html")), 200)
         .is_err());
 }

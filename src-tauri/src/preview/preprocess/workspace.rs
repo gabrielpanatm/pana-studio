@@ -32,6 +32,10 @@ const MAX_SEEDED_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const SKIPPED_SOURCE_DIRECTORIES: &[&str] = &[
     ".git",
     ".svelte-kit",
+    ".panastudio",
+    ".panastudio_preview",
+    "build",
+    "dist",
     "node_modules",
     "target",
     "public",
@@ -779,21 +783,14 @@ fn projection_manifest(lease: &WorkspaceProjectionLease) -> PersistentProjection
         text_hashes: lease
             .source_texts
             .iter()
-            .filter(|(path, _)| path.starts_with("sursa/"))
             .map(|(path, source)| (path.clone(), hash_bytes(source.as_bytes())))
             .collect(),
         resource_hashes: lease
             .resource_bytes
             .iter()
-            .filter(|(path, _)| path.starts_with("sursa/"))
             .map(|(path, bytes)| (path.clone(), hash_bytes(bytes)))
             .collect(),
-        deleted_sources: lease
-            .deleted_sources
-            .iter()
-            .filter(|path| path.starts_with("sursa/"))
-            .cloned()
-            .collect(),
+        deleted_sources: lease.deleted_sources.iter().cloned().collect(),
     }
 }
 
@@ -817,7 +814,7 @@ fn require_projection_root(
     zola_root: &Path,
     lease: &WorkspaceProjectionLease,
 ) -> Result<(), String> {
-    let expected = Path::new(&lease.project_root).join("sursa");
+    let expected = Path::new(&lease.project_root).to_path_buf();
     let expected = expected.canonicalize().unwrap_or(expected);
     let actual = zola_root
         .canonicalize()
@@ -870,7 +867,7 @@ fn require_accepted_disk_baseline(lease: &WorkspaceProjectionLease) -> Result<()
 }
 
 fn projected_active_theme(lease: &WorkspaceProjectionLease) -> Option<String> {
-    ["sursa/zola.toml", "sursa/config.toml"]
+    ["zola.toml", "config.toml"]
         .iter()
         .find_map(|relative| {
             if lease.deleted_sources.contains(*relative) {
@@ -889,6 +886,7 @@ fn copy_zola_sources<R: Runtime>(
     lease: &WorkspaceProjectionLease,
     budget: &mut MaterializationBudget,
 ) -> Result<(), String> {
+    let output_root = crate::deploy::resolve_artifact_root(zola_root, zola_root).ok();
     for entry in sorted_directory_entries(zola_root)? {
         let name = entry.file_name();
         let name_text = name.to_string_lossy();
@@ -899,6 +897,9 @@ fn copy_zola_sources<R: Runtime>(
             continue;
         }
         let source = entry.path();
+        if output_root.as_deref() == Some(source.as_path()) {
+            continue;
+        }
         let target = generation_root.join(&name);
         let file_type = entry.file_type().map_err(|error| {
             format!(
@@ -934,6 +935,7 @@ fn copy_zola_sources<R: Runtime>(
                         generation_root,
                         lease,
                         budget,
+                        output_root.as_deref(),
                     )?;
                 }
                 Ok(_) => {
@@ -955,6 +957,7 @@ fn copy_zola_sources<R: Runtime>(
             generation_root,
             lease,
             budget,
+            output_root.as_deref(),
         )?;
     }
     Ok(())
@@ -968,7 +971,11 @@ fn copy_entry_recursive<R: Runtime>(
     generation_root: &Path,
     lease: &WorkspaceProjectionLease,
     budget: &mut MaterializationBudget,
+    output_root: Option<&Path>,
 ) -> Result<(), String> {
+    if output_root == Some(source) {
+        return Ok(());
+    }
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("Nu am putut inspecta {}: {error}", source.display()))?;
     if metadata.file_type().is_symlink() {
@@ -1005,6 +1012,7 @@ fn copy_entry_recursive<R: Runtime>(
                 generation_root,
                 lease,
                 budget,
+                output_root,
             )?;
         }
         return Ok(());
@@ -1033,7 +1041,7 @@ fn workspace_owns_source_file(
             source.display()
         )
     })?;
-    let project_relative = format!("sursa/{}", relative.to_string_lossy().replace('\\', "/"));
+    let project_relative = relative.to_string_lossy().replace('\\', "/");
     Ok(lease.source_texts.contains_key(&project_relative)
         || lease.resource_bytes.contains_key(&project_relative)
         || lease.deleted_sources.contains(&project_relative))
@@ -1147,11 +1155,9 @@ fn collect_template_paths(
 
 fn zola_relative_projection_path(project_relative: &str) -> Result<Option<PathBuf>, String> {
     let normalized = project_relative.trim().replace('\\', "/");
-    let Some(relative) = normalized.strip_prefix("sursa/") else {
-        return Ok(None);
-    };
+    let relative = normalized.as_str();
     if relative.is_empty() {
-        return Err("Proiecția Preview refuză root-ul `sursa` ca document.".to_string());
+        return Err("Proiecția Preview refuză rădăcina proiectului ca document.".to_string());
     }
     let path = Path::new(relative);
     for component in path.components() {
@@ -1398,22 +1404,22 @@ mod tests {
     }
 
     #[test]
-    fn projection_paths_accept_only_zola_descendants() {
+    fn projection_paths_accept_safe_zola_root_files_and_descendants() {
         assert_eq!(
-            zola_relative_projection_path("sursa/templates/index.html").unwrap(),
+            zola_relative_projection_path("templates/index.html").unwrap(),
             Some(PathBuf::from("templates/index.html"))
         );
-        assert_eq!(zola_relative_projection_path("README.md").unwrap(), None);
-        assert!(zola_relative_projection_path("sursa/templates/../outside.html").is_err());
+        assert_eq!(
+            zola_relative_projection_path("README.md").unwrap(),
+            Some(PathBuf::from("README.md"))
+        );
+        assert!(zola_relative_projection_path("templates/../outside.html").is_err());
     }
 
     #[test]
     fn draft_and_delete_for_same_path_are_rejected() {
         let mut source_texts = std::collections::HashMap::new();
-        source_texts.insert(
-            "sursa/templates/index.html".to_string(),
-            "draft".to_string(),
-        );
+        source_texts.insert("templates/index.html".to_string(), "draft".to_string());
         let accepted_disk = crate::project::AcceptedProjectDiskManifest::new(
             "session",
             "/tmp/project",
@@ -1432,9 +1438,7 @@ mod tests {
             workspace_transaction_id: Some("projection-test-1".to_string()),
             source_texts,
             resource_bytes: std::collections::HashMap::new(),
-            deleted_sources: std::collections::HashSet::from([
-                "sursa/templates/index.html".to_string()
-            ]),
+            deleted_sources: std::collections::HashSet::from(["templates/index.html".to_string()]),
             changed_paths: std::collections::HashSet::new(),
             accepted_disk,
         };

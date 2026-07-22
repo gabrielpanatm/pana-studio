@@ -711,7 +711,7 @@ mod tests {
                 &project,
                 &identity(&before),
                 WorkbenchIntent::OpenDocument {
-                    relative_path: " ./sursa\\templates\\index.html ".to_string(),
+                    relative_path: " ./templates\\index.html ".to_string(),
                     group_id: WorkbenchGroupId::Primary,
                     surface: WorkbenchSurface::Code,
                     pinned: false,
@@ -722,8 +722,8 @@ mod tests {
         assert!(receipt.changed);
         assert_eq!(receipt.revision_after, 1);
         let document = &receipt.snapshot.groups[0].documents[0];
-        assert_eq!(document.relative_path, "sursa/templates/index.html");
-        assert_eq!(document.document_id, "project:sursa/templates/index.html");
+        assert_eq!(document.relative_path, "templates/index.html");
+        assert_eq!(document.document_id, "project:templates/index.html");
         assert_eq!(document.title, "index.html");
     }
 

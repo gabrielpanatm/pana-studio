@@ -230,7 +230,7 @@ function addNormalizedFile(files: Set<string>, path: string | null | undefined) 
 }
 
 function isTemplatePath(path: string | null | undefined) {
-  const normalized = normalizeProjectPath(path).replace(/^sursa\//, "");
+  const normalized = normalizeProjectPath(path);
   return normalized.startsWith("templates/") || /^themes\/[^/]+\/templates\//.test(normalized);
 }
 

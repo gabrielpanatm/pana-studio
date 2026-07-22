@@ -983,7 +983,7 @@
       <div class="title-block">
         <span class="title-icon"><IconGitBranch size={20} stroke={1.8} /></span>
         <div>
-          <span class="eyebrow">Repository · sursa/</span>
+          <span class="eyebrow">Repository · </span>
           <h1>{UI_TERMS.versionControl}</h1>
           <p>Modificări, versiuni, ramuri și sincronizare Git într-un singur flux.</p>
         </div>
@@ -1086,7 +1086,7 @@
           <IconGitCommit size={20} stroke={1.8} />
           <div>
             <strong>Versionarea nu este inițializată</strong>
-            <p>Repository-ul va fi creat strict în <code>sursa/</code>. Restul proiectului rămâne în afara Git.</p>
+          <p>Repository-ul va fi creat direct în rădăcina Zola deschisă. Dosarele exterioare rămân în afara Git.</p>
           </div>
           <button type="button" disabled={!!busyAction || workspaceDirty} onclick={() => runSnapshotMutation("Repository Git inițializat", () => initializeVersioning(mutationIdentity()))}>
             Inițializează Git
@@ -1348,7 +1348,7 @@
               </div>
               <code>{restoreEntry.shortOid}</code>
             </div>
-            <p>Fișierele din <code>sursa/</code> vor reveni la această versiune. Istoricul nu este rescris: rezultatul devine un commit nou, copil al versiunii curente.</p>
+            <p>Fișierele din <code></code> vor reveni la această versiune. Istoricul nu este rescris: rezultatul devine un commit nou, copil al versiunii curente.</p>
             <label>Mesajul commit-ului<textarea rows="3" bind:value={restoreMessage}></textarea></label>
             <label>Scrie <code>{restoreEntry.shortOid}</code> pentru confirmare<input bind:value={restoreConfirmation} autocomplete="off" spellcheck="false" /></label>
             <div class="restore-actions">

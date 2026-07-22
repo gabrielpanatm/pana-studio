@@ -9,6 +9,7 @@ const DERIVED_OR_INTERNAL_DIRS: &[&str] = &[
     "node_modules",
     "target",
     "export",
+    "public",
     ".panastudio",
     ".panastudio_preview",
 ];
@@ -22,8 +23,9 @@ mod tests {
     use super::is_derived_or_internal_dir;
 
     #[test]
-    fn generated_export_is_outside_the_project_source_authority() {
+    fn generated_outputs_are_outside_the_project_source_authority() {
         assert!(is_derived_or_internal_dir("export"));
-        assert!(!is_derived_or_internal_dir("sursa"));
+        assert!(is_derived_or_internal_dir("public"));
+        assert!(!is_derived_or_internal_dir("content"));
     }
 }

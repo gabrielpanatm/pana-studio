@@ -856,17 +856,17 @@ mod tests {
     fn model_with_index_template() -> ProjectModel {
         ProjectModel {
             project_root: PathBuf::from("/project"),
-            zola_root: PathBuf::from("/project/sursa"),
+            zola_root: PathBuf::from("/project"),
             revision: "model-revision".to_string(),
             files: Vec::new(),
             source_graph: SourceGraph {
                 project_root: "/project".to_string(),
-                zola_root: "/project/sursa".to_string(),
+                zola_root: "/project".to_string(),
                 active_theme: None,
                 pages: Vec::new(),
                 templates: vec![SourceGraphTemplate {
                     id: "template:index".to_string(),
-                    file: "sursa/templates/index.html".to_string(),
+                    file: "templates/index.html".to_string(),
                     name: "index.html".to_string(),
                     origin: SourceOrigin::Local,
                     theme_name: None,
@@ -981,9 +981,9 @@ mod tests {
             "file.index".to_string(),
             CommandCenterItemKind::File,
             "index.html".to_string(),
-            "Fișier · sursa/templates/index.html".to_string(),
+            "Fișier · templates/index.html".to_string(),
             "file index".to_string(),
-            "sursa/templates/index.html".to_string(),
+            "templates/index.html".to_string(),
             WorkbenchSurface::Code,
             500,
         );
@@ -1007,7 +1007,7 @@ mod tests {
             CommandCenterAction::OpenDocument {
                 relative_path,
                 surface: WorkbenchSurface::Visual,
-            } if relative_path == "sursa/templates/index.html"
+            } if relative_path == "templates/index.html"
         ));
 
         let symbol_response = search_command_center_index(
@@ -1027,7 +1027,7 @@ mod tests {
             CommandCenterAction::OpenDocument {
                 relative_path,
                 surface: WorkbenchSurface::Code,
-            } if relative_path == "sursa/templates/index.html"
+            } if relative_path == "templates/index.html"
         ));
     }
 

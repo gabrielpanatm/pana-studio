@@ -357,6 +357,122 @@ pub(in crate::kernel::write_authority::capability) fn remove_tree_wal(
     Ok(CapabilityEffect::changed(0))
 }
 
+/// Removes an ephemeral, rebuildable directory through the same
+/// descriptor-bound snapshot/quarantine traversal as the journaled project
+/// operation. This deliberately has no global WAL: callers may only use it
+/// for private generations which can be regenerated, never source of truth.
+pub(in crate::kernel::write_authority::capability) fn remove_rebuildable_tree(
+    target: &WriteTarget,
+    operation_id: &str,
+) -> Result<CapabilityEffect, String> {
+    let lexical = lexical_target(target, false)?;
+    let Some(plan) = plan_remove_tree(target, operation_id)? else {
+        return Ok(CapabilityEffect::unchanged());
+    };
+    validate_plan_shape(&lexical, target, &plan, operation_id)?;
+    let parent = match capture_parent_from_wal_evidence(&lexical, &plan.evidence.parent) {
+        Ok(parent) => parent,
+        Err(error) => return error.into_operation_result(),
+    };
+    if parent.created_ancestors {
+        return Err(capability_error(
+            &lexical.public_label,
+            "cleanup-ul rebuildable nu poate crea namespace părinte",
+        ));
+    }
+    let quarantine_leaf = plan.quarantine_leaf()?;
+    validate_source_before(
+        &parent.directory,
+        &parent.leaf,
+        &plan,
+        &lexical.public_label,
+    )?;
+    validate_leaf_absent(
+        &parent.directory,
+        &quarantine_leaf,
+        &lexical.public_label,
+        "cleanup rebuildable quarantine",
+    )?;
+    validate_public_state(&lexical, &plan.evidence, RemoveTreePublicState::Before)?;
+
+    let recovery = |diagnostic: String| {
+        CapabilityEffect::recovery_required(
+            0,
+            format!(
+                "{diagnostic} Generația rebuildable poate rămâne izolată în quarantine {}; nu repeta cleanup-ul automat.",
+                quarantine_leaf.to_string_lossy()
+            ),
+        )
+    };
+    if let Err(error) = fs::renameat_with(
+        &parent.directory,
+        &parent.leaf,
+        &parent.directory,
+        &quarantine_leaf,
+        RenameFlags::NOREPLACE,
+    ) {
+        return Err(capability_error(
+            &lexical.public_label,
+            &format!("cleanup-ul rebuildable nu a putut izola generația: {error}"),
+        ));
+    }
+    if let Err(error) = validate_quarantine_intact(
+        &parent.directory,
+        &parent.leaf,
+        &quarantine_leaf,
+        &plan,
+        &lexical.public_label,
+    ) {
+        return Ok(recovery(error));
+    }
+    if let Err(error) = sync_directory(&parent.directory, &lexical.public_label) {
+        return Ok(recovery(error));
+    }
+
+    let planned = records_by_key(&plan.source_records);
+    let mut removed = 0_u64;
+    if let Err(error) = remove_planned_tree_contents(
+        &plan.source_directory,
+        "",
+        0,
+        &mut removed,
+        plan.evidence.source.mount_id,
+        &planned,
+        &lexical.public_label,
+    ) {
+        return Ok(recovery(error));
+    }
+    if removed != plan.evidence.source.entry_count {
+        return Ok(recovery(capability_error(
+            &lexical.public_label,
+            &format!(
+                "cleanup-ul rebuildable a eliminat {removed} intrări din {} planificate",
+                plan.evidence.source.entry_count
+            ),
+        )));
+    }
+    if let Err(error) = validate_named_directory_identity(
+        &parent.directory,
+        &quarantine_leaf,
+        &plan.source_directory,
+        &lexical.public_label,
+        "cleanup rebuildable quarantine root",
+    ) {
+        return Ok(recovery(error));
+    }
+    if let Err(error) = fs::unlinkat(&parent.directory, &quarantine_leaf, AtFlags::REMOVEDIR) {
+        return Ok(recovery(capability_error(
+            &lexical.public_label,
+            &format!("cleanup-ul rebuildable nu a putut elimina rădăcina: {error}"),
+        )));
+    }
+    if let Err(error) = sync_directory(&parent.directory, &lexical.public_label) {
+        return Ok(recovery(error));
+    }
+    validate_public_state(&lexical, &plan.evidence, RemoveTreePublicState::Removed)?;
+    Ok(CapabilityEffect::changed(0))
+}
+
 impl RemoveTreeOperationPlan {
     fn quarantine_leaf(&self) -> Result<OsString, String> {
         decode_component_hex(&self.evidence.quarantine_leaf_hex)

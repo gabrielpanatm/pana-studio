@@ -46,7 +46,7 @@ fn dirty_workspace_is_the_transition_authority_even_before_disk_scan() {
             &identity(&workspace),
             mutation_metadata("Edit title"),
             vec![WorkspaceDocumentMutation {
-                relative_path: "sursa/templates/index.html".to_string(),
+                relative_path: "templates/index.html".to_string(),
                 contents: "<h1>Draft</h1>".to_string(),
             }],
             10,
@@ -167,7 +167,7 @@ fn disk_conflict_allows_only_explicit_reload_confirmation() {
 fn workspace() -> ProjectWorkspace {
     let session = session();
     let text = "<h1>Disk</h1>";
-    let relative_path = "sursa/templates/index.html";
+    let relative_path = "templates/index.html";
     let mut documents = FileBufferStore::for_project_session(
         &session,
         1,
@@ -213,7 +213,7 @@ fn session() -> ProjectSessionSnapshot {
         schema_version: 1,
         id: "project-state-test".to_string(),
         project_root: project_root.clone(),
-        zola_root: format!("{project_root}/sursa"),
+        zola_root: project_root.to_string(),
         session_dir: "/tmp/pana-project-state-session".to_string(),
         manifest_path: "/tmp/pana-project-state-session/manifest.json".to_string(),
         opened_at_ms: 7,

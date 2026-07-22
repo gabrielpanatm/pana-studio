@@ -57,7 +57,7 @@ fn role_for_asset(relative_path: &str, language: TextBufferLanguage) -> TextBuff
     {
         return TextBufferRole::Config;
     }
-    if relative_path.contains("/data/") || relative_path.starts_with("sursa/data/") {
+    if relative_path.contains("/data/") || relative_path.starts_with("data/") {
         return TextBufferRole::Data;
     }
     TextBufferRole::Other

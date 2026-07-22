@@ -245,7 +245,7 @@ function includeTeraChainForRenderedSource(
 }
 
 function includeTemplateNameForRenderedFile(file: string) {
-  const path = normalizeProjectPath(file).replace(/^sursa\//, "").toLowerCase();
+  const path = normalizeProjectPath(file).toLowerCase();
   const themed = path.match(/^themes\/[^/]+\/templates\/(.+)$/);
   if (themed) return themed[1];
   const local = path.match(/^templates\/(.+)$/);
@@ -325,12 +325,12 @@ function isTransparentInheritanceBlock(node: SourceGraphNode) {
 }
 
 function isTemplateFile(file: string | null | undefined) {
-  const normalized = normalizeProjectPath(file).replace(/^sursa\//, "");
+  const normalized = normalizeProjectPath(file);
   return normalized.startsWith("templates/") || /^themes\/[^/]+\/templates\//.test(normalized);
 }
 
 function isPartialTemplateFile(file: string | null | undefined) {
-  const normalized = normalizeProjectPath(file).replace(/^sursa\//, "");
+  const normalized = normalizeProjectPath(file);
   const logical = normalized.match(/^themes\/[^/]+\/templates\/(.+)$/)?.[1]
     ?? normalized.replace(/^templates\//, "");
   return logical.startsWith("partials/") || logical.startsWith("macros/");

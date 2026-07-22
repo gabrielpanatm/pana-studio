@@ -397,8 +397,8 @@ mod tests {
 
         let workspace = test_root("ancestor-swap");
         let project = workspace.join("project");
-        let templates = project.join("sursa/templates");
-        let held_templates = project.join("sursa/templates-held");
+        let templates = project.join("templates");
+        let held_templates = project.join("templates-held");
         let outside = workspace.join("outside");
         fs::create_dir_all(&templates).unwrap();
         fs::create_dir_all(&outside).unwrap();
@@ -416,7 +416,7 @@ mod tests {
             || {
                 read_project_disk_text_snapshot(
                     &project,
-                    "sursa/templates/index.html",
+                    "templates/index.html",
                     &FileBufferStoreLimits {
                         max_files: 10,
                         max_file_bytes: 1024,
@@ -437,14 +437,14 @@ mod tests {
         let workspace = test_root("hardlink");
         let project = workspace.join("project");
         let outside = workspace.join("outside.html");
-        let target = project.join("sursa/templates/index.html");
+        let target = project.join("templates/index.html");
         fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::write(&outside, "outside-secret").unwrap();
         fs::hard_link(&outside, &target).unwrap();
 
         let outcome = read_project_disk_text_snapshot(
             &project,
-            "sursa/templates/index.html",
+            "templates/index.html",
             &FileBufferStoreLimits {
                 max_files: 10,
                 max_file_bytes: 1024,

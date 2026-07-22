@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const FILE_BUFFER_STORE_SCHEMA_VERSION: u32 = 2;
+pub const FILE_BUFFER_STORE_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug)]
 pub struct FileBufferStore {

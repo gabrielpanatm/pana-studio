@@ -197,7 +197,7 @@ function relationCountTo(graph: SourceGraph, nodeId: string, kind: SourceRelatio
 }
 
 function sectionNameForPage(page: SourceGraphPage) {
-  const contentPath = page.file.replace(/^sursa\/content\//, "");
+  const contentPath = page.file.replace(/^content\//, "");
   if (contentPath === "_index.md") return "";
   const parts = contentPath.split("/");
   if (page.pageKind === "section" && parts.at(-1) === "_index.md") {

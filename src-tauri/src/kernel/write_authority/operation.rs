@@ -315,6 +315,9 @@ fn authority_scope_label(scope: &DirectoryAuthorityScope) -> String {
         DirectoryAuthorityScope::ProjectBootstrap { lease_id } => {
             format!("project_bootstrap:{lease_id}")
         }
+        DirectoryAuthorityScope::ZolaArtifactPublication { lease_id } => {
+            format!("zola_artifact_publication:{lease_id}")
+        }
         DirectoryAuthorityScope::ExternalCodex { lease_id } => {
             format!("external_codex:{lease_id}")
         }

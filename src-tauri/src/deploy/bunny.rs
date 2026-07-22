@@ -409,12 +409,13 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let root = deploy_fixture("zero-request");
-        fs::create_dir_all(root.join("outside")).unwrap();
-        symlink(root.join("outside"), root.join("export")).unwrap();
+        let outside = root.parent().unwrap().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        symlink(outside, fixture_output(&root)).unwrap();
         let transport = FakeTransport::default();
 
         let error =
-            deploy_project_with_transport(&root, &root.join("sursa"), &root, &transport, |_| {
+            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
                 Ok(test_endpoints())
             })
             .unwrap_err();
@@ -428,15 +429,16 @@ mod tests {
     #[test]
     fn upload_failure_is_terminal_and_skips_purge() {
         let root = deploy_fixture("upload-failure");
-        fs::create_dir_all(root.join("export")).unwrap();
-        fs::write(root.join("export/index.html"), "payload").unwrap();
+        let output = fixture_output(&root);
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("index.html"), "payload").unwrap();
         let transport = FakeTransport {
             fail_upload: true,
             ..FakeTransport::default()
         };
 
         let error =
-            deploy_project_with_transport(&root, &root.join("sursa"), &root, &transport, |_| {
+            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
                 Ok(test_endpoints())
             })
             .unwrap_err();
@@ -450,12 +452,13 @@ mod tests {
     #[test]
     fn successful_manifest_sends_uppercase_checksum_then_purges_once() {
         let root = deploy_fixture("checksum-purge");
-        fs::create_dir_all(root.join("export")).unwrap();
-        fs::write(root.join("export/index.html"), "abc").unwrap();
+        let output = fixture_output(&root);
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("index.html"), "abc").unwrap();
         let transport = FakeTransport::default();
 
         let result =
-            deploy_project_with_transport(&root, &root.join("sursa"), &root, &transport, |_| {
+            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
                 Ok(test_endpoints())
             })
             .unwrap();
@@ -476,15 +479,16 @@ mod tests {
     #[test]
     fn cancellation_stops_between_uploads_and_skips_purge() {
         let root = deploy_fixture("cancel-between-uploads");
-        fs::create_dir_all(root.join("export")).unwrap();
-        fs::write(root.join("export/a.html"), "a").unwrap();
-        fs::write(root.join("export/b.html"), "b").unwrap();
+        let output = fixture_output(&root);
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("a.html"), "a").unwrap();
+        fs::write(output.join("b.html"), "b").unwrap();
         let transport = FakeTransport::default();
         let cancellation_checks = Cell::new(0usize);
 
         let error = deploy_project_with_transport_cancellable(
             &root,
-            &root.join("sursa"),
+            &root.to_path_buf(),
             &root,
             &transport,
             |_| Ok(test_endpoints()),
@@ -505,15 +509,16 @@ mod tests {
     #[test]
     fn purge_failure_is_terminal_after_successful_uploads() {
         let root = deploy_fixture("purge-failure");
-        fs::create_dir_all(root.join("export")).unwrap();
-        fs::write(root.join("export/index.html"), "payload").unwrap();
+        let output = fixture_output(&root);
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("index.html"), "payload").unwrap();
         let transport = FakeTransport {
             fail_purge: true,
             ..FakeTransport::default()
         };
 
         let error =
-            deploy_project_with_transport(&root, &root.join("sursa"), &root, &transport, |_| {
+            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
                 Ok(test_endpoints())
             })
             .unwrap_err();
@@ -525,10 +530,11 @@ mod tests {
     }
 
     fn deploy_fixture(label: &str) -> PathBuf {
-        let root = unique_temp_dir(label);
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        let outer = unique_temp_dir(label);
+        let root = outer.join("site");
+        fs::create_dir_all(&root).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = '/'\noutput_dir = '../export'\n",
         )
         .unwrap();
@@ -538,6 +544,10 @@ mod tests {
         )
         .unwrap();
         root.canonicalize().unwrap()
+    }
+
+    fn fixture_output(root: &Path) -> PathBuf {
+        root.parent().unwrap().join("export")
     }
 
     fn test_endpoints() -> BunnyEndpoints {
@@ -559,6 +569,7 @@ mod tests {
     }
 
     fn cleanup(path: PathBuf) {
-        let _ = fs::remove_dir_all(path);
+        let target = path.parent().unwrap_or(&path).to_path_buf();
+        let _ = fs::remove_dir_all(target);
     }
 }

@@ -93,8 +93,8 @@ impl CapturedVersioningSession {
             .ok_or_else(|| "WriteAuthorityRuntime lipsește pentru Git.".to_string())?;
         let lease = runtime
             .acquire_active_project_read_lease_for_session(&self.root, &self.runtime_session_id)?;
-        let directory = lease
-            .capture_subprocess_directory(Path::new("sursa"), "versioning/git-repository-cwd")?;
+        let directory =
+            lease.capture_subprocess_directory(Path::new(""), "versioning/git-repository-cwd")?;
         let repository = VersionRepository::new(
             self.session.project_root.clone(),
             self.repository_root.clone(),
@@ -146,11 +146,11 @@ fn capture_from_workspace(
     if root != Path::new(&session.project_root) {
         return Err("Root-ul activ și ProjectSession nu corespund pentru Git.".to_string());
     }
-    let expected_repository_root = root.join("sursa");
+    let expected_repository_root = root.to_path_buf();
     let session_repository_root = PathBuf::from(&session.zola_root);
     if session_repository_root != expected_repository_root {
         return Err(format!(
-            "Versiuni acceptă numai zola_root proiect/sursa: sesiunea indică {}, iar rădăcina cerută este {}.",
+            "Versiuni cere ca rădăcina Git și rădăcina Zola să fie dosarul selectat: sesiunea indică {}, iar rădăcina cerută este {}.",
             session_repository_root.display(),
             expected_repository_root.display()
         ));
@@ -543,7 +543,7 @@ async fn execute_source_integration(
                 &captured.runtime_session_id,
             )?;
             let directory = session_lease.capture_subprocess_directory(
-                Path::new("sursa"),
+                Path::new(""),
                 "versioning/integration-git-repository-cwd",
             )?;
             let repository = VersionRepository::new(
@@ -810,7 +810,7 @@ pub async fn initialize_versioning(
             KernelEventKind::VersioningMutationCommitted,
             "initialize",
             Some(project_root),
-            "Repository-ul Git local a fost inițializat în sursa/.",
+            "Repository-ul Git local a fost inițializat direct în rădăcina Zola.",
             None,
         ),
         Err(error) => record_versioning_event(
@@ -1357,7 +1357,7 @@ pub async fn restore_version(
             &captured.runtime_session_id,
         )?;
         let directory = session_lease.capture_subprocess_directory(
-            Path::new("sursa"),
+            Path::new(""),
             "versioning/restore-git-repository-cwd",
         )?;
         let repository = VersionRepository::new(
@@ -1628,7 +1628,7 @@ pub async fn read_version_restore_recovery(
             &captured.runtime_session_id,
         )?;
         let directory = lease.capture_subprocess_directory(
-            Path::new("sursa"),
+            Path::new(""),
             "versioning/recovery-scan-git-cwd",
         )?;
         let repository = VersionRepository::new(
@@ -1701,7 +1701,7 @@ pub async fn read_version_integration_recovery(
             &captured.runtime_session_id,
         )?;
         let directory = lease.capture_subprocess_directory(
-            Path::new("sursa"),
+            Path::new(""),
             "versioning/integration-recovery-scan-git-cwd",
         )?;
         let repository = VersionRepository::new(
@@ -1795,7 +1795,7 @@ pub async fn resolve_version_integration_recovery(
                 &captured.runtime_session_id,
             )?;
             let directory = lease.capture_subprocess_directory(
-                Path::new("sursa"),
+                Path::new(""),
                 "versioning/integration-recovery-resolve-git-cwd",
             )?;
             let repository = VersionRepository::new(
@@ -2075,7 +2075,7 @@ pub async fn resolve_version_restore_recovery(
             &captured.runtime_session_id,
         )?;
         let directory = lease.capture_subprocess_directory(
-            Path::new("sursa"),
+            Path::new(""),
             "versioning/recovery-resolve-git-cwd",
         )?;
         let repository = VersionRepository::new(
@@ -2515,11 +2515,7 @@ fn integration_non_conflict_files_match(
         .collect::<BTreeSet<_>>();
     let expected = expected_tree_files(previous_tree, target_tree)
         .into_iter()
-        .filter(|file| {
-            file.project_relative_path
-                .strip_prefix("sursa/")
-                .is_some_and(|path| !conflicts.contains(path))
-        })
+        .filter(|file| !conflicts.contains(file.project_relative_path.as_str()))
         .collect::<Vec<_>>();
     verify_restored_files(lease, &expected).is_ok()
 }
@@ -2529,9 +2525,8 @@ fn integration_conflict_markers_resolved(
     conflicts: &[String],
 ) -> Result<bool, String> {
     for path in conflicts {
-        let project_path = format!("sursa/{path}");
         let Some(file) = lease.read_bounded_regular_file(
-            Path::new(&project_path),
+            Path::new(path),
             32 * 1024 * 1024,
             "versioning/integration-conflict-resolution",
         )?
@@ -2584,10 +2579,7 @@ fn publish_integration_tree(
             "versioning/integration-binary-baseline",
         )?;
         let live_bytes = live.map(|snapshot| snapshot.bytes);
-        let source_relative = change
-            .relative_path
-            .strip_prefix("sursa/")
-            .unwrap_or(&change.relative_path);
+        let source_relative = change.relative_path.as_str();
         if live_bytes != change.before && !allowed_baseline_divergence.contains(source_relative) {
             return Err(format!(
                 "Integrarea a fost blocată: baseline-ul live pentru {} nu corespunde arborelui HEAD Git.",
@@ -2700,7 +2692,7 @@ fn expected_tree_files(
         .files
         .iter()
         .map(|file| VersionRestoreExpectedFile {
-            project_relative_path: format!("sursa/{}", file.path),
+            project_relative_path: file.path.clone(),
             expected_bytes: Some(file.bytes.clone()),
         })
         .collect::<Vec<_>>();
@@ -2710,7 +2702,7 @@ fn expected_tree_files(
             .iter()
             .filter(|file| !target_paths.contains(file.path.as_str()))
             .map(|file| VersionRestoreExpectedFile {
-                project_relative_path: format!("sursa/{}", file.path),
+                project_relative_path: file.path.clone(),
                 expected_bytes: None,
             }),
     );

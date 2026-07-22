@@ -195,7 +195,7 @@ mod platform {
     };
     pub(super) use remove_tree::{
         classify_remove_tree_recovery, execute_remove_tree_recovery, plan_remove_tree,
-        remove_tree_wal, resolve_remove_tree_operator,
+        remove_rebuildable_tree, remove_tree_wal, resolve_remove_tree_operator,
     };
     pub(super) use rename::{
         classify_rename_recovery, execute_rename_recovery, plan_rename, rename_entry_wal,
@@ -276,6 +276,7 @@ mod platform {
 
     pub(super) struct CapabilityDirectoryLease {
         directory: OwnedFd,
+        #[cfg_attr(not(test), allow(dead_code))]
         public_label: String,
     }
 
@@ -284,6 +285,7 @@ mod platform {
             PathBuf::from(format!("/proc/self/fd/{}", self.directory.as_raw_fd()))
         }
 
+        #[cfg(test)]
         pub(super) fn require_empty(&self) -> Result<(), String> {
             let mut stream = Dir::read_from(&self.directory).map_err(|error| {
                 capability_error(
@@ -3117,6 +3119,168 @@ mod platform {
         )
     }
 
+    /// Atomically publishes a complete rebuildable directory. Both names
+    /// must be sibling leaves under one sealed authority. If a previous
+    /// artifact exists Linux exchanges the two directory names in one syscall;
+    /// otherwise NOREPLACE closes the absent-destination race.
+    pub(super) fn publish_rebuildable_directory(
+        source: &WriteTarget,
+        destination: &WriteTarget,
+    ) -> Result<CapabilityEffect, String> {
+        let source_lexical = lexical_target(source, false)?;
+        let destination_lexical = lexical_target(destination, false)?;
+        if source.boundary_root != destination.boundary_root
+            || source_lexical.relative_components.len() != 1
+            || destination_lexical.relative_components.len() != 1
+            || !matches!(
+                (source.authority(), destination.authority()),
+                (Some(left), Some(right)) if left.same_authority(right)
+            )
+        {
+            return Err(capability_error(
+                &source_lexical.public_label,
+                "publicarea rebuildable cere două leaf-uri sibling sub aceeași authority sigilată",
+            ));
+        }
+
+        let boundary = capture_existing_boundary(&source_lexical)?.ok_or_else(|| {
+            capability_error(
+                &source_lexical.public_label,
+                "authority root pentru publicare nu mai există",
+            )
+        })?;
+        let source_leaf = &source_lexical.relative_components[0];
+        let destination_leaf = &destination_lexical.relative_components[0];
+        if source_leaf == destination_leaf {
+            return Err(capability_error(
+                &source_lexical.public_label,
+                "generația staged și artifactul public nu pot avea același nume",
+            ));
+        }
+
+        let source_before = fs::statat(&boundary.directory, source_leaf, AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(|error| {
+                capability_error(
+                    &source_lexical.public_label,
+                    &format!("generația staged nu poate fi capturată: {error}"),
+                )
+            })?;
+        if FileType::from_raw_mode(source_before.st_mode) != FileType::Directory {
+            return Err(capability_error(
+                &source_lexical.public_label,
+                "generația staged nu este un director real",
+            ));
+        }
+        let source_directory =
+            open_directory_strict(&boundary.directory, source_leaf).map_err(|error| {
+                capability_error(
+                    &source_lexical.public_label,
+                    &format!("generația staged nu poate fi deschisă sigur: {error}"),
+                )
+            })?;
+        validate_open_directory_identity(
+            &source_directory,
+            &source_before,
+            &source_lexical.public_label,
+            "rebuildable publication source",
+        )?;
+
+        let previous = match fs::statat(
+            &boundary.directory,
+            destination_leaf,
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            Ok(stat) => {
+                if FileType::from_raw_mode(stat.st_mode) != FileType::Directory {
+                    return Err(capability_error(
+                        &destination_lexical.public_label,
+                        "artifactul existent nu este un director real",
+                    ));
+                }
+                let directory = open_directory_strict(&boundary.directory, destination_leaf)
+                    .map_err(|error| {
+                        capability_error(
+                            &destination_lexical.public_label,
+                            &format!("artifactul existent nu poate fi deschis sigur: {error}"),
+                        )
+                    })?;
+                validate_open_directory_identity(
+                    &directory,
+                    &stat,
+                    &destination_lexical.public_label,
+                    "rebuildable publication destination",
+                )?;
+                Some((stat, directory))
+            }
+            Err(Errno::NOENT) => None,
+            Err(error) => {
+                return Err(capability_error(
+                    &destination_lexical.public_label,
+                    &format!("artifactul existent nu poate fi inspectat: {error}"),
+                ));
+            }
+        };
+
+        let flags = if previous.is_some() {
+            RenameFlags::EXCHANGE
+        } else {
+            RenameFlags::NOREPLACE
+        };
+        fs::renameat_with(
+            &boundary.directory,
+            source_leaf,
+            &boundary.directory,
+            destination_leaf,
+            flags,
+        )
+        .map_err(|error| {
+            capability_error(
+                &destination_lexical.public_label,
+                &format!(
+                    "commit-ul atomic al generației Zola a fost refuzat; artifactul precedent rămâne publicat: {error}"
+                ),
+            )
+        })?;
+
+        let postflight = (|| {
+            validate_named_directory_identity(
+                &boundary.directory,
+                destination_leaf,
+                &source_directory,
+                &destination_lexical.public_label,
+                "rebuildable publication committed destination",
+            )?;
+            if let Some((_stat, previous_directory)) = &previous {
+                validate_named_directory_identity(
+                    &boundary.directory,
+                    source_leaf,
+                    previous_directory,
+                    &source_lexical.public_label,
+                    "rebuildable publication exchanged previous artifact",
+                )?;
+            } else if leaf_metadata(
+                &boundary.directory,
+                source_leaf,
+                &source_lexical.public_label,
+            )?
+            .is_some()
+            {
+                return Err(capability_error(
+                    &source_lexical.public_label,
+                    "numele staged trebuia să fie absent după publicare",
+                ));
+            }
+            sync_directory(&boundary.directory, &destination_lexical.public_label)
+        })();
+        match postflight {
+            Ok(()) => Ok(CapabilityEffect::changed(0)),
+            Err(error) => Ok(CapabilityEffect::recovery_required(
+                0,
+                format!("{error} Commit-ul poate fi deja vizibil; nu repeta publicarea automat."),
+            )),
+        }
+    }
+
     fn rename_expected_noreplace(
         source: &CapturedParent,
         destination: &CapturedParent,
@@ -5782,7 +5946,7 @@ mod platform {
             let root = unique_test_dir("sealed-authority-preflight-swap");
             let authority_path = root.join("project");
             let held_path = root.join("project-held");
-            let target_path = authority_path.join("sursa/document.txt");
+            let target_path = authority_path.join("document.txt");
             fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             fs::write(&target_path, "original-before").unwrap();
 
@@ -5813,7 +5977,7 @@ mod platform {
 
             assert!(error.contains("înlocuit"));
             assert_eq!(
-                fs::read_to_string(held_path.join("sursa/document.txt")).unwrap(),
+                fs::read_to_string(held_path.join("document.txt")).unwrap(),
                 "original-before"
             );
             assert_eq!(
@@ -5829,12 +5993,12 @@ mod platform {
             let authority_path = root.join("project");
             let held_path = root.join("project-held");
             let replacement_path = root.join("project-replacement");
-            let target_path = authority_path.join("sursa/document.txt");
+            let target_path = authority_path.join("document.txt");
             fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             fs::write(&target_path, "original-before").unwrap();
-            fs::create_dir_all(replacement_path.join("sursa")).unwrap();
+            fs::create_dir_all(replacement_path.to_path_buf()).unwrap();
             fs::write(
-                replacement_path.join("sursa/document.txt"),
+                replacement_path.join("document.txt"),
                 "replacement-sentinel",
             )
             .unwrap();
@@ -5880,7 +6044,7 @@ mod platform {
                 .as_deref()
                 .is_some_and(|diagnostic| diagnostic.contains("Replacement-ul nu a fost folosit")));
             assert_eq!(
-                fs::read_to_string(held_path.join("sursa/document.txt")).unwrap(),
+                fs::read_to_string(held_path.join("document.txt")).unwrap(),
                 "original-after"
             );
             assert_eq!(
@@ -5896,14 +6060,10 @@ mod platform {
             let authority_path = root.join("project");
             let held_path = root.join("project-held");
             let replacement_path = root.join("project-replacement");
-            let target_path = authority_path.join("sursa/missing.txt");
-            fs::create_dir_all(authority_path.join("sursa")).unwrap();
-            fs::create_dir_all(replacement_path.join("sursa")).unwrap();
-            fs::write(
-                replacement_path.join("sursa/missing.txt"),
-                "replacement-sentinel",
-            )
-            .unwrap();
+            let target_path = authority_path.join("missing.txt");
+            fs::create_dir_all(authority_path.to_path_buf()).unwrap();
+            fs::create_dir_all(replacement_path.to_path_buf()).unwrap();
+            fs::write(replacement_path.join("missing.txt"), "replacement-sentinel").unwrap();
 
             let authority = capture_directory_authority(
                 &authority_path,
@@ -5939,7 +6099,7 @@ mod platform {
 
             assert!(!effect.changed);
             assert!(effect.recovery_required);
-            assert!(held_path.join("sursa").is_dir());
+            assert!(held_path.to_path_buf().is_dir());
             assert_eq!(
                 fs::read_to_string(&target_path).unwrap(),
                 "replacement-sentinel"
@@ -6642,10 +6802,6 @@ pub(super) struct CapabilityDirectoryLease {
 impl CapabilityDirectoryLease {
     pub(super) fn current_dir_path(&self) -> std::path::PathBuf {
         self.inner.current_dir_path()
-    }
-
-    pub(super) fn require_empty(&self) -> Result<(), String> {
-        self.inner.require_empty()
     }
 }
 
@@ -7550,6 +7706,24 @@ pub(super) fn rename_noreplace(
 }
 
 #[cfg(target_os = "linux")]
+pub(super) fn publish_rebuildable_directory(
+    source: &WriteTarget,
+    destination: &WriteTarget,
+) -> Result<CapabilityEffect, String> {
+    platform::publish_rebuildable_directory(source, destination)
+        .map(|effect| settle_authority_postflight(effect, &[source, destination]))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn remove_rebuildable_directory_if_exists(
+    target: &WriteTarget,
+    operation_id: &str,
+) -> Result<CapabilityEffect, String> {
+    platform::remove_rebuildable_tree(target, operation_id)
+        .map(|effect| settle_authority_postflight(effect, &[target]))
+}
+
+#[cfg(target_os = "linux")]
 fn settle_authority_postflight(
     mut effect: CapabilityEffect,
     targets: &[&WriteTarget],
@@ -8132,6 +8306,22 @@ pub(super) fn remove_file_if_exists_maintenance(
 pub(super) fn rename_noreplace(
     _source: &WriteTarget,
     _destination: &WriteTarget,
+) -> Result<CapabilityEffect, String> {
+    unsupported()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn publish_rebuildable_directory(
+    _source: &WriteTarget,
+    _destination: &WriteTarget,
+) -> Result<CapabilityEffect, String> {
+    unsupported()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn remove_rebuildable_directory_if_exists(
+    _target: &WriteTarget,
+    _operation_id: &str,
 ) -> Result<CapabilityEffect, String> {
     unsupported()
 }

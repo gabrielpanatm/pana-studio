@@ -305,7 +305,7 @@ pub(super) fn committed_html_duplicate_receipt(
     intent: PreviewProjectionIntentReceipt,
     model_revision: String,
     patch: ProjectHtmlDuplicatePatch,
-    canvas_patch: CanvasPatch,
+    canvas_patch: Option<CanvasPatch>,
     workspace_mutation: ProjectWorkspaceMutationReceipt,
 ) -> PreviewHtmlDuplicateExecutionReceipt {
     let touched_files = workspace_mutation.touched_files.clone();
@@ -323,7 +323,7 @@ pub(super) fn committed_html_duplicate_receipt(
         touched_files,
         diagnostics: Vec::new(),
         patch: Some(patch),
-        canvas_patch: Some(canvas_patch),
+        canvas_patch,
         workspace_mutation: Some(workspace_mutation),
     }
 }

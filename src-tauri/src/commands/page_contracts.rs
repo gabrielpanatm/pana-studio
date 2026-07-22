@@ -89,7 +89,7 @@ pub(super) fn project_relative_zola_path(relative_path: &str) -> String {
     let stripped = strip_zola_root_prefix(relative_path)
         .trim()
         .trim_start_matches('/');
-    format!("sursa/{stripped}")
+    stripped.to_string()
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -9,6 +9,7 @@ use crate::{
         paths::{is_template_relative_path, read_active_theme, zola_relative_path},
         range::line_column,
     },
+    project_model::zola_image_engine::{inspect_zola_image_at, ZolaImagePresentation},
     source_graph::{
         html::parse_html_opening_tags,
         identity::source_node_id,
@@ -24,6 +25,7 @@ pub struct SourceIdIndex {
     pub(super) template_source_by_html_location: HashMap<String, String>,
     pub(super) scope_start_marker_by_location: HashMap<String, String>,
     pub(super) external_scope_start_by_scope_location: HashSet<String>,
+    pub(super) zola_image_by_source_location: HashMap<String, ZolaImagePresentation>,
 }
 
 #[derive(Clone)]
@@ -92,6 +94,10 @@ impl SourceIdIndex {
             .contains(source_location)
     }
 
+    pub(super) fn zola_image_for(&self, source_location: &str) -> Option<&ZolaImagePresentation> {
+        self.zola_image_by_source_location.get(source_location)
+    }
+
     fn collect_templates(&mut self, zola_root: &Path, current: &Path) -> Result<(), String> {
         for entry in fs::read_dir(current).map_err(|error| {
             format!(
@@ -124,7 +130,7 @@ impl SourceIdIndex {
     }
 
     pub(super) fn index_template_source(&mut self, source: &str, relative_path: &str) {
-        let graph_file = format!("sursa/{}", relative_path.trim_start_matches('/'));
+        let graph_file = relative_path.trim_start_matches('/').to_string();
         let tera_scopes = self.index_tera_source(source, relative_path, &graph_file);
         for item in parse_html_opening_tags(source) {
             let (line, column) = line_column(source, item.start);
@@ -137,6 +143,14 @@ impl SourceIdIndex {
                 Some(item.end),
             );
             self.by_source_location.insert(source_location, source_id);
+            if item.tag.eq_ignore_ascii_case("img") {
+                if let Ok(Some(presentation)) = inspect_zola_image_at(source, item.start) {
+                    self.zola_image_by_source_location.insert(
+                        format!("{}:{}:{}", relative_path, line, column),
+                        presentation,
+                    );
+                }
+            }
             if let Some(scope) = innermost_tera_scope(&tera_scopes, item.start, item.end) {
                 self.template_source_by_html_location.insert(
                     format!("{}:{}:{}", relative_path, line, column),

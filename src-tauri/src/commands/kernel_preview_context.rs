@@ -222,7 +222,7 @@ mod identity_tests {
             schema_version: 1,
             id: "stable-project-session".to_string(),
             project_root: "/tmp/project".to_string(),
-            zola_root: "/tmp/project/sursa".to_string(),
+            zola_root: "/tmp/project".to_string(),
             session_dir: "/tmp/app/session".to_string(),
             manifest_path: "/tmp/app/session/manifest.json".to_string(),
             opened_at_ms,

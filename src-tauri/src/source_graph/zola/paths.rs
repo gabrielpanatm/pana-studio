@@ -137,14 +137,14 @@ pub(crate) fn rewrite_zola_data_file_reference(
 
 pub(crate) fn local_static_asset_project_file_reference(relative_path: &str) -> Option<String> {
     relative_path
-        .strip_prefix("sursa/static/")
+        .strip_prefix("static/")
         .filter(|name| !name.is_empty())
         .map(str::to_string)
 }
 
 pub(crate) fn local_zola_data_project_file_reference(relative_path: &str) -> Option<String> {
     relative_path
-        .strip_prefix("sursa/date/")
+        .strip_prefix("date/")
         .filter(|name| !name.is_empty())
         .map(|name| format!("date/{name}"))
 }
@@ -204,11 +204,11 @@ mod tests {
     #[test]
     fn maps_local_static_asset_project_files() {
         assert_eq!(
-            local_static_asset_project_file_reference("sursa/static/js/app.js").as_deref(),
+            local_static_asset_project_file_reference("static/js/app.js").as_deref(),
             Some("js/app.js")
         );
         assert_eq!(
-            local_static_asset_project_file_reference("sursa/content/blog/post.md"),
+            local_static_asset_project_file_reference("content/blog/post.md"),
             None
         );
     }

@@ -206,7 +206,7 @@ test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS r
     htmlPending,
     pendingTag: null,
     globalDirtyState: { dirty: true, canSave: true },
-    kernelSourceDirtyPaths: ["sursa/templates/index.html"],
+    kernelSourceDirtyPaths: ["templates/index.html"],
     cssRuleEdits: { ".hero": { dirty: true } },
     scssVariableEdits: {},
     pageJsEdits: { "templates/index.html": { dirty: true } },
@@ -235,7 +235,7 @@ test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS r
   assert.equal(await saveActiveFile(host), false);
   assert.deepEqual(flushed, ["css:save", "js:save"]);
   assert.equal(host.htmlPending.attributes, true);
-  assert.deepEqual(host.kernelSourceDirtyPaths, ["sursa/templates/index.html"]);
+  assert.deepEqual(host.kernelSourceDirtyPaths, ["templates/index.html"]);
   assert.equal(host.saveRequest, 1);
   assert.deepEqual(statuses.at(-1), {
     text: "Salvarea sesiunii proiectului a eșuat: commit HTML refuzat de kernel",
@@ -265,7 +265,7 @@ test("Save păstrează terminală eroarea saveSessionDrafts și nu o rescrie cu 
     htmlPending: emptyHtmlPending(),
     pendingTag: null,
     globalDirtyState: { dirty: true, canSave: true },
-    kernelSourceDirtyPaths: ["sursa/templates/index.html"],
+    kernelSourceDirtyPaths: ["templates/index.html"],
     cssRuleEdits: {},
     scssVariableEdits: {},
     pageJsEdits: {},

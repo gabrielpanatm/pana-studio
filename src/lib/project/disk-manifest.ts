@@ -41,12 +41,12 @@ export function diffDiskManifests(
 }
 
 export function isPreviewRelevantPath(path: string) {
-  if (path === "sursa/zola.toml" || path === "sursa/config.toml") return true;
-  return path.startsWith("sursa/content/")
-    || path.startsWith("sursa/templates/")
-    || path.startsWith("sursa/themes/")
-    || path.startsWith("sursa/sass/")
-    || path.startsWith("sursa/static/")
+  if (path === "zola.toml" || path === "config.toml") return true;
+  return path.startsWith("content/")
+    || path.startsWith("templates/")
+    || path.startsWith("themes/")
+    || path.startsWith("sass/")
+    || path.startsWith("static/")
     || path.endsWith(".html")
     || path.endsWith(".css")
     || path.endsWith(".scss")

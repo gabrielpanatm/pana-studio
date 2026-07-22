@@ -298,6 +298,7 @@
       variables: collectRelevantCssVariables(element),
       matchedRules: collectMatchedCssRules(element),
       imageSrc: tag === "img" ? element.getAttribute("src") : null,
+      zolaImage: tag === "img" ? decodeZolaImagePresentation(element) : null,
       attributes: collectElementAttributes(element),
 	      parentNode: parentElement ? createDomNodeLink(parentElement) : null,
 	      childNodes: childNodes,
@@ -306,4 +307,25 @@
 	      templateSourceId: inheritedTemplateSourceId(element),
       sessionId: element.getAttribute(SESSION_ID_ATTR) || null,
     };
+  }
+
+  function decodeZolaImagePresentation(element) {
+    var payload = element.getAttribute("data-pana-zola-image");
+    if (!payload) return null;
+    try {
+      var standard = payload.replace(/-/g, "+").replace(/_/g, "/");
+      while (standard.length % 4 !== 0) standard += "=";
+      var binary = window.atob(standard);
+      var bytes = new Uint8Array(binary.length);
+      for (var index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      var candidate = JSON.parse(new TextDecoder().decode(bytes));
+      if (!candidate || typeof candidate.sourceUrl !== "string" || typeof candidate.sourcePath !== "string") {
+        return null;
+      }
+      return candidate;
+    } catch (error) {
+      return null;
+    }
   }

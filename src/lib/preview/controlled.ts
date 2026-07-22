@@ -145,7 +145,7 @@ export function markZolaRunning(
   return {
     ...state,
     validation: "running",
-    validationMessage: "Se rulează zola check în fundal.",
+    validationMessage: "Motorul Zola embedded validează proiectul.",
     validationReason: reason,
   };
 }
@@ -153,7 +153,7 @@ export function markZolaRunning(
 export function markZolaValid(
   state: ControlledPreviewState,
   reason: ZolaValidationReason,
-  message = "Zola check a trecut.",
+  message = "Validarea Zola embedded a trecut.",
 ): ControlledPreviewState {
   return {
     ...state,
@@ -202,7 +202,7 @@ export function zolaValidationLabel(state: ControlledPreviewState) {
     case "queued":
       return "Zola în coadă";
     case "running":
-      return "Zola check";
+      return "Zola validează";
     case "valid":
       return "Zola valid";
     case "invalid":

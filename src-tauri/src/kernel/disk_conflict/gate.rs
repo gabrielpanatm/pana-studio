@@ -615,15 +615,15 @@ mod tests {
     #[test]
     fn gate_allows_clean_targets() {
         let root = test_root("allows-clean");
-        write_text(&root, "sursa/templates/base.html", "base");
+        write_text(&root, "templates/base.html", "base");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/templates/base.html", "base"));
+        store.insert_loaded_file(entry_from_disk(&root, "templates/base.html", "base"));
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::workspace_mutation_text(
                 "WorkspaceMutation",
-                vec!["sursa/templates/base.html".to_string()],
+                vec!["templates/base.html".to_string()],
             ),
         )
         .unwrap();
@@ -638,16 +638,16 @@ mod tests {
     #[test]
     fn gate_blocks_disk_changed_targets() {
         let root = test_root("blocks-disk-changed");
-        write_text(&root, "sursa/templates/base.html", "base");
+        write_text(&root, "templates/base.html", "base");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/templates/base.html", "base"));
-        write_text(&root, "sursa/templates/base.html", "external");
+        store.insert_loaded_file(entry_from_disk(&root, "templates/base.html", "base"));
+        write_text(&root, "templates/base.html", "external");
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::workspace_mutation_text(
                 "WorkspaceMutation",
-                vec!["sursa/templates/base.html".to_string()],
+                vec!["templates/base.html".to_string()],
             ),
         )
         .unwrap();
@@ -669,18 +669,18 @@ mod tests {
     #[test]
     fn workspace_mutation_policy_blocks_dirty_targets() {
         let root = test_root("blocks-dirty");
-        write_text(&root, "sursa/templates/base.html", "base");
+        write_text(&root, "templates/base.html", "base");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/templates/base.html", "base"));
+        store.insert_loaded_file(entry_from_disk(&root, "templates/base.html", "base"));
         store
-            .set_draft("sursa/templates/base.html", "draft".to_string(), 10)
+            .set_draft("templates/base.html", "draft".to_string(), 10)
             .unwrap();
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::workspace_mutation_text(
                 "WorkspaceMutation",
-                vec!["sursa/templates/base.html".to_string()],
+                vec!["templates/base.html".to_string()],
             ),
         )
         .unwrap();
@@ -697,18 +697,18 @@ mod tests {
     #[test]
     fn workspace_mutation_current_buffer_policy_allows_dirty_targets() {
         let root = test_root("allows-dirty-current-buffer");
-        write_text(&root, "sursa/templates/base.html", "base");
+        write_text(&root, "templates/base.html", "base");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/templates/base.html", "base"));
+        store.insert_loaded_file(entry_from_disk(&root, "templates/base.html", "base"));
         store
-            .set_draft("sursa/templates/base.html", "draft".to_string(), 10)
+            .set_draft("templates/base.html", "draft".to_string(), 10)
             .unwrap();
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::workspace_mutation_current_buffer_text(
                 "WorkspaceMutation current buffer",
-                vec!["sursa/templates/base.html".to_string()],
+                vec!["templates/base.html".to_string()],
             ),
         )
         .unwrap();
@@ -744,18 +744,18 @@ mod tests {
     #[test]
     fn lifecycle_policy_blocks_dirty_sources() {
         let root = test_root("blocks-dirty-lifecycle");
-        write_text(&root, "sursa/templates/base.html", "base");
+        write_text(&root, "templates/base.html", "base");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/templates/base.html", "base"));
+        store.insert_loaded_file(entry_from_disk(&root, "templates/base.html", "base"));
         store
-            .set_draft("sursa/templates/base.html", "draft".to_string(), 10)
+            .set_draft("templates/base.html", "draft".to_string(), 10)
             .unwrap();
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_entry_rename(
                 "project.entry.rename",
-                vec!["sursa/templates/base.html".to_string()],
+                vec!["templates/base.html".to_string()],
             ),
         )
         .unwrap();
@@ -778,7 +778,7 @@ mod tests {
             &store,
             KernelDiskConflictGateRequest::project_file_save_text(
                 "project.file.save_text",
-                vec!["sursa/content/new.md".to_string()],
+                vec!["content/new.md".to_string()],
             ),
         )
         .unwrap();
@@ -796,14 +796,14 @@ mod tests {
     #[test]
     fn save_policy_blocks_existing_file_without_baseline() {
         let root = test_root("blocks-existing-without-baseline");
-        write_text(&root, "sursa/content/existing.md", "existing");
+        write_text(&root, "content/existing.md", "existing");
         let store = store(&root);
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_file_save_text(
                 "project.file.save_text",
-                vec!["sursa/content/existing.md".to_string()],
+                vec!["content/existing.md".to_string()],
             ),
         )
         .unwrap();
@@ -820,18 +820,18 @@ mod tests {
     #[test]
     fn save_policy_allows_dirty_tracked_target_as_local_save() {
         let root = test_root("allows-dirty-save");
-        write_text(&root, "sursa/templates/base.html", "base");
+        write_text(&root, "templates/base.html", "base");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/templates/base.html", "base"));
+        store.insert_loaded_file(entry_from_disk(&root, "templates/base.html", "base"));
         store
-            .set_draft("sursa/templates/base.html", "draft".to_string(), 10)
+            .set_draft("templates/base.html", "draft".to_string(), 10)
             .unwrap();
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_file_save_text(
                 "project.file.save_text",
-                vec!["sursa/templates/base.html".to_string()],
+                vec!["templates/base.html".to_string()],
             ),
         )
         .unwrap();
@@ -849,15 +849,15 @@ mod tests {
     #[test]
     fn undo_created_policy_allows_clean_tracked_target() {
         let root = test_root("allows-clean-undo-created");
-        write_text(&root, "sursa/content/new.md", "created");
+        write_text(&root, "content/new.md", "created");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/content/new.md", "created"));
+        store.insert_loaded_file(entry_from_disk(&root, "content/new.md", "created"));
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_file_undo_created_text(
                 "project.file.undo_created_text",
-                vec!["sursa/content/new.md".to_string()],
+                vec!["content/new.md".to_string()],
             ),
         )
         .unwrap();
@@ -872,18 +872,18 @@ mod tests {
     #[test]
     fn undo_created_policy_blocks_dirty_tracked_target() {
         let root = test_root("blocks-dirty-undo-created");
-        write_text(&root, "sursa/content/new.md", "created");
+        write_text(&root, "content/new.md", "created");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/content/new.md", "created"));
+        store.insert_loaded_file(entry_from_disk(&root, "content/new.md", "created"));
         store
-            .set_draft("sursa/content/new.md", "local draft".to_string(), 10)
+            .set_draft("content/new.md", "local draft".to_string(), 10)
             .unwrap();
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_file_undo_created_text(
                 "project.file.undo_created_text",
-                vec!["sursa/content/new.md".to_string()],
+                vec!["content/new.md".to_string()],
             ),
         )
         .unwrap();
@@ -900,14 +900,14 @@ mod tests {
     #[test]
     fn undo_created_policy_blocks_untracked_target() {
         let root = test_root("blocks-untracked-undo-created");
-        write_text(&root, "sursa/content/new.md", "created");
+        write_text(&root, "content/new.md", "created");
         let store = store(&root);
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_file_undo_created_text(
                 "project.file.undo_created_text",
-                vec!["sursa/content/new.md".to_string()],
+                vec!["content/new.md".to_string()],
             ),
         )
         .unwrap();
@@ -924,16 +924,16 @@ mod tests {
     #[test]
     fn undo_created_policy_blocks_changed_disk_target() {
         let root = test_root("blocks-changed-undo-created");
-        write_text(&root, "sursa/content/new.md", "created");
+        write_text(&root, "content/new.md", "created");
         let mut store = store(&root);
-        store.insert_loaded_file(entry_from_disk(&root, "sursa/content/new.md", "created"));
-        write_text(&root, "sursa/content/new.md", "external change");
+        store.insert_loaded_file(entry_from_disk(&root, "content/new.md", "created"));
+        write_text(&root, "content/new.md", "external change");
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_file_undo_created_text(
                 "project.file.undo_created_text",
-                vec!["sursa/content/new.md".to_string()],
+                vec!["content/new.md".to_string()],
             ),
         )
         .unwrap();
@@ -956,7 +956,7 @@ mod tests {
             &store,
             KernelDiskConflictGateRequest::project_entry_restore(
                 "project.entry.restore",
-                vec!["sursa/templates/restored.html".to_string()],
+                vec!["templates/restored.html".to_string()],
             ),
         )
         .unwrap();
@@ -974,14 +974,14 @@ mod tests {
     #[test]
     fn restore_policy_blocks_existing_untracked_destination() {
         let root = test_root("blocks-existing-restore-destination");
-        write_text(&root, "sursa/templates/restored.html", "existing");
+        write_text(&root, "templates/restored.html", "existing");
         let store = store(&root);
 
         let result = evaluate_disk_conflict_gate(
             &store,
             KernelDiskConflictGateRequest::project_entry_restore(
                 "project.entry.restore",
-                vec!["sursa/templates/restored.html".to_string()],
+                vec!["templates/restored.html".to_string()],
             ),
         )
         .unwrap();
@@ -998,11 +998,11 @@ mod tests {
     #[test]
     fn restore_policy_blocks_tracked_destination_even_when_clean() {
         let root = test_root("blocks-tracked-restore-destination");
-        write_text(&root, "sursa/templates/restored.html", "existing");
+        write_text(&root, "templates/restored.html", "existing");
         let mut store = store(&root);
         store.insert_loaded_file(entry_from_disk(
             &root,
-            "sursa/templates/restored.html",
+            "templates/restored.html",
             "existing",
         ));
 
@@ -1010,7 +1010,7 @@ mod tests {
             &store,
             KernelDiskConflictGateRequest::project_entry_restore(
                 "project.entry.restore",
-                vec!["sursa/templates/restored.html".to_string()],
+                vec!["templates/restored.html".to_string()],
             ),
         )
         .unwrap();

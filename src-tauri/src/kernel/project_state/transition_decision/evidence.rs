@@ -160,8 +160,8 @@ mod tests {
                 blocking_count: 1,
             },
             files: vec![KernelDiskConflictFileSnapshot {
-                relative_path: "sursa/templates/index.html".to_string(),
-                absolute_path: "/project/sursa/templates/index.html".to_string(),
+                relative_path: "templates/index.html".to_string(),
+                absolute_path: "/project/templates/index.html".to_string(),
                 language: TextBufferLanguage::Html,
                 role: TextBufferRole::Template,
                 status: KernelDiskConflictStatus::Warning,

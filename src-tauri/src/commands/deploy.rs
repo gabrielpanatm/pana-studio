@@ -1,19 +1,9 @@
-use std::{
-    path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::{
-    commands::{
-        config::{read_project_app_config_for_root, ProjectAppConfig},
-        project::require_current_project_root,
-    },
-    deploy::{
-        deploy_project_to_bunny_cancellable, resolve_artifact_root, run_zola_build_cancellable,
-        run_zola_check,
-    },
-    images::{optimize_output_images, ImageOptimizationOptions},
+    commands::project::require_current_project_root,
+    deploy::{deploy_project_to_bunny_cancellable, run_zola_build_cancellable, run_zola_check},
     kernel::{
         file_buffer_store::FileBufferRequestIdentity,
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
@@ -33,7 +23,6 @@ static PUBLISH_OPERATION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[tauri::command]
 pub async fn zola_build(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    let binary = get_zola_binary(&state)?;
     let root = require_current_project_root(&state)?;
     let runtime_session_id = capture_deploy_runtime_session_id(&state, &root)?;
     let zola_root = zola_project_root(&root);
@@ -49,33 +38,10 @@ pub async fn zola_build(app: AppHandle, state: State<'_, AppState>) -> Result<St
     let worker_app = app.clone();
 
     let worker = tauri::async_runtime::spawn_blocking(move || {
-        let mut log = {
-            let runtime = worker_app.state::<WriteAuthorityRuntime>();
-            let _project_lease = runtime
-                .acquire_active_project_read_lease_for_session(&root, &runtime_session_id)?;
-            run_zola_build_cancellable(&binary, &root, &zola_root, &cancellation_token)?
-        };
-        if cancellation_token.is_cancelled() {
-            return Err(WriteAuthorityError::from(
-                "[publish_cancelled] Build-ul a fost anulat înainte de optimizarea output-ului."
-                    .to_string(),
-            ));
-        }
-        // Do not hold an outer project RwLock lease while the optimizer enters
-        // WriteAuthority; nested reads can deadlock behind a queued publisher.
-        log.push_str(
-            &maybe_optimize_output_images(&worker_app, &root, &zola_root, &runtime_session_id)
-                .map_err(WriteAuthorityError::into_terminal_diagnostic)?,
-        );
-        if cancellation_token.is_cancelled() {
-            return Err(WriteAuthorityError::from(
-                "[publish_cancelled] Build-ul a fost anulat după optimizarea output-ului."
-                    .to_string(),
-            ));
-        }
         let runtime = worker_app.state::<WriteAuthorityRuntime>();
-        let _post_optimizer_lease =
+        let _project_lease =
             runtime.acquire_active_project_read_lease_for_session(&root, &runtime_session_id)?;
+        let log = run_zola_build_cancellable(&root, &zola_root, &cancellation_token)?;
         Ok(log)
     })
     .await;
@@ -97,7 +63,6 @@ pub async fn zola_build(app: AppHandle, state: State<'_, AppState>) -> Result<St
 
 #[tauri::command]
 pub async fn zola_check(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    let binary = get_zola_binary(&state)?;
     let root = require_current_project_root(&state)?;
     let runtime_session_id = capture_deploy_runtime_session_id(&state, &root)?;
     let zola_root = zola_project_root(&root);
@@ -106,10 +71,51 @@ pub async fn zola_check(app: AppHandle, state: State<'_, AppState>) -> Result<St
         let runtime = app.state::<WriteAuthorityRuntime>();
         let _project_lease =
             runtime.acquire_active_project_read_lease_for_session(&root, &runtime_session_id)?;
-        run_zola_check(&binary, &root, &zola_root)
+        run_zola_check(&root, &zola_root)
     })
     .await
-    .map_err(|e| format!("Zola check a căzut în task-ul de fundal: {}", e))?
+    .map_err(|e| format!("Validarea Zola embedded a căzut în task-ul de fundal: {e}"))?
+}
+
+/// Automatic editor validation is the exact ProjectWorkspace generation that
+/// the embedded Preview engine has already loaded and rendered successfully.
+/// Publication preflight continues to call `zola_check`, which intentionally
+/// validates only canonical bytes saved on disk.
+#[tauri::command]
+pub fn zola_check_workspace(state: State<'_, AppState>) -> Result<String, String> {
+    let (project_root, runtime_session_id, revision) = {
+        let workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut captura ProjectWorkspace pentru validare.".to_string())?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru validare.".to_string())?;
+        (
+            workspace.session.project_root.clone(),
+            workspace.runtime_session_id(),
+            workspace.revision,
+        )
+    };
+    let engine = state
+        .preview_engine
+        .lock()
+        .map_err(|_| "Motorul Preview embedded este indisponibil pentru validare.".to_string())?;
+    let engine = engine.as_ref().ok_or_else(|| {
+        "Nu există o generație Preview embedded pentru ProjectWorkspace curent.".to_string()
+    })?;
+    if !engine.owner_matches(&crate::preview::PersistentPreviewOwner::new(
+        &project_root,
+        &runtime_session_id,
+    )) || !engine.active_matches_revision(revision)?
+    {
+        return Err(format!(
+            "Generația Preview nu confirmă revizia ProjectWorkspace {revision}; reîmprospătează Preview-ul."
+        ));
+    }
+    Ok(format!(
+        "OK Validare Zola embedded reușită\nSursă validată: ProjectWorkspace revizia {revision}"
+    ))
 }
 
 // ── Deploy ───────────────────────────────────────────────────────────────────
@@ -131,12 +137,6 @@ pub async fn deploy_to_bunny(app: AppHandle, state: State<'_, AppState>) -> Resu
     let worker_app = app.clone();
 
     let worker = tauri::async_runtime::spawn_blocking(move || {
-        // The optimizer owns its WriteAuthority leases. The outer read lease
-        // starts only after those writes finish and then protects manifest +
-        // network against an internal project publication.
-        let mut prefix =
-            maybe_optimize_output_images(&worker_app, &root, &zola_root, &runtime_session_id)
-                .map_err(WriteAuthorityError::into_terminal_diagnostic)?;
         if cancellation_token.is_cancelled() {
             return Err(
                 "[publish_cancelled] Deploy-ul a fost anulat înainte de upload.".to_string(),
@@ -145,14 +145,7 @@ pub async fn deploy_to_bunny(app: AppHandle, state: State<'_, AppState>) -> Resu
         let runtime = worker_app.state::<WriteAuthorityRuntime>();
         let _project_lease =
             runtime.acquire_active_project_read_lease_for_session(&root, &runtime_session_id)?;
-        // deploy_project_to_bunny captures its manifest only after this
-        // optional optimizer has completed.
-        let deploy =
-            deploy_project_to_bunny_cancellable(&root, &zola_root, &root, &cancellation_token)?;
-        if !prefix.is_empty() {
-            prefix.push('\n');
-        }
-        Ok(format!("{}{}", prefix, deploy))
+        deploy_project_to_bunny_cancellable(&root, &zola_root, &root, &cancellation_token)
     })
     .await;
     let result: Result<String, String> = match worker {
@@ -207,40 +200,6 @@ pub fn cancel_publish_operation(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn get_zola_binary(state: &State<AppState>) -> Result<PathBuf, String> {
-    state
-        .zola_binary_path
-        .lock()
-        .map_err(|_| "Nu am putut accesa binary-ul Zola.".to_string())?
-        .clone()
-        .ok_or_else(|| "Binary-ul Zola nu a fost găsit.".to_string())
-}
-
-fn maybe_optimize_output_images(
-    app: &AppHandle,
-    project_root: &std::path::Path,
-    zola_root: &std::path::Path,
-    expected_runtime_session_id: &str,
-) -> Result<String, WriteAuthorityError> {
-    let config = read_project_app_config_for_root(app, project_root)?;
-    if !config.optimize_images_on_build {
-        return Ok(String::new());
-    }
-
-    let output_dir = resolve_artifact_root(project_root, zola_root)?;
-    let report = optimize_output_images(
-        app,
-        &output_dir,
-        &image_options_from_config(&config),
-        expected_runtime_session_id,
-    )?;
-    let mut log = format!("\n{}\n", report.summary());
-    if !report.log.trim().is_empty() {
-        log.push_str(&report.log);
-    }
-    Ok(log)
-}
-
 fn capture_deploy_runtime_session_id(
     state: &State<'_, AppState>,
     project_root: &std::path::Path,
@@ -260,14 +219,6 @@ fn capture_deploy_runtime_session_id(
         ));
     }
     Ok(session.runtime_instance_id())
-}
-
-fn image_options_from_config(config: &ProjectAppConfig) -> ImageOptimizationOptions {
-    ImageOptimizationOptions {
-        max_dimension: config.image_max_dimension.max(1),
-        exclude_suffix: config.image_exclude_suffix.clone(),
-        replace_only_if_smaller: config.image_replace_only_if_smaller,
-    }
 }
 
 fn begin_publish_operation<R: Runtime>(

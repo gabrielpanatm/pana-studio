@@ -26,7 +26,7 @@ fn derives_theme_page_scss_from_theme_template() {
         "themes/pana-studio/sass/pagini/index.scss"
     );
     assert_eq!(
-        page_scss_relative_path("sursa/themes/pana-studio/templates/atelier/home_page.html"),
+        page_scss_relative_path("themes/pana-studio/templates/atelier/home_page.html"),
         "themes/pana-studio/sass/pagini/atelier-home-page.scss"
     );
 }

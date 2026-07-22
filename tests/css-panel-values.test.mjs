@@ -67,7 +67,7 @@ test("open-source projection reads grouped desktop and exact viewport rules", ()
 `;
   const context = cssRuleContextFromSource(
     source,
-    "sursa/sass/pagini/index.scss",
+    "sass/pagini/index.scss",
     ".hero",
     "mobile",
   );

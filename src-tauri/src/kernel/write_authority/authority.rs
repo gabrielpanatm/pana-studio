@@ -1521,7 +1521,6 @@ fn category_label(category: WriteCategory) -> &'static str {
         WriteCategory::ProjectSourceWrite => "project_source_write",
         WriteCategory::PreviewWorkspaceWrite => "preview_workspace_write",
         WriteCategory::ExternalIntegrationWrite => "external_integration_write",
-        WriteCategory::BuildOutputWrite => "build_output_write",
     }
 }
 
@@ -1537,7 +1536,6 @@ fn owner_label(owner: WriteOwner) -> &'static str {
         WriteOwner::CodexMcp => "codex_mcp",
         WriteOwner::ProjectInitializer => "project_initializer",
         WriteOwner::Preview => "preview",
-        WriteOwner::ImageOptimizer => "image_optimizer",
     }
 }
 
@@ -1567,8 +1565,7 @@ fn copy_replace_policy(owner: WriteOwner) -> Result<CapabilityReplacePolicy, Str
         | WriteOwner::ScratchState
         | WriteOwner::AppConfig
         | WriteOwner::McpContext
-        | WriteOwner::CodexMcp
-        | WriteOwner::ImageOptimizer => Err(format!(
+        | WriteOwner::CodexMcp => Err(format!(
             "WriteAuthority Copy refuză ownerul {owner:?}; numai ProjectInitializer și Preview au contract copy."
         )),
     }
@@ -2786,7 +2783,7 @@ mod tests {
 
         let intent = WriteIntent::new(
             WriteCategory::InternalAppWrite,
-            WriteOwner::ImageOptimizer,
+            WriteOwner::Preview,
             WriteOperationKind::WriteText,
             WriteTarget::new(target.clone(), root.clone(), "undeclared/deploy.txt"),
             WritePolicy::internal_atomic(),
@@ -2917,41 +2914,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn write_bytes_blocks_boundary_below_symlink_to_outside() {
-        use std::os::unix::fs::symlink;
-
-        let root = unique_test_dir("write-bytes-symlink-boundary");
-        let safe = root.join("safe");
-        let outside = root.join("outside");
-        fs::create_dir_all(&safe).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, safe.join("link")).unwrap();
-        let boundary = safe.join("link/build");
-        let external_target = outside.join("build/output.webp");
-        let app = tauri::test::mock_builder()
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .expect("Tauri test app should build with mock context");
-
-        let intent = WriteIntent::new(
-            WriteCategory::BuildOutputWrite,
-            WriteOwner::ImageOptimizer,
-            WriteOperationKind::WriteBytes,
-            WriteTarget::new(boundary.join("output.webp"), boundary, "build/output.webp"),
-            WritePolicy::build_output_atomic(),
-            "Binary write below symlink boundary must be rejected.",
-        );
-
-        let error = WriteAuthority::new(app.handle())
-            .write_bytes(intent, b"blocked")
-            .unwrap_err();
-
-        assert!(error.diagnostic().contains("symlink"));
-        assert!(!external_target.exists());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
     fn append_rejects_dangling_symlink_leaf_without_creating_external_target() {
         use std::os::unix::fs::symlink;
 
@@ -3052,7 +3014,7 @@ mod tests {
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project = root.join("project");
         let source = root.join("source.txt");
-        let initializer_target = project.join("sursa/config.toml");
+        let initializer_target = project.join("config.toml");
         fs::create_dir_all(initializer_target.parent().unwrap()).unwrap();
         fs::write(&source, "new initializer").unwrap();
         fs::write(&initializer_target, "existing initializer").unwrap();
@@ -3076,7 +3038,7 @@ mod tests {
             WriteOwner::ProjectInitializer,
             WriteOperationKind::Copy,
             bootstrap
-                .target(initializer_target.clone(), "project/sursa/config.toml")
+                .target(initializer_target.clone(), "project/config.toml")
                 .unwrap(),
             WritePolicy::project_creation_lifecycle(),
             "Project initializer copy must be create-only.",

@@ -16,11 +16,7 @@ pub(super) fn scan_asset(
 ) -> AssetSummary {
     let file = relative_project_path(project_root, path);
     let logical_path = static_asset_logical_path(zola_root, path, theme_name.as_deref())
-        .unwrap_or_else(|| {
-            file.strip_prefix("sursa/static/")
-                .unwrap_or(&file)
-                .to_string()
-        });
+        .unwrap_or_else(|| file.strip_prefix("static/").unwrap_or(&file).to_string());
     let is_script = path
         .extension()
         .and_then(|extension| extension.to_str())

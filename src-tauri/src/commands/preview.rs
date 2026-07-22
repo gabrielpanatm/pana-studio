@@ -828,22 +828,22 @@ mod tests {
     #[test]
     fn requested_paths_are_deduplicated_and_sorted() {
         let paths = normalize_requested_paths(vec![
-            "sursa/templates/z.html".to_string(),
-            "sursa/templates/a.html".to_string(),
-            "sursa/templates/z.html".to_string(),
+            "templates/z.html".to_string(),
+            "templates/a.html".to_string(),
+            "templates/z.html".to_string(),
         ])
         .unwrap();
         assert_eq!(
             paths,
             vec![
-                "sursa/templates/a.html".to_string(),
-                "sursa/templates/z.html".to_string(),
+                "templates/a.html".to_string(),
+                "templates/z.html".to_string(),
             ]
         );
     }
 
     #[test]
     fn requested_paths_fail_closed_on_traversal() {
-        assert!(normalize_requested_paths(vec!["sursa/../outside".to_string()]).is_err());
+        assert!(normalize_requested_paths(vec!["../outside".to_string()]).is_err());
     }
 }

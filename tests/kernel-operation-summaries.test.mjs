@@ -126,7 +126,7 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
   assert.match(commands, /engine\.acknowledge_candidate_phase/);
   assert.doesNotMatch(commands, /engine\.publish_candidate/);
   assert.doesNotMatch(materializer, /materialize_project_workspace_generation/);
-  assert.doesNotMatch(engine.split("#[cfg(test)]")[0], /Command::new|zola serve/);
+  assert.doesNotMatch(engine.split("#[cfg(test)]")[0], /(?:std|tokio)::process|Command::new/);
   assert.match(engine, /publish_template_workbench_view/);
   assert.match(engine, /render_template_workbench_document/);
   assert.match(server, /workbench_content/);
@@ -189,7 +189,7 @@ test("Source Browser renders AcceptedDisk with embedded Zola on one stable Rust 
     assert.doesNotMatch(process, new RegExp(legacy));
     assert.doesNotMatch(state, new RegExp(legacy));
   }
-  assert.doesNotMatch(process, /zola serve|Command::new\([^)]*zola/);
+  assert.doesNotMatch(process, /(?:std|tokio)::process|Command::new/);
 });
 
 test("Files panel is projected from one exact ProjectWorkspace revision", () => {

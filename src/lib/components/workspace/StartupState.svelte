@@ -17,7 +17,7 @@
 {#if !scannedProject}
   <div class="empty-state">
     <p class="empty-title">Pană Studio</p>
-    <p class="empty-sub">Studio local pentru proiecte web Zola.<br>Deschide root-ul proiectului pentru a începe.</p>
+    <p class="empty-sub">Studio local pentru proiecte web Zola.<br>Deschide direct dosarul-rădăcină Zola pentru a începe.</p>
     <button type="button" class="empty-open-btn" onclick={openProjectFolder}>
       Deschide dosar
     </button>
@@ -26,8 +26,8 @@
   <div class="empty-state">
     <p class="empty-title">Dosar gol</p>
     <p class="empty-sub">
-      Acest dosar poate deveni un proiect web Pană Studio.<br>
-      Aplicația va crea brief, structură, resurse și Zola în <code>sursa/</code>.
+      Acest dosar poate deveni direct un proiect Zola.<br>
+      Configurația și directoarele Zola vor fi create în dosarul selectat.
     </p>
     <button type="button" class="empty-open-btn" onclick={initZolaProject}>
       Inițializează proiect Pană Studio
@@ -40,7 +40,7 @@
   <div class="empty-state">
     <p class="empty-title">Nu este un proiect Pană Studio</p>
     <p class="empty-sub">
-      Deschide root-ul proiectului complet, cu Zola în <code>sursa/</code>.<br>
+      Deschide direct dosarul care conține <code>zola.toml</code> și <code>content/</code>.<br>
       Sau alege un dosar gol pentru inițializare.
     </p>
     <button type="button" class="empty-open-btn" onclick={openProjectFolder}>

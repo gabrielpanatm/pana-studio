@@ -5,7 +5,7 @@ use crate::zola_theme::{template_to_page_slug, validate_template_relative_path};
 const PAGE_JS_TEMPLATE_PATH_MAX_BYTES: usize = 4096;
 
 /// Canonicalizes the project-relative Zola source identity used by every
-/// Page JS boundary. The returned path is relative to `sursa/` and can be
+/// Page JS boundary. The returned path is relative to `` and can be
 /// joined only after this validation has succeeded.
 pub(super) fn normalize_template_path(input: &str) -> Result<String, String> {
     let mut normalized = input.trim().replace('\\', "/");
@@ -41,10 +41,6 @@ pub(super) fn normalize_template_path(input: &str) -> Result<String, String> {
         ));
     }
 
-    normalized = normalized
-        .strip_prefix("sursa/")
-        .unwrap_or(&normalized)
-        .to_string();
     if normalized.is_empty() || normalized.len() > PAGE_JS_TEMPLATE_PATH_MAX_BYTES {
         return Err(format!(
             "Page JS a refuzat template path invalid sau prea lung: {normalized}."
@@ -78,7 +74,7 @@ mod tests {
             "pana-index"
         );
         assert_eq!(
-            js_relative_path("sursa/themes/pana-studio/templates/atelier/home_page.html"),
+            js_relative_path("themes/pana-studio/templates/atelier/home_page.html"),
             "static/js/pana-atelier-home-page.js"
         );
     }
@@ -98,7 +94,7 @@ mod tests {
     #[test]
     fn template_path_normalization_is_canonical_and_blocks_traversal() {
         assert_eq!(
-            normalize_template_path("./sursa/templates/index.html").unwrap(),
+            normalize_template_path("./templates/index.html").unwrap(),
             "templates/index.html"
         );
         assert!(normalize_template_path("templates/../secret.html").is_err());

@@ -1,4 +1,8 @@
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use serde::Serialize;
 
@@ -30,6 +34,99 @@ pub use recovery::{
 pub use registry::{known_write_declarations, WriteDeclaration};
 pub(crate) use root_authority::{ActiveProjectReadLease, CodexConfigLease, ProjectBootstrapLease};
 pub use root_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
+
+static ZOLA_ARTIFACT_PUBLICATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+/// Sealed, descriptor-backed authority for one configured Zola output name
+/// and its private sibling generations. It is intentionally separate from
+/// ProjectSourceWrite because valid Zola `output_dir` values may be outside
+/// the selected project root.
+pub(crate) struct ZolaArtifactPublicationLease {
+    authority: root_authority::DirectoryAuthority,
+    artifact_root: PathBuf,
+    lease_id: u64,
+}
+
+impl ZolaArtifactPublicationLease {
+    pub(crate) fn capture(artifact_root: &Path) -> Result<Self, String> {
+        let parent = artifact_root.parent().ok_or_else(|| {
+            format!(
+                "Artifactul {} nu are un director părinte sigur.",
+                artifact_root.display()
+            )
+        })?;
+        let lease_id = ZOLA_ARTIFACT_PUBLICATION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let authority = capability::bootstrap_directory_authority(
+            parent,
+            "zola-artifact/parent",
+            root_authority::DirectoryAuthorityScope::ZolaArtifactPublication { lease_id },
+        )?;
+        Ok(Self {
+            authority,
+            artifact_root: artifact_root.to_path_buf(),
+            lease_id,
+        })
+    }
+
+    pub(crate) fn verify_path_binding(&self) -> Result<(), String> {
+        capability::verify_directory_authority_path(&self.authority)
+    }
+
+    pub(crate) fn publish_private_generation(
+        &self,
+        staging_root: &Path,
+    ) -> Result<Option<String>, CapabilityMaintenanceError> {
+        let source = self.private_generation_target(staging_root)?;
+        let destination = WriteTarget::new(
+            &self.artifact_root,
+            self.authority.root_path(),
+            "zola-artifact/public",
+        )
+        .bind_authority(self.authority.clone())?;
+        let effect = capability::publish_rebuildable_directory(&source, &destination)?;
+        require_durable_maintenance_effect(effect)?;
+
+        // With EXCHANGE the old complete artifact now owns the private staged
+        // name. Without a previous artifact the staged name is already absent.
+        match self.discard_private_generation(staging_root) {
+            Ok(_) => Ok(None),
+            Err(error) => Ok(Some(format!(
+                "Artifactul nou este publicat, dar cleanup-ul generației precedente cere intervenție: {error}"
+            ))),
+        }
+    }
+
+    pub(crate) fn discard_private_generation(
+        &self,
+        staging_root: &Path,
+    ) -> Result<bool, CapabilityMaintenanceError> {
+        let target = self.private_generation_target(staging_root)?;
+        let operation_id = format!("zola-artifact-cleanup-{}", self.lease_id);
+        let effect = capability::remove_rebuildable_directory_if_exists(&target, &operation_id)?;
+        require_durable_maintenance_effect(effect).map(|effect| effect.changed)
+    }
+
+    fn private_generation_target(
+        &self,
+        path: &Path,
+    ) -> Result<WriteTarget, CapabilityMaintenanceError> {
+        if path.parent() != self.artifact_root.parent()
+            || !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".pana-studio-build-staging-"))
+        {
+            return Err("Authority Zola a refuzat o generație care nu este sibling privat al artifactului configurat.".into());
+        }
+        WriteTarget::new(
+            path,
+            self.authority.root_path(),
+            "zola-artifact/private-generation",
+        )
+        .bind_authority(self.authority.clone())
+        .map_err(Into::into)
+    }
+}
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub(crate) enum CapabilityMaintenanceError {
@@ -137,20 +234,6 @@ impl CapabilitySubprocessDirectory {
     pub fn current_dir_path(&self) -> std::path::PathBuf {
         self.inner.current_dir_path()
     }
-
-    pub fn require_empty(&self) -> Result<(), CapabilityMaintenanceError> {
-        self.inner.require_empty().map_err(Into::into)
-    }
-}
-
-pub(crate) fn capability_capture_subprocess_directory(
-    lease: &ProjectBootstrapLease,
-    path: &Path,
-    public_label: &str,
-) -> Result<CapabilitySubprocessDirectory, CapabilityMaintenanceError> {
-    capability::capture_directory_lease_from_authority(lease.authority(), path, public_label)
-        .map(|inner| CapabilitySubprocessDirectory { inner })
-        .map_err(Into::into)
 }
 
 pub(crate) fn capability_open_regular_file_readonly_no_follow(

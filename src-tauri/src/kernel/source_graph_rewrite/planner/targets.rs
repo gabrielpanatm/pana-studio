@@ -40,7 +40,7 @@ pub(super) fn rewrite_targets_for_entry(
         let new_name =
             local_zola_template_project_file_reference(&destination_file).ok_or_else(|| {
                 format!(
-                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub sursa/templates/.",
+                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub templates/.",
                     template.file, destination_file
                 )
             })?;
@@ -65,13 +65,13 @@ pub(super) fn rewrite_targets_for_entry(
             replace_entry_prefix(&page.file, source_relative_path, destination_relative_path)?;
         let new_name = zola_content_project_file_reference(&destination_file).ok_or_else(|| {
             format!(
-                "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub sursa/content/.",
+                "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub content/.",
                 page.file, destination_file
             )
         })?;
         let old_name = zola_content_project_file_reference(&page.file).ok_or_else(|| {
             format!(
-                "SourceGraphRewrite blocat pentru {}: pagina Source Graph nu este sub sursa/content/.",
+                "SourceGraphRewrite blocat pentru {}: pagina Source Graph nu este sub content/.",
                 page.file
             )
         })?;
@@ -102,13 +102,13 @@ pub(super) fn rewrite_targets_for_entry(
         let new_name =
             local_static_asset_project_file_reference(&destination_file).ok_or_else(|| {
                 format!(
-                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub sursa/static/.",
+                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub static/.",
                     asset.file, destination_file
                 )
             })?;
         let old_name = local_static_asset_project_file_reference(&asset.file).ok_or_else(|| {
             format!(
-                "SourceGraphRewrite blocat pentru {}: asset-ul Source Graph nu este sub sursa/static/.",
+                "SourceGraphRewrite blocat pentru {}: asset-ul Source Graph nu este sub static/.",
                 asset.file
             )
         })?;
@@ -142,13 +142,13 @@ pub(super) fn rewrite_targets_for_entry(
         let new_name =
             local_zola_data_project_file_reference(&destination_file).ok_or_else(|| {
                 format!(
-                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub sursa/date/.",
+                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub date/.",
                     data_file.file, destination_file
                 )
             })?;
         let old_name = local_zola_data_project_file_reference(&data_file.file).ok_or_else(|| {
             format!(
-                "SourceGraphRewrite blocat pentru {}: fișierul data Source Graph nu este sub sursa/date/.",
+                "SourceGraphRewrite blocat pentru {}: fișierul data Source Graph nu este sub date/.",
                 data_file.file
             )
         })?;

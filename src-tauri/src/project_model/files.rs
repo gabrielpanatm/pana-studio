@@ -13,6 +13,10 @@ const TEXT_EXTENSIONS: &[&str] = &[
 ];
 const SKIP_DIRS: &[&str] = &[
     ".git",
+    ".panastudio",
+    ".panastudio_preview",
+    "build",
+    "dist",
     "node_modules",
     "target",
     "public",
@@ -27,8 +31,9 @@ pub(super) fn collect_project_model_files(
     deleted_sources: &HashSet<String>,
 ) -> Result<Vec<ProjectModelFile>, String> {
     let mut paths = Vec::new();
+    let output_root = crate::deploy::resolve_artifact_root(project_root, zola_root).ok();
     if require_safe_model_root(zola_root)? {
-        collect_text_paths(zola_root, &mut paths)?;
+        collect_text_paths(zola_root, &mut paths, output_root.as_deref())?;
     }
 
     let mut seen = HashSet::new();
@@ -54,7 +59,10 @@ pub(super) fn collect_project_model_files(
         if seen.contains(relative_path) || deleted_sources.contains(relative_path) {
             continue;
         }
-        if !relative_path.starts_with("sursa/") {
+        if output_root
+            .as_ref()
+            .is_some_and(|output| project_root.join(relative_path).starts_with(output))
+        {
             continue;
         }
         files.push(project_model_file(
@@ -78,8 +86,7 @@ pub(super) fn collect_project_model_files_from_workspace_sources(
     let mut files = source_texts
         .iter()
         .filter(|(relative_path, _)| {
-            relative_path.starts_with("sursa/")
-                && !deleted_sources.contains(*relative_path)
+            !deleted_sources.contains(*relative_path)
                 && Path::new(relative_path)
                     .extension()
                     .and_then(|extension| extension.to_str())
@@ -143,7 +150,11 @@ pub(super) fn model_revision(files: &[ProjectModelFile]) -> String {
     format!("pm_{:016x}", hasher.finish())
 }
 
-fn collect_text_paths(root: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+fn collect_text_paths(
+    root: &Path,
+    paths: &mut Vec<PathBuf>,
+    output_root: Option<&Path>,
+) -> Result<(), String> {
     let entries = fs::read_dir(root).map_err(|error| {
         format!(
             "ProjectModel nu a putut citi folderul {}: {error}",
@@ -169,6 +180,9 @@ fn collect_text_paths(root: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Strin
             continue;
         }
         if file_type.is_dir() {
+            if output_root == Some(path.as_path()) {
+                continue;
+            }
             let name = path
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -176,7 +190,7 @@ fn collect_text_paths(root: &Path, paths: &mut Vec<PathBuf>) -> Result<(), Strin
             if SKIP_DIRS.iter().any(|skip| name.eq_ignore_ascii_case(skip)) {
                 continue;
             }
-            collect_text_paths(&path, paths)?;
+            collect_text_paths(&path, paths, output_root)?;
         } else if file_type.is_file() && is_text_path(&path) {
             paths.push(path);
         }
@@ -223,13 +237,13 @@ fn file_kind(relative_path: &str) -> ProjectModelFileKind {
     if path.ends_with("zola.toml") || path.ends_with("config.toml") {
         return ProjectModelFileKind::Config;
     }
-    if path.starts_with("sursa/content/") && path.ends_with(".md") {
+    if path.starts_with("content/") && path.ends_with(".md") {
         return ProjectModelFileKind::Content;
     }
     if path.contains("/templates/") && path.ends_with(".html") {
         return ProjectModelFileKind::Template;
     }
-    if path.starts_with("sursa/templates/") && path.ends_with(".html") {
+    if path.starts_with("templates/") && path.ends_with(".html") {
         return ProjectModelFileKind::Template;
     }
     if path.ends_with(".scss") || path.ends_with(".css") {
@@ -238,10 +252,10 @@ fn file_kind(relative_path: &str) -> ProjectModelFileKind {
     if path.ends_with(".js") {
         return ProjectModelFileKind::Script;
     }
-    if path.starts_with("sursa/data/") || path.starts_with("sursa/date/") {
+    if path.starts_with("data/") || path.starts_with("date/") {
         return ProjectModelFileKind::Data;
     }
-    if path.starts_with("sursa/static/") {
+    if path.starts_with("static/") {
         return ProjectModelFileKind::StaticText;
     }
     ProjectModelFileKind::OtherText

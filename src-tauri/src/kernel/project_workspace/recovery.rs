@@ -37,7 +37,7 @@ use super::{
     ProjectWorkspace, WorkspaceBinaryResource,
 };
 
-const PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 3;
+const PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 4;
 const PROJECT_WORKSPACE_RECOVERY_MAX_BYTES: u64 = 192 * 1024 * 1024;
 const PROJECT_OPEN_RECOVERY_ASSESSMENT_SCHEMA_VERSION: u32 = 1;
 const PROJECT_OPEN_RECOVERY_DECISION_SCHEMA_VERSION: u32 = 1;
@@ -974,10 +974,10 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project_path = root.join("project");
-        fs::create_dir_all(project_path.join("sursa/templates")).unwrap();
-        fs::write(project_path.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(project_path.join("templates")).unwrap();
+        fs::write(project_path.join("zola.toml"), "base_url = '/'\n").unwrap();
         fs::write(
-            project_path.join("sursa/templates/index.html"),
+            project_path.join("templates/index.html"),
             "<main>baseline</main>\n",
         )
         .unwrap();
@@ -1003,7 +1003,7 @@ mod tests {
                     transaction_id: None,
                 },
                 vec![super::super::WorkspaceResourceMutation {
-                    relative_path: "sursa/templates/draft.html".to_string(),
+                    relative_path: "templates/draft.html".to_string(),
                     contents: "<main>unsaved</main>\n".to_string(),
                     create_only: true,
                 }],
@@ -1099,8 +1099,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project = root.join("project");
-        fs::create_dir_all(project.join("sursa/static/fonturi/inter")).unwrap();
-        fs::write(project.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(project.join("static/fonturi/inter")).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
         let project = project.canonicalize().unwrap();
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1111,7 +1111,7 @@ mod tests {
         let session = test_session(&project, &session_dir);
 
         let mut original = workspace(&project, &session);
-        let relative_path = "sursa/static/fonturi/inter/inter-regular.woff2";
+        let relative_path = "static/fonturi/inter/inter-regular.woff2";
         let bytes = vec![0x77, 0x4f, 0x46, 0x32, 21, 22, 23];
         original
             .stage_binary_resource_creates(
@@ -1159,8 +1159,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project = root.join("project");
-        fs::create_dir_all(project.join("sursa/static/fonturi/inter")).unwrap();
-        fs::write(project.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(project.join("static/fonturi/inter")).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
         let project = project.canonicalize().unwrap();
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1172,7 +1172,7 @@ mod tests {
         let session = test_session(&project, &session_dir);
 
         let mut original = workspace(&project, &session);
-        let relative_path = "sursa/static/fonturi/inter/inter-regular.woff2";
+        let relative_path = "static/fonturi/inter/inter-regular.woff2";
         let bytes = vec![0x77, 0x4f, 0x46, 0x32, 31, 32, 33];
         original
             .stage_binary_resource_creates(
@@ -1242,8 +1242,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project = root.join("project");
-        fs::create_dir_all(project.join("sursa/templates")).unwrap();
-        fs::write(project.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(project.join("templates")).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
         let project = project.canonicalize().unwrap();
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1269,7 +1269,7 @@ mod tests {
                         transaction_id: None,
                     },
                     vec![super::super::WorkspaceResourceMutation {
-                        relative_path: "sursa/templates/candidate.html".to_string(),
+                        relative_path: "templates/candidate.html".to_string(),
                         contents: "<main>candidate</main>".to_string(),
                         create_only: true,
                     }],
@@ -1285,7 +1285,7 @@ mod tests {
         assert_eq!(after.history.undo_count, before.history.undo_count);
         assert!(live
             .documents
-            .text_for("sursa/templates/candidate.html")
+            .text_for("templates/candidate.html")
             .is_none());
 
         drop(app);
@@ -1330,7 +1330,7 @@ mod tests {
             schema_version: 1,
             id: "binary-recovery-session".to_string(),
             project_root: project.to_string_lossy().into_owned(),
-            zola_root: project.join("sursa").to_string_lossy().into_owned(),
+            zola_root: project.to_path_buf().to_string_lossy().into_owned(),
             session_dir: session_dir.to_string_lossy().into_owned(),
             manifest_path: session_dir
                 .join("manifest.json")

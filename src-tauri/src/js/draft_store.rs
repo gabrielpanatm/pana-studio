@@ -464,7 +464,7 @@ mod tests {
             schema_version: 1,
             id: "session-test".to_string(),
             project_root: "/tmp/pana-test".to_string(),
-            zola_root: "/tmp/pana-test/sursa".to_string(),
+            zola_root: "/tmp/pana-test".to_string(),
             session_dir: "/tmp/pana-test-session".to_string(),
             manifest_path: "/tmp/pana-test-session/session.json".to_string(),
             opened_at_ms,

@@ -103,7 +103,7 @@ export function fontFaceTargetForVariable(variable: ScssVariable | null | undefi
 
 function toProjectRelativeZolaFile(file: string) {
   const normalized = file.replace(/^\/+/, "");
-  return normalized.startsWith("sursa/") ? normalized : `sursa/${normalized}`;
+  return normalized;
 }
 
 function findFontVariable(variables: ScssVariable[], candidates: string[]) {

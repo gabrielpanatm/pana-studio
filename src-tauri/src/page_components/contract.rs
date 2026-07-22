@@ -101,19 +101,11 @@ pub fn plan_page_component_contract(
 }
 
 fn normalize_template_path(path: &str) -> String {
-    path.trim()
-        .trim_start_matches('/')
-        .strip_prefix("sursa/")
-        .unwrap_or_else(|| path.trim().trim_start_matches('/'))
-        .to_string()
+    path.trim().trim_start_matches('/').to_string()
 }
 
 fn to_project_relative_path(path: &str) -> String {
-    if path.starts_with("sursa/") {
-        path.to_string()
-    } else {
-        format!("sursa/{path}")
-    }
+    path.to_string()
 }
 
 fn known_component_id_set() -> HashSet<&'static str> {
@@ -520,7 +512,7 @@ mod tests {
             PageJsConfig::default(),
         ));
 
-        assert_eq!(plan.stylesheet_path, "sursa/sass/pagini/index.scss");
+        assert_eq!(plan.stylesheet_path, "sass/pagini/index.scss");
         assert_eq!(plan.stylesheet_href, "/pagini/index.css");
         assert_eq!(plan.active_component_ids, vec!["counter".to_string()]);
         assert!(plan.template.changed);

@@ -71,7 +71,7 @@ pub(crate) fn build_version_restore_plan(
                 "Restaurarea a fost blocată pentru {path}: schimbările de fișiere executabile nu pot fi reproduse exact de ProjectWorkspace."
             ));
         }
-        let project_relative_path = format!("sursa/{path}");
+        let project_relative_path = path.to_string();
         let workspace_tracks_text = workspace
             .documents
             .files

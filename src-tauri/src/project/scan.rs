@@ -35,10 +35,13 @@ pub fn scan_project_root(root: &Path) -> Result<ProjectScan, String> {
         .map_err(|error| format!("Nu am putut rezolva folderul: {}", error))?;
     let zola_mode = is_zola_project(&root);
     let zola_root = zola_project_root(&root);
+    let output_root = zola_mode
+        .then(|| crate::deploy::resolve_artifact_root(&root, &zola_root).ok())
+        .flatten();
     let active_theme = zola_mode.then(|| read_active_theme(&zola_root)).flatten();
     let mut files = Vec::new();
 
-    collect_project_files(&root, &root, &mut files, zola_mode)?;
+    collect_project_files(&root, &root, &mut files, zola_mode, output_root.as_deref())?;
     files.sort_by(compare_project_files);
 
     let is_empty = fs::read_dir(&root)
@@ -84,7 +87,7 @@ pub fn scan_project_workspace_projection(
     paths.extend(projection.source_texts.keys().cloned());
     paths.extend(projection.resource_bytes.keys().cloned());
 
-    let config_source = ["sursa/zola.toml", "sursa/config.toml"]
+    let config_source = ["zola.toml", "config.toml"]
         .iter()
         .find_map(|path| projection.source_texts.get(*path));
     let is_zola = config_source.is_some();
@@ -178,6 +181,7 @@ fn collect_project_files(
     current: &Path,
     files: &mut Vec<ProjectFile>,
     zola_mode: bool,
+    output_root: Option<&Path>,
 ) -> Result<(), String> {
     if files.len() >= MAX_SCAN_FILES {
         return Ok(());
@@ -212,7 +216,7 @@ fn collect_project_files(
         }
 
         if file_type.is_dir() {
-            if should_skip_dir(&file_name, zola_mode) {
+            if should_skip_dir(&path, &file_name, zola_mode, output_root) {
                 continue;
             }
 
@@ -226,7 +230,7 @@ fn collect_project_files(
                 preview_path: None,
             });
 
-            collect_project_files(root, &path, files, zola_mode)?;
+            collect_project_files(root, &path, files, zola_mode, output_root)?;
             continue;
         }
 
@@ -282,7 +286,7 @@ pub(crate) fn project_file_role_for_path(
     }
 
     let zola_relative_path = strip_zola_root_prefix(relative_path);
-    let logical_zola_path = zola_path_without_theme_root(&zola_relative_path);
+    let logical_zola_path = zola_path_without_theme_root(zola_relative_path);
 
     if zola_relative_path.starts_with("content/") && matches!(kind, ProjectFileKind::Md) {
         return Some(ProjectFileRole::Page);
@@ -300,7 +304,7 @@ pub(crate) fn project_file_role_for_path(
         });
     }
 
-    if is_template_relative_path(&zola_relative_path) && matches!(kind, ProjectFileKind::Html) {
+    if is_template_relative_path(zola_relative_path) && matches!(kind, ProjectFileKind::Html) {
         return Some(ProjectFileRole::Template);
     }
 
@@ -405,12 +409,12 @@ fn project_file_sort_key(file: &ProjectFile) -> (u8, u8, usize, String) {
     }
 }
 
-fn should_skip_dir(name: &str, zola_mode: bool) -> bool {
+fn should_skip_dir(path: &Path, name: &str, zola_mode: bool, output_root: Option<&Path>) -> bool {
     if is_derived_or_internal_dir(name) {
         return true;
     }
 
-    zola_mode && name == "public"
+    zola_mode && output_root.is_some_and(|output| output == path)
 }
 
 fn project_file_kind(path: &Path) -> Option<ProjectFileKind> {
@@ -470,15 +474,15 @@ mod tests {
     #[test]
     fn scan_includes_empty_directories() {
         let root = temp_project_root("empty-dir");
-        fs::create_dir_all(root.join("sursa/static/imagini/goale")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "").unwrap();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
+        fs::create_dir_all(root.join("static/imagini/goale")).unwrap();
+        fs::write(root.join("zola.toml"), "").unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
 
         let scan = scan_project_root(&root).unwrap();
         let empty_dir = scan
             .files
             .iter()
-            .find(|file| file.relative_path == "sursa/static/imagini/goale")
+            .find(|file| file.relative_path == "static/imagini/goale")
             .expect("empty directory should be scanned");
 
         assert!(matches!(empty_dir.kind, ProjectFileKind::Dir));
@@ -493,26 +497,26 @@ mod tests {
 
         let root = temp_project_root("symlinks");
         let outside = temp_project_root("symlinks-outside");
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/templates/local.html"), "local").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("templates/local.html"), "local").unwrap();
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("secret.html"), "secret").unwrap();
         symlink(
             outside.join("secret.html"),
-            root.join("sursa/templates/linked.html"),
+            root.join("templates/linked.html"),
         )
         .unwrap();
-        symlink(&outside, root.join("sursa/external-dir")).unwrap();
+        symlink(&outside, root.join("external-dir")).unwrap();
 
         let scan = scan_project_root(&root).unwrap();
 
         assert!(scan
             .files
             .iter()
-            .any(|file| file.relative_path == "sursa/templates/local.html"));
+            .any(|file| file.relative_path == "templates/local.html"));
         assert!(!scan.files.iter().any(|file| {
-            file.relative_path == "sursa/templates/linked.html"
-                || file.relative_path.starts_with("sursa/external-dir")
+            file.relative_path == "templates/linked.html"
+                || file.relative_path.starts_with("external-dir")
         }));
 
         let _ = fs::remove_dir_all(root);
@@ -522,8 +526,8 @@ mod tests {
     #[test]
     fn scan_includes_project_env_file_for_config_buffering() {
         let root = temp_project_root("env-file");
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "").unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(root.join("zola.toml"), "").unwrap();
         fs::write(root.join(".env"), "BUNNY_API_KEY=test\n").unwrap();
 
         let scan = scan_project_root(&root).unwrap();
@@ -538,10 +542,10 @@ mod tests {
     #[test]
     fn scan_excludes_generated_export_tree_from_editable_projection() {
         let root = temp_project_root("generated-export");
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
         fs::create_dir_all(root.join("export/css-framework")).unwrap();
         fs::create_dir_all(root.join("export/pagini")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "").unwrap();
+        fs::write(root.join("zola.toml"), "").unwrap();
         fs::write(root.join("export/css-framework/framework.css"), "body {}").unwrap();
         fs::write(root.join("export/pagini/index.css"), ".page {}").unwrap();
 
@@ -556,15 +560,41 @@ mod tests {
     }
 
     #[test]
+    fn scan_excludes_default_and_custom_zola_output_directories() {
+        for (label, config, output) in [
+            ("default-public", "base_url = '/'\n", "public"),
+            (
+                "custom-output",
+                "base_url = '/'\noutput_dir = 'generated/site'\n",
+                "generated/site",
+            ),
+        ] {
+            let root = temp_project_root(label);
+            fs::create_dir_all(root.join("content")).unwrap();
+            fs::create_dir_all(root.join(output)).unwrap();
+            fs::write(root.join("zola.toml"), config).unwrap();
+            fs::write(root.join(output).join("index.html"), "generated").unwrap();
+
+            let scan = scan_project_root(&root).unwrap();
+
+            assert!(scan.files.iter().all(|file| {
+                file.relative_path != output
+                    && !file.relative_path.starts_with(&format!("{output}/"))
+            }));
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
     fn workspace_scan_projects_one_exact_revision_without_live_disk_overlay() {
         let root = temp_project_root("workspace-projection");
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "theme = \"disk-theme\"\n").unwrap();
-        fs::write(root.join("sursa/templates/index.html"), "disk template").unwrap();
-        fs::write(root.join("sursa/static/removed.js"), "disk script").unwrap();
-        fs::write(root.join("sursa/static/logo.png"), b"png").unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
+        fs::write(root.join("zola.toml"), "theme = \"disk-theme\"\n").unwrap();
+        fs::write(root.join("templates/index.html"), "disk template").unwrap();
+        fs::write(root.join("static/removed.js"), "disk script").unwrap();
+        fs::write(root.join("static/logo.png"), b"png").unwrap();
 
         let root = root.canonicalize().unwrap();
         let project_root = root.to_string_lossy().into_owned();
@@ -582,34 +612,34 @@ mod tests {
             workspace_transaction_id: Some("scan-test-7".to_string()),
             source_texts: HashMap::from([
                 (
-                    "sursa/zola.toml".to_string(),
+                    "zola.toml".to_string(),
                     "theme = \"workspace-theme\"\n".to_string(),
                 ),
                 (
-                    "sursa/templates/index.html".to_string(),
+                    "templates/index.html".to_string(),
                     "workspace template".to_string(),
                 ),
                 (
-                    "sursa/templates/draft.html".to_string(),
+                    "templates/draft.html".to_string(),
                     "unsaved draft".to_string(),
                 ),
             ]),
             resource_bytes: HashMap::new(),
-            deleted_sources: HashSet::from(["sursa/static/removed.js".to_string()]),
+            deleted_sources: HashSet::from(["static/removed.js".to_string()]),
             changed_paths: HashSet::from([
-                "sursa/zola.toml".to_string(),
-                "sursa/templates/index.html".to_string(),
-                "sursa/templates/draft.html".to_string(),
-                "sursa/static/removed.js".to_string(),
+                "zola.toml".to_string(),
+                "templates/index.html".to_string(),
+                "templates/draft.html".to_string(),
+                "static/removed.js".to_string(),
             ]),
             accepted_disk,
         };
 
         // These live-disk changes happen after the immutable lease was
         // captured and must not alter the Files-panel projection.
-        fs::write(root.join("sursa/zola.toml"), "theme = \"external-theme\"\n").unwrap();
+        fs::write(root.join("zola.toml"), "theme = \"external-theme\"\n").unwrap();
         fs::write(
-            root.join("sursa/templates/external.html"),
+            root.join("templates/external.html"),
             "unaccepted external file",
         )
         .unwrap();
@@ -627,10 +657,10 @@ mod tests {
         );
         assert_eq!(scan.accepted_disk_generation, Some(1));
         assert_eq!(scan.active_theme.as_deref(), Some("workspace-theme"));
-        assert!(paths.contains("sursa/templates/draft.html"));
-        assert!(paths.contains("sursa/static/logo.png"));
-        assert!(!paths.contains("sursa/static/removed.js"));
-        assert!(!paths.contains("sursa/templates/external.html"));
+        assert!(paths.contains("templates/draft.html"));
+        assert!(paths.contains("static/logo.png"));
+        assert!(!paths.contains("static/removed.js"));
+        assert!(!paths.contains("templates/external.html"));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -639,7 +669,7 @@ mod tests {
     fn zola_mode_roles_include_active_theme_roots() {
         assert!(matches!(
             project_file_role_for_path(
-                "sursa/themes/test-theme/templates/base.html",
+                "themes/test-theme/templates/base.html",
                 &ProjectFileKind::Html,
                 true
             ),
@@ -647,7 +677,7 @@ mod tests {
         ));
         assert!(matches!(
             project_file_role_for_path(
-                "sursa/themes/test-theme/sass/pagini/index.scss",
+                "themes/test-theme/sass/pagini/index.scss",
                 &ProjectFileKind::Scss,
                 true
             ),
@@ -655,7 +685,7 @@ mod tests {
         ));
         assert!(matches!(
             project_file_role_for_path(
-                "sursa/themes/test-theme/static/js/site.js",
+                "themes/test-theme/static/js/site.js",
                 &ProjectFileKind::Js,
                 true
             ),
@@ -667,7 +697,7 @@ mod tests {
     fn zola_mode_roles_do_not_treat_arbitrary_nested_templates_as_zola_templates() {
         assert!(matches!(
             project_file_role_for_path(
-                "sursa/content/example/templates/card.html",
+                "content/example/templates/card.html",
                 &ProjectFileKind::Html,
                 true
             ),

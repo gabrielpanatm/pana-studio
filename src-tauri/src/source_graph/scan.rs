@@ -98,7 +98,7 @@ fn build_source_graph_internal(
     let _ = require_safe_scan_root(&zola_root)?;
     require_safe_draft_source_paths(draft_sources)?;
     require_safe_deleted_source_paths(deleted_sources)?;
-    let projected_config = ["sursa/zola.toml", "sursa/config.toml"]
+    let projected_config = ["zola.toml", "config.toml"]
         .iter()
         .find_map(|path| draft_sources.get(*path));
     let theme_resolver = match workspace_projection {
@@ -529,13 +529,13 @@ fn add_workspace_manifest_only_paths(
             ));
         }
         let path = project_root.join(&relative);
-        if relative.starts_with("sursa/static/") {
+        if relative.starts_with("static/") {
             local_assets.push(path);
         } else if active_theme
-            .is_some_and(|theme| relative.starts_with(&format!("sursa/themes/{theme}/static/")))
+            .is_some_and(|theme| relative.starts_with(&format!("themes/{theme}/static/")))
         {
             theme_assets.push(path);
-        } else if relative.starts_with("sursa/date/")
+        } else if relative.starts_with("date/")
             && Path::new(&relative)
                 .extension()
                 .and_then(|extension| extension.to_str())
@@ -574,21 +574,21 @@ mod tests {
     #[test]
     fn source_graph_includes_draft_only_template_for_atomic_workspace_planning() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             "{% block content %}<main></main>{% endblock %}\n",
         )
         .unwrap();
         let drafts = HashMap::from([(
-            "sursa/templates/partials/hero.html".to_string(),
+            "templates/partials/hero.html".to_string(),
             "<section class=\"hero\"></section>\n".to_string(),
         )]);
 
@@ -600,7 +600,7 @@ mod tests {
             .iter()
             .any(|template| template.name == "partials/hero.html" && template.is_partial));
         assert!(graph.nodes.iter().any(|node| {
-            node.file == "sursa/templates/partials/hero.html"
+            node.file == "templates/partials/hero.html"
                 && node.kind == SourceNodeKind::Html
                 && node.label == "<section .hero>"
         }));
@@ -609,8 +609,8 @@ mod tests {
     #[test]
     fn source_graph_rejects_unsafe_virtual_draft_path() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
         let drafts =
             HashMap::from([("../outside.html".to_string(), "<main></main>\n".to_string())]);
 
@@ -626,38 +626,38 @@ mod tests {
     #[test]
     fn builds_minimal_zola_source_graph() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
-        fs::create_dir_all(root.join("sursa/sass/pagini")).unwrap();
-        fs::create_dir_all(root.join("sursa/sass/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
+        fs::create_dir_all(root.join("sass/pagini")).unwrap();
+        fs::create_dir_all(root.join("sass/partials")).unwrap();
 
         fs::write(
-            root.join("sursa/config.toml"),
+            root.join("config.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n\nSalut\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/base.html"),
+            root.join("templates/base.html"),
             "<body>{% block content %}{% endblock %}</body>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             "{% extends \"base.html\" %}{% block content %}{% include \"partials/header.html\" %}{% set cards = section.extra.cards %}<main class=\"hero\"></main>{% for card in cards %}<article class=\"card\"></article>{% endfor %}{% endblock %}",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/partials/header.html"),
+            root.join("templates/partials/header.html"),
             "<header></header>",
         )
         .unwrap();
-        fs::write(root.join("sursa/sass/pagini/index.scss"), ".hero {}\n").unwrap();
-        fs::write(root.join("sursa/sass/partials/_header.scss"), "header {}\n").unwrap();
+        fs::write(root.join("sass/pagini/index.scss"), ".hero {}\n").unwrap();
+        fs::write(root.join("sass/partials/_header.scss"), "header {}\n").unwrap();
 
         let graph = build_source_graph(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
@@ -696,7 +696,7 @@ mod tests {
         let header_style = graph
             .styles
             .iter()
-            .find(|style| style.file == "sursa/sass/partials/_header.scss")
+            .find(|style| style.file == "sass/partials/_header.scss")
             .unwrap();
         assert!(graph.relations.iter().any(|relation| {
             relation.kind == SourceRelationKind::UsesStyle
@@ -736,26 +736,26 @@ mod tests {
     #[test]
     fn section_page_template_creates_source_graph_relation() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content/blog")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/blog")).unwrap();
+        fs::create_dir_all(root.join("content/blog")).unwrap();
+        fs::create_dir_all(root.join("templates/blog")).unwrap();
 
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/blog/_index.md"),
+            root.join("content/blog/_index.md"),
             "+++\ntitle = \"Blog\"\npage_template = \"blog/page.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/section.html"),
+            root.join("templates/section.html"),
             "<h1>{{ section.title }}</h1>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/blog/page.html"),
+            root.join("templates/blog/page.html"),
             "<h1>{{ page.title }}</h1>",
         )
         .unwrap();
@@ -766,7 +766,7 @@ mod tests {
         let section = graph
             .pages
             .iter()
-            .find(|page| page.file == "sursa/content/blog/_index.md")
+            .find(|page| page.file == "content/blog/_index.md")
             .unwrap();
         assert_eq!(
             section.frontmatter_page_template.as_deref(),
@@ -783,26 +783,26 @@ mod tests {
     #[test]
     fn zola_content_functions_create_source_graph_relations() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content/blog")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content/blog")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
 
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/blog/_index.md"),
+            root.join("content/blog/_index.md"),
             "+++\ntitle = \"Blog\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/blog/post.md"),
+            root.join("content/blog/post.md"),
             "+++\ntitle = \"Post\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             r#"{% set post = get_page(path="blog/post.md") %}
 {% set blog = get_section(path="blog/_index.md", metadata_only=true) %}
 <a href="{{ get_url(path="@/blog/post.md") }}">Post</a>
@@ -822,12 +822,12 @@ mod tests {
         let post = graph
             .pages
             .iter()
-            .find(|page| page.file == "sursa/content/blog/post.md")
+            .find(|page| page.file == "content/blog/post.md")
             .unwrap();
         let section = graph
             .pages
             .iter()
-            .find(|page| page.file == "sursa/content/blog/_index.md")
+            .find(|page| page.file == "content/blog/_index.md")
             .unwrap();
         assert!(template.get_pages.contains(&"blog/post.md".to_string()));
         assert!(template
@@ -860,29 +860,29 @@ mod tests {
     #[test]
     fn zola_static_asset_functions_create_source_graph_relations() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/static/js")).unwrap();
-        fs::create_dir_all(root.join("sursa/static/css")).unwrap();
-        fs::create_dir_all(root.join("sursa/static/data")).unwrap();
-        fs::create_dir_all(root.join("sursa/static/img")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("static/js")).unwrap();
+        fs::create_dir_all(root.join("static/css")).unwrap();
+        fs::create_dir_all(root.join("static/data")).unwrap();
+        fs::create_dir_all(root.join("static/img")).unwrap();
 
         fs::write(
-            root.join("sursa/config.toml"),
+            root.join("config.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/static/js/app.js"), "console.log('ok');").unwrap();
-        fs::write(root.join("sursa/static/css/site.css"), "body{}").unwrap();
-        fs::write(root.join("sursa/static/data/catalog.json"), "{}").unwrap();
-        fs::write(root.join("sursa/static/img/hero.png"), b"png").unwrap();
+        fs::write(root.join("static/js/app.js"), "console.log('ok');").unwrap();
+        fs::write(root.join("static/css/site.css"), "body{}").unwrap();
+        fs::write(root.join("static/data/catalog.json"), "{}").unwrap();
+        fs::write(root.join("static/img/hero.png"), b"png").unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             r#"<script src="{{ get_url(path="js/app.js") }}" integrity="{{ get_hash(path="static/js/app.js") }}"></script>
 <link rel="stylesheet" href="{{ get_url(path="css/site.css") }}">
 {% set data = load_data(path="static/data/catalog.json") %}
@@ -969,27 +969,27 @@ mod tests {
     #[test]
     fn zola_data_files_create_load_data_relations() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/date")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("date")).unwrap();
 
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/date/meniu.toml"),
+            root.join("date/meniu.toml"),
             "[[item]]\nlabel = \"Acasă\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             r#"{% set meniu = load_data(path="date/meniu.toml") %}"#,
         )
         .unwrap();
@@ -1012,8 +1012,7 @@ mod tests {
         assert!(graph
             .nodes
             .iter()
-            .any(|node| node.kind == SourceNodeKind::DataFile
-                && node.file == "sursa/date/meniu.toml"));
+            .any(|node| node.kind == SourceNodeKind::DataFile && node.file == "date/meniu.toml"));
         assert!(graph.relations.iter().any(|relation| {
             relation.kind == SourceRelationKind::DataFileLoad
                 && relation.from == template.node_id
@@ -1024,21 +1023,21 @@ mod tests {
     #[test]
     fn zola_content_files_create_load_data_relations() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content/blog")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content/blog")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
 
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/blog/post.md"),
+            root.join("content/blog/post.md"),
             "+++\ntitle = \"Post\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             r#"{% set post = load_data(path="@/blog/post.md") %}
 {% set post_copy = load_data(path="content/blog/post.md") %}
 "#,
@@ -1056,7 +1055,7 @@ mod tests {
         let page = graph
             .pages
             .iter()
-            .find(|page| page.file == "sursa/content/blog/post.md")
+            .find(|page| page.file == "content/blog/post.md")
             .unwrap();
 
         assert!(template.data_loads.contains(&"@/blog/post.md".to_string()));
@@ -1073,43 +1072,43 @@ mod tests {
     #[test]
     fn resolves_active_theme_templates_as_fallback() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/themes/test-theme/templates/partials")).unwrap();
-        fs::create_dir_all(root.join("sursa/themes/test-theme/static/css")).unwrap();
-        fs::create_dir_all(root.join("sursa/themes/test-theme/sass/pagini")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("themes/test-theme/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("themes/test-theme/static/css")).unwrap();
+        fs::create_dir_all(root.join("themes/test-theme/sass/pagini")).unwrap();
 
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\ntheme = \"test-theme\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\n+++\n\nSalut\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/templates/index.html"),
+            root.join("themes/test-theme/templates/index.html"),
             "{% extends \"base.html\" %}{% block content %}<main></main>{% endblock %}",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/templates/base.html"),
+            root.join("themes/test-theme/templates/base.html"),
             "<body>{% include \"partials/footer.html\" %}{% block content %}{% endblock %}</body>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/templates/partials/footer.html"),
+            root.join("themes/test-theme/templates/partials/footer.html"),
             "<footer></footer>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/static/css/style.css"),
+            root.join("themes/test-theme/static/css/style.css"),
             "body { color: black; }",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/sass/pagini/index.scss"),
+            root.join("themes/test-theme/sass/pagini/index.scss"),
             ".theme-main { color: red; }",
         )
         .unwrap();
@@ -1136,14 +1135,14 @@ mod tests {
             template.name == "partials/footer.html" && template.origin == SourceOrigin::Theme
         }));
         assert!(graph.styles.iter().any(|style| {
-            style.file == "sursa/themes/test-theme/static/css/style.css"
+            style.file == "themes/test-theme/static/css/style.css"
                 && style.origin == SourceOrigin::Theme
                 && matches!(style.scope, SourceStyleScope::Global)
         }));
         let theme_page_style = graph
             .styles
             .iter()
-            .find(|style| style.file == "sursa/themes/test-theme/sass/pagini/index.scss")
+            .find(|style| style.file == "themes/test-theme/sass/pagini/index.scss")
             .unwrap();
         assert!(graph.relations.iter().any(|relation| {
             relation.from == page.id
@@ -1155,39 +1154,39 @@ mod tests {
     #[test]
     fn local_template_overrides_theme_template_for_page_style() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/sass/pagini")).unwrap();
-        fs::create_dir_all(root.join("sursa/themes/test-theme/templates")).unwrap();
-        fs::create_dir_all(root.join("sursa/themes/test-theme/sass/pagini")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("sass/pagini")).unwrap();
+        fs::create_dir_all(root.join("themes/test-theme/templates")).unwrap();
+        fs::create_dir_all(root.join("themes/test-theme/sass/pagini")).unwrap();
 
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\ntheme = \"test-theme\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\n+++\n\nSalut\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             "{% block content %}<main class=\"local\"></main>{% endblock %}",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/sass/pagini/index.scss"),
+            root.join("sass/pagini/index.scss"),
             ".local { color: blue; }",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/templates/index.html"),
+            root.join("themes/test-theme/templates/index.html"),
             "{% block content %}<main class=\"theme\"></main>{% endblock %}",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/themes/test-theme/sass/pagini/index.scss"),
+            root.join("themes/test-theme/sass/pagini/index.scss"),
             ".theme { color: red; }",
         )
         .unwrap();
@@ -1211,7 +1210,7 @@ mod tests {
         let local_page_style = graph
             .styles
             .iter()
-            .find(|style| style.file == "sursa/sass/pagini/index.scss")
+            .find(|style| style.file == "sass/pagini/index.scss")
             .unwrap();
         assert!(graph.relations.iter().any(|relation| {
             relation.from == page.id
@@ -1223,26 +1222,26 @@ mod tests {
     #[test]
     fn partial_blocks_are_diagnostics_not_layout_blocks() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
 
         fs::write(
-            root.join("sursa/config.toml"),
+            root.join("config.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             "{% include \"partials/cta.html\" %}",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/partials/cta.html"),
+            root.join("templates/partials/cta.html"),
             "{% block content %}<section class=\"cta\"></section>{% endblock %}",
         )
         .unwrap();

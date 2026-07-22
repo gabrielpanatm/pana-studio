@@ -11,7 +11,6 @@ pub enum WriteCategory {
     ProjectSourceWrite,
     PreviewWorkspaceWrite,
     ExternalIntegrationWrite,
-    BuildOutputWrite,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -27,7 +26,6 @@ pub enum WriteOwner {
     CodexMcp,
     ProjectInitializer,
     Preview,
-    ImageOptimizer,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -443,24 +441,6 @@ impl WritePolicy {
     }
 
     pub fn preview_workspace_lifecycle() -> Self {
-        Self {
-            atomicity: WriteAtomicity::FileLifecycle,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::EphemeralRebuildable,
-            log_required: true,
-        }
-    }
-
-    pub fn build_output_atomic() -> Self {
-        Self {
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::EphemeralRebuildable,
-            log_required: true,
-        }
-    }
-
-    pub fn build_output_lifecycle() -> Self {
         Self {
             atomicity: WriteAtomicity::FileLifecycle,
             conflict: ConflictPolicy::SingleOwnerInternal,

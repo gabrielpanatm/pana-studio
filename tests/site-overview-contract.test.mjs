@@ -9,7 +9,7 @@ import {
 function page(overrides) {
   return {
     id: overrides.id,
-    file: overrides.file ?? `sursa/content/${overrides.id}.md`,
+    file: overrides.file ?? `content/${overrides.id}.md`,
     title: overrides.title,
     url: overrides.url,
     pageKind: overrides.pageKind ?? "page",

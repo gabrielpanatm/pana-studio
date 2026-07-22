@@ -39,7 +39,7 @@ function receipt(input, overrides = {}) {
       schemaVersion: 2,
       activeTemplate: {
         sourceId: "template-active",
-        name: input.templatePath.replace(/^sursa\/templates\//, ""),
+        name: input.templatePath.replace(/^templates\//, ""),
         file: input.templatePath,
         origin: "local",
         themeName: null,
@@ -77,12 +77,12 @@ function receipt(input, overrides = {}) {
   };
 }
 
-function workbenchHost(activePath = "sursa/templates/partials/header.html") {
+function workbenchHost(activePath = "templates/partials/header.html") {
   const statuses = [];
   const refreshes = [];
   const reconciliations = [];
   const template = templateFile(activePath);
-  const page = pageFile("sursa/content/_index.md");
+  const page = pageFile("content/_index.md");
   const host = {
     scannedProject: {
       root: "/project-a",
@@ -151,7 +151,7 @@ test("Template Workbench binds activation to the exact ProjectWorkspace revision
   });
   assert.equal(host.templateWorkbenchActive, true);
   assert.equal(host.templateWorkbenchTarget, template.relativePath);
-  assert.equal(host.templateWorkbenchReturnPreviewPath, "sursa/content/_index.md");
+  assert.equal(host.templateWorkbenchReturnPreviewPath, "content/_index.md");
   assert.match(host.previewSrc, /__pana_workbench\/template-active/);
   assert.match(statuses.at(-1).text, /Context de template activ/);
 });
@@ -175,7 +175,7 @@ test("a late Workbench result has zero UI effects after the selected source chan
   const opening = updateTemplateWorkbenchContext(host, host.scannedProject, template);
   await nextTurn();
   assert.ok(request, "Workbench request should be in flight before changing the source");
-  host.activeScannedPath = "sursa/templates/partials/footer.html";
+  host.activeScannedPath = "templates/partials/footer.html";
   gate.resolve(receipt(request));
   await opening;
 

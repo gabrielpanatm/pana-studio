@@ -517,7 +517,7 @@ fn read_optional_zola_text(
     zola_relative_path: &str,
 ) -> Result<Option<String>, String> {
     let project_root = Path::new(&store.project_root);
-    let expected_zola_root = project_root.join("sursa");
+    let expected_zola_root = project_root.to_path_buf();
     if zola_root != expected_zola_root {
         return Err(format!(
             "Page JS a refuzat autorități divergente: Zola root {} nu corespunde FileBufferStore {}.",
@@ -531,11 +531,7 @@ fn read_optional_zola_text(
 
 fn to_project_relative_path(path: &str) -> String {
     let normalized = path.trim().trim_start_matches('/');
-    if normalized.starts_with("sursa/") {
-        normalized.to_string()
-    } else {
-        format!("sursa/{normalized}")
-    }
+    normalized.to_string()
 }
 
 #[cfg(test)]
@@ -572,7 +568,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let project = std::env::temp_dir().join(format!("pana-page-js-plan-{nonce}"));
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         fs::create_dir_all(&zola_root).unwrap();
         fs::write(project.join("secret.html"), "TOP_SECRET_PAGE_JS_SENTINEL").unwrap();
         let live = ProjectSessionSnapshot {
@@ -637,7 +633,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let project = std::env::temp_dir().join(format!("pana-page-js-safe-read-{nonce}"));
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         let templates = zola_root.join("templates");
         fs::create_dir_all(&templates).unwrap();
         let outside = std::env::temp_dir().join(format!("pana-page-js-secret-{nonce}.html"));
@@ -714,7 +710,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let project = std::env::temp_dir().join(format!("pana-page-js-collision-{nonce}"));
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         fs::create_dir_all(zola_root.join("templates/foo")).unwrap();
         let target = "<main>Target</main>";
         let owner = r#"<main>Owner</main><script src="{{ get_url(path = 'js/pana-foo-bar.js') }}" defer></script>"#;
@@ -758,10 +754,10 @@ mod tests {
             },
         );
         store
-            .record_saved_text("sursa/templates/foo/bar.html", target.to_string())
+            .record_saved_text("templates/foo/bar.html", target.to_string())
             .unwrap();
         store
-            .record_saved_text("sursa/templates/foo-bar.html", owner.to_string())
+            .record_saved_text("templates/foo-bar.html", owner.to_string())
             .unwrap();
 
         let error = plan_page_js_save_for_project(
@@ -792,7 +788,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let project = std::env::temp_dir().join(format!("pana-page-js-theme-draft-{nonce}"));
-        let zola_root = project.join("sursa");
+        let zola_root = project.to_path_buf();
         fs::create_dir_all(zola_root.join("templates")).unwrap();
         fs::create_dir_all(zola_root.join("themes/theme-b/templates")).unwrap();
         let child =
@@ -839,16 +835,13 @@ mod tests {
             },
         );
         store
-            .record_saved_text("sursa/zola.toml", "theme = 'theme-b'\n".to_string())
+            .record_saved_text("zola.toml", "theme = 'theme-b'\n".to_string())
             .unwrap();
         store
-            .record_saved_text("sursa/templates/index.html", child.to_string())
+            .record_saved_text("templates/index.html", child.to_string())
             .unwrap();
         store
-            .record_saved_text(
-                "sursa/themes/theme-b/templates/base.html",
-                base_b.to_string(),
-            )
+            .record_saved_text("themes/theme-b/templates/base.html", base_b.to_string())
             .unwrap();
 
         let plan = plan_page_js_save_for_project(

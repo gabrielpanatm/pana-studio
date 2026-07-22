@@ -356,12 +356,12 @@ async function projectPublishedSessionIntoFrontend(
   if (!project.isZola) {
     host.sourceGraph = null;
     host.projectStatus = "Acest dosar nu este un proiect Pană Studio valid.";
-    host.setGlobalStatus("Pană Studio așteaptă un proiect cu Zola în sursa/.", "error");
+    host.setGlobalStatus("Pană Studio așteaptă direct rădăcina unui proiect Zola.", "error");
     host.notify({
       id: "project.not-zola",
       level: "warning",
       title: "Dosarul nu este proiect Pană Studio",
-      message: "Alege root-ul proiectului complet, cu Zola în sursa/, sau un dosar gol pentru inițializare.",
+      message: "Alege dosarul care conține zola.toml și content/ sau un dosar gol pentru inițializare.",
     });
     host.resetExternalDiskState?.();
     return null;

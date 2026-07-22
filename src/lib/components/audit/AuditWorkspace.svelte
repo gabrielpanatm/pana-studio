@@ -75,7 +75,7 @@
   );
   const zolaLabel = $derived.by(() => {
     switch (app.controlledPreview.validation) {
-      case "valid": return "Zola check valid";
+      case "valid": return "Validare Zola reușită";
       case "invalid": return "Proiect Zola invalid";
       case "error": return "Validare indisponibilă";
       case "queued": return "Validare programată";

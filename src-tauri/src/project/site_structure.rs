@@ -164,7 +164,7 @@ pub fn plan_site_page_structure(
     let (origin, theme_name) =
         resolve_template_write_base(input.target_origin, input.target_theme_name)?;
 
-    let content_path = format!("sursa/content/{slug}.md");
+    let content_path = format!("content/{slug}.md");
     let template_path = template_project_path(&page_template, origin, theme_name.as_deref())?;
     let mut created = Vec::new();
     let mut changes = Vec::new();
@@ -226,7 +226,7 @@ pub fn plan_site_archive_structure(
 
     let (origin, theme_name) =
         resolve_template_write_base(input.target_origin, input.target_theme_name)?;
-    let content_path = format!("sursa/content/{slug}/_index.md");
+    let content_path = format!("content/{slug}/_index.md");
     let template_path = template_project_path(&archive_template, origin, theme_name.as_deref())?;
     let mut created = Vec::new();
     let mut changes = Vec::new();
@@ -293,7 +293,7 @@ pub fn plan_site_single_structure(
 
     let (origin, theme_name) =
         resolve_template_write_base(input.target_origin, input.target_theme_name)?;
-    let item_path = format!("sursa/content/{section_slug}/{item_slug}.md");
+    let item_path = format!("content/{section_slug}/{item_slug}.md");
     let template_path = template_project_path(&single_template, origin, theme_name.as_deref())?;
     let mut created = Vec::new();
     let mut changes = Vec::new();
@@ -429,13 +429,11 @@ fn template_project_path(
     theme_name: Option<&str>,
 ) -> Result<String, String> {
     match origin {
-        SiteTemplateWriteOrigin::Local => Ok(format!("sursa/templates/{template_name}")),
+        SiteTemplateWriteOrigin::Local => Ok(format!("templates/{template_name}")),
         SiteTemplateWriteOrigin::Theme => {
             let theme_name = theme_name
                 .ok_or_else(|| "Tema țintă lipsește pentru scrierea template-ului.".to_string())?;
-            Ok(format!(
-                "sursa/themes/{theme_name}/templates/{template_name}"
-            ))
+            Ok(format!("themes/{theme_name}/templates/{template_name}"))
         }
     }
 }
@@ -443,9 +441,6 @@ fn template_project_path(
 fn normalize_template_file_name(value: &str) -> Result<String, String> {
     let mut normalized = value.trim().replace('\\', "/");
     normalized = normalized.trim_start_matches('/').to_string();
-    if let Some(rest) = normalized.strip_prefix("sursa/") {
-        normalized = rest.to_string();
-    }
     if let Some(rest) = strip_theme_template_prefix(&normalized) {
         normalized = rest.to_string();
     } else if let Some(rest) = normalized.strip_prefix("templates/") {
@@ -460,7 +455,7 @@ fn normalize_template_file_name(value: &str) -> Result<String, String> {
 
 fn normalize_site_template_project_path(value: &str) -> Result<String, String> {
     let normalized = normalize_relative_segments(&value.trim().replace('\\', "/"), "Template-ul")?;
-    let local_template = normalized.starts_with("sursa/templates/");
+    let local_template = normalized.starts_with("templates/");
     let theme_template = is_theme_template_project_path(&normalized);
     if !local_template && !theme_template {
         return Err("Include-ul trebuie aplicat pe un template Zola.".to_string());
@@ -473,8 +468,7 @@ fn normalize_site_template_project_path(value: &str) -> Result<String, String> {
 
 fn is_theme_template_project_path(value: &str) -> bool {
     let mut segments = value.split('/');
-    matches!(segments.next(), Some("sursa"))
-        && matches!(segments.next(), Some("themes"))
+    matches!(segments.next(), Some("themes"))
         && segments.next().is_some()
         && matches!(segments.next(), Some("templates"))
         && segments.next().is_some()
@@ -728,7 +722,7 @@ mod tests {
     #[test]
     fn plans_local_site_page_and_template_as_one_structure() {
         let root = unique_test_dir("local-site-page");
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
 
         let plan = plan_site_page_structure(
             &root,
@@ -744,8 +738,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.slug, "pagina-nou");
-        assert_eq!(plan.content_path, "sursa/content/pagina-nou.md");
-        assert_eq!(plan.template_path, "sursa/templates/custom/page.html");
+        assert_eq!(plan.content_path, "content/pagina-nou.md");
+        assert_eq!(plan.template_path, "templates/custom/page.html");
         assert_eq!(
             plan.created,
             vec![plan.template_path.clone(), plan.content_path.clone()]
@@ -759,8 +753,8 @@ mod tests {
     #[test]
     fn skips_existing_template_and_creates_missing_content() {
         let root = unique_test_dir("existing-template");
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/templates/page.html"), "existing").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("templates/page.html"), "existing").unwrap();
 
         let plan = plan_site_page_structure(
             &root,
@@ -775,7 +769,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.created, vec!["sursa/content/despre.md"]);
+        assert_eq!(plan.created, vec!["content/despre.md"]);
         assert_eq!(plan.changes.len(), 1);
         assert!(!plan.changes[0].new_text.contains("draft = true"));
 
@@ -785,7 +779,7 @@ mod tests {
     #[test]
     fn plans_theme_template_target_when_requested() {
         let root = unique_test_dir("theme-target");
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
 
         let plan = plan_site_page_structure(
             &root,
@@ -802,7 +796,7 @@ mod tests {
 
         assert_eq!(
             plan.template_path,
-            "sursa/themes/tema-test/templates/pages/service.html"
+            "themes/tema-test/templates/pages/service.html"
         );
         assert_eq!(plan.origin, SiteTemplateWriteOrigin::Theme);
         assert_eq!(plan.theme_name.as_deref(), Some("tema-test"));
@@ -813,7 +807,7 @@ mod tests {
     #[test]
     fn rejects_template_path_traversal() {
         let root = unique_test_dir("reject-template");
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
 
         let error = plan_site_page_structure(
             &root,
@@ -835,7 +829,7 @@ mod tests {
     #[test]
     fn plans_archive_content_and_template_as_one_structure() {
         let root = unique_test_dir("archive-structure");
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
 
         let plan = plan_site_archive_structure(
             &root,
@@ -850,8 +844,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.slug, "articole");
-        assert_eq!(plan.content_path, "sursa/content/articole/_index.md");
-        assert_eq!(plan.template_path, "sursa/templates/blog/archive.html");
+        assert_eq!(plan.content_path, "content/articole/_index.md");
+        assert_eq!(plan.template_path, "templates/blog/archive.html");
         assert_eq!(
             plan.created,
             vec![plan.content_path.clone(), plan.template_path.clone()]
@@ -866,8 +860,8 @@ mod tests {
     #[test]
     fn archive_skips_existing_content_and_creates_template() {
         let root = unique_test_dir("archive-existing-content");
-        fs::create_dir_all(root.join("sursa/content/blog")).unwrap();
-        fs::write(root.join("sursa/content/blog/_index.md"), "existing").unwrap();
+        fs::create_dir_all(root.join("content/blog")).unwrap();
+        fs::write(root.join("content/blog/_index.md"), "existing").unwrap();
 
         let plan = plan_site_archive_structure(
             &root,
@@ -881,9 +875,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.created, vec!["sursa/templates/blog.html"]);
+        assert_eq!(plan.created, vec!["templates/blog.html"]);
         assert_eq!(plan.changes.len(), 1);
-        assert_eq!(plan.changes[0].relative_path, "sursa/templates/blog.html");
+        assert_eq!(plan.changes[0].relative_path, "templates/blog.html");
 
         cleanup(&root);
     }
@@ -891,7 +885,7 @@ mod tests {
     #[test]
     fn plans_single_item_and_template_as_one_structure() {
         let root = unique_test_dir("single-structure");
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
 
         let plan = plan_site_single_structure(
             &root,
@@ -908,8 +902,8 @@ mod tests {
 
         assert_eq!(plan.section_slug, "blog");
         assert_eq!(plan.item_slug, "primul-articol");
-        assert_eq!(plan.item_path, "sursa/content/blog/primul-articol.md");
-        assert_eq!(plan.template_path, "sursa/templates/blog/single.html");
+        assert_eq!(plan.item_path, "content/blog/primul-articol.md");
+        assert_eq!(plan.template_path, "templates/blog/single.html");
         assert_eq!(
             plan.created,
             vec![plan.template_path.clone(), plan.item_path.clone()]
@@ -924,8 +918,8 @@ mod tests {
     #[test]
     fn single_skips_existing_template_and_creates_item() {
         let root = unique_test_dir("single-existing-template");
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/templates/blog-single.html"), "existing").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("templates/blog-single.html"), "existing").unwrap();
 
         let plan = plan_site_single_structure(
             &root,
@@ -941,12 +935,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.single_template, "blog-single.html");
-        assert_eq!(plan.created, vec!["sursa/content/blog/articol.md"]);
+        assert_eq!(plan.created, vec!["content/blog/articol.md"]);
         assert_eq!(plan.changes.len(), 1);
-        assert_eq!(
-            plan.changes[0].relative_path,
-            "sursa/content/blog/articol.md"
-        );
+        assert_eq!(plan.changes[0].relative_path, "content/blog/articol.md");
 
         cleanup(&root);
     }
@@ -954,7 +945,7 @@ mod tests {
     #[test]
     fn plans_local_partial_as_workspace_mutation_change() {
         let root = unique_test_dir("partial-structure");
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        fs::create_dir_all(&root).unwrap();
 
         let plan = plan_site_partial_structure(
             &root,
@@ -967,14 +958,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.path, "sursa/templates/partials/card-promo.html");
+        assert_eq!(plan.path, "templates/partials/card-promo.html");
         assert_eq!(plan.template_name, "partials/card-promo.html");
         assert_eq!(plan.origin, SiteTemplateWriteOrigin::Local);
         assert!(plan.created);
         assert_eq!(plan.changes.len(), 1);
         assert_eq!(
             plan.changes[0].relative_path,
-            "sursa/templates/partials/card-promo.html"
+            "templates/partials/card-promo.html"
         );
         assert!(plan.changes[0].new_text.contains("class=\"card-promo\""));
 
@@ -984,9 +975,9 @@ mod tests {
     #[test]
     fn partial_skips_existing_theme_template() {
         let root = unique_test_dir("partial-existing-theme");
-        fs::create_dir_all(root.join("sursa/themes/tema-test/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("themes/tema-test/templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/themes/tema-test/templates/partials/footer.html"),
+            root.join("themes/tema-test/templates/partials/footer.html"),
             "existing",
         )
         .unwrap();
@@ -1002,10 +993,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            plan.path,
-            "sursa/themes/tema-test/templates/partials/footer.html"
-        );
+        assert_eq!(plan.path, "themes/tema-test/templates/partials/footer.html");
         assert_eq!(plan.origin, SiteTemplateWriteOrigin::Theme);
         assert_eq!(plan.theme_name.as_deref(), Some("tema-test"));
         assert!(!plan.created);
@@ -1021,7 +1009,7 @@ mod tests {
         let plan = plan_site_partial_include(
             source,
             SitePartialIncludeInput {
-                target_file: "sursa/templates/page.html".to_string(),
+                target_file: "templates/page.html".to_string(),
                 partial_template_name: "partials/cta.html".to_string(),
                 ensure_partial: None,
             },
@@ -1029,7 +1017,7 @@ mod tests {
         .unwrap();
 
         assert!(plan.changed);
-        assert_eq!(plan.target_file, "sursa/templates/page.html");
+        assert_eq!(plan.target_file, "templates/page.html");
         assert_eq!(plan.partial_template_name, "partials/cta.html");
         assert_eq!(plan.reason, "Partial inclus înainte de footer.");
         assert_eq!(plan.changes.len(), 1);
@@ -1045,7 +1033,7 @@ mod tests {
         let plan = plan_site_partial_include(
             source,
             SitePartialIncludeInput {
-                target_file: "sursa/templates/page.html".to_string(),
+                target_file: "templates/page.html".to_string(),
                 partial_template_name: "partials/cta.html".to_string(),
                 ensure_partial: None,
             },
@@ -1064,7 +1052,7 @@ mod tests {
         let plan = plan_site_partial_include(
             source,
             SitePartialIncludeInput {
-                target_file: "sursa/templates/page.html".to_string(),
+                target_file: "templates/page.html".to_string(),
                 partial_template_name: "partials/cta.html".to_string(),
                 ensure_partial: None,
             },
@@ -1081,7 +1069,7 @@ mod tests {
         let error = plan_site_partial_include(
             "{% block content %}{% endblock %}",
             SitePartialIncludeInput {
-                target_file: "sursa/templates/page.txt".to_string(),
+                target_file: "templates/page.txt".to_string(),
                 partial_template_name: "partials/cta.html".to_string(),
                 ensure_partial: None,
             },

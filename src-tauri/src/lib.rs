@@ -3,7 +3,6 @@ mod commands;
 mod css;
 mod deploy;
 mod fonts;
-mod images;
 mod js;
 pub mod kernel;
 mod mcp;
@@ -15,6 +14,7 @@ mod project_model;
 mod source_graph;
 mod state;
 mod versioning;
+mod zola_engine;
 #[macro_use]
 #[allow(dead_code)]
 mod tauri_command_registry;
@@ -49,7 +49,9 @@ use commands::{
         resolve_page_css_target, set_css_rule, set_css_rule_at_viewport,
         set_page_css_rule_at_viewport, set_scss_variable,
     },
-    deploy::{cancel_publish_operation, deploy_to_bunny, zola_build, zola_check},
+    deploy::{
+        cancel_publish_operation, deploy_to_bunny, zola_build, zola_check, zola_check_workspace,
+    },
     design_system::{read_design_class_inventory, rename_design_class},
     external_disk::reconcile_clean_external_project_files,
     fonts::{download_google_font_family, get_font_inventory, search_google_fonts},
@@ -88,10 +90,10 @@ use commands::{
     project::{
         acknowledge_project_transition_decision_recovery_plan, apply_file_buffer_changeset,
         clear_file_buffer_draft, close_project, execute_project_transition_decision_retention,
-        get_zola_binary_path, inspect_project_open_recovery, open_project,
-        read_current_project_disk_manifest, read_file_buffer_store, read_file_buffer_text,
-        read_project_file, read_project_session, read_project_workspace_history,
-        read_project_workspace_state, read_recovery_coordinator_scan, reattach_project_session,
+        inspect_project_open_recovery, open_project, read_current_project_disk_manifest,
+        read_file_buffer_store, read_file_buffer_text, read_project_file, read_project_session,
+        read_project_workspace_history, read_project_workspace_state,
+        read_recovery_coordinator_scan, reattach_project_session,
         record_project_transition_operator_decision,
         recover_project_transition_decision_retention_hot_journal, recover_project_workspace_save,
         redo_project_workspace, save_project_workspace, scan_project, set_file_buffer_draft,
@@ -131,7 +133,7 @@ use mcp::{
     load_or_generate_access_token, mark_context_server_lifecycle, recorded_server_process_id,
     start_context_server,
 };
-use preview::{resolve_zola_binary_path, stop_project_preview, stop_source_browser};
+use preview::{stop_project_preview, stop_source_browser};
 use state::AppState;
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -396,7 +398,7 @@ mod desktop_lifecycle_tests {
             &EditAuthority::Conflict {
                 project_session_id: "project-close".to_string(),
                 detected_at_ms: 2,
-                files: vec!["sursa/content/test.md".to_string()],
+                files: vec!["content/test.md".to_string()],
                 reason: "test".to_string(),
             }
         ));
@@ -418,13 +420,6 @@ pub fn run() {
             apply_main_window_icon(app);
             lock_main_webview_zoom(app);
             start_mcp_context_server(app);
-            let state = app.state::<AppState>();
-            let zola_binary_path = resolve_zola_binary_path(&app.handle())?;
-            let mut path_slot = state
-                .zola_binary_path
-                .lock()
-                .map_err(|_| "Nu am putut bloca starea binarului Zola.")?;
-            *path_slot = Some(zola_binary_path);
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())

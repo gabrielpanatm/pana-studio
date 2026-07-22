@@ -118,7 +118,7 @@ pub fn is_template_relative_path(relative_path: &str) -> bool {
 
 pub fn validate_template_relative_path(relative_path: &str) -> Result<bool, String> {
     let normalized = relative_path.trim().replace('\\', "/");
-    let normalized = normalized.strip_prefix("sursa/").unwrap_or(&normalized);
+    let normalized = normalized.as_str();
 
     if normalized.is_empty() {
         return Ok(false);
@@ -160,7 +160,7 @@ pub fn validate_template_relative_path(relative_path: &str) -> Result<bool, Stri
 pub fn normalized_zola_path(path: &str) -> String {
     path.trim()
         .trim_start_matches('/')
-        .trim_start_matches("sursa/")
+        .trim_start_matches("")
         .replace('\\', "/")
 }
 
@@ -294,15 +294,10 @@ pub fn conventional_style_files_for_template(
     vec![format!("{}/pagini/{}.scss", style_root, name)]
 }
 
-fn style_root_for_origin(origin: &ZolaTemplateOrigin, project_relative: bool) -> String {
-    let root = match origin {
+fn style_root_for_origin(origin: &ZolaTemplateOrigin, _project_relative: bool) -> String {
+    match origin {
         ZolaTemplateOrigin::Local => "sass".to_string(),
         ZolaTemplateOrigin::Theme(theme) => format!("themes/{}/sass", theme),
-    };
-    if project_relative {
-        format!("sursa/{}", root)
-    } else {
-        root
     }
 }
 
@@ -581,7 +576,7 @@ theme = "ignored-after-table"
                 &ZolaTemplateOrigin::Theme("test-theme".to_string()),
                 true,
             ),
-            vec!["sursa/themes/test-theme/sass/pagini/index.scss"]
+            vec!["themes/test-theme/sass/pagini/index.scss"]
         );
         assert_eq!(
             resolver.conventional_style_files_for_template(
@@ -589,25 +584,22 @@ theme = "ignored-after-table"
                 &ZolaTemplateOrigin::Local,
                 true,
             ),
-            vec![
-                "sursa/sass/partials/_header.scss",
-                "sursa/sass/partials/header.scss"
-            ]
+            vec!["sass/partials/_header.scss", "sass/partials/header.scss"]
         );
     }
 
     #[test]
     fn strips_theme_root_from_zola_asset_paths() {
         assert_eq!(
-            zola_path_without_theme_root("sursa/themes/test-theme/sass/pagini/index.scss"),
+            zola_path_without_theme_root("themes/test-theme/sass/pagini/index.scss"),
             "sass/pagini/index.scss"
         );
         assert_eq!(
-            zola_path_without_theme_root("sursa/sass/pagini/index.scss"),
+            zola_path_without_theme_root("sass/pagini/index.scss"),
             "sass/pagini/index.scss"
         );
         assert_eq!(
-            theme_asset_parts("sursa/themes/test-theme/static/css/site.css"),
+            theme_asset_parts("themes/test-theme/static/css/site.css"),
             Some(("test-theme".to_string(), "static/css/site.css".to_string()))
         );
     }

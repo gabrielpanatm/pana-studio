@@ -32,6 +32,7 @@ import {
   type PreviewStructuralSessionLease,
 } from "$lib/kernel/preview-structural-lane";
 import { htmlPaletteInsertOptions } from "$lib/project/html-palette";
+import { createZolaImageIntent, resolveZolaImageSource } from "$lib/html/zola-image";
 import {
   reconcilePageComponentContracts,
 } from "$lib/page-components/contract";
@@ -58,6 +59,7 @@ import type {
   HtmlPendingArea,
   ProjectHtmlAttributePatch,
   ProjectHtmlAttributeMutation,
+  ProjectZolaImageIntent,
   ProjectHtmlTextPatch,
   ProjectFile,
   ProjectDiskManifest,
@@ -66,6 +68,7 @@ import type {
   SelectionInfo,
   SourceEditLocation,
   SourceEditTarget,
+  ZolaImagePresentation,
 } from "$lib/types";
 import { errorMessage } from "$lib/util";
 
@@ -119,6 +122,7 @@ export type HtmlActionTarget = {
   attributes?: Readonly<Record<string, string>>;
   classes?: readonly string[];
   parentSelector?: string | null;
+  zolaImage?: ZolaImagePresentation | null;
 };
 
 function freezeHtmlActionTarget(target: HtmlActionTarget): HtmlActionTarget {
@@ -155,6 +159,7 @@ export function captureHtmlActionTarget(
       hasChildElements: selection?.hasChildElements,
       rawText: selection?.rawText,
       attributes: selection?.attributes,
+      zolaImage: selection?.zolaImage ?? null,
       classes: selection?.classes,
       parentSelector: selection?.parentNode?.selector ?? null,
     });
@@ -170,6 +175,7 @@ export function captureHtmlActionTarget(
     hasChildElements: target.hasChildElements,
     rawText: target.rawText,
     attributes: target.attributes,
+    zolaImage: target.zolaImage ?? null,
     classes: target.classes,
     parentSelector: target.parentNode?.selector ?? null,
   });
@@ -404,6 +410,34 @@ export function attributeMutationsFromRecord(attributes: Record<string, string |
     : { kind: "setAttribute", name, value });
 }
 
+export function htmlAttributeRecordForKernel(
+  attributes: Readonly<EditableAttributes>,
+  targetAttributes: Readonly<Record<string, string>> = {},
+  zolaImageManaged = false,
+): Record<string, string | null> {
+  const next: Record<string, string | null> = Object.fromEntries(
+    Object.entries(attributes)
+      .filter(([name]) => !name.toLowerCase().startsWith("data-pana-"))
+      .map(([name, value]) => [name, value]),
+  );
+  if (zolaImageManaged) {
+    delete next.src;
+    delete next.width;
+    delete next.height;
+  }
+  for (const name of Object.keys(targetAttributes)) {
+    if (
+      !(name in attributes)
+      && !name.toLowerCase().startsWith("data-pana-")
+      && !["class", "style"].includes(name)
+      && !(zolaImageManaged && ["src", "width", "height"].includes(name.toLowerCase()))
+    ) {
+      next[name] = null;
+    }
+  }
+  return next;
+}
+
 function cacheCommittedHtmlPatch(
   host: HtmlActionsControllerHost,
   patch: { file: string; contents: string },
@@ -422,6 +456,7 @@ async function executeSelectedHtmlAttributes(
   target: HtmlActionTarget,
   attributes: Record<string, string | null>,
   project: (patch: ProjectHtmlAttributePatch, target: HtmlActionTarget) => Promise<void> | void,
+  zolaImage: ProjectZolaImageIntent | null = null,
 ): Promise<EditorActionOutcome> {
   const result = await runInPreviewStructuralLane(host, async (lease) => {
     const location = sourceLocationForSourceReference(
@@ -444,6 +479,7 @@ async function executeSelectedHtmlAttributes(
         targetTag: target.tag,
         targetSelector: target.selector,
         attributes: attributeMutationsFromRecord(attributes),
+        ...(zolaImage ? { zolaImage } : {}),
       },
     }, previewStructuralCommandIdentity(lease));
 
@@ -472,6 +508,44 @@ async function executeSelectedHtmlAttributes(
     return committedAction();
   });
   return result ?? cancelledAction("Aplicarea atributelor a fost anulată odată cu sesiunea structurală.");
+}
+
+export async function applyZolaImageProcessingToHtml(
+  host: HtmlActionsControllerHost,
+  intent: ProjectZolaImageIntent,
+): Promise<EditorActionOutcome> {
+  const target = captureHtmlActionTarget(host.selectedElement);
+  if (!target || target.tag !== "img") {
+    host.imageStatus = "Selectează un element <img> înainte de procesarea Zola.";
+    return blockedAction(host.imageStatus);
+  }
+
+  host.setHtmlPending("image", true);
+  host.imageStatus = intent.enabled
+    ? "Se configurează resize_image prin Zola…"
+    : "Se elimină contractul resize_image…";
+  try {
+    const result = await executeSelectedHtmlAttributes(
+      host,
+      target,
+      {},
+      (_patch, capturedTarget) => {
+        if (!currentSelectionMatchesTarget(host, capturedTarget)) return;
+        host.imageStatus = intent.enabled
+          ? "Procesarea imaginii este administrată declarativ de Zola."
+          : "Procesarea Zola a fost eliminată, iar atributele originale au fost restaurate.";
+      },
+      intent,
+    );
+    host.setHtmlPending("image", false);
+    return result;
+  } catch (error) {
+    const result = actionErrorOutcome(error);
+    host.imageStatus = `Nu am putut actualiza procesarea Zola: ${result.reason ?? result.status}`;
+    host.setGlobalStatus(`Eroare imagine Zola: ${result.reason ?? result.status}`, "error");
+    host.setHtmlPending("image", false);
+    return result;
+  }
 }
 
 async function executeSelectedHtmlText(
@@ -1041,6 +1115,23 @@ export async function applyImageSourceToHtml(
 
   const src = (sourceOverride ?? host.imageSourceValue).trim();
   host.imageSourceValue = src;
+  const zolaImage = host.selectedElement?.zolaImage ?? null;
+  if (zolaImage) {
+    const source = resolveZolaImageSource(src, host.scannedProject?.files ?? []);
+    if (!source.eligible) {
+      host.imageStatus = source.reason;
+      return blockedAction(source.reason);
+    }
+    return await applyZolaImageProcessingToHtml(host, createZolaImageIntent({
+      enabled: true,
+      source,
+      width: zolaImage.width,
+      height: zolaImage.height,
+      operation: zolaImage.operation,
+      format: zolaImage.format,
+      quality: zolaImage.quality,
+    }));
+  }
   if ((target.attributes?.src ?? "").trim() === src) {
     host.setHtmlPending("image", false);
     host.imageStatus = "Sursa imaginii nu are modificări de aplicat.";
@@ -1182,20 +1273,11 @@ async function applyAttributesToTarget(
   const attributeValues: EditableAttributes = { ...capturedAttributeValues };
   const baselineAttributeDraft = attributeDraftToken(host.attributeValues);
   const submittedAttributeDraft = attributeDraftToken(attributeValues);
-  const nextKernelAttributes: Record<string, string | null> = Object.fromEntries(
-    Object.entries(attributeValues)
-      .filter(([name]) => !name.toLowerCase().startsWith("data-pana-"))
-      .map(([name, value]) => [name, value]),
+  const nextKernelAttributes = htmlAttributeRecordForKernel(
+    attributeValues,
+    target.attributes,
+    Boolean(target.zolaImage),
   );
-  for (const name of Object.keys(target.attributes ?? {})) {
-    if (
-      !(name in attributeValues)
-      && !name.toLowerCase().startsWith("data-pana-")
-      && !["class", "style"].includes(name)
-    ) {
-      nextKernelAttributes[name] = null;
-    }
-  }
   const targetDataAnim = target.attributes?.["data-anim"]?.trim() ?? "";
   const submittedDataAnim = nextKernelAttributes["data-anim"]?.trim() ?? "";
   const removedOrReplacedDataAnim = targetDataAnim.length > 0 && targetDataAnim !== submittedDataAnim;

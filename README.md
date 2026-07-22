@@ -30,11 +30,12 @@ Publicare. Navigarea restaurabilă, documentele, split-urile, viewport-ul și
 panoul inferior sunt proiectate dintr-o stare canonică administrată de nucleul
 Rust; frontendul Svelte nu păstrează un al doilea model al proiectului.
 
-Pană Studio include motorul și binarul Zola `0.22.1`, fixate la revizia upstream
-`29540e9897dbe8aca388b13f7bdf615985f6ca2c`. Nu este necesară instalarea
-separată a Zola pentru funcțiile oferite de aplicație. Binarul Linux x86_64 este
-cel publicat în release-ul oficial Zola; proveniența și amprentele sale sunt
-documentate în [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+Pană Studio integrează direct motorul Rust Zola `0.22.1`, fixat la revizia
+upstream `29540e9897dbe8aca388b13f7bdf615985f6ca2c`. Preview-ul, validarea și
+buildul folosesc crate-urile oficiale ale acestei revizii; aplicația nu livrează,
+nu caută și nu pornește un executabil Zola separat. Nu este necesară instalarea
+Zola pentru funcțiile oferite de aplicație. Proveniența motorului este
+documentată în [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Instalare din AppImage
 

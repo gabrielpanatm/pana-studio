@@ -72,11 +72,11 @@ test("schema comenzii Undo/Redo este validată separat și are diagnostic explic
 
 test("receipt-ul este legat de tranzacția rezervată și de proiecția exactă a documentului", () => {
   const projected = receipt();
-  projected.result.entry.documentPaths = ["sursa/content/despre.md"];
+  projected.result.entry.documentPaths = ["content/despre.md"];
   projected.result.documents = [{
-    relativePath: "sursa/content/despre.md",
+    relativePath: "content/despre.md",
     snapshot: {
-      relativePath: "sursa/content/despre.md",
+      relativePath: "content/despre.md",
       text: "Despre noi",
       dirty: true,
       hash: "0000000000000000",
@@ -98,7 +98,7 @@ test("receipt-ul este legat de tranzacția rezervată și de proiecția exactă 
   );
 
   const mismatchedProjection = structuredClone(projected);
-  mismatchedProjection.result.documents[0].snapshot.relativePath = "sursa/content/alta.md";
+  mismatchedProjection.result.documents[0].snapshot.relativePath = "content/alta.md";
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(mismatchedProjection, expected),
     /snapshot FileBuffer invalid/,
@@ -116,8 +116,8 @@ test("manifestul de topologie este obligatoriu și rămâne în resursele tranza
   const outsideTransaction = receipt();
   outsideTransaction.result.entry = {
     ...outsideTransaction.result.entry,
-    documentPaths: ["sursa/content/despre.md"],
-    topologyPaths: ["sursa/templates/despre.html"],
+    documentPaths: ["content/despre.md"],
+    topologyPaths: ["templates/despre.html"],
   };
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(outsideTransaction, expected),
@@ -128,7 +128,7 @@ test("manifestul de topologie este obligatoriu și rămâne în resursele tranza
 test("numai istoricul structural rescanează catalogul înainte de Preview", async () => {
   const calls = [];
   const host = {
-    activeScannedPath: "sursa/content/despre.md",
+    activeScannedPath: "content/despre.md",
     async rescanCurrentProjectWithinKernelUndoRedoLease(...args) {
       calls.push(args);
     },
@@ -150,8 +150,8 @@ test("numai istoricul structural rescanează catalogul înainte de Preview", asy
   const structural = receipt();
   structural.result.entry = {
     ...structural.result.entry,
-    documentPaths: ["sursa/content/despre.md", "sursa/templates/despre.html"],
-    topologyPaths: ["sursa/content/despre.md", "sursa/templates/despre.html"],
+    documentPaths: ["content/despre.md", "templates/despre.html"],
+    topologyPaths: ["content/despre.md", "templates/despre.html"],
   };
   assert.equal(projectWorkspaceHistoryChangesTopology(structural), true);
   assert.equal(
@@ -160,7 +160,7 @@ test("numai istoricul structural rescanează catalogul înainte de Preview", asy
   );
   assert.deepEqual(calls, [[
     lease,
-    "sursa/content/despre.md",
+    "content/despre.md",
     { strict: true, deferPreviewRefresh: true },
   ]]);
 });

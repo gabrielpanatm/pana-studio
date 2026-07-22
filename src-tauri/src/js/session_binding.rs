@@ -119,7 +119,7 @@ mod tests {
             schema_version: 1,
             id: "stable-project-session".to_string(),
             project_root: "/tmp/page-js-session-bound".to_string(),
-            zola_root: "/tmp/page-js-session-bound/sursa".to_string(),
+            zola_root: "/tmp/page-js-session-bound".to_string(),
             session_dir: "/tmp/page-js-session-state".to_string(),
             manifest_path: "/tmp/page-js-session-state/session.json".to_string(),
             opened_at_ms,

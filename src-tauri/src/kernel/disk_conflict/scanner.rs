@@ -292,16 +292,16 @@ mod tests {
     #[test]
     fn scan_reports_clean_dirty_and_changed_files() {
         let root = test_root("scan-reports-clean-dirty-and-changed-files");
-        write_text(&root, "sursa/templates/clean.html", "clean");
-        write_text(&root, "sursa/templates/dirty.html", "dirty");
-        write_text(&root, "sursa/templates/changed.html", "disk changed");
+        write_text(&root, "templates/clean.html", "clean");
+        write_text(&root, "templates/dirty.html", "dirty");
+        write_text(&root, "templates/changed.html", "disk changed");
         let mut store = store(&root);
-        store.insert_loaded_file(entry(&root, "sursa/templates/clean.html", "clean"));
-        store.insert_loaded_file(entry(&root, "sursa/templates/dirty.html", "dirty"));
+        store.insert_loaded_file(entry(&root, "templates/clean.html", "clean"));
+        store.insert_loaded_file(entry(&root, "templates/dirty.html", "dirty"));
         store
-            .set_draft("sursa/templates/dirty.html", "draft".to_string(), 10)
+            .set_draft("templates/dirty.html", "draft".to_string(), 10)
             .unwrap();
-        store.insert_loaded_file(entry(&root, "sursa/templates/changed.html", "baseline"));
+        store.insert_loaded_file(entry(&root, "templates/changed.html", "baseline"));
 
         let snapshot = scan_disk_conflicts(&store);
 
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(snapshot.summary.disk_changed_count, 1);
         assert_eq!(snapshot.summary.status, KernelDiskConflictStatus::Warning);
         assert!(snapshot.files.iter().any(|file| {
-            file.relative_path == "sursa/templates/changed.html"
+            file.relative_path == "templates/changed.html"
                 && file.kind == KernelDiskConflictKind::DiskChanged
         }));
 
@@ -322,7 +322,7 @@ mod tests {
     fn scan_reports_missing_file_as_conflict() {
         let root = test_root("scan-reports-missing-file-as-conflict");
         let mut store = store(&root);
-        store.insert_loaded_file(entry(&root, "sursa/templates/missing.html", "baseline"));
+        store.insert_loaded_file(entry(&root, "templates/missing.html", "baseline"));
 
         let snapshot = scan_disk_conflicts(&store);
 

@@ -159,8 +159,8 @@
   function layerSourceTone(section: LayerNode) {
     const sourceNode = section.sourceId ? sourceNodesById.get(section.sourceId) : null;
     const templateNode = section.templateSourceId ? sourceNodesById.get(section.templateSourceId) : null;
-    const file = (sourceNode?.file ?? templateNode?.file ?? section.sourceLocation?.file ?? "").replace(/^sursa\//, "");
-    const active = (activeRenderedTemplatePath ?? activeScannedPath ?? "").replace(/^sursa\//, "");
+    const file = sourceNode?.file ?? templateNode?.file ?? section.sourceLocation?.file ?? "";
+    const active = activeRenderedTemplatePath ?? activeScannedPath ?? "";
     if (active && file === active) return "current";
     const origin = sourceNode?.origin ?? templateNode?.origin;
     if (origin) return origin;

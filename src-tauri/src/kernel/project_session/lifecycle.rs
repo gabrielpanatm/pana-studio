@@ -22,7 +22,7 @@ use super::{
     model::{ProjectSessionScanSummary, ProjectSessionSnapshot},
 };
 
-const PROJECT_SESSION_SCHEMA_VERSION: u32 = 1;
+const PROJECT_SESSION_SCHEMA_VERSION: u32 = 2;
 static LAST_SESSION_OPENED_AT_MS: AtomicU64 = AtomicU64::new(0);
 
 pub fn open_project_session<R: Runtime>(

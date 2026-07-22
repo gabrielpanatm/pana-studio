@@ -156,11 +156,11 @@ test("Page JS queue canonicalizes aliases and stages only the latest config", as
     },
     async clear() { throw new Error("clear neașteptat"); },
   }, 1_000);
-  queue.enqueue(stageTask(1, "./sursa\\templates\\index.html", taskIdentity));
+  queue.enqueue(stageTask(1, "./templates\\index.html", taskIdentity));
   queue.enqueue(stageTask(2, "templates/index.html", taskIdentity));
   await queue.flush();
 
-  assert.equal(normalizePageJsTemplatePath("./sursa\\templates\\index.html"), "templates/index.html");
+  assert.equal(normalizePageJsTemplatePath("./templates\\index.html"), "templates/index.html");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].input.templatePath, "templates/index.html");
   assert.equal(calls[0].input.currentConfig.revision, 2);

@@ -1,6 +1,5 @@
 use sha2::{Digest, Sha256};
 use std::{
-    ffi::OsString,
     fs::{self, File},
     io::Read,
     path::{Component, Path, PathBuf},
@@ -28,20 +27,19 @@ pub struct DeployArtifactFile {
     pub sha256_uppercase: String,
 }
 
-/// Resolves Zola's output directory against the canonical ProjectRoot.
+/// Resolves Zola's output directory against the canonical Zola root.
 ///
-/// `..` is accepted only while it remains inside ProjectRoot, which preserves
-/// the starter contract `sursa/../export`. Absolute output paths, source
-/// overlap and symlinked existing path components are rejected.
+/// Relative parent components and absolute paths are valid Zola configuration,
+/// so the artifact may live outside the source authority. Source overlap and
+/// symlinked existing path components are still rejected before build/deploy.
 pub fn resolve_artifact_root(project_root: &Path, zola_root: &Path) -> Result<PathBuf, String> {
     let project_root = canonical_project_root(project_root)?;
     let zola_root = canonical_zola_root(&project_root, zola_root)?;
     let configured = configured_output_dir(&zola_root)?;
-    let output_relative = normalize_output_relative(&project_root, &zola_root, &configured)?;
-    let output_root = project_root.join(&output_relative);
+    let output_root = normalize_output_path(&zola_root, &configured)?;
 
     reject_source_overlap(&output_root, &zola_root)?;
-    validate_existing_components_no_follow(&project_root, &output_relative)?;
+    validate_absolute_existing_components_no_follow(&output_root)?;
     Ok(output_root)
 }
 
@@ -204,18 +202,14 @@ fn canonical_project_root(project_root: &Path) -> Result<PathBuf, String> {
 }
 
 fn canonical_zola_root(project_root: &Path, zola_root: &Path) -> Result<PathBuf, String> {
-    let relative = zola_root.strip_prefix(project_root).map_err(|_| {
-        format!(
-            "Zola root {} nu aparține ProjectRoot {}.",
-            zola_root.display(),
-            project_root.display()
-        )
-    })?;
-    validate_existing_components_no_follow(project_root, relative)?;
     let canonical = fs::canonicalize(zola_root)
         .map_err(|error| format!("Zola root nu poate fi capturat: {error}."))?;
-    if !canonical.starts_with(project_root) {
-        return Err("Zola root canonizat a ieșit din ProjectRoot.".to_string());
+    if canonical != project_root {
+        return Err(format!(
+            "Rădăcina Zola {} trebuie să fie chiar dosarul de proiect selectat {}.",
+            canonical.display(),
+            project_root.display()
+        ));
     }
     let metadata = fs::symlink_metadata(&canonical)
         .map_err(|error| format!("Zola root nu poate fi inspectat: {error}."))?;
@@ -272,59 +266,37 @@ fn configured_output_dir(zola_root: &Path) -> Result<String, String> {
     Ok("public".to_string())
 }
 
-fn normalize_output_relative(
-    project_root: &Path,
-    zola_root: &Path,
-    configured: &str,
-) -> Result<PathBuf, String> {
+fn normalize_output_path(zola_root: &Path, configured: &str) -> Result<PathBuf, String> {
     if configured.trim().is_empty() {
         return Err("output_dir din configurația Zola este gol.".to_string());
     }
-    if configured.contains('\\') {
-        return Err(
-            "output_dir cu separator Windows/backslash este interzis; folosește un path relativ portabil."
-                .to_string(),
-        );
-    }
     let configured = Path::new(configured);
-    if configured.is_absolute() {
-        return Err(
-            "output_dir absolut este interzis; artifactul trebuie să rămână în ProjectRoot."
-                .to_string(),
-        );
-    }
-
-    let mut segments = zola_root
-        .strip_prefix(project_root)
-        .map_err(|_| "Zola root nu aparține ProjectRoot.".to_string())?
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(value) => Some(value.to_os_string()),
-            _ => None,
-        })
-        .collect::<Vec<OsString>>();
-
-    for component in configured.components() {
+    let candidate = if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        zola_root.join(configured)
+    };
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
         match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
             Component::CurDir => {}
-            Component::Normal(value) => segments.push(value.to_os_string()),
             Component::ParentDir => {
-                if segments.pop().is_none() {
+                if !normalized.pop() {
                     return Err(
-                        "output_dir traversează în afara ProjectRoot; deploy-ul a fost blocat."
+                        "output_dir traversează dincolo de rădăcina sistemului de fișiere."
                             .to_string(),
                     );
                 }
             }
-            Component::RootDir | Component::Prefix(_) => {
-                return Err("output_dir absolut este interzis.".to_string())
-            }
         }
     }
-    if segments.is_empty() {
-        return Err("output_dir nu poate fi chiar ProjectRoot.".to_string());
+    if !normalized.is_absolute() {
+        return Err("output_dir nu a putut fi rezolvat la o cale absolută.".to_string());
     }
-    Ok(segments.into_iter().collect())
+    Ok(normalized)
 }
 
 fn reject_source_overlap(output_root: &Path, zola_root: &Path) -> Result<(), String> {
@@ -356,17 +328,29 @@ fn reject_source_overlap(output_root: &Path, zola_root: &Path) -> Result<(), Str
     Ok(())
 }
 
-fn validate_existing_components_no_follow(root: &Path, relative: &Path) -> Result<(), String> {
-    let mut current = root.to_path_buf();
+fn validate_absolute_existing_components_no_follow(path: &Path) -> Result<(), String> {
+    if !path.is_absolute() {
+        return Err(format!(
+            "Path-ul artifactului nu este absolut după normalizare: {}.",
+            path.display()
+        ));
+    }
+    let mut current = PathBuf::new();
     let mut missing_parent = false;
-    for component in relative.components() {
-        let Component::Normal(segment) = component else {
-            return Err(format!(
-                "Path-ul {} nu este normalizat sub ProjectRoot.",
-                relative.display()
-            ));
-        };
-        current.push(segment);
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                current.push(component.as_os_str());
+                continue;
+            }
+            Component::Normal(segment) => current.push(segment),
+            Component::CurDir | Component::ParentDir => {
+                return Err(format!(
+                    "Path-ul artifactului nu este normalizat: {}.",
+                    path.display()
+                ))
+            }
+        }
         if missing_parent {
             continue;
         }
@@ -595,13 +579,14 @@ mod tests {
     fn starter_parent_output_is_contained_and_manifest_is_deterministic() {
         let root = fixture("starter");
         write_config(&root, "../export");
-        fs::create_dir_all(root.join("export/assets")).unwrap();
-        fs::write(root.join("export/index.html"), "index").unwrap();
-        fs::write(root.join("export/assets/app.js"), "app").unwrap();
+        let output = root.parent().unwrap().join("export");
+        fs::create_dir_all(output.join("assets")).unwrap();
+        fs::write(output.join("index.html"), "index").unwrap();
+        fs::write(output.join("assets/app.js"), "app").unwrap();
 
-        let manifest = build_deploy_artifact_manifest(&root, &root.join("sursa")).unwrap();
+        let manifest = build_deploy_artifact_manifest(&root, &root.to_path_buf()).unwrap();
 
-        assert_eq!(manifest.root, root.join("export"));
+        assert_eq!(manifest.root, output);
         assert_eq!(manifest.total_bytes, 8);
         assert_eq!(
             manifest
@@ -619,28 +604,27 @@ mod tests {
     }
 
     #[test]
-    fn absolute_and_outside_traversal_are_rejected() {
+    fn absolute_and_parent_outputs_are_resolved_from_the_zola_root() {
         let absolute = fixture("absolute");
-        write_config(&absolute, "/tmp/export");
-        assert!(resolve_artifact_root(&absolute, &absolute.join("sursa"))
-            .unwrap_err()
-            .contains("absolut"));
-        cleanup(absolute);
-
-        let windows_absolute = fixture("windows-absolute");
-        write_config(&windows_absolute, r"C:\export");
-        assert!(
-            resolve_artifact_root(&windows_absolute, &windows_absolute.join("sursa"))
-                .unwrap_err()
-                .contains("separator Windows")
+        let absolute_output = absolute.parent().unwrap().join("absolute-output");
+        write_config(&absolute, absolute_output.to_str().unwrap());
+        assert_eq!(
+            resolve_artifact_root(&absolute, &absolute).unwrap(),
+            absolute_output
         );
-        cleanup(windows_absolute);
+        cleanup(absolute);
 
         let traversal = fixture("traversal");
         write_config(&traversal, "../../outside");
-        assert!(resolve_artifact_root(&traversal, &traversal.join("sursa"))
-            .unwrap_err()
-            .contains("în afara ProjectRoot"));
+        assert_eq!(
+            resolve_artifact_root(&traversal, &traversal).unwrap(),
+            traversal
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("outside")
+        );
         cleanup(traversal);
     }
 
@@ -648,16 +632,16 @@ mod tests {
     fn source_overlap_is_rejected_but_default_public_is_allowed() {
         let source = fixture("source-overlap");
         write_config(&source, "templates/generated");
-        assert!(resolve_artifact_root(&source, &source.join("sursa"))
+        assert!(resolve_artifact_root(&source, &source.to_path_buf())
             .unwrap_err()
             .contains("se suprapune"));
         cleanup(source);
 
         let public = fixture("public");
-        fs::write(public.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(public.join("zola.toml"), "base_url = '/'\n").unwrap();
         assert_eq!(
-            resolve_artifact_root(&public, &public.join("sursa")).unwrap(),
-            public.join("sursa/public")
+            resolve_artifact_root(&public, &public.to_path_buf()).unwrap(),
+            public.join("public")
         );
         cleanup(public);
     }
@@ -671,8 +655,8 @@ mod tests {
         write_config(&root, "../export");
         let outside = unique_temp_dir("outside");
         fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, root.join("export")).unwrap();
-        assert!(resolve_artifact_root(&root, &root.join("sursa"))
+        symlink(&outside, root.parent().unwrap().join("export")).unwrap();
+        assert!(resolve_artifact_root(&root, &root.to_path_buf())
             .unwrap_err()
             .contains("symlink"));
         cleanup(root);
@@ -680,10 +664,11 @@ mod tests {
 
         let root = fixture("nested-symlink");
         write_config(&root, "../export");
-        fs::create_dir_all(root.join("export")).unwrap();
+        let output = root.parent().unwrap().join("export");
+        fs::create_dir_all(&output).unwrap();
         fs::write(root.join("target.txt"), "target").unwrap();
-        symlink(root.join("target.txt"), root.join("export/link.txt")).unwrap();
-        assert!(build_deploy_artifact_manifest(&root, &root.join("sursa"))
+        symlink(root.join("target.txt"), output.join("link.txt")).unwrap();
+        assert!(build_deploy_artifact_manifest(&root, &root.to_path_buf())
             .unwrap_err()
             .contains("symlink"));
         cleanup(root);
@@ -696,13 +681,14 @@ mod tests {
 
         let root = fixture("special");
         write_config(&root, "../export");
-        fs::create_dir_all(root.join("export")).unwrap();
+        let output = root.parent().unwrap().join("export");
+        fs::create_dir_all(&output).unwrap();
         let status = Command::new("mkfifo")
-            .arg(root.join("export/pipe"))
+            .arg(output.join("pipe"))
             .status()
             .unwrap();
         assert!(status.success());
-        assert!(build_deploy_artifact_manifest(&root, &root.join("sursa"))
+        assert!(build_deploy_artifact_manifest(&root, &root.to_path_buf())
             .unwrap_err()
             .contains("obiect special"));
         cleanup(root);
@@ -712,23 +698,24 @@ mod tests {
     fn file_and_depth_budgets_are_enforced() {
         let large = fixture("large-file");
         write_config(&large, "../export");
-        fs::create_dir_all(large.join("export")).unwrap();
-        let file = File::create(large.join("export/large.bin")).unwrap();
+        let large_output = large.parent().unwrap().join("export");
+        fs::create_dir_all(&large_output).unwrap();
+        let file = File::create(large_output.join("large.bin")).unwrap();
         file.set_len(MAX_ARTIFACT_FILE_BYTES + 1).unwrap();
-        assert!(build_deploy_artifact_manifest(&large, &large.join("sursa"))
+        assert!(build_deploy_artifact_manifest(&large, &large.to_path_buf())
             .unwrap_err()
             .contains("limita per fișier"));
         cleanup(large);
 
         let deep = fixture("deep");
         write_config(&deep, "../export");
-        let mut directory = deep.join("export");
+        let mut directory = deep.parent().unwrap().join("export");
         for _ in 0..MAX_ARTIFACT_PATH_DEPTH {
             directory.push("d");
         }
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join("file.txt"), "x").unwrap();
-        assert!(build_deploy_artifact_manifest(&deep, &deep.join("sursa"))
+        assert!(build_deploy_artifact_manifest(&deep, &deep.to_path_buf())
             .unwrap_err()
             .contains("adâncimea maximă"));
         cleanup(deep);
@@ -738,7 +725,7 @@ mod tests {
     #[test]
     fn directory_snapshot_detects_nested_manifest_invalidation() {
         let root = fixture("directory-postflight");
-        let nested = root.join("export/nested");
+        let nested = root.parent().unwrap().join("export/nested");
         fs::create_dir_all(&nested).unwrap();
         let before = metadata_snapshot(&fs::symlink_metadata(&nested).unwrap());
 
@@ -750,14 +737,15 @@ mod tests {
     }
 
     fn fixture(label: &str) -> PathBuf {
-        let root = unique_temp_dir(label);
-        fs::create_dir_all(root.join("sursa")).unwrap();
+        let outer = unique_temp_dir(label);
+        let root = outer.join("site");
+        fs::create_dir_all(&root).unwrap();
         root.canonicalize().unwrap()
     }
 
     fn write_config(root: &Path, output_dir: &str) {
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             format!("base_url = '/'\noutput_dir = {output_dir:?}\n"),
         )
         .unwrap();
@@ -775,6 +763,11 @@ mod tests {
     }
 
     fn cleanup(path: PathBuf) {
-        let _ = fs::remove_dir_all(path);
+        let target = path
+            .parent()
+            .filter(|_| path.file_name().is_some_and(|name| name == "site"))
+            .unwrap_or(&path)
+            .to_path_buf();
+        let _ = fs::remove_dir_all(target);
     }
 }

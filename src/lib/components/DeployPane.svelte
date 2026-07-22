@@ -64,10 +64,6 @@
   let zolaSettings = $state<ZolaProjectSettings>(createDefaultZolaSettings());
   let envVars = $state<Record<string, string>>({});
   let cachebustAssetsDraft = $state(false);
-  let optimizeImagesDraft = $state(false);
-  let imageMaxDimensionText = $state("1920");
-  let imageExcludeSuffix = $state("-nr");
-  let imageReplaceOnlyIfSmaller = $state(true);
   let feedFilenamesText = $state("");
   let feedLimitText = $state("");
   let searchTruncateText = $state("");
@@ -128,10 +124,6 @@
         saveProjectEnv(bunnyEnvVarsFromDraft(envVars)),
         saveProjectAppConfig(appConfigFromDraft({
           cachebustAssetsDraft,
-          optimizeImagesDraft,
-          imageMaxDimensionText,
-          imageExcludeSuffix,
-          imageReplaceOnlyIfSmaller,
         })),
       ]);
       zolaSettings = savedSettings;
@@ -155,10 +147,6 @@
   function syncAppConfigFields(config: ProjectAppConfig) {
     const draft = appConfigDraftFromConfig(config);
     cachebustAssetsDraft = draft.cachebustAssetsDraft;
-    optimizeImagesDraft = draft.optimizeImagesDraft;
-    imageMaxDimensionText = draft.imageMaxDimensionText;
-    imageExcludeSuffix = draft.imageExcludeSuffix;
-    imageReplaceOnlyIfSmaller = draft.imageReplaceOnlyIfSmaller;
   }
 
   function markConfigDirty() {
@@ -373,60 +361,6 @@
         />
         <i aria-hidden="true"></i>
       </label>
-      <label class="switch-field">
-        <span>
-          <strong>Optimizează imaginile după build</strong>
-          <small>Procesează doar rezultatul Zola din <code>{zolaSettings.outputDir || "public"}</code>; sursele rămân neatinse.</small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={optimizeImagesDraft}
-          onchange={(event) => {
-            optimizeImagesDraft = event.currentTarget.checked;
-            markConfigDirty();
-          }}
-        />
-        <i aria-hidden="true"></i>
-      </label>
-      {#if optimizeImagesDraft}
-        <div class="image-settings">
-          <div class="field-grid">
-            <label class="config-field">
-              <span>Latură maximă</span>
-              <input class="config-input" type="number" min="1" value={imageMaxDimensionText}
-                oninput={(event) => {
-                  imageMaxDimensionText = event.currentTarget.value;
-                  markConfigDirty();
-                }} />
-            </label>
-            <label class="config-field">
-              <span>Exclude sufix</span>
-              <input class="config-input" placeholder="-nr" value={imageExcludeSuffix}
-                oninput={(event) => {
-                  imageExcludeSuffix = event.currentTarget.value;
-                  markConfigDirty();
-                }} />
-            </label>
-          </div>
-          <label class="switch-field compact">
-            <span>
-              <strong>Doar dacă WebP e mai mic</strong>
-              <small>Formatul curent este WebP lossless, cu metadata eliminată.</small>
-            </span>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={imageReplaceOnlyIfSmaller}
-              onchange={(event) => {
-                imageReplaceOnlyIfSmaller = event.currentTarget.checked;
-                markConfigDirty();
-              }}
-            />
-            <i aria-hidden="true"></i>
-          </label>
-        </div>
-      {/if}
     </section>
 
     <section class="config-section">
@@ -776,16 +710,6 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: 7px;
-  }
-
-  .image-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    padding: 8px;
-    border: 1px dashed var(--border-3);
-    border-radius: 7px;
-    background: color-mix(in srgb, var(--surface-5) 55%, transparent);
   }
 
   .config-field {

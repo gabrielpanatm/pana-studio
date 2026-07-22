@@ -72,6 +72,7 @@ export type SelectionInfo = {
   variables: CssVariableRow[];
   matchedRules: CssRuleMatch[];
   imageSrc: string | null;
+  zolaImage: ZolaImagePresentation | null;
   attributes: Record<string, string>;
   parentNode: DomNodeLink | null;
   childNodes: DomNodeLink[];
@@ -79,6 +80,19 @@ export type SelectionInfo = {
   sourceId: string | null;
   templateSourceId: string | null;
   sessionId: string | null;
+};
+
+export type ZolaImageOperation = "fit_width" | "fit" | "fill";
+export type ZolaImageFormat = "auto" | "webp" | "avif" | "jpg" | "png";
+
+export type ZolaImagePresentation = {
+  sourceUrl: string;
+  sourcePath: string;
+  width: number;
+  height: number | null;
+  operation: ZolaImageOperation;
+  format: ZolaImageFormat;
+  quality: number;
 };
 
 export type PreviewSelectionState =
@@ -326,10 +340,6 @@ export type SitePartialIncludeReceipt = {
 export type ProjectAppConfig = {
   projectPath: string;
   cachebustAssets: boolean;
-  optimizeImagesOnBuild: boolean;
-  imageMaxDimension: number;
-  imageExcludeSuffix: string;
-  imageReplaceOnlyIfSmaller: boolean;
 };
 
 export type ZolaProjectSettings = {
@@ -2859,6 +2869,18 @@ export type ProjectHtmlAttributeIntent = {
   targetTag?: string | null;
   targetSelector?: string | null;
   attributes: ProjectHtmlAttributeMutation[];
+  zolaImage?: ProjectZolaImageIntent | null;
+};
+
+export type ProjectZolaImageIntent = {
+  enabled: boolean;
+  sourceUrl?: string | null;
+  sourcePath?: string | null;
+  width?: number | null;
+  height?: number | null;
+  operation?: ZolaImageOperation | null;
+  format?: ZolaImageFormat | null;
+  quality?: number | null;
 };
 
 export type ProjectHtmlTextIntent = {
@@ -3230,6 +3252,8 @@ export type ProjectHtmlAttributePatch = {
   sourceStartLine: number;
   tag: string;
   attributes: Record<string, string | null>;
+  zolaImageContract: boolean;
+  zolaImage: ZolaImagePresentation | null;
 };
 
 export type PreviewHtmlAttributesExecutionStatus = "committed" | "blocked";
@@ -3341,6 +3365,7 @@ export type ProjectHtmlDuplicatePatch = {
   componentIds: string[];
   dataAnimCount: number;
   duplicateIdCount: number;
+  zolaImageContract: boolean;
 };
 
 export type PreviewHtmlDuplicateExecutionStatus = "committed" | "blocked";

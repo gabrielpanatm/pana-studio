@@ -1240,27 +1240,27 @@ mod tests {
     }
 
     fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
         fs::write(
-            root.join("sursa/templates/partials/card.html"),
+            root.join("templates/partials/card.html"),
             "<article></article>\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/base.html"), "<body></body>\n").unwrap();
+        fs::write(root.join("templates/base.html"), "<body></body>\n").unwrap();
         fs::write(
-            root.join("sursa/templates/macros.html"),
+            root.join("templates/macros.html"),
             "{% macro card() %}{% endmacro %}\n",
         )
         .unwrap();

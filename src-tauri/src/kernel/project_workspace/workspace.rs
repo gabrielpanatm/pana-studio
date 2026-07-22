@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
+};
 
 use crate::{
     js::{PageJsConfig, PageJsDraftStageInput, PageJsDraftStore},
@@ -400,6 +403,7 @@ impl ProjectWorkspace {
 
         for mut resource in resources {
             let normalized = normalize_project_relative_path(&resource.relative_path)?;
+            self.require_editable_source_path(&normalized)?;
             if normalized != resource.relative_path || !seen.insert(normalized.clone()) {
                 return Err(format!(
                     "ProjectWorkspace a refuzat resursa binară necanonică sau duplicată: {}.",
@@ -657,6 +661,13 @@ impl ProjectWorkspace {
             return Ok(self.mutation_receipt(revision_before, Vec::new(), None, None));
         }
         require_distinct_resource_changes(&mutations, &deletes)?;
+        for path in mutations
+            .iter()
+            .map(|mutation| mutation.relative_path.as_str())
+            .chain(deletes.iter().map(|delete| delete.relative_path.as_str()))
+        {
+            self.require_editable_source_path(path)?;
+        }
 
         let mut next_documents = self.documents.clone();
         let mut transitions = Vec::with_capacity(mutations.len() + deletes.len());
@@ -1221,6 +1232,22 @@ impl ProjectWorkspace {
         self.project_model_source_revision = None;
     }
 
+    fn require_editable_source_path(&self, relative_path: &str) -> Result<(), String> {
+        let normalized = normalize_project_relative_path(relative_path)?;
+        let project_root = Path::new(&self.session.project_root);
+        let zola_root = Path::new(&self.session.zola_root);
+        let Some(output_root) = crate::deploy::resolve_artifact_root(project_root, zola_root).ok()
+        else {
+            return Ok(());
+        };
+        if project_root.join(&normalized).starts_with(&output_root) {
+            return Err(format!(
+                "ProjectWorkspace a refuzat `{normalized}`: path-ul aparține output_dir Zola generat și nu este sursă editabilă."
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn require_identity(
         &self,
         identity: &ProjectWorkspaceIdentity,
@@ -1623,17 +1650,17 @@ mod tests {
     #[test]
     fn document_mutation_and_undo_redo_never_touch_disk() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        let path = root.join("sursa/templates/index.html");
+        fs::create_dir_all(root.join("templates")).unwrap();
+        let path = root.join("templates/index.html");
         fs::write(&path, "<h1>Disk</h1>").unwrap();
-        let mut workspace = workspace(&root, &[("sursa/templates/index.html", "<h1>Disk</h1>")]);
+        let mut workspace = workspace(&root, &[("templates/index.html", "<h1>Disk</h1>")]);
 
         let receipt = workspace
             .stage_document_texts(
                 &identity(&workspace),
                 metadata("Text titlu", Some("inspector.content")),
                 vec![WorkspaceDocumentMutation {
-                    relative_path: "sursa/templates/index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
                     contents: "<h1>Draft</h1>".to_string(),
                 }],
                 10,
@@ -1662,7 +1689,7 @@ mod tests {
             Some("<h1>Disk</h1>")
         );
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/index.html"),
+            workspace.documents.text_for("templates/index.html"),
             Some("<h1>Disk</h1>".to_string())
         );
         assert!(!workspace.is_dirty());
@@ -1678,7 +1705,7 @@ mod tests {
             Some("<h1>Draft</h1>")
         );
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/index.html"),
+            workspace.documents.text_for("templates/index.html"),
             Some("<h1>Draft</h1>".to_string())
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "<h1>Disk</h1>");
@@ -1687,7 +1714,7 @@ mod tests {
                 &identity(&workspace),
                 metadata("Existing template resource edit", None),
                 vec![WorkspaceResourceMutation {
-                    relative_path: "sursa/templates/index.html".into(),
+                    relative_path: "templates/index.html".into(),
                     contents: "<h1>Draft 2</h1>".into(),
                     create_only: false,
                 }],
@@ -1704,10 +1731,7 @@ mod tests {
         let root = unique_test_dir();
         let mut workspace = workspace(
             &root,
-            &[
-                ("sursa/templates/a.html", "a"),
-                ("sursa/templates/b.html", "b"),
-            ],
+            &[("templates/a.html", "a"), ("templates/b.html", "b")],
         );
         let stale = ProjectWorkspaceIdentity {
             expected_revision: 8,
@@ -1718,14 +1742,14 @@ mod tests {
                 &stale,
                 metadata("stale", None),
                 vec![WorkspaceDocumentMutation {
-                    relative_path: "sursa/templates/a.html".to_string(),
+                    relative_path: "templates/a.html".to_string(),
                     contents: "changed".to_string(),
                 }],
                 10,
             )
             .is_err());
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/a.html"),
+            workspace.documents.text_for("templates/a.html"),
             Some("a".into())
         );
 
@@ -1735,11 +1759,11 @@ mod tests {
                 metadata("atomic", None),
                 vec![
                     WorkspaceDocumentMutation {
-                        relative_path: "sursa/templates/a.html".to_string(),
+                        relative_path: "templates/a.html".to_string(),
                         contents: "changed".to_string(),
                     },
                     WorkspaceDocumentMutation {
-                        relative_path: "sursa/templates/missing.html".to_string(),
+                        relative_path: "templates/missing.html".to_string(),
                         contents: "missing".to_string(),
                     },
                 ],
@@ -1748,7 +1772,7 @@ mod tests {
             .is_err());
         assert_eq!(workspace.revision, 0);
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/a.html"),
+            workspace.documents.text_for("templates/a.html"),
             Some("a".into())
         );
         fs::remove_dir_all(root).ok();
@@ -1757,7 +1781,7 @@ mod tests {
     #[test]
     fn page_js_is_part_of_the_same_revision_and_history() {
         let root = unique_test_dir();
-        let mut workspace = workspace(&root, &[("sursa/templates/index.html", "<main></main>")]);
+        let mut workspace = workspace(&root, &[("templates/index.html", "<main></main>")]);
         let session_id = workspace.runtime_session_id();
         let project_root = workspace.session.project_root.clone();
         let staged = workspace
@@ -1795,21 +1819,17 @@ mod tests {
     #[test]
     fn projection_publish_requires_the_exact_workspace_revision() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(
-            root.join("sursa/zola.toml"),
-            "base_url = 'http://example.test'\n",
-        )
-        .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), "<main></main>").unwrap();
-        let mut workspace = workspace(&root, &[("sursa/templates/index.html", "<main></main>")]);
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = 'http://example.test'\n").unwrap();
+        fs::write(root.join("templates/index.html"), "<main></main>").unwrap();
+        let mut workspace = workspace(&root, &[("templates/index.html", "<main></main>")]);
         let lease = workspace.capture_projection_lease().unwrap();
         workspace
             .stage_document_texts(
                 &identity(&workspace),
                 metadata("edit", None),
                 vec![WorkspaceDocumentMutation {
-                    relative_path: "sursa/templates/index.html".into(),
+                    relative_path: "templates/index.html".into(),
                     contents: "<main>draft</main>".into(),
                 }],
                 1,
@@ -1829,8 +1849,8 @@ mod tests {
         let mut workspace = workspace(
             &root,
             &[
-                ("sursa/zola.toml", "base_url = '/'\n"),
-                ("sursa/templates/index.html", "<main>Baseline</main>"),
+                ("zola.toml", "base_url = '/'\n"),
+                ("templates/index.html", "<main>Baseline</main>"),
             ],
         );
         let receipt = workspace
@@ -1838,7 +1858,7 @@ mod tests {
                 &identity(&workspace),
                 metadata("edit", None),
                 vec![WorkspaceDocumentMutation {
-                    relative_path: "sursa/templates/index.html".into(),
+                    relative_path: "templates/index.html".into(),
                     contents: "<main>Draft</main>".into(),
                 }],
                 1,
@@ -1852,22 +1872,19 @@ mod tests {
         );
         assert_eq!(lease.source_texts.len(), 2);
         assert_eq!(
-            lease
-                .source_texts
-                .get("sursa/zola.toml")
-                .map(String::as_str),
+            lease.source_texts.get("zola.toml").map(String::as_str),
             Some("base_url = '/'\n")
         );
         assert_eq!(
             lease
                 .source_texts
-                .get("sursa/templates/index.html")
+                .get("templates/index.html")
                 .map(String::as_str),
             Some("<main>Draft</main>")
         );
         assert_eq!(
             lease.changed_paths,
-            std::collections::HashSet::from(["sursa/templates/index.html".to_string()])
+            std::collections::HashSet::from(["templates/index.html".to_string()])
         );
         fs::remove_dir_all(root).ok();
     }
@@ -1875,18 +1892,11 @@ mod tests {
     #[test]
     fn resource_delete_is_a_tombstone_projection_and_is_fully_reversible() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(
-            root.join("sursa/zola.toml"),
-            "base_url = 'http://example.test'\n",
-        )
-        .unwrap();
-        let path = root.join("sursa/templates/index.html");
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = 'http://example.test'\n").unwrap();
+        let path = root.join("templates/index.html");
         fs::write(&path, "<main>Disk</main>").unwrap();
-        let mut workspace = workspace(
-            &root,
-            &[("sursa/templates/index.html", "<main>Disk</main>")],
-        );
+        let mut workspace = workspace(&root, &[("templates/index.html", "<main>Disk</main>")]);
 
         workspace
             .stage_resource_changes(
@@ -1894,7 +1904,7 @@ mod tests {
                 metadata("Delete template", None),
                 Vec::new(),
                 vec![WorkspaceResourceDelete {
-                    relative_path: "sursa/templates/index.html".into(),
+                    relative_path: "templates/index.html".into(),
                 }],
                 10,
             )
@@ -1903,23 +1913,23 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "<main>Disk</main>");
         assert_eq!(
             workspace.deleted_document_paths(),
-            vec!["sursa/templates/index.html"]
+            vec!["templates/index.html"]
         );
         assert!(workspace
             .capture_projection_lease()
             .unwrap()
             .deleted_sources
-            .contains("sursa/templates/index.html"));
+            .contains("templates/index.html"));
         workspace.undo(&identity(&workspace), 11).unwrap();
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/index.html"),
+            workspace.documents.text_for("templates/index.html"),
             Some("<main>Disk</main>".into())
         );
         assert!(!workspace.is_dirty());
         workspace.redo(&identity(&workspace), 12).unwrap();
         assert!(workspace
             .documents
-            .text_for("sursa/templates/index.html")
+            .text_for("templates/index.html")
             .is_none());
         fs::remove_dir_all(root).unwrap();
     }
@@ -1927,8 +1937,8 @@ mod tests {
     #[test]
     fn binary_resource_is_session_only_projected_and_reversible() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/static/fonturi/inter")).unwrap();
-        let relative_path = "sursa/static/fonturi/inter/inter-regular.woff2";
+        fs::create_dir_all(root.join("static/fonturi/inter")).unwrap();
+        let relative_path = "static/fonturi/inter/inter-regular.woff2";
         let disk_path = root.join(relative_path);
         let bytes = vec![0x77, 0x4f, 0x46, 0x32, 1, 2, 3, 4];
         let mut workspace = workspace(&root, &[]);
@@ -1970,11 +1980,52 @@ mod tests {
     }
 
     #[test]
+    fn configured_output_is_not_an_editable_workspace_namespace() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = '/'\noutput_dir = 'generated/site'\n",
+        )
+        .unwrap();
+        let mut workspace = workspace(&root, &[]);
+
+        let text_error = workspace
+            .stage_resource_texts(
+                &identity(&workspace),
+                metadata("generated text", None),
+                vec![WorkspaceResourceMutation {
+                    relative_path: "generated/site/index.html".to_string(),
+                    contents: "generated".to_string(),
+                    create_only: true,
+                }],
+                35,
+            )
+            .unwrap_err();
+        assert!(text_error.contains("nu este sursă editabilă"));
+
+        let binary_error = workspace
+            .stage_binary_resource_creates(
+                &identity(&workspace),
+                metadata("generated binary", None),
+                vec![WorkspaceBinaryResource::new(
+                    "generated/site/image.webp",
+                    vec![1, 2, 3],
+                )],
+                36,
+            )
+            .unwrap_err();
+        assert!(binary_error.contains("nu este sursă editabilă"));
+        assert!(!workspace.is_dirty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn binary_create_is_fail_closed_against_text_and_accepted_disk_namespaces() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
-        fs::write(root.join("sursa/static/existing.bin"), b"disk").unwrap();
-        let mut workspace = workspace(&root, &[("sursa/static/text.json", "{\"value\":true}")]);
+        fs::create_dir_all(root.join("static")).unwrap();
+        fs::write(root.join("static/existing.bin"), b"disk").unwrap();
+        let mut workspace = workspace(&root, &[("static/text.json", "{\"value\":true}")]);
         workspace.accepted_disk = AcceptedProjectDiskManifest::new(
             workspace.runtime_session_id(),
             workspace.session.project_root.clone(),
@@ -1986,10 +2037,7 @@ mod tests {
             .stage_binary_resource_creates(
                 &identity(&workspace),
                 metadata("collision", None),
-                vec![WorkspaceBinaryResource::new(
-                    "sursa/static/text.json",
-                    vec![1],
-                )],
+                vec![WorkspaceBinaryResource::new("static/text.json", vec![1])],
                 40,
             )
             .unwrap_err();
@@ -1999,10 +2047,7 @@ mod tests {
             .stage_binary_resource_creates(
                 &identity(&workspace),
                 metadata("collision", None),
-                vec![WorkspaceBinaryResource::new(
-                    "sursa/static/existing.bin",
-                    vec![1],
-                )],
+                vec![WorkspaceBinaryResource::new("static/existing.bin", vec![1])],
                 41,
             )
             .unwrap_err();
@@ -2015,8 +2060,8 @@ mod tests {
     #[test]
     fn external_reconcile_preserves_or_invalidates_binary_history_by_exact_path() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/static/fonturi/inter")).unwrap();
-        let relative_path = "sursa/static/fonturi/inter/inter-regular.woff2";
+        fs::create_dir_all(root.join("static/fonturi/inter")).unwrap();
+        let relative_path = "static/fonturi/inter/inter-regular.woff2";
         let bytes = vec![0x77, 0x4f, 0x46, 0x32, 51, 52];
         let mut workspace = workspace(&root, &[]);
         workspace
@@ -2044,7 +2089,7 @@ mod tests {
             .unwrap();
         assert_eq!(workspace.snapshot().history.undo_count, 1);
 
-        fs::write(root.join("sursa/static/unrelated.txt"), "external").unwrap();
+        fs::write(root.join("static/unrelated.txt"), "external").unwrap();
         let reconciled = workspace
             .accepted_disk
             .next(
@@ -2087,14 +2132,14 @@ mod tests {
     #[test]
     fn history_rebases_resource_existence_across_a_saved_baseline() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         let mut workspace = workspace(&root, &[]);
         let create_receipt = workspace
             .stage_resource_texts(
                 &identity(&workspace),
                 metadata("Create template", None),
                 vec![WorkspaceResourceMutation {
-                    relative_path: "sursa/templates/new.html".into(),
+                    relative_path: "templates/new.html".into(),
                     contents: "<main>New</main>".into(),
                     create_only: true,
                 }],
@@ -2103,13 +2148,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             create_receipt.entry.unwrap().topology_paths,
-            vec!["sursa/templates/new.html"]
+            vec!["templates/new.html"]
         );
-        let path = root.join("sursa/templates/new.html");
+        let path = root.join("templates/new.html");
         fs::write(&path, "<main>New</main>").unwrap();
         let mut saved_documents = workspace.documents.clone();
         saved_documents
-            .record_saved_text("sursa/templates/new.html", "<main>New</main>".into())
+            .record_saved_text("templates/new.html", "<main>New</main>".into())
             .unwrap();
         let accepted = workspace
             .accepted_disk
@@ -2130,15 +2175,15 @@ mod tests {
         assert!(!workspace.is_dirty());
 
         let undo = workspace.undo(&identity(&workspace), 21).unwrap();
-        assert_eq!(undo.entry.topology_paths, vec!["sursa/templates/new.html"]);
+        assert_eq!(undo.entry.topology_paths, vec!["templates/new.html"]);
         assert_eq!(
             workspace.deleted_document_paths(),
-            vec!["sursa/templates/new.html"]
+            vec!["templates/new.html"]
         );
         let redo = workspace.redo(&identity(&workspace), 22).unwrap();
-        assert_eq!(redo.entry.topology_paths, vec!["sursa/templates/new.html"]);
+        assert_eq!(redo.entry.topology_paths, vec!["templates/new.html"]);
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/new.html"),
+            workspace.documents.text_for("templates/new.html"),
             Some("<main>New</main>".into())
         );
         assert!(!workspace.is_dirty());
@@ -2148,12 +2193,12 @@ mod tests {
     #[test]
     fn version_restore_stages_create_update_and_delete_as_one_history_entry() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         let mut workspace = workspace(
             &root,
             &[
-                ("sursa/templates/index.html", "old"),
-                ("sursa/templates/remove.html", "remove"),
+                ("templates/index.html", "old"),
+                ("templates/remove.html", "remove"),
             ],
         );
         let revision_before = workspace.revision;
@@ -2169,18 +2214,18 @@ mod tests {
                 },
                 vec![
                     WorkspaceResourceMutation {
-                        relative_path: "sursa/templates/index.html".to_string(),
+                        relative_path: "templates/index.html".to_string(),
                         contents: "restored".to_string(),
                         create_only: false,
                     },
                     WorkspaceResourceMutation {
-                        relative_path: "sursa/templates/new.html".to_string(),
+                        relative_path: "templates/new.html".to_string(),
                         contents: "new".to_string(),
                         create_only: true,
                     },
                 ],
                 vec![WorkspaceResourceDelete {
-                    relative_path: "sursa/templates/remove.html".to_string(),
+                    relative_path: "templates/remove.html".to_string(),
                 }],
                 Vec::new(),
                 40,
@@ -2190,31 +2235,28 @@ mod tests {
         assert_eq!(workspace.revision, revision_before + 1);
         assert_eq!(workspace.history.snapshot().undo_count, undo_before + 1);
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/index.html"),
+            workspace.documents.text_for("templates/index.html"),
             Some("restored".to_string())
         );
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/new.html"),
+            workspace.documents.text_for("templates/new.html"),
             Some("new".to_string())
         );
         assert_eq!(
             workspace.deleted_document_paths(),
-            vec!["sursa/templates/remove.html"]
+            vec!["templates/remove.html"]
         );
 
         workspace.undo(&identity(&workspace), 41).unwrap();
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/index.html"),
+            workspace.documents.text_for("templates/index.html"),
             Some("old".to_string())
         );
         assert_eq!(
-            workspace.documents.text_for("sursa/templates/remove.html"),
+            workspace.documents.text_for("templates/remove.html"),
             Some("remove".to_string())
         );
-        assert_eq!(
-            workspace.documents.text_for("sursa/templates/new.html"),
-            None
-        );
+        assert_eq!(workspace.documents.text_for("templates/new.html"), None);
     }
 
     fn workspace(root: &PathBuf, files: &[(&str, &str)]) -> ProjectWorkspace {
@@ -2282,7 +2324,7 @@ mod tests {
             schema_version: 1,
             id: "workspace-test".to_string(),
             project_root: root.to_string_lossy().to_string(),
-            zola_root: root.join("sursa").to_string_lossy().to_string(),
+            zola_root: root.to_path_buf().to_string_lossy().to_string(),
             session_dir: root.join("session").to_string_lossy().to_string(),
             manifest_path: root.join("session.json").to_string_lossy().to_string(),
             opened_at_ms: 7,

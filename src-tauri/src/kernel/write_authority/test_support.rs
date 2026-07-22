@@ -4,22 +4,6 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use super::WriteAuthorityRuntime;
 
-#[cfg(target_os = "linux")]
-pub(crate) fn with_before_remove_leaf_target_durable_hook_for_test<T>(
-    hook: impl Fn() + 'static,
-    operation: impl FnOnce() -> T,
-) -> T {
-    super::capability::with_before_remove_leaf_target_durable_hook_for_test(hook, operation)
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn with_before_remove_tree_traversal_hook_for_test<T>(
-    hook: impl Fn() + 'static,
-    operation: impl FnOnce() -> T,
-) -> T {
-    super::capability::with_before_remove_tree_traversal_hook_for_test(hook, operation)
-}
-
 pub(crate) fn install_test_project_authority<R: Runtime>(
     app: &AppHandle<R>,
     runtime_session_id: &str,

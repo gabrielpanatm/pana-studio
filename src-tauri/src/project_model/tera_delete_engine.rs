@@ -326,7 +326,7 @@ mod tests {
             ),
         );
         let model = build_project_model(&root, &HashMap::new()).unwrap();
-        let partial_path = root.join("sursa/templates/partials/card.html");
+        let partial_path = root.join("templates/partials/card.html");
         let partial_before = fs::read_to_string(&partial_path).unwrap();
         let include = tera_node(
             &model,
@@ -586,21 +586,21 @@ mod tests {
     }
 
     fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
         fs::write(
-            root.join("sursa/templates/partials/card.html"),
+            root.join("templates/partials/card.html"),
             "<article></article>\n",
         )
         .unwrap();

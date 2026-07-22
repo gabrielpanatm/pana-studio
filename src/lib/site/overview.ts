@@ -35,5 +35,5 @@ export function pageTemplateLabel(page: SourceGraphPage) {
 }
 
 export function sourceDisplayPath(path: string) {
-  return path.replace(/^sursa\//, "");
+  return path;
 }

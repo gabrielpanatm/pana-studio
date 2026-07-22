@@ -339,17 +339,17 @@ test("a late receipt cannot project local or Preview state into the active sessi
           projectRoot: "/project",
           runtimeSessionId: "session:runtime-old",
         },
-        touchedFiles: ["sursa/templates/index.html"],
+        touchedFiles: ["templates/index.html"],
         workspaceMutation: {
           schemaVersion: 1,
           changed: true,
           revisionBefore: 3,
           revisionAfter: 4,
           dirty: true,
-          touchedFiles: ["sursa/templates/index.html"],
+          touchedFiles: ["templates/index.html"],
         },
       },
-      { file: "sursa/templates/index.html" },
+      { file: "templates/index.html" },
       () => {
         calls.project += 1;
       },

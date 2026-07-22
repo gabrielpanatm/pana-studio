@@ -57,8 +57,7 @@ function buildFontFaceRule(familyName: string, file: LocalFontFile) {
 }
 
 function publicFontUrl(projectRelativeFile: string) {
-  const zolaRelative = projectRelativeFile.replace(/^sursa\//, "");
-  const staticRelative = zolaRelative
+  const staticRelative = projectRelativeFile
     .replace(/^themes\/[^/]+\/static\//, "")
     .replace(/^static\//, "");
   return `/${staticRelative.split("/").map(encodeURIComponent).join("/")}`;

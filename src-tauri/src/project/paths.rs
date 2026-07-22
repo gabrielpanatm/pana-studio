@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
-const ZOLA_ROOT_DIR: &str = "sursa";
+/// The folder selected by the user is the Zola project root.  Keeping this
+/// helper avoids duplicating that invariant at call sites which still need to
+/// distinguish the logical project root from generated artifacts.
 pub fn zola_project_root(project_root: &Path) -> PathBuf {
-    project_root.join(ZOLA_ROOT_DIR)
+    project_root.to_path_buf()
 }
 
 pub fn strip_zola_root_prefix(relative_path: &str) -> &str {
     relative_path
-        .strip_prefix("sursa/")
-        .unwrap_or(relative_path)
 }
 
 pub fn resolve_project_write_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {

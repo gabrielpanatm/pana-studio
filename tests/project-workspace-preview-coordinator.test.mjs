@@ -88,7 +88,7 @@ test("one coordinator projects, publishes and deduplicates a workspace revision"
 
   await projectLatestProjectWorkspacePreview(target, {
     reason: "workspace-mutation",
-    requestedPaths: ["sursa/templates/index.html", "sursa/templates/index.html", ""],
+    requestedPaths: ["templates/index.html", "templates/index.html", ""],
   });
   await projectLatestProjectWorkspacePreview(target, { reason: "workspace-mutation" });
 
@@ -96,7 +96,7 @@ test("one coordinator projects, publishes and deduplicates a workspace revision"
     expectedProjectRoot: "/project",
     expectedSessionId: "session:a",
     expectedWorkspaceRevision: 7,
-    requestedPaths: ["sursa/templates/index.html"],
+    requestedPaths: ["templates/index.html"],
   }]);
   assert.equal(target.previewWorkspaceRevision, "preview-7");
   assert.deepEqual(target.refreshes, ["workspace-mutation"]);
@@ -353,7 +353,7 @@ test("a direct structural projection restores the active Template Workbench at t
   await projectLatestProjectWorkspacePreview(target, {
     reason: "html-structural",
     minimumWorkspaceRevision: 14,
-    requestedPaths: ["sursa/templates/partials/header.html"],
+    requestedPaths: ["templates/partials/header.html"],
   });
 
   assert.deepEqual(target.refreshes, []);
@@ -387,7 +387,7 @@ test("an unmounted Canvas defers the workspace revision and projects it once a s
   await projectLatestProjectWorkspacePreview(target, {
     reason: "workspace-mutation",
     minimumWorkspaceRevision: 16,
-    requestedPaths: ["sursa/content/despre.md", "sursa/templates/despre.html"],
+    requestedPaths: ["content/despre.md", "templates/despre.html"],
   });
 
   assert.equal(workspaceReads, 0);
@@ -414,7 +414,7 @@ test("Template Workbench uses the canonical preview command with one exact works
     expectedProjectRoot: "/project",
     expectedSessionId: "session:a",
     expectedWorkspaceRevision: 9,
-    templatePath: "sursa/templates/index.html",
+    templatePath: "templates/index.html",
     preferredPagePath: null,
   };
   const receipt = {

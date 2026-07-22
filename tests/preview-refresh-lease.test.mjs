@@ -39,7 +39,7 @@ async function nextTurn() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-function previewFile(relativePath = "sursa/templates/index.html") {
+function previewFile(relativePath = "templates/index.html") {
   return {
     name: relativePath.split("/").at(-1),
     relativePath,
@@ -146,7 +146,7 @@ test("bootstrap Canvas promovează numai identitatea completă a documentului mo
     identity,
     workspaceTransactionId: "workspace-edit-8",
     phase: "prepared",
-    impact: { kinds: ["htmlStructure"], paths: ["sursa/templates/index.html"], requiresFullDocument: false },
+    impact: { kinds: ["htmlStructure"], paths: ["templates/index.html"], requiresFullDocument: false },
     resources: { schemaVersion: 1, previewRevision: "workspace-8", totalBytes: 0, entries: [] },
   };
   mockIPC(async (command, payload) => {
@@ -363,14 +363,14 @@ test("preview embedded întârziat nu se publică după redeschiderea aceluiași
     scannedProject: {
       root: "/project-a",
       isZola: true,
-      files: [{ relativePath: "sursa/templates/index.html" }],
+      files: [{ relativePath: "templates/index.html" }],
       previewBaseUrl: null,
       previewWarning: null,
     },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     projectTransitionFrontendLeaseActive: false,
-    activeScannedPath: "sursa/templates/index.html",
+    activeScannedPath: "templates/index.html",
     async loadScannedProjectFile() {
       loadCount += 1;
     },
@@ -424,14 +424,14 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
     scannedProject: {
       root: "/project-a",
       isZola: true,
-      files: [{ relativePath: "sursa/templates/index.html" }],
+      files: [{ relativePath: "templates/index.html" }],
       previewBaseUrl: null,
       previewWarning: null,
     },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     projectTransitionFrontendLeaseActive: false,
-    activeScannedPath: "sursa/templates/index.html",
+    activeScannedPath: "templates/index.html",
     async loadScannedProjectFile() {
       loadCount += 1;
     },
@@ -467,12 +467,12 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
   const events = [];
   const template = {
     name: "index.html",
-    relativePath: "sursa/templates/index.html",
+    relativePath: "templates/index.html",
     role: "template",
   };
   const page = {
     name: "_index.md",
-    relativePath: "sursa/content/_index.md",
+    relativePath: "content/_index.md",
     role: "page",
     previewPath: "/",
   };
@@ -572,7 +572,7 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
     identity: canvasIdentity,
     workspaceTransactionId: null,
     phase: "canonicalVerified",
-    impact: { kinds: ["htmlStructure"], paths: ["sursa/content/_index.md"], requiresFullDocument: true },
+    impact: { kinds: ["htmlStructure"], paths: ["content/_index.md"], requiresFullDocument: true },
     resources: { schemaVersion: 1, previewRevision: "workspace-3", totalBytes: 0, entries: [] },
   };
   const warnings = [];
@@ -583,7 +583,7 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
       isZola: true,
       files: [{
         name: "_index.md",
-        relativePath: "sursa/content/_index.md",
+        relativePath: "content/_index.md",
         role: "page",
         previewPath: "/",
       }],
@@ -593,7 +593,7 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     projectTransitionFrontendLeaseActive: false,
-    activeScannedPath: "sursa/content/_index.md",
+    activeScannedPath: "content/_index.md",
     pendingCanvasProjection: null,
     previewWorkspaceRevision: null,
     activeCanvasIdentity: null,
@@ -681,7 +681,7 @@ test("redeschiderea aceleiași rădăcini invalidează refresh-ul runtime-ului v
 });
 
 test("aceeași rută primește documentul Zola canonic fără reload de iframe", async () => {
-  const canonicalUrl = "http://127.0.0.1:1111/sursa/templates/index.html";
+  const canonicalUrl = "http://127.0.0.1:1111/templates/index.html";
   const sent = [];
   const identity = {
     projectRoot: "/project-a",
@@ -695,7 +695,7 @@ test("aceeași rută primește documentul Zola canonic fără reload de iframe",
     identity,
     workspaceTransactionId: "workspace-edit-8",
     phase: "prepared",
-    impact: { kinds: ["htmlStructure"], paths: ["sursa/templates/index.html"], requiresFullDocument: false },
+    impact: { kinds: ["htmlStructure"], paths: ["templates/index.html"], requiresFullDocument: false },
     resources: { schemaVersion: 1, previewRevision: "workspace-8", totalBytes: 0, entries: [] },
   };
   mockIPC(async (command, payload) => {
@@ -750,7 +750,7 @@ test("aceeași rută primește documentul Zola canonic fără reload de iframe",
 });
 
 test("eșecul reconcilerului pe aceeași rută păstrează ultimul document și nu navighează iframe-ul", async () => {
-  const canonicalUrl = "http://127.0.0.1:1111/sursa/templates/index.html";
+  const canonicalUrl = "http://127.0.0.1:1111/templates/index.html";
   const identity = {
     projectRoot: "/project-a",
     runtimeSessionId: "session-a:runtime-1",
@@ -763,7 +763,7 @@ test("eșecul reconcilerului pe aceeași rută păstrează ultimul document și 
     identity,
     workspaceTransactionId: "workspace-edit-9",
     phase: "prepared",
-    impact: { kinds: ["stylesheet"], paths: ["sursa/sass/pagini/index.scss"], requiresFullDocument: false },
+    impact: { kinds: ["stylesheet"], paths: ["sass/pagini/index.scss"], requiresFullDocument: false },
     resources: { schemaVersion: 1, previewRevision: "workspace-9", totalBytes: 0, entries: [] },
   };
   mockIPC(async (command, payload) => {
@@ -829,7 +829,7 @@ test("un bridge fără ACK recuperează aceeași revizie prin navigarea iframe-u
     identity,
     workspaceTransactionId: "workspace-edit-10",
     phase: "prepared",
-    impact: { kinds: ["stylesheet"], paths: ["sursa/sass/pagini/index.scss"], requiresFullDocument: false },
+    impact: { kinds: ["stylesheet"], paths: ["sass/pagini/index.scss"], requiresFullDocument: false },
     resources: { schemaVersion: 1, previewRevision: "workspace-10", totalBytes: 0, entries: [] },
   };
   mockIPC(async (command, payload) => {

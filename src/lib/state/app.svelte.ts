@@ -83,6 +83,7 @@ import {
   generateClassForSelectedHtml as generateClassForSelectedHtmlFromController,
   generateDataAnimForSelectedHtml as generateDataAnimForSelectedHtmlFromController,
   applyImageSourceToHtml as applyImageSourceToHtmlFromController,
+  applyZolaImageProcessingToHtml as applyZolaImageProcessingToHtmlFromController,
   applyTextContentToCapturedHtmlTarget,
   captureHtmlActionTarget,
   insertPaletteElementAtTarget as insertPaletteElementAtTargetFromController,
@@ -123,6 +124,7 @@ import type {
   ProjectAuditSnapshot,
   ProjectFile,
   ProjectScan,
+  ProjectZolaImageIntent,
   ProjectWorkspaceSnapshot,
   WorkbenchActivity,
   WorkbenchBottomPanelView,
@@ -168,7 +170,6 @@ import {
 import {
   clearActiveTerminal as clearActiveTerminalFromController,
   runTerminalQuickTask as runTerminalQuickTaskFromController,
-  terminalCommandForTask as terminalCommandForTaskFromController,
   type TerminalQuickTaskHost,
 } from "$lib/state/terminal-quick-task-controller";
 import {
@@ -720,7 +721,6 @@ export class AppState {
   terminalTabs = $state<TerminalTab[]>(initialTerminalTabs());
   activeTerminalTabId = $state("terminal-shell-1");
   terminalTabSerial = $state(1);
-  zolaBinaryPath = $state<string | null>(null);
 
   // ── AI / MCP context bridge ──
   aiContextStatus = $state<AiContextStatus | null>(null);
@@ -3342,6 +3342,13 @@ export class AppState {
     return await applyImageSourceToHtmlFromController(this.htmlActionsControllerHost(), src);
   }
 
+  async applyZolaImageProcessingToHtml(intent: ProjectZolaImageIntent) {
+    return await applyZolaImageProcessingToHtmlFromController(
+      this.htmlActionsControllerHost(),
+      intent,
+    );
+  }
+
   async applyClassesToHtml() {
     return await applyClassesToHtmlFromController(this.htmlActionsControllerHost());
   }
@@ -3702,10 +3709,6 @@ export class AppState {
 
   closeTerminalTab(tabId: string) {
     closeTerminalTabFromController(this.terminalTabsHost(), tabId);
-  }
-
-  async terminalCommandForTask(task: TerminalQuickTask) {
-    return await terminalCommandForTaskFromController(this.terminalQuickTaskHost(), task);
   }
 
   async runTerminalQuickTask(task: TerminalQuickTask) {

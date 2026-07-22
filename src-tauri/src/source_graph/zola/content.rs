@@ -85,7 +85,7 @@ pub(crate) fn normalize_zola_content_reference(target: &str) -> String {
 }
 
 pub(crate) fn zola_content_project_file_reference(file: &str) -> Option<String> {
-    file.strip_prefix("sursa/content/")
+    file.strip_prefix("content/")
         .filter(|path| !path.is_empty() && path.ends_with(".md"))
         .map(str::to_string)
 }
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn resolves_zola_content_kind_templates_and_urls() {
-        let zola_root = PathBuf::from("/project/sursa");
+        let zola_root = PathBuf::from("/project");
         let home = zola_root.join("content/_index.md");
         let section = zola_root.join("content/blog/_index.md");
         let page = zola_root.join("content/blog/post.md");
@@ -404,11 +404,11 @@ mod tests {
             "blog/post.md"
         );
         assert_eq!(
-            zola_content_project_file_reference("sursa/content/blog/post.md").as_deref(),
+            zola_content_project_file_reference("content/blog/post.md").as_deref(),
             Some("blog/post.md")
         );
         assert_eq!(
-            zola_content_project_file_reference("sursa/templates/blog.html"),
+            zola_content_project_file_reference("templates/blog.html"),
             None
         );
     }

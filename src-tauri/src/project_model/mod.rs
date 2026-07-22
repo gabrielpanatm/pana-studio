@@ -21,6 +21,7 @@ mod tera_graph;
 pub mod tera_insert_engine;
 pub mod tera_move_engine;
 pub mod text_engine;
+pub mod zola_image_engine;
 
 use crate::{
     kernel::project_workspace::WorkspaceProjectionLease,
@@ -147,28 +148,28 @@ mod tests {
     #[test]
     fn builds_project_model_with_tera_graph_from_drafts() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates/partials")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             "{% extends \"base.html\" %}{% block content %}<main></main>{% endblock %}",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/base.html"), "<body></body>").unwrap();
+        fs::write(root.join("templates/base.html"), "<body></body>").unwrap();
 
         let mut drafts = HashMap::new();
         drafts.insert(
-            "sursa/templates/index.html".to_string(),
+            "templates/index.html".to_string(),
             "{% extends \"base.html\" %}{% block content %}{% include \"partials/header.html\" %}{% for card in cards %}<article></article>{% endfor %}{% endblock %}".to_string(),
         );
 
@@ -178,7 +179,7 @@ mod tests {
         assert!(model
             .files
             .iter()
-            .any(|file| { file.relative_path == "sursa/templates/index.html" && file.from_draft }));
+            .any(|file| { file.relative_path == "templates/index.html" && file.from_draft }));
         assert!(model.tera_graph.templates.iter().any(|template| {
             template.name == "index.html"
                 && template
@@ -196,15 +197,15 @@ mod tests {
     #[test]
     fn workspace_projection_never_imports_external_text_from_disk() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
-        fs::write(root.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             "<main>External replacement</main>",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/external.html"),
+            root.join("templates/external.html"),
             "<aside>External addition</aside>",
         )
         .unwrap();
@@ -216,18 +217,15 @@ mod tests {
             revision: 7,
             workspace_transaction_id: Some("workspace-test-7".to_string()),
             source_texts: HashMap::from([
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
                 (
-                    "sursa/zola.toml".to_string(),
-                    "base_url = '/'\n".to_string(),
-                ),
-                (
-                    "sursa/templates/index.html".to_string(),
+                    "templates/index.html".to_string(),
                     "<main>Workspace snapshot</main>".to_string(),
                 ),
             ]),
             resource_bytes: HashMap::new(),
             deleted_sources: HashSet::new(),
-            changed_paths: HashSet::from(["sursa/templates/index.html".to_string()]),
+            changed_paths: HashSet::from(["templates/index.html".to_string()]),
             accepted_disk: AcceptedProjectDiskManifest::new(
                 session_id,
                 canonical.clone(),
@@ -245,39 +243,39 @@ mod tests {
         let index = model
             .files
             .iter()
-            .find(|file| file.relative_path == "sursa/templates/index.html")
+            .find(|file| file.relative_path == "templates/index.html")
             .unwrap();
         assert_eq!(index.contents, "<main>Workspace snapshot</main>");
         assert!(index.from_draft);
         assert!(!model
             .files
             .iter()
-            .any(|file| file.relative_path == "sursa/templates/external.html"));
+            .any(|file| file.relative_path == "templates/external.html"));
         assert!(!model
             .source_graph
             .templates
             .iter()
-            .any(|template| template.file == "sursa/templates/external.html"));
+            .any(|template| template.file == "templates/external.html"));
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn move_engine_resolves_stale_source_ids_through_aliases() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",
@@ -347,20 +345,20 @@ mod tests {
     #[test]
     fn move_engine_moves_inserted_session_element_by_source_location() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",
@@ -374,7 +372,7 @@ mod tests {
 
         let mut drafts = HashMap::new();
         drafts.insert(
-            "sursa/templates/index.html".to_string(),
+            "templates/index.html".to_string(),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",
@@ -416,20 +414,20 @@ mod tests {
     #[test]
     fn move_engine_reindents_when_moving_element_inside_parent() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",
@@ -483,20 +481,20 @@ mod tests {
     #[test]
     fn move_engine_rejects_contradictory_or_stale_html_identity_for_same_tag_siblings() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<div><p class=\"first\">A</p><p class=\"second\">B</p></div>\n",
@@ -558,20 +556,20 @@ mod tests {
     #[test]
     fn move_engine_rejects_rebased_locations_when_dom_source_ids_are_stale_without_aliases() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/templates/index.html"),
+            root.join("templates/index.html"),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",

@@ -53,7 +53,6 @@ pub(super) fn validate_authority_path(intent: &WriteIntent) -> Result<(), String
     let valid = match intent.category {
         WriteCategory::InternalAppWrite => validate_internal_path(intent.owner, &segments),
         WriteCategory::PreviewWorkspaceWrite => validate_preview_path(&segments),
-        WriteCategory::BuildOutputWrite => validate_build_output_path(&segments),
         WriteCategory::ExternalIntegrationWrite => {
             intent.owner == WriteOwner::CodexMcp && segments.as_slice() == ["config.toml"]
         }
@@ -174,10 +173,6 @@ fn validate_preview_path(segments: &[&str]) -> bool {
         return false;
     };
     workspace.starts_with("project-") || workspace.starts_with("template-sandbox-")
-}
-
-fn validate_build_output_path(segments: &[&str]) -> bool {
-    segments.len() >= 2 && segments[0] == "sursa"
 }
 
 fn validate_project_path(intent: &WriteIntent, segments: &[&str]) -> bool {
@@ -427,7 +422,7 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
                 WriteOperationKind::RemoveDirectoryTree,
             ],
             path_authority:
-                "new empty project root and project/sursa during Project Initializer bootstrap",
+                "new empty Zola project root during Project Initializer bootstrap",
             atomicity: WriteAtomicity::FileLifecycle,
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::LoggedAtomicFile,
@@ -460,28 +455,6 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::EphemeralRebuildable,
             validation: "Preview workspaces are rebuildable and never become source of truth.",
-        },
-        WriteDeclaration {
-            category: WriteCategory::BuildOutputWrite,
-            owner: WriteOwner::ImageOptimizer,
-            operations: vec![WriteOperationKind::WriteBytes, WriteOperationKind::WriteText],
-            path_authority: "Zola output_dir after build",
-            atomicity: WriteAtomicity::AtomicRename,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::EphemeralRebuildable,
-            validation:
-                "Image optimizer writes WebP assets and rewritten output references only inside validated Zola output_dir; output is rebuildable from project source.",
-        },
-        WriteDeclaration {
-            category: WriteCategory::BuildOutputWrite,
-            owner: WriteOwner::ImageOptimizer,
-            operations: vec![WriteOperationKind::RemoveFile],
-            path_authority: "Zola output_dir after build",
-            atomicity: WriteAtomicity::FileLifecycle,
-            conflict: ConflictPolicy::SingleOwnerInternal,
-            recovery: RecoveryPolicy::EphemeralRebuildable,
-            validation:
-                "Image optimizer removes replaced originals only inside validated Zola output_dir after the replacement asset has been committed.",
         },
     ]
 }

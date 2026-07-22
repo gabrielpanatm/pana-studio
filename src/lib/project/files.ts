@@ -10,11 +10,11 @@ export function templateNameForPath(relativePath: string) {
 }
 
 export function zolaRelativePath(relativePath: string) {
-  return relativePath.startsWith("sursa/") ? relativePath.slice("sursa/".length) : relativePath;
+  return relativePath;
 }
 
 export function projectRelativeZolaPath(relativePath: string) {
-  return relativePath.startsWith("sursa/") ? relativePath : `sursa/${relativePath}`;
+  return relativePath;
 }
 
 export function normalizedZolaPath(relativePath: string) {

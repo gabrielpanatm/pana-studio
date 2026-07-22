@@ -6,14 +6,6 @@ pub struct ProjectAppConfig {
     pub project_path: String,
     #[serde(default)]
     pub cachebust_assets: bool,
-    #[serde(default)]
-    pub optimize_images_on_build: bool,
-    #[serde(default = "default_image_max_dimension")]
-    pub image_max_dimension: u32,
-    #[serde(default = "default_image_exclude_suffix")]
-    pub image_exclude_suffix: String,
-    #[serde(default = "default_true")]
-    pub image_replace_only_if_smaller: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -21,14 +13,6 @@ pub struct ProjectAppConfig {
 pub struct ProjectAppConfigInput {
     #[serde(default)]
     pub cachebust_assets: bool,
-    #[serde(default)]
-    pub optimize_images_on_build: bool,
-    #[serde(default = "default_image_max_dimension")]
-    pub image_max_dimension: u32,
-    #[serde(default = "default_image_exclude_suffix")]
-    pub image_exclude_suffix: String,
-    #[serde(default = "default_true")]
-    pub image_replace_only_if_smaller: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -77,16 +61,4 @@ impl Default for GlobalAppConfig {
     fn default() -> Self {
         Self { version: 1 }
     }
-}
-
-pub(crate) fn default_image_max_dimension() -> u32 {
-    1920
-}
-
-pub(super) fn default_image_exclude_suffix() -> String {
-    "-nr".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }

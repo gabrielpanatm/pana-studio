@@ -1,8 +1,5 @@
 import type { ZolaProjectSettings } from "$lib/types";
 
-export const DEFAULT_IMAGE_MAX_DIMENSION = 1920;
-export const DEFAULT_IMAGE_EXCLUDE_SUFFIX = "-nr";
-
 export const BUNNY_ENV_KEYS = [
   { key: "BUNNY_STORAGE_ZONE", label: "Storage Zone", secret: false },
   { key: "BUNNY_STORAGE_KEY", label: "Storage Key", secret: true },
@@ -13,18 +10,10 @@ export const BUNNY_ENV_KEYS = [
 
 export type ProjectAppConfig = {
   cachebustAssets: boolean;
-  optimizeImagesOnBuild: boolean;
-  imageMaxDimension: number;
-  imageExcludeSuffix: string;
-  imageReplaceOnlyIfSmaller: boolean;
 };
 
 export type ProjectAppConfigDraft = {
   cachebustAssetsDraft: boolean;
-  optimizeImagesDraft: boolean;
-  imageMaxDimensionText: string;
-  imageExcludeSuffix: string;
-  imageReplaceOnlyIfSmaller: boolean;
 };
 
 export type ZolaSettingsTextFields = {
@@ -93,20 +82,12 @@ export function zolaSettingsWithTextFields(
 export function appConfigDraftFromConfig(config: ProjectAppConfig): ProjectAppConfigDraft {
   return {
     cachebustAssetsDraft: config.cachebustAssets,
-    optimizeImagesDraft: config.optimizeImagesOnBuild,
-    imageMaxDimensionText: String(config.imageMaxDimension || DEFAULT_IMAGE_MAX_DIMENSION),
-    imageExcludeSuffix: config.imageExcludeSuffix || DEFAULT_IMAGE_EXCLUDE_SUFFIX,
-    imageReplaceOnlyIfSmaller: config.imageReplaceOnlyIfSmaller,
   };
 }
 
 export function appConfigFromDraft(draft: ProjectAppConfigDraft): ProjectAppConfig {
   return {
     cachebustAssets: draft.cachebustAssetsDraft,
-    optimizeImagesOnBuild: draft.optimizeImagesDraft,
-    imageMaxDimension: parsePositiveNumber(draft.imageMaxDimensionText, DEFAULT_IMAGE_MAX_DIMENSION),
-    imageExcludeSuffix: draft.imageExcludeSuffix,
-    imageReplaceOnlyIfSmaller: draft.imageReplaceOnlyIfSmaller,
   };
 }
 
@@ -130,9 +111,4 @@ function parseOptionalNumber(value: string) {
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
-}
-
-function parsePositiveNumber(value: string, fallback: number) {
-  const parsed = Number(value.trim());
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }

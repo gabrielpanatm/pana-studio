@@ -528,7 +528,7 @@ fn materialize_workspace_for_save(
     workspace: &ProjectWorkspace,
 ) -> Result<MaterializedWorkspaceSave, String> {
     let zola_root = Path::new(&workspace.session.zola_root);
-    if zola_root != project_root.join("sursa") {
+    if zola_root != project_root.to_path_buf() {
         return Err(format!(
             "ProjectWorkspace a refuzat Save: Zola root {} nu corespunde proiectului {}.",
             zola_root.display(),
@@ -710,11 +710,7 @@ fn stage_materialized_text(
 
 fn project_relative_zola_path(path: &str) -> String {
     let normalized = path.trim().trim_start_matches('/');
-    if normalized.starts_with("sursa/") {
-        normalized.to_string()
-    } else {
-        format!("sursa/{normalized}")
-    }
+    normalized.to_string()
 }
 
 fn workspace_document_writes(
@@ -1204,7 +1200,7 @@ mod tests {
     #[test]
     fn binary_create_and_delete_are_planned_with_reversible_bytes() {
         let root = unique_test_dir();
-        std::fs::create_dir_all(root.join("sursa/static")).unwrap();
+        std::fs::create_dir_all(root.join("static")).unwrap();
         let store = FileBufferStore::new(
             "save-test-session",
             root.to_string_lossy(),
@@ -1215,9 +1211,9 @@ mod tests {
                 max_total_bytes: 4 * 1024 * 1024,
             },
         );
-        let created_path = "sursa/static/new.woff2";
+        let created_path = "static/new.woff2";
         let created_bytes = vec![0x77, 0x4f, 0x46, 0x32, 9];
-        let deleted_path = "sursa/static/old.woff2";
+        let deleted_path = "static/old.woff2";
         let deleted_bytes = vec![0x77, 0x4f, 0x46, 0x32, 1];
         std::fs::write(root.join(deleted_path), &deleted_bytes).unwrap();
 
@@ -1251,7 +1247,7 @@ mod tests {
     #[test]
     fn save_plan_rejects_a_path_shared_by_text_and_binary_operations() {
         let root = unique_test_dir();
-        std::fs::create_dir_all(root.join("sursa/static")).unwrap();
+        std::fs::create_dir_all(root.join("static")).unwrap();
         let store = FileBufferStore::new(
             "save-test-session",
             root.to_string_lossy(),
@@ -1265,15 +1261,15 @@ mod tests {
         let error = plan_project_workspace_save(
             &root,
             &store,
-            vec![("sursa/static/collision.dat".to_string(), "text".to_string())],
+            vec![("static/collision.dat".to_string(), "text".to_string())],
             Vec::new(),
-            vec![("sursa/static/collision.dat".to_string(), vec![1, 2, 3])],
+            vec![("static/collision.dat".to_string(), vec![1, 2, 3])],
             Vec::new(),
             8,
         )
         .unwrap_err();
         assert!(error.contains("duplicat"));
-        assert!(!root.join("sursa/static/collision.dat").exists());
+        assert!(!root.join("static/collision.dat").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1283,8 +1279,8 @@ mod tests {
         let root = unique_test_dir();
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project = root.join("project");
-        std::fs::create_dir_all(project.join("sursa/static/fonturi/inter")).unwrap();
-        std::fs::write(project.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
+        std::fs::create_dir_all(project.join("static/fonturi/inter")).unwrap();
+        std::fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
         let project = project.canonicalize().unwrap();
 
         let app = tauri::test::mock_builder()
@@ -1320,7 +1316,7 @@ mod tests {
         );
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace = ProjectWorkspace::new(session, accepted, documents, page_js).unwrap();
-        let relative_path = "sursa/static/fonturi/inter/inter-regular.woff2";
+        let relative_path = "static/fonturi/inter/inter-regular.woff2";
         let disk_path = project.join(relative_path);
         let bytes = vec![0x77, 0x4f, 0x46, 0x32, 11, 12, 13];
         workspace
@@ -1402,10 +1398,10 @@ mod tests {
         let root = unique_test_dir();
         let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
         let project = root.join("project");
-        std::fs::create_dir_all(project.join("sursa/templates")).unwrap();
-        std::fs::create_dir_all(project.join("sursa/static/fonturi/inter")).unwrap();
-        std::fs::write(project.join("sursa/zola.toml"), "base_url = '/'\n").unwrap();
-        let template_relative_path = "sursa/templates/index.html";
+        std::fs::create_dir_all(project.join("templates")).unwrap();
+        std::fs::create_dir_all(project.join("static/fonturi/inter")).unwrap();
+        std::fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let template_relative_path = "templates/index.html";
         let template_path = project.join(template_relative_path);
         let baseline_text = "<main>Baseline</main>";
         let draft_text = "<main>Draft</main>";
@@ -1475,7 +1471,7 @@ mod tests {
                 20,
             )
             .unwrap();
-        let binary_relative_path = "sursa/static/fonturi/inter/inter-regular.woff2";
+        let binary_relative_path = "static/fonturi/inter/inter-regular.woff2";
         let intended_bytes = vec![0x77, 0x4f, 0x46, 0x32, 41];
         let concurrent_bytes = b"external concurrent edit".to_vec();
         workspace
@@ -1496,7 +1492,7 @@ mod tests {
             .unwrap();
         let revision_before_save = workspace.revision;
         let identity = workspace_identity(&workspace);
-        let concurrent_relative_path = "sursa/static/external-concurrent.txt";
+        let concurrent_relative_path = "static/external-concurrent.txt";
         let concurrent_path = project.join(concurrent_relative_path);
         let concurrent_bytes_for_hook = concurrent_bytes.clone();
         let result = super::super::disk_boundary::with_after_text_write_before_file_buffer_projection_hook_for_test(
@@ -1557,7 +1553,7 @@ mod tests {
             schema_version: 1,
             id: "binary-save-session".to_string(),
             project_root: project.to_string_lossy().into_owned(),
-            zola_root: project.join("sursa").to_string_lossy().into_owned(),
+            zola_root: project.to_path_buf().to_string_lossy().into_owned(),
             session_dir: session_dir.to_string_lossy().into_owned(),
             manifest_path: session_dir
                 .join("manifest.json")

@@ -37,9 +37,7 @@
     "shortDescription": "Editor vizual desktop open-source pentru site-uri Zola.",
     "longDescription": "Pană Studio combină preview-ul vizual cu editarea surselor HTML/Tera, SCSS, Markdown și JavaScript pentru proiecte Zola locale.",
     "resources": [
-      "binaries/zola",
       "resources/licenses",
-      "resources/project-template",
       "resources/starters"
     ],
     "icon": [

@@ -22,11 +22,7 @@ pub(super) struct ConfigWorkspaceMutationInput {
 }
 
 pub(super) fn zola_to_project_relative_path(path: &str) -> String {
-    if path.starts_with("sursa/") {
-        path.to_string()
-    } else {
-        format!("sursa/{path}")
-    }
+    path.to_string()
 }
 
 pub(super) fn read_current_project_text(

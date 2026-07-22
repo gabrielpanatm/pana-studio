@@ -13,6 +13,7 @@ use super::move_engine::{
     resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
     source_location_at_offset, source_missing_message, ProjectSourceEditLocation, Span,
 };
+use super::zola_image_engine::zola_image_contract_start;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,7 +132,10 @@ fn plan_html_delete_from_source_node(
         .range
         .as_ref()
         .ok_or_else(|| "Ținta nu are range stabil în Source Graph.".to_string())?;
-    let span = resolve_html_element_span(&file.contents, target_range.start)?;
+    let mut span = resolve_html_element_span(&file.contents, target_range.start)?;
+    if let Some(contract_start) = zola_image_contract_start(&file.contents, target_range.start)? {
+        span.start = contract_start;
+    }
 
     plan_html_delete_for_span(
         file,
@@ -303,9 +307,9 @@ mod tests {
     fn plan_html_delete_resolves_active_html_by_direct_location() {
         let root = unique_test_dir();
         write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
         fs::write(
-            root.join("sursa/static/plain.html"),
+            root.join("static/plain.html"),
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -325,7 +329,7 @@ mod tests {
             &ProjectHtmlDeleteIntent {
                 target_source_id: None,
                 target_location: Some(ProjectSourceEditLocation {
-                    file: "sursa/static/plain.html".to_string(),
+                    file: "static/plain.html".to_string(),
                     line: 4,
                     column: 3,
                 }),
@@ -338,11 +342,8 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "sursa/static/plain.html");
-        assert_eq!(
-            patch.resolved_target_id,
-            "location:sursa/static/plain.html:4:3"
-        );
+        assert_eq!(patch.file, "static/plain.html");
+        assert_eq!(patch.resolved_target_id, "location:static/plain.html:4:3");
         assert!(!patch.contents.contains("id=\"hero\""));
         assert_eq!(patch.source_start_line, 4);
         assert_eq!(patch.source_end_line, 6);
@@ -353,9 +354,9 @@ mod tests {
     fn plan_html_delete_rejects_stale_source_id_instead_of_using_direct_location_fallback() {
         let root = unique_test_dir();
         write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("sursa/static")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
         fs::write(
-            root.join("sursa/static/plain.html"),
+            root.join("static/plain.html"),
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -374,7 +375,7 @@ mod tests {
             &ProjectHtmlDeleteIntent {
                 target_source_id: Some("stale-source-id".to_string()),
                 target_location: Some(ProjectSourceEditLocation {
-                    file: "sursa/static/plain.html".to_string(),
+                    file: "static/plain.html".to_string(),
                     line: 5,
                     column: 3,
                 }),
@@ -419,19 +420,19 @@ mod tests {
     }
 
     fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("sursa/content")).unwrap();
-        fs::create_dir_all(root.join("sursa/templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(
-            root.join("sursa/zola.toml"),
+            root.join("zola.toml"),
             "base_url = \"http://example.test\"\n",
         )
         .unwrap();
         fs::write(
-            root.join("sursa/content/_index.md"),
+            root.join("content/_index.md"),
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
         )
         .unwrap();
-        fs::write(root.join("sursa/templates/index.html"), template).unwrap();
+        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

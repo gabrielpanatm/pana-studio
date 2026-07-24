@@ -1,0 +1,24 @@
+<header class="antet-radacini">
+  <div class="container antet-radacini__interior">
+    <a class="marca-radacini" href="/" aria-label="{{ site.marca }} — pagina principală">
+      <span class="marca-radacini__simbol" aria-hidden="true">R</span>
+      <span>
+        <strong>{{ site.marca }}</strong>
+        <small>{{ site.localizare_scurta }}</small>
+      </span>
+    </a>
+    <button class="buton-meniu" type="button" aria-expanded="false" aria-controls="navigatie-principala">
+      <span class="sr-only">Deschide meniul</span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </button>
+    <nav id="navigatie-principala" class="navigatie-radacini" aria-label="Navigație principală">
+      <ul>
+        {% for element in meniu.elemente %}
+        <li><a href="{{ element.url }}">{{ element.eticheta }}</a></li>
+        {% endfor %}
+      </ul>
+      <a class="btn btn-accent btn-sm" href="{{ site.cta_url }}">{{ site.cta_scurt }}</a>
+    </nav>
+  </div>
+</header>

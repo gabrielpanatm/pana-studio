@@ -4,7 +4,7 @@ use crate::source_graph::{
     model::{SourceDiagnosticSeverity, SourceGraphPage, SourceRelationKind},
     scan::{
         builder::SourceGraphBuilder,
-        style::conventional_style_files_for_template,
+        style::{conventional_script_files_for_template, conventional_style_files_for_template},
         summary::{AssetSummary, DataFileSummary, TemplateSummary},
     },
     zola::{
@@ -111,6 +111,26 @@ pub(super) fn add_template_style_relations(
                     style_node_id.clone(),
                     SourceRelationKind::UsesStyle,
                     style_file,
+                );
+            }
+        }
+    }
+}
+
+pub(super) fn add_template_script_relations(
+    templates: &[TemplateSummary],
+    asset_node_by_file: &HashMap<String, String>,
+    resolver: &ZolaThemeResolver,
+    builder: &mut SourceGraphBuilder,
+) {
+    for template in templates {
+        for script_file in conventional_script_files_for_template(resolver, template) {
+            if let Some(script_node_id) = asset_node_by_file.get(&script_file) {
+                builder.add_relation(
+                    template.node_id.clone(),
+                    script_node_id.clone(),
+                    SourceRelationKind::UsesScript,
+                    script_file,
                 );
             }
         }

@@ -3,9 +3,9 @@ import { buildHtmlSnippet } from "$lib/html/snippets";
 
 export type HtmlPaletteElement = {
   id: string;
-  kind?: "html" | "component";
-  componentId?: string;
-  componentKind?: "css" | "js";
+  kind?: "html" | "block";
+  blockId?: string;
+  blockKind?: "css" | "js";
   tag: string;
   label: string;
   description: string;
@@ -119,10 +119,10 @@ function joinClassNames(...tokens: Array<string | undefined>) {
 
 export function htmlPaletteInsertOptions(
   element: HtmlPaletteElement,
-  identity?: { className?: string; dataAnim?: string; componentInstanceId?: string },
+  identity?: { className?: string; dataAnim?: string; blockInstanceId?: string },
 ): HtmlPaletteInsertOptions {
   const className = joinClassNames(element.className, identity?.className);
-  if (element.kind === "component" && element.html) {
+  if (element.kind === "block" && element.html) {
     return {
       tag: element.tag,
       className,
@@ -131,7 +131,7 @@ export function htmlPaletteInsertOptions(
       html: element.html
         .replaceAll("__PANA_CLASS__", identity?.className ?? "")
         .replaceAll("__PANA_DATA_ANIM__", identity?.dataAnim ?? "")
-        .replaceAll("__PANA_INSTANCE__", identity?.componentInstanceId ?? identity?.dataAnim ?? ""),
+        .replaceAll("__PANA_INSTANCE__", identity?.blockInstanceId ?? identity?.dataAnim ?? ""),
     };
   }
 

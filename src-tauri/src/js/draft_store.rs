@@ -455,7 +455,7 @@ fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::js::PanaComponent;
+    use crate::js::NativeBlockRuntimeEntry;
 
     use super::*;
 
@@ -494,7 +494,7 @@ mod tests {
     fn dirty_config(id: &str) -> PageJsConfig {
         PageJsConfig {
             version: Some(1),
-            components: vec![PanaComponent { id: id.to_string() }],
+            blocks: vec![NativeBlockRuntimeEntry { id: id.to_string() }],
             motion: None,
         }
     }
@@ -596,10 +596,7 @@ mod tests {
         assert!(!stale_clear.changed);
         assert!(stale_clear.dirty);
         assert_eq!(stale_clear.entry_revision, second.entry_revision);
-        assert_eq!(
-            store.snapshot().drafts[0].current.components[0].id,
-            "accordion"
-        );
+        assert_eq!(store.snapshot().drafts[0].current.blocks[0].id, "accordion");
 
         let current_clear = store
             .clear("templates/index.html", second.entry_revision)
@@ -620,7 +617,7 @@ mod tests {
         let snapshot = store.snapshot();
         assert_eq!(snapshot.dirty_count, 1);
         assert_eq!(snapshot.revision, 2);
-        assert_eq!(snapshot.drafts[0].current.components[0].id, "accordion");
+        assert_eq!(snapshot.drafts[0].current.blocks[0].id, "accordion");
     }
 
     #[test]

@@ -31,6 +31,10 @@ import {
 } from "$lib/editor-runtime/action-outcome";
 import { createDefaultEditableStyles } from "$lib/editor/defaults";
 import type { AppNotification } from "$lib/notifications/center";
+import {
+  readApplicationSettings,
+  saveApplicationSettings,
+} from "$lib/application/io";
 import type {
   CanvasProjectionIdentity,
   CanvasProjectionPlan,
@@ -84,6 +88,7 @@ import {
   generateDataAnimForSelectedHtml as generateDataAnimForSelectedHtmlFromController,
   applyImageSourceToHtml as applyImageSourceToHtmlFromController,
   applyZolaImageProcessingToHtml as applyZolaImageProcessingToHtmlFromController,
+  applyNativeBlockOptionToHtml as applyNativeBlockOptionToHtmlFromController,
   applyTextContentToCapturedHtmlTarget,
   captureHtmlActionTarget,
   insertPaletteElementAtTarget as insertPaletteElementAtTargetFromController,
@@ -91,6 +96,7 @@ import {
   openSourceLocation as openSourceLocationFromController,
   type HtmlActionTarget,
   type HtmlActionsControllerHost,
+  type ApplyNativeBlockOptionRequest,
 } from "$lib/state/html-actions-controller";
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
 import type { LayerMoveRequest } from "$lib/project/layers-drag";
@@ -99,6 +105,7 @@ import {
   DEFAULT_PREVIEW_ZOOM,
   resetPreviewZoom as resetPreviewZoomFromController,
   resetResize as resetResizeFromController,
+  setUiTheme as setUiThemeFromController,
   setPreviewZoom as setPreviewZoomFromController,
   startResizeDrag as startResizeDragFromController,
   stopResizeDrag as stopResizeDragFromController,
@@ -116,6 +123,9 @@ import type {
   InspectorTab,
   AiCoordinationSnapshot,
   AiContextStatus,
+  ApplicationSettingsSnapshot,
+  ApplicationSurface,
+  ApplicationTheme,
   CenterView,
   DesignClassInventorySnapshot,
   ExternalDiskState,
@@ -213,7 +223,6 @@ import {
   type HtmlDraftControllerHost,
 } from "$lib/state/html-draft-controller";
 import {
-  pageSettingsSource as pageSettingsSourceFromController,
   updatePageFrontmatterSource as updatePageFrontmatterSourceFromController,
   type PageSettingsControllerHost,
 } from "$lib/state/page-settings-controller";
@@ -249,7 +258,6 @@ import {
   cancelProjectOpenRecoveryDecision as cancelProjectOpenRecoveryDecisionFromController,
   closeCurrentProject as closeCurrentProjectFromController,
   continueProjectOpenWithRecoveryAbandonment as continueProjectOpenWithRecoveryAbandonmentFromController,
-  createContentPage as createContentPageFromController,
   createContentPageFromInput as createContentPageFromInputFromController,
   continueProjectTransitionWithOperatorDecision as continueProjectTransitionWithOperatorDecisionFromController,
   discardSessionAndReloadFromDisk as discardSessionAndReloadFromDiskFromController,
@@ -344,6 +352,8 @@ import {
 } from "$lib/session/file-buffer-draft-sync";
 import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
 import {
+  createDesignClass as createDesignClassCommand,
+  createScssVariable,
   createCssRequestIdentity,
   getScssVariables,
   readDesignClassInventory,
@@ -456,16 +466,6 @@ import {
   cancelPendingNativeWindowClose,
   closeNativeWindowIfProjectClosed,
 } from "$lib/state/native-window-close-controller";
-import {
-  loopPaletteItemForDefinition,
-  normalizeLoopDefinition,
-  type LoopDefinition,
-} from "$lib/loops/model";
-import {
-  loadLoopDefinitionsForProject,
-  saveLoopDefinitionsForProject,
-} from "$lib/loops/storage";
-
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const SELECTED_CLASS = "pana-studio-selected-element";
@@ -654,7 +654,6 @@ export class AppState {
   sourceGraph = $state<SourceGraph | null>(null);
   sourceGraphLoadSerial = 0;
   scssVariables = $state<ScssVariable[]>([]);
-  loopDefinitions = $state<LoopDefinition[]>([]);
   projectStatus = $state("");
   cachebustAssets = $state(false);
 
@@ -707,13 +706,15 @@ export class AppState {
   terminalPaneHeight = $state(defaultTerminalPaneHeight);
   leftPaneCollapsed = $state(false);
   rightPaneCollapsed = $state(false);
-  historyPanelOpen = $state(false);
-  settingsPanelOpen = $state(false);
+  applicationSurface = $state<ApplicationSurface>("workbench");
+  applicationSettings = $state<ApplicationSettingsSnapshot | null>(null);
+  applicationSettingsLoading = $state(false);
   activeVersionPreview = $state<VersionPreviewReceipt | null>(null);
   activeInspectorTab = $state<InspectorTab>("html");
   activeResizeKind = $state<ResizeKind | null>(null);
   private workbenchController: WorkbenchProjectionController;
   private workbenchHydratedRuntimeSessionId = "";
+  private applicationSettingsSaveTail: Promise<void> = Promise.resolve();
 
   // ── Terminal state ──
   terminalPaneOpen = $state(false);
@@ -1113,8 +1114,6 @@ export class AppState {
         : surface === "markdown"
           ? "markdown"
           : "preview";
-    } else if (activity === "site" || activity === "content") {
-      this.centerView = "site";
     } else if (activity === "audit") {
       this.centerView = "kernel";
     }
@@ -1546,8 +1545,8 @@ export class AppState {
     this.terminalPaneOpen = false;
   }
 
-  async initZolaProject() {
-    await initZolaProjectFromController(this.projectControllerHost());
+  async initZolaProject(themeId: string) {
+    await initZolaProjectFromController(this.projectControllerHost(), themeId);
   }
 
   resetProjectScopedState() {
@@ -1602,10 +1601,6 @@ export class AppState {
 
   async refreshCurrentSession() {
     await refreshCurrentSessionFromController(this);
-  }
-
-  async createContentPage() {
-    await createContentPageFromController(this.projectControllerHost());
   }
 
   async createContentPageFromInput(input: {
@@ -2174,6 +2169,54 @@ export class AppState {
     return true;
   }
 
+  async createDesignSystemVariable(
+    relativePath: string,
+    name: string,
+    value: string,
+  ): Promise<boolean> {
+    const projectRoot = this.sessionProjectRoot;
+    const runtimeSessionId = this.kernelProjectSessionId;
+    const identity = createCssRequestIdentity(projectRoot, runtimeSessionId);
+    const receipt = await createScssVariable(relativePath, name, value, identity);
+    if (
+      this.sessionProjectRoot !== projectRoot
+      || this.kernelProjectSessionId !== runtimeSessionId
+    ) return false;
+    await this.projectCommittedInspectorCssMutation(receipt.authority, null);
+    if (
+      this.sessionProjectRoot !== projectRoot
+      || this.kernelProjectSessionId !== runtimeSessionId
+    ) return false;
+    this.scssVariables = await getScssVariables(identity);
+    this.setGlobalStatus(`Tokenul $${name.replace(/^\$/, "")} a fost creat în ProjectWorkspace.`, "unsaved");
+    return true;
+  }
+
+  async createDesignSystemClass(name: string, relativePath: string): Promise<boolean> {
+    const outcome = await runInPreviewStructuralLane(this, async (lease) => {
+      const receipt = await createDesignClassCommand(name, relativePath, {
+        expectedProjectRoot: lease.projectRoot,
+        expectedSessionId: lease.sessionId,
+      });
+      requireCurrentPreviewStructuralSession(this, lease);
+      this.projectWorkspaceSnapshot = receipt.workspace;
+      await this.rescanCurrentProjectWithinStructuralLane(
+        lease,
+        relativePath,
+        { strict: true },
+      );
+      requireCurrentPreviewStructuralSession(this, lease);
+      await this.refreshDesignClassInventory(true);
+      requireCurrentPreviewStructuralSession(this, lease);
+      this.setGlobalStatus(
+        `Clasa .${name.replace(/^\./, "")} a fost creată în ${relativePath}.`,
+        "unsaved",
+      );
+      return true;
+    });
+    return outcome ?? false;
+  }
+
   async renameDesignSystemClass(oldName: string, newName: string): Promise<boolean> {
     const outcome = await runInPreviewStructuralLane(this, async (lease) => {
       const receipt = await renameDesignClassCommand(oldName, newName, {
@@ -2388,11 +2431,9 @@ export class AppState {
       await this.prepareHtmlCodeRevealTargetForCodeEntry();
       this.requestCodeSelectionReveal();
     }
-    const targetActivity: WorkbenchActivity = view === "site"
-      ? "site"
-      : view === "kernel"
-        ? "audit"
-        : "editor";
+    const targetActivity: WorkbenchActivity = view === "kernel"
+      ? "audit"
+      : "editor";
     if (
       this.workbenchHydratedRuntimeSessionId === this.kernelProjectSessionId
       && this.workbenchSnapshot
@@ -3222,39 +3263,6 @@ export class AppState {
     startTeraPaletteDragFromController(this.teraPaletteDragHost(), item, event);
   }
 
-  loopPaletteItems() {
-    return this.loopDefinitions.map(loopPaletteItemForDefinition);
-  }
-
-  loadProjectLoopDefinitions(projectRoot = this.currentProjectPath) {
-    this.loopDefinitions = loadLoopDefinitionsForProject(window.localStorage, projectRoot);
-  }
-
-  resetProjectLoopDefinitions() {
-    this.loopDefinitions = [];
-  }
-
-  registerLoopDefinition(definition: LoopDefinition) {
-    const nextDefinition = normalizeLoopDefinition(definition);
-    const existingIndex = this.loopDefinitions.findIndex((item) => item.id === nextDefinition.id);
-    const nextDefinitions = [...this.loopDefinitions];
-    if (existingIndex >= 0) {
-      nextDefinitions[existingIndex] = nextDefinition;
-    } else {
-      nextDefinitions.unshift(nextDefinition);
-    }
-    this.loopDefinitions = nextDefinitions;
-    saveLoopDefinitionsForProject(window.localStorage, this.currentProjectPath, this.loopDefinitions);
-    this.setGlobalStatus(`Loop pregătit pentru Adaugă: ${nextDefinition.label}.`, "restored");
-  }
-
-  removeLoopDefinition(id: string) {
-    const nextDefinitions = this.loopDefinitions.filter((definition) => definition.id !== id);
-    this.loopDefinitions = nextDefinitions;
-    saveLoopDefinitionsForProject(window.localStorage, this.currentProjectPath, this.loopDefinitions);
-    this.setGlobalStatus("Loop eliminat din panoul Adaugă.", "restored");
-  }
-
   async insertPaletteElementAtTarget(request: PreviewInsertDropRequest) {
     await insertPaletteElementAtTargetFromController(this.htmlActionsControllerHost(), request);
   }
@@ -3349,6 +3357,13 @@ export class AppState {
     );
   }
 
+  async applyNativeBlockOption(request: ApplyNativeBlockOptionRequest) {
+    return await applyNativeBlockOptionToHtmlFromController(
+      this.htmlActionsControllerHost(),
+      request,
+    );
+  }
+
   async applyClassesToHtml() {
     return await applyClassesToHtmlFromController(this.htmlActionsControllerHost());
   }
@@ -3412,10 +3427,6 @@ export class AppState {
 
   filesControllerHost(): FilesControllerHost {
     return this;
-  }
-
-  pageSettingsSource() {
-    return pageSettingsSourceFromController(this.pageSettingsControllerHost());
   }
 
   updatePageFrontmatterSource(relativePath: string, nextSource: string) {
@@ -3677,6 +3688,101 @@ export class AppState {
 
   toggleUiTheme() {
     toggleUiThemeFromController(this.uiControllerHost());
+    void this.persistApplicationTheme(this.uiTheme);
+  }
+
+  setApplicationTheme(theme: ApplicationTheme) {
+    if (theme === this.uiTheme) return;
+    setUiThemeFromController(this.uiControllerHost(), theme);
+    void this.persistApplicationTheme(theme);
+  }
+
+  openApplicationSettings() {
+    this.applicationSurface = "settings";
+  }
+
+  openProjectWorkbench() {
+    this.applicationSurface = "workbench";
+  }
+
+  async initApplicationSettings() {
+    this.applicationSettingsLoading = true;
+    try {
+      const snapshot = await readApplicationSettings();
+      this.applicationSettings = snapshot;
+      if (snapshot.initialized) {
+        setUiThemeFromController(this.uiControllerHost(), snapshot.theme);
+      } else {
+        await this.persistApplicationTheme(this.uiTheme);
+      }
+    } catch (error) {
+      this.notify({
+        id: "application.settings.load",
+        level: "warning",
+        title: "Setările aplicației nu au fost încărcate",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.applicationSettingsLoading = false;
+    }
+  }
+
+  private persistApplicationTheme(theme: ApplicationTheme) {
+    const operation = this.applicationSettingsSaveTail.then(async () => {
+      const current = this.applicationSettings ?? await readApplicationSettings();
+      const snapshot = await saveApplicationSettings(
+        current.revision,
+        theme,
+        current.blockPropertiesHeight,
+        current.blockPropertiesCollapsed,
+      );
+      this.applicationSettings = snapshot;
+      this.clearNotification("application.settings.load");
+      this.clearNotification("application.settings.save");
+    });
+    this.applicationSettingsSaveTail = operation.then(
+      () => undefined,
+      (error) => {
+        this.notify({
+          id: "application.settings.save",
+          level: "warning",
+          title: "Tema nu a fost salvată în configurația aplicației",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      },
+    );
+    return this.applicationSettingsSaveTail;
+  }
+
+  persistBlockPropertiesLayout(height: number, collapsed: boolean) {
+    const normalizedHeight = Math.max(140, Math.min(520, Math.round(height)));
+    const operation = this.applicationSettingsSaveTail.then(async () => {
+      const current = this.applicationSettings ?? await readApplicationSettings();
+      if (
+        current.blockPropertiesHeight === normalizedHeight
+        && current.blockPropertiesCollapsed === collapsed
+      ) return;
+      const snapshot = await saveApplicationSettings(
+        current.revision,
+        current.theme,
+        normalizedHeight,
+        collapsed,
+      );
+      this.applicationSettings = snapshot;
+      this.clearNotification("application.settings.save");
+    });
+    this.applicationSettingsSaveTail = operation.then(
+      () => undefined,
+      (error) => {
+        this.notify({
+          id: "application.settings.save",
+          level: "warning",
+          title: "Layout-ul Inspectorului nu a fost salvat",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      },
+    );
+    return this.applicationSettingsSaveTail;
   }
 
   resetResize(kind: ResizeKind) {

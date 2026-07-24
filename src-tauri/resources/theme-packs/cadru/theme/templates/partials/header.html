@@ -1,0 +1,20 @@
+<header class="antet-cadru">
+  <div class="container antet-cadru__interior">
+    <a class="marca-cadru" href="/" aria-label="{{ site.marca }} — pagina principală">
+      <span>{{ site.marca }}</span><i aria-hidden="true"></i>
+    </a>
+    <button class="buton-meniu" type="button" aria-expanded="false" aria-controls="navigatie-principala">
+      <span class="sr-only">Deschide meniul</span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </button>
+    <nav id="navigatie-principala" class="navigatie-cadru" aria-label="Navigație principală">
+      <ul>
+        {% for element in meniu.elemente %}
+        <li><a href="{{ element.url }}">{{ element.eticheta }}</a></li>
+        {% endfor %}
+      </ul>
+      <a class="cadru-contact" href="{{ site.cta_url }}">{{ site.cta_scurt }} <span aria-hidden="true">↗</span></a>
+    </nav>
+  </div>
+</header>

@@ -1,17 +1,62 @@
 <script lang="ts">
+  import { IconCheck, IconPalette } from "@tabler/icons-svelte";
+  import { readThemeCatalog } from "$lib/project/io";
+  import type {
+    ProjectWorkspaceIdentity,
+    ProjectWorkspaceSnapshot,
+    ThemeCatalogSnapshot,
+  } from "$lib/types";
+  import { errorMessage } from "$lib/util";
+
   let {
     scannedProject = false,
     isEmpty = false,
     isZola = false,
     openProjectFolder,
     initZolaProject,
+    workspaceSnapshot = null,
   }: {
     scannedProject?: boolean;
     isEmpty?: boolean;
     isZola?: boolean;
     openProjectFolder: () => void | Promise<void>;
-    initZolaProject: () => void | Promise<void>;
+    initZolaProject: (themeId: string) => void | Promise<void>;
+    workspaceSnapshot?: ProjectWorkspaceSnapshot | null;
   } = $props();
+
+  let catalog = $state<ThemeCatalogSnapshot | null>(null);
+  let selectedThemeId = $state("");
+  let catalogError = $state("");
+  let catalogLoading = $state(false);
+  let catalogRequested = false;
+
+  $effect(() => {
+    if (!isEmpty || catalogRequested) return;
+    catalogRequested = true;
+    void loadCatalog();
+  });
+
+  function catalogIdentity(): ProjectWorkspaceIdentity | null {
+    if (!workspaceSnapshot) return null;
+    return {
+      expectedProjectRoot: workspaceSnapshot.projectRoot,
+      expectedSessionId: workspaceSnapshot.runtimeSessionId,
+      expectedRevision: workspaceSnapshot.revision,
+    };
+  }
+
+  async function loadCatalog() {
+    catalogLoading = true;
+    catalogError = "";
+    try {
+      catalog = await readThemeCatalog(catalogIdentity());
+      selectedThemeId = catalog.themes[0]?.id ?? "";
+    } catch (error) {
+      catalogError = errorMessage(error);
+    } finally {
+      catalogLoading = false;
+    }
+  }
 </script>
 
 {#if !scannedProject}
@@ -23,14 +68,46 @@
     </button>
   </div>
 {:else if isEmpty}
-  <div class="empty-state">
+  <div class="empty-state create-state">
     <p class="empty-title">Dosar gol</p>
     <p class="empty-sub">
-      Acest dosar poate deveni direct un proiect Zola.<br>
-      Configurația și directoarele Zola vor fi create în dosarul selectat.
+      Alege pachetul de temă. Pană Studio va publica starterul neutru, tema și rețeta ei într-o singură inițializare validată.
     </p>
-    <button type="button" class="empty-open-btn" onclick={initZolaProject}>
-      Inițializează proiect Pană Studio
+    <div class="starter-themes" aria-label="Alege tema proiectului" aria-busy={catalogLoading}>
+      {#each catalog?.themes ?? [] as theme (theme.id)}
+        <button
+          type="button"
+          class:selected={selectedThemeId === theme.id}
+          class="starter-theme"
+          onclick={() => { selectedThemeId = theme.id; }}
+        >
+          <img src={theme.previewDataUrl} alt="" />
+          <span>
+            <strong>{theme.name}</strong>
+            <small>{theme.description}</small>
+          </span>
+          {#if selectedThemeId === theme.id}
+            <IconCheck size={17} stroke={2} />
+          {:else}
+            <IconPalette size={17} stroke={1.7} />
+          {/if}
+        </button>
+      {:else}
+        <p class="catalog-state">
+          {catalogLoading ? "Se încarcă temele bundled..." : "Catalogul de teme nu este disponibil."}
+        </p>
+      {/each}
+    </div>
+    {#if catalogError}
+      <p class="catalog-error" role="alert">{catalogError}</p>
+    {/if}
+    <button
+      type="button"
+      class="empty-open-btn"
+      disabled={!selectedThemeId || catalogLoading}
+      onclick={() => initZolaProject(selectedThemeId)}
+    >
+      Creează proiectul cu tema aleasă
     </button>
     <button type="button" class="empty-secondary-btn" onclick={openProjectFolder}>
       Deschide alt dosar
@@ -85,6 +162,12 @@
     box-shadow: var(--shadow);
   }
 
+  .create-state {
+    justify-content: flex-start;
+    overflow: auto;
+    padding-top: clamp(36px, 7vh, 72px);
+  }
+
   .empty-state::before {
     content: "";
     position: absolute;
@@ -130,6 +213,68 @@
 
   .empty-open-btn:hover {
     opacity: 0.88;
+  }
+
+  .empty-open-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .starter-themes {
+    display: grid;
+    width: min(760px, 100%);
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .starter-theme {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr) 24px;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--border-3);
+    border-radius: var(--radius-panel);
+    color: var(--text);
+    text-align: left;
+    background: var(--surface-3);
+  }
+
+  .starter-theme:hover,
+  .starter-theme.selected {
+    border-color: var(--brand);
+    background: var(--control-selected);
+  }
+
+  .starter-theme img {
+    width: 150px;
+    aspect-ratio: 16 / 10;
+    border-radius: 6px;
+    object-fit: cover;
+  }
+
+  .starter-theme span {
+    display: grid;
+    gap: 5px;
+  }
+
+  .starter-theme small {
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  .catalog-state,
+  .catalog-error {
+    margin: 0;
+    padding: 14px;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .catalog-error {
+    max-width: 760px;
+    color: var(--danger);
   }
 
   .empty-secondary-btn {

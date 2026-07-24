@@ -8,7 +8,6 @@ export function createInspectorPendingSourceRegistry(): InspectorPendingSourceRe
   return {
     html: new Set(),
     css: new Set(),
-    vars: new Set(),
     js: new Set(),
   };
 }

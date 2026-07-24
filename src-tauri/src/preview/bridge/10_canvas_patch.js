@@ -361,7 +361,30 @@
     var baseCanvasTransactionId = root.getAttribute("data-pana-canvas-transaction-id") || "";
 
     try {
-      if (operation.kind === "setAttributes") {
+      if (operation.kind === "setBlockOption") {
+        selected = requireCanvasPatchElement(operation.target, "target");
+        var providerId = String(operation.providerId || "").trim();
+        var optionId = String(operation.optionId || "").trim();
+        var optionAttribute = String(operation.attribute || "").trim().toLowerCase();
+        if (
+          !providerId
+          || !optionId
+          || !optionAttribute
+          || selected.getAttribute("data-pana-block") !== providerId
+          || ["data-pana-block", "data-pana-component", "data-pana-instance"].indexOf(optionAttribute) >= 0
+          || optionAttribute.indexOf("on") === 0
+        ) {
+          throw new Error("CanvasPatch a refuzat contractul proprietății de bloc.");
+        }
+        var previousOptionValue = selected.hasAttribute(optionAttribute)
+          ? selected.getAttribute(optionAttribute)
+          : null;
+        rollbacks.push(function () {
+          restoreCanvasAttribute(selected, optionAttribute, previousOptionValue);
+        });
+        if (operation.value === null) selected.removeAttribute(optionAttribute);
+        else selected.setAttribute(optionAttribute, String(operation.value));
+      } else if (operation.kind === "setAttributes") {
         selected = requireCanvasPatchElement(operation.target, "target");
         var attributeChanges = Object.keys(operation.attributes || {}).map(function (name) {
           var normalized = String(name || "").trim();
@@ -471,7 +494,7 @@
       root.setAttribute(CANVAS_WORKSPACE_TRANSACTION_ATTR, patch.workspaceTransactionId);
 
       refreshEmptyEditableZones();
-      notifyPanaComponentsInit(document);
+      notifyPanaBlocksInit(document);
       if (selected && selected.isConnected) selectElement(selected);
       else clearSelectedElement();
       post("structure", { sections: collectPageSections() });

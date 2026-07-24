@@ -1,6 +1,6 @@
 [package]
 name = "pana-studio"
-version = "0.1.0"
+version = "0.1.1"
 description = "Editor vizual desktop open-source pentru site-uri Zola"
 authors = ["Gabriel Pană"]
 license = "EUPL-1.2-or-later"
@@ -40,7 +40,15 @@ schemars = "1"
 # Hash-urile CSP cer codarea standard RFC 4648 a digestului SHA-256.
 base64 = "0.22"
 getrandom = "0.3"
-toml_edit = "0.25"
+toml_edit = { version = "0.25", features = ["serde"] }
+# Adaptoarele urmează exact formatele acceptate de load_data din Zola embedded.
+serde_yaml = "0.9"
+csv = "1.4"
+nom-bibtex = "0.6"
+roxmltree_to_serde = "0.6.2"
+# Shortcode CST folosește copia exactă a gramaticii din Zola embedded/pinned.
+pest = "2"
+pest_derive = "2"
 tauri-plugin-pty = "0.2.1"
 reqwest = { version = "0.12", features = ["blocking"] }
 walkdir = "2"

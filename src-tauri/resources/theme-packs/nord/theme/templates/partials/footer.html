@@ -1,0 +1,25 @@
+<footer class="subsol-site">
+  <div class="container subsol-site__principal">
+    <div>
+      <a class="marca-site marca-site--subsol" href="/">
+        <span class="marca-site__semn" aria-hidden="true">N</span>
+        <span>{{ site.marca }}</span>
+      </a>
+      <p>{{ site.descriere_scurta }}</p>
+    </div>
+    <div>
+      <p class="subsol-site__eticheta">Contact</p>
+      <a href="mailto:{{ site.email }}">{{ site.email }}</a>
+      <a href="tel:{{ site.telefon_link }}">{{ site.telefon }}</a>
+    </div>
+    <div>
+      <p class="subsol-site__eticheta">Birou</p>
+      <p>{{ site.adresa }}</p>
+      <p>{{ site.program }}</p>
+    </div>
+  </div>
+  <div class="container subsol-site__legal">
+    <p>© {{ now() | date(format="%Y") }} {{ site.marca }}</p>
+    <a href="/politica-confidentialitate/">Confidențialitate</a>
+  </div>
+</footer>

@@ -247,6 +247,24 @@ function collectElementAttributes(element: Element, selectedClass: string): Reco
   return result;
 }
 
+function blockContextForElement(element: Element): SelectionInfo["blockContext"] {
+  const root = element.closest("[data-pana-block],[data-pana-component]");
+  if (!root) return null;
+  const canonical = root.getAttribute("data-pana-block");
+  const legacy = root.getAttribute("data-pana-component");
+  const providerId = (canonical ?? legacy ?? "").trim();
+  if (!providerId) return null;
+  return {
+    providerId,
+    markerKind: canonical ? "canonical" : "legacy",
+    rootSelector: createDomPathSelector(root),
+    rootTag: root.tagName.toLowerCase(),
+    rootSourceId: root.getAttribute(SOURCE_ID_ATTR),
+    rootTemplateSourceId: inheritedTemplateSourceId(root),
+    rootSessionId: root.getAttribute(SESSION_ID_ATTR),
+  };
+}
+
 export function createDomNodeLink(element: Element): DomNodeLink {
   return {
     selector: createDomPathSelector(element),
@@ -647,6 +665,7 @@ export function createSelectionInfoFromSourceElement(
     sourceId: element.getAttribute(SOURCE_ID_ATTR) ?? null,
     templateSourceId: inheritedTemplateSourceId(element),
     sessionId: element.getAttribute(SESSION_ID_ATTR) ?? null,
+    blockContext: blockContextForElement(element),
   };
 }
 
@@ -718,6 +737,7 @@ export function createSelectionInfo(element: Element, previewWindow: Window, sel
     sourceId: element.getAttribute(SOURCE_ID_ATTR) ?? null,
     templateSourceId: inheritedTemplateSourceId(element),
     sessionId: element.getAttribute(SESSION_ID_ATTR) ?? null,
+    blockContext: blockContextForElement(element),
   };
 }
 

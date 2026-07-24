@@ -304,8 +304,27 @@
 	      childNodes: childNodes,
 	      sourceLocation: null,
 	      sourceId: element.getAttribute(SOURCE_ID_ATTR) || null,
-	      templateSourceId: inheritedTemplateSourceId(element),
+      templateSourceId: inheritedTemplateSourceId(element),
       sessionId: element.getAttribute(SESSION_ID_ATTR) || null,
+      blockContext: blockContextForElement(element),
+    };
+  }
+
+  function blockContextForElement(element) {
+    var root = element.closest("[data-pana-block],[data-pana-component]");
+    if (!root) return null;
+    var canonical = root.getAttribute("data-pana-block");
+    var legacy = root.getAttribute("data-pana-component");
+    var providerId = (canonical || legacy || "").trim();
+    if (!providerId) return null;
+    return {
+      providerId: providerId,
+      markerKind: canonical ? "canonical" : "legacy",
+      rootSelector: createDomPathSelector(root),
+      rootTag: root.tagName.toLowerCase(),
+      rootSourceId: root.getAttribute(SOURCE_ID_ATTR) || null,
+      rootTemplateSourceId: inheritedTemplateSourceId(root),
+      rootSessionId: root.getAttribute(SESSION_ID_ATTR) || null,
     };
   }
 

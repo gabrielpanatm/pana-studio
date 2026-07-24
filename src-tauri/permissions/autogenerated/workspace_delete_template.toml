@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-delete-template"
+description = "Enables the workspace_delete_template command without any pre-configured scope."
+commands.allow = ["workspace_delete_template"]
+
+[[permission]]
+identifier = "deny-workspace-delete-template"
+description = "Denies the workspace_delete_template command without any pre-configured scope."
+commands.deny = ["workspace_delete_template"]

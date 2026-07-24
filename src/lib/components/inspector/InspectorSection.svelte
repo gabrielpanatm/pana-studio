@@ -59,6 +59,7 @@
     align-items: center;
     gap: 5px;
     width: 100%;
+    min-height: 32px;
     padding: 5px 9px;
     border: none;
     background: transparent;
@@ -67,7 +68,7 @@
   }
 
   .section-header:hover {
-    background: var(--surface-4);
+    background: var(--control-hover);
   }
 
   .section-icon {
@@ -82,8 +83,8 @@
   .section-title {
     flex: 1;
     font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.07em;
+    font-weight: 650;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--text-muted);
   }
@@ -113,7 +114,7 @@
     padding: 5px 9px 9px;
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 8px;
     min-width: 0;
     overflow: visible;
   }

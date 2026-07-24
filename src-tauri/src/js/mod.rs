@@ -28,4 +28,4 @@ pub use template::{
     ensure_base_scripts_block, ensure_page_scripts_block, ensure_script_tags, extract_extends,
     page_scripts_html, remove_page_scripts_contract,
 };
-pub use types::{PageJsConfig, PanaComponent};
+pub use types::{NativeBlockRuntimeEntry, PageJsConfig};

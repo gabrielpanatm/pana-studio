@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ page.description }}{% endblock %}
+
+{% block content %}
+<article class="studiu-caz">
+  <header class="studiu-caz__antet">
+    <div class="container studiu-caz__grila">
+      <div>
+        <p class="eticheta-cadru">{{ page.extra.disciplina }} / {{ page.extra.an }}</p>
+        <h1>{{ page.title }}</h1>
+      </div>
+      <p>{{ page.description }}</p>
+    </div>
+  </header>
+  <div class="container studiu-caz__vizual" aria-hidden="true">
+    <span>{{ page.extra.initiala }}</span>
+  </div>
+  <div class="container studiu-caz__continut">
+    <aside>
+      <p class="eticheta-cadru">Rolul nostru</p>
+      <ul>
+        {% for rol in page.extra.roluri %}<li>{{ rol }}</li>{% endfor %}
+      </ul>
+    </aside>
+    <div class="content">{{ page.content | safe }}</div>
+  </div>
+</article>
+{% endblock %}

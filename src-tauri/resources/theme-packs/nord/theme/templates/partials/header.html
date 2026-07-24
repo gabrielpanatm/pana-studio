@@ -1,0 +1,21 @@
+<header class="antet-site">
+  <div class="container antet-site__interior">
+    <a class="marca-site" href="/" aria-label="{{ site.marca }} — pagina principală">
+      <span class="marca-site__semn" aria-hidden="true">N</span>
+      <span>{{ site.marca }}</span>
+    </a>
+    <button class="buton-meniu" type="button" aria-expanded="false" aria-controls="navigatie-principala">
+      <span class="sr-only">Deschide meniul</span>
+      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
+    </button>
+    <nav id="navigatie-principala" class="navigatie-principala" aria-label="Navigație principală">
+      <ul class="navigatie-principala__lista">
+        {% for element in meniu.elemente %}
+        <li><a class="navigatie-principala__link" href="{{ element.url }}">{{ element.eticheta }}</a></li>
+        {% endfor %}
+      </ul>
+      <a class="btn btn-primary btn-sm" href="{{ site.cta_url }}">{{ site.cta_scurt }}</a>
+    </nav>
+  </div>
+</header>

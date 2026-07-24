@@ -1,232 +1,257 @@
-use crate::source_graph::model::SourceNodeKind;
+use crate::source_graph::{
+    model::SourceNodeKind,
+    tera_cst::{parse_tera_cst, TeraCstKind, TeraCstNode, TeraScopeAction, TeraTagKind},
+};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TeraItem {
     pub kind: TeraItemKind,
     pub node_kind: Option<SourceNodeKind>,
     pub label: String,
     pub target: Option<String>,
+    pub targets: Vec<String>,
+    pub ignore_missing: bool,
+    pub scope_action: TeraScopeAction,
     pub start: usize,
     pub end: usize,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+impl TeraItem {
+    pub fn opens_scope(&self) -> bool {
+        self.scope_action == TeraScopeAction::Open
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TeraItemKind {
     Node,
     EndScope,
 }
 
 pub fn parse_tera_items(source: &str) -> Vec<TeraItem> {
-    let bytes = source.as_bytes();
-    let mut items = Vec::new();
-    let mut index = 0;
-
-    while index + 1 < bytes.len() {
-        if bytes[index] != b'{' {
-            index += 1;
-            continue;
-        }
-
-        match bytes[index + 1] {
-            b'#' => {
-                if let Some(end) = find_close(bytes, index + 2, b'#', b'}') {
-                    let content = source[index + 2..end - 2].trim();
-                    items.push(TeraItem {
-                        kind: TeraItemKind::Node,
-                        node_kind: Some(SourceNodeKind::TeraComment),
-                        label: shorten(content, "comment"),
-                        target: None,
-                        start: index,
-                        end,
-                    });
-                    index = end;
-                } else {
-                    break;
-                }
-            }
-            b'{' => {
-                if let Some(end) = find_close(bytes, index + 2, b'}', b'}') {
-                    let content = trim_tera_markers(&source[index + 2..end - 2]);
-                    items.push(TeraItem {
-                        kind: TeraItemKind::Node,
-                        node_kind: Some(SourceNodeKind::TeraVariable),
-                        label: shorten(&content, "variable"),
-                        target: None,
-                        start: index,
-                        end,
-                    });
-                    index = end;
-                } else {
-                    break;
-                }
-            }
-            b'%' => {
-                if let Some(end) = find_close(bytes, index + 2, b'%', b'}') {
-                    let content = trim_tera_markers(&source[index + 2..end - 2]);
-                    let keyword = first_word(&content);
-
-                    if keyword == "raw" {
-                        if let Some(raw_end) = find_endraw(source, end) {
-                            items.push(TeraItem {
-                                kind: TeraItemKind::Node,
-                                node_kind: Some(SourceNodeKind::Raw),
-                                label: "raw".to_string(),
-                                target: None,
-                                start: index,
-                                end: raw_end,
-                            });
-                            index = raw_end;
-                            continue;
-                        }
-                    }
-
-                    items.push(item_from_tag(&content, keyword, index, end));
-                    index = end;
-                } else {
-                    break;
-                }
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-
-    items
+    let document = parse_tera_cst(source, "pana-source-graph.html");
+    tera_items_from_document(&document)
 }
 
-fn item_from_tag(content: &str, keyword: &str, start: usize, end: usize) -> TeraItem {
-    match keyword {
-        "extends" => TeraItem {
+pub(crate) fn tera_items_from_document(
+    document: &crate::source_graph::tera_cst::TeraCstDocument,
+) -> Vec<TeraItem> {
+    debug_assert!(document.is_lossless());
+    document
+        .nodes
+        .iter()
+        .filter_map(|node| item_from_cst(document.source(), node))
+        .collect()
+}
+
+fn item_from_cst(source: &str, node: &TeraCstNode) -> Option<TeraItem> {
+    let content = node.content(source).trim();
+    let base = |kind, node_kind, label: String, scope_action| TeraItem {
+        kind,
+        node_kind,
+        label,
+        target: None,
+        targets: Vec::new(),
+        ignore_missing: false,
+        scope_action,
+        start: node.start,
+        end: node.end,
+    };
+
+    match &node.kind {
+        TeraCstKind::Text => None,
+        TeraCstKind::Variable => Some(base(
+            TeraItemKind::Node,
+            Some(if content.trim() == "super()" {
+                SourceNodeKind::Super
+            } else {
+                SourceNodeKind::TeraVariable
+            }),
+            shorten(content, "variable"),
+            TeraScopeAction::None,
+        )),
+        TeraCstKind::Comment => Some(base(
+            TeraItemKind::Node,
+            Some(SourceNodeKind::TeraComment),
+            shorten(content, "comment"),
+            TeraScopeAction::None,
+        )),
+        TeraCstKind::Raw => Some(base(
+            TeraItemKind::Node,
+            Some(SourceNodeKind::Raw),
+            "raw".to_string(),
+            TeraScopeAction::None,
+        )),
+        TeraCstKind::Opaque => Some(base(
+            TeraItemKind::Node,
+            Some(SourceNodeKind::Tera),
+            shorten(content, "opaque"),
+            TeraScopeAction::None,
+        )),
+        TeraCstKind::Tag(tag) => Some(item_from_tag(content, tag, node)),
+    }
+}
+
+fn item_from_tag(content: &str, tag: &TeraTagKind, node: &TeraCstNode) -> TeraItem {
+    let mut item = match tag {
+        TeraTagKind::Extends => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(SourceNodeKind::Extends),
             label: target_label("extends", extract_first_string(content).as_deref()),
             target: extract_first_string(content),
-            start,
-            end,
+            targets: extract_strings(content),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
-        "include" => TeraItem {
+        TeraTagKind::Include => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(SourceNodeKind::Include),
             label: target_label("include", extract_first_string(content).as_deref()),
             target: extract_first_string(content),
-            start,
-            end,
+            targets: extract_strings(content),
+            ignore_missing: has_ignore_missing(content),
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
-        "import" => TeraItem {
+        TeraTagKind::Import => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(SourceNodeKind::Import),
             label: target_label("import", extract_first_string(content).as_deref()),
             target: extract_first_string(content),
-            start,
-            end,
+            targets: extract_strings(content),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
-        "block" => {
+        TeraTagKind::Block => {
             let name = word_after_keyword(content).unwrap_or_else(|| "block".to_string());
             TeraItem {
                 kind: TeraItemKind::Node,
                 node_kind: Some(SourceNodeKind::Block),
                 label: name,
                 target: None,
-                start,
-                end,
+                targets: Vec::new(),
+                ignore_missing: false,
+                scope_action: tag.scope_action(),
+                start: node.start,
+                end: node.end,
             }
         }
-        "macro" => {
+        TeraTagKind::Macro => {
             let name = macro_name(content).unwrap_or_else(|| "macro".to_string());
             TeraItem {
                 kind: TeraItemKind::Node,
                 node_kind: Some(SourceNodeKind::Macro),
                 label: name,
                 target: None,
-                start,
-                end,
+                targets: Vec::new(),
+                ignore_missing: false,
+                scope_action: tag.scope_action(),
+                start: node.start,
+                end: node.end,
             }
         }
-        "for" => TeraItem {
+        TeraTagKind::For => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(SourceNodeKind::For),
             label: shorten(content, "for"),
             target: None,
-            start,
-            end,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
-        "if" | "elif" | "else" => TeraItem {
+        TeraTagKind::If | TeraTagKind::Elif | TeraTagKind::Else => TeraItem {
             kind: TeraItemKind::Node,
-            node_kind: Some(SourceNodeKind::If),
-            label: shorten(content, keyword),
+            node_kind: Some(match tag {
+                TeraTagKind::If => SourceNodeKind::If,
+                TeraTagKind::Elif => SourceNodeKind::Elif,
+                TeraTagKind::Else => SourceNodeKind::Else,
+                _ => unreachable!(),
+            }),
+            label: shorten(content, "condition"),
             target: None,
-            start,
-            end,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
-        "set" => TeraItem {
+        TeraTagKind::Set | TeraTagKind::SetGlobal => TeraItem {
             kind: TeraItemKind::Node,
-            node_kind: Some(SourceNodeKind::Set),
+            node_kind: Some(if *tag == TeraTagKind::SetGlobal {
+                SourceNodeKind::SetGlobal
+            } else {
+                SourceNodeKind::Set
+            }),
             label: shorten(content, "set"),
             target: None,
-            start,
-            end,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
-        "with" => TeraItem {
-            kind: TeraItemKind::Node,
-            node_kind: Some(SourceNodeKind::With),
-            label: shorten(content, "with"),
-            target: None,
-            start,
-            end,
-        },
-        "endblock" | "endfor" | "endif" | "endmacro" | "endset" | "endwith" => TeraItem {
+        TeraTagKind::EndBlock
+        | TeraTagKind::EndMacro
+        | TeraTagKind::EndFor
+        | TeraTagKind::EndIf
+        | TeraTagKind::EndFilter => TeraItem {
             kind: TeraItemKind::EndScope,
             node_kind: None,
-            label: keyword.to_string(),
+            label: shorten(content, "end"),
             target: None,
-            start,
-            end,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: TeraScopeAction::Close,
+            start: node.start,
+            end: node.end,
         },
-        _ => TeraItem {
+        TeraTagKind::Filter | TeraTagKind::Break | TeraTagKind::Continue => TeraItem {
+            kind: TeraItemKind::Node,
+            node_kind: Some(match tag {
+                TeraTagKind::Filter => SourceNodeKind::Filter,
+                TeraTagKind::Break => SourceNodeKind::Break,
+                TeraTagKind::Continue => SourceNodeKind::Continue,
+                _ => unreachable!(),
+            }),
+            label: shorten(content, "tera"),
+            target: None,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
+        },
+        TeraTagKind::Raw | TeraTagKind::EndRaw | TeraTagKind::Unknown(_) => TeraItem {
             kind: TeraItemKind::Node,
             node_kind: Some(SourceNodeKind::Tera),
-            label: shorten(content, keyword),
+            label: shorten(content, "tera"),
             target: None,
-            start,
-            end,
+            targets: Vec::new(),
+            ignore_missing: false,
+            scope_action: tag.scope_action(),
+            start: node.start,
+            end: node.end,
         },
+    };
+    if item.target.is_none() {
+        item.target = item.targets.first().cloned();
     }
-}
-
-fn find_close(bytes: &[u8], mut index: usize, close_a: u8, close_b: u8) -> Option<usize> {
-    while index + 1 < bytes.len() {
-        if bytes[index] == close_a && bytes[index + 1] == close_b {
-            return Some(index + 2);
-        }
-        index += 1;
-    }
-    None
-}
-
-fn find_endraw(source: &str, start: usize) -> Option<usize> {
-    let rest = &source[start..];
-    let relative = rest.find("{% endraw")?;
-    let token_start = start + relative;
-    let bytes = source.as_bytes();
-    find_close(bytes, token_start + 2, b'%', b'}')
-}
-
-fn trim_tera_markers(value: &str) -> String {
-    value
-        .trim()
-        .trim_start_matches('-')
-        .trim_end_matches('-')
-        .trim()
-        .to_string()
-}
-
-fn first_word(value: &str) -> &str {
-    value.split_whitespace().next().unwrap_or("")
+    item
 }
 
 pub fn set_assignment_name(value: &str) -> Option<String> {
-    let rest = value.trim().strip_prefix("set")?.trim();
+    let trimmed = value.trim();
+    let rest = trimmed
+        .strip_prefix("set_global")
+        .or_else(|| trimmed.strip_prefix("set"))?
+        .trim();
     let (before_equals, _) = rest.split_once('=')?;
     first_identifier(before_equals)
 }
@@ -289,12 +314,17 @@ fn macro_name(value: &str) -> Option<String> {
 }
 
 fn extract_first_string(value: &str) -> Option<String> {
+    extract_strings(value).into_iter().next()
+}
+
+fn extract_strings(value: &str) -> Vec<String> {
     let bytes = value.as_bytes();
     let mut index = 0;
+    let mut strings = Vec::new();
 
     while index < bytes.len() {
         let quote = bytes[index];
-        if quote != b'"' && quote != b'\'' {
+        if !matches!(quote, b'"' | b'\'' | b'`') {
             index += 1;
             continue;
         }
@@ -302,15 +332,24 @@ fn extract_first_string(value: &str) -> Option<String> {
         let start = index + 1;
         index = start;
         while index < bytes.len() {
-            if bytes[index] == quote && bytes[index.saturating_sub(1)] != b'\\' {
-                return Some(value[start..index].to_string());
+            if bytes[index] == quote {
+                strings.push(value[start..index].to_string());
+                index += 1;
+                break;
             }
             index += 1;
         }
-        break;
     }
 
-    None
+    strings
+}
+
+fn has_ignore_missing(value: &str) -> bool {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .contains("ignore missing")
 }
 
 fn target_label(kind: &str, target: Option<&str>) -> String {
@@ -363,5 +402,57 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item.node_kind == Some(SourceNodeKind::TeraVariable)));
+    }
+
+    #[test]
+    fn parses_the_structural_contract_supported_by_embedded_tera() {
+        let source = r#"{% include ["missing.html", "fallback.html"] ignore missing %}
+{% set_global total = 0 %}
+{% block content %}
+{{ super() }}
+{% filter upper %}
+{% if page.extra.first %}
+first
+{% elif page.extra.second %}
+second
+{% else %}
+fallback
+{% endif %}
+{% endfilter %}
+{% for item in page.extra.items %}
+{% if item.hidden %}{% continue %}{% endif %}
+{% if item.stop %}{% break %}{% endif %}
+{% endfor %}
+{% endblock %}
+"#;
+        let items = parse_tera_items(source);
+
+        let include = items
+            .iter()
+            .find(|item| item.node_kind == Some(SourceNodeKind::Include))
+            .expect("include");
+        assert_eq!(include.targets, vec!["missing.html", "fallback.html"]);
+        assert!(include.ignore_missing);
+        assert!(items
+            .iter()
+            .any(|item| item.node_kind == Some(SourceNodeKind::SetGlobal)));
+        assert!(items
+            .iter()
+            .any(|item| { item.node_kind == Some(SourceNodeKind::Filter) && item.opens_scope() }));
+        assert!(items
+            .iter()
+            .any(|item| { item.node_kind == Some(SourceNodeKind::Elif) && !item.opens_scope() }));
+        assert!(items
+            .iter()
+            .any(|item| { item.node_kind == Some(SourceNodeKind::Else) && !item.opens_scope() }));
+        assert!(items
+            .iter()
+            .any(|item| item.node_kind == Some(SourceNodeKind::Break)));
+        assert!(items
+            .iter()
+            .any(|item| item.node_kind == Some(SourceNodeKind::Continue)));
+        assert!(items
+            .iter()
+            .any(|item| item.node_kind == Some(SourceNodeKind::Super)));
     }
 }

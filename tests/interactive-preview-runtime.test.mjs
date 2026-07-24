@@ -68,14 +68,20 @@ test("Interactive realm has no Tauri/file bridge and never uses allow-same-origi
     new URL("../src-tauri/src/preview/interactive_runtime.js", import.meta.url),
     "utf8",
   );
+  const blockRuntime = readFileSync(
+    new URL("../src-tauri/src/blocks/runtime.js", import.meta.url),
+    "utf8",
+  );
   const surface = readFileSync(
     new URL("../src/lib/components/preview/InteractivePreviewSurface.svelte", import.meta.url),
     "utf8",
   );
   assert.doesNotMatch(runtime, /__TAURI__|invoke\(|@tauri-apps|readFile|writeFile/);
-  assert.match(runtime, /PanaInteractiveRuntime/);
-  assert.match(runtime, /mount/);
-  assert.match(runtime, /dispose/);
+  assert.doesNotMatch(blockRuntime, /__TAURI__|invoke\(|@tauri-apps|readFile|writeFile/);
+  assert.match(runtime, /PanaBlockRuntime/);
+  assert.match(blockRuntime, /PanaBlockRuntime/);
+  assert.match(blockRuntime, /mount/);
+  assert.match(blockRuntime, /dispose/);
   assert.match(surface, /sandbox="allow-scripts"/);
   assert.doesNotMatch(surface, /allow-same-origin|allow-forms|allow-popups|allow-top-navigation/);
   assert.match(surface, /ultima revizie interactivă validă rămâne activă/);

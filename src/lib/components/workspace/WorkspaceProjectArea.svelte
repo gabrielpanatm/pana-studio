@@ -6,7 +6,8 @@
   let { app }: { app: AppState } = $props();
 
   const activityUsesFullWorkspace = $derived(
-    (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
+    app.applicationSurface !== "workbench"
+      || (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
   );
 </script>
 
@@ -27,12 +28,10 @@
       selectedElement={app.selectedElement}
       previewSelection={app.previewSelection}
       sourceGraph={app.sourceGraph}
-      loopPaletteItems={app.loopPaletteItems()}
       activeRenderedTemplatePath={app.activeRenderedTemplatePath}
       templateHtmlEditSourceId={app.templateHtmlEditSourceId}
       templateWorkbenchPlan={app.templateWorkbenchPlan}
       fileMoveBlockedReason={app.immediateDiskOperationBlockedReason}
-      pageSource={app.pageSettingsSource()}
       openScannedFile={(file) => app.loadScannedProjectFile(file)}
       createProjectFile={(path, content) => app.createProjectFile(path, content)}
       moveProjectFile={(request) => app.moveProjectFile(request)}
@@ -57,11 +56,6 @@
         await app.deleteSelectedTeraNode();
       }}
       openSelectedTeraSource={() => app.openSelectedTeraSource()}
-      openTemplateWorkbenchSource={(file) => {
-        const target = app.scannedProject?.files.find((candidate) => candidate.relativePath === file);
-        if (target) void app.loadScannedProjectFile(target);
-      }}
-      updatePageFrontmatterSource={(path, source) => app.updatePageFrontmatterSource(path, source)}
     />
   </div>
 {/if}

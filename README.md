@@ -5,7 +5,7 @@ cu [Zola](https://www.getzola.org/). Aplicația combină un preview controlat cu
 editarea surselor HTML/Tera, SCSS, Markdown și JavaScript într-un workspace
 local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 
-> **Stadiu:** versiune publică de test `0.1.0`. Interfața este în limba română,
+> **Stadiu:** versiune publică de test `0.1.1`. Interfața este în limba română,
 > iar distribuția pregătită în prezent este pentru Linux x86-64. Fă backup sau
 > inițializează versionarea Git înainte de a lucra pe un proiect important.
 
@@ -14,6 +14,9 @@ local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 - creare și deschidere de proiecte Zola;
 - preview vizual izolat și editare sincronizată cu sursele proiectului;
 - navigare prin fișiere, straturi și structura site-ului;
+- catalog și administrare Rust-first pentru teme și șabloane Zola;
+- blocuri native configurabile, componente Tera și editare vizuală a datelor;
+- sistem de design cu tokeni, clase și stilurile tematice ale elementelor;
 - editare HTML/Tera, SCSS, Markdown și comportamente JavaScript;
 - timeline pentru animații și generare locală de resurse Anime.js;
 - gestionare imagini, fonturi și resurse;
@@ -24,11 +27,13 @@ local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 - recovery tranzacțional și protecții pentru conflictele dintre editor, disk și
   operațiile externe.
 
-Interfața este organizată în activități dedicate — Editor, Site, Componente,
-Sistem de design, Resurse, Conținut, Control versiuni, Probleme și audit și
-Publicare. Navigarea restaurabilă, documentele, split-urile, viewport-ul și
-panoul inferior sunt proiectate dintr-o stare canonică administrată de nucleul
-Rust; frontendul Svelte nu păstrează un al doilea model al proiectului.
+Interfața este organizată în activități dedicate — Editor, Șabloane,
+Componente, Blocuri, Sistem de design, Resurse, Conținut, Date, Teme,
+Control versiuni, Probleme și audit și Publicare. Setările aplicației sunt
+separate de proiectul deschis. Navigarea restaurabilă, documentele,
+split-urile, viewport-ul și panoul inferior sunt proiectate dintr-o stare
+canonică administrată de nucleul Rust; frontendul Svelte nu păstrează un al
+doilea model al proiectului.
 
 Pană Studio integrează direct motorul Rust Zola `0.22.1`, fixat la revizia
 upstream `29540e9897dbe8aca388b13f7bdf615985f6ca2c`. Preview-ul, validarea și
@@ -44,9 +49,9 @@ După publicarea unei versiuni, descarcă fișierul `.AppImage` și fișierul s�
 Verifică și pornește aplicația astfel:
 
 ```bash
-sha256sum --check "Pană Studio_0.1.0_amd64.AppImage.sha256"
-chmod +x "Pană Studio_0.1.0_amd64.AppImage"
-./"Pană Studio_0.1.0_amd64.AppImage"
+sha256sum --check "Pană Studio_0.1.1_amd64.AppImage.sha256"
+chmod +x "Pană Studio_0.1.1_amd64.AppImage"
+./"Pană Studio_0.1.1_amd64.AppImage"
 ```
 
 AppImage-ul nu necesită instalare. Compatibilitatea depinde de distribuția și
@@ -113,10 +118,9 @@ src-tauri/target/release/bundle/appimage/
 `src-tauri/target/`, `node_modules/`, `build/` și artefactele AppImage sunt
 generate local și nu trebuie adăugate în Git.
 
-Un tag Git cu forma `v0.1.0` pornește workflow-ul de release pe Ubuntu 22.04.
+Un tag Git cu forma `v0.1.1` pornește workflow-ul de release pe Ubuntu 22.04.
 Acesta repetă verificările, construiește AppImage-ul, generează checksum-ul și
-creează un release GitHub în starea **draft**. Release-ul devine public numai
-după verificarea și publicarea manuală a draftului.
+publică release-ul GitHub ca prerelease după finalizarea cu succes.
 
 ## Structura repository-ului
 

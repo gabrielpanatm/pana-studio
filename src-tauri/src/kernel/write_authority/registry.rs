@@ -430,6 +430,18 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
                 "Project initializer writes only after empty-folder preflight, stays inside the selected project root, blocks file overwrite during resource copy, and logs lifecycle mutations through WriteAuthority.",
         },
         WriteDeclaration {
+            category: WriteCategory::ProjectSourceWrite,
+            owner: WriteOwner::ProjectInitializer,
+            operations: vec![WriteOperationKind::WriteText],
+            path_authority:
+                "new empty Zola project root during Project Initializer bootstrap",
+            atomicity: WriteAtomicity::AtomicRename,
+            conflict: ConflictPolicy::SingleOwnerInternal,
+            recovery: RecoveryPolicy::LoggedAtomicFile,
+            validation:
+                "Project initializer may patch only its freshly copied Zola configuration through the descriptor-bound bootstrap authority before the project is published.",
+        },
+        WriteDeclaration {
             category: WriteCategory::PreviewWorkspaceWrite,
             owner: WriteOwner::Preview,
             operations: vec![WriteOperationKind::WriteText, WriteOperationKind::WriteBytes],

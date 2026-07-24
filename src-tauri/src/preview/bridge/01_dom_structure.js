@@ -304,13 +304,13 @@
     return String(value || "").replace(/["\\]/g, "\\$&");
   }
 
-  function notifyPanaComponentsInit(root) {
+  function notifyPanaBlocksInit(root) {
     var detail = { root: root || document };
     try {
-      document.dispatchEvent(new CustomEvent("pana:components:init", { detail: detail }));
+      document.dispatchEvent(new CustomEvent("pana:blocks:init", { detail: detail }));
     } catch (_) {
       var event = document.createEvent("CustomEvent");
-      event.initCustomEvent("pana:components:init", false, false, detail);
+      event.initCustomEvent("pana:blocks:init", false, false, detail);
       document.dispatchEvent(event);
     }
   }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { appShortcutIntent } from "../src/lib/ui/app-shortcuts.ts";
@@ -53,4 +54,49 @@ test("prefixele Command Center selectează scope-ul fără a ajunge în query", 
     scope: "symbols",
     scopeLabel: "Simboluri",
   });
+});
+
+test("panoul History nu mai este expus, dar Undo și Redo rămân disponibile", () => {
+  const historyPanel = new URL(
+    "../src/lib/components/HistoryPanel.svelte",
+    import.meta.url,
+  );
+  const toolbar = readFileSync(
+    new URL(
+      "../src/lib/components/topbar/HistoryActionButtons.svelte",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const appChrome = readFileSync(
+    new URL("../src/lib/components/workspace/AppChrome.svelte", import.meta.url),
+    "utf8",
+  );
+  const commandTypes = readFileSync(
+    new URL("../src/lib/types.ts", import.meta.url),
+    "utf8",
+  );
+  const rustModel = readFileSync(
+    new URL(
+      "../src-tauri/src/kernel/command_center/model.rs",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const rustSearch = readFileSync(
+    new URL(
+      "../src-tauri/src/kernel/command_center/search.rs",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.equal(existsSync(historyPanel), false);
+  assert.doesNotMatch(toolbar, /IconClock|historyPanelOpen|toggleHistoryPanel|historySnapshots/);
+  assert.match(toolbar, /IconArrowBackUp/);
+  assert.match(toolbar, /IconArrowForwardUp/);
+  assert.doesNotMatch(appChrome, /HistoryPanel|historyPanelOpen|toggleHistoryPanel/);
+  assert.doesNotMatch(commandTypes, /"open_history"/);
+  assert.doesNotMatch(rustModel, /OpenHistory/);
+  assert.doesNotMatch(rustSearch, /command\.open_history|OpenHistory/);
 });

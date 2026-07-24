@@ -127,7 +127,7 @@ pub fn plan_design_class_rename(
     })
 }
 
-fn validate_class_name(value: &str, label: &str) -> Result<String, String> {
+pub(crate) fn validate_class_name(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim().trim_start_matches('.');
     if value.is_empty() {
         return Err(format!("{label} nu poate fi goală."));
@@ -386,6 +386,9 @@ mod tests {
                 scripts: Vec::new(),
                 assets: Vec::new(),
                 data_files: Vec::new(),
+                structured_documents: Vec::new(),
+                component_graph: Default::default(),
+                block_graph: Default::default(),
                 nodes: Vec::new(),
                 relations: Vec::new(),
                 diagnostics: Vec::new(),

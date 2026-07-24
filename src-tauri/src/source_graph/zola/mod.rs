@@ -1,5 +1,6 @@
 mod content;
 mod paths;
+mod runtime;
 mod template_references;
 mod templates;
 mod tera_calls;
@@ -9,7 +10,8 @@ pub(crate) use content::{
     parse_zola_content_frontmatter, resolve_zola_page_template, resolve_zola_section_page_template,
     rewrite_zola_content_load_reference, rewrite_zola_content_reference,
     zola_content_load_reference, zola_content_page_kind, zola_content_project_file_reference,
-    zola_content_reference_for_relation, zola_content_url, zola_frontmatter_template_for_key,
+    zola_content_reference_for_relation, zola_content_url, zola_frontmatter_range,
+    zola_frontmatter_template_for_key,
 };
 pub(crate) use paths::{
     data_file_reference_keys, internal_content_path, local_static_asset_project_file_reference,
@@ -18,6 +20,10 @@ pub(crate) use paths::{
     rewrite_zola_static_asset_reference, static_asset_logical_path, static_asset_reference,
     static_asset_reference_keys, zola_data_file_logical_path, zola_data_file_reference_for_rewrite,
     zola_static_asset_reference_for_rewrite,
+};
+pub(crate) use runtime::{
+    collect_zola_runtime_uses, ZolaTeraRuntimeAvailability, ZolaTeraRuntimeKind,
+    PINNED_ZOLA_REVISION,
 };
 pub(crate) use template_references::extract_zola_template_references;
 pub(crate) use templates::{

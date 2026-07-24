@@ -19,6 +19,109 @@ struct ObservedCopyLeaf {
     mode_bits: u32,
 }
 
+pub(in crate::kernel::write_authority::capability) fn copy_rebuildable_file(
+    target: &WriteTarget,
+    source: &Path,
+) -> Result<CapabilityEffect, String> {
+    let lexical = lexical_target(target, false)?;
+    let authority = lexical.authority.as_ref().ok_or_else(|| {
+        capability_error(
+            &lexical.public_label,
+            "copia rebuildable cere authority root sigilat",
+        )
+    })?;
+    if !matches!(
+        authority.scope(),
+        DirectoryAuthorityScope::ComponentValidation { .. }
+    ) || target.expected_leaf != ExpectedLeaf::Absent
+    {
+        return Err(capability_error(
+            &lexical.public_label,
+            "copia rebuildable este permisă numai create-only în sandbox-ul validării componentelor",
+        ));
+    }
+
+    let mut source_file = open_copy_source(source)?;
+    let source_before = fs::fstat(&source_file).map_err(|error| {
+        capability_error(
+            &lexical.public_label,
+            &format!("sursa copiei rebuildable nu poate fi inspectată: {error}"),
+        )
+    })?;
+    if FileType::from_raw_mode(source_before.st_mode) != FileType::RegularFile {
+        return Err(capability_error(
+            &lexical.public_label,
+            "sursa copiei rebuildable nu este fișier regular",
+        ));
+    }
+    let source_size = u64::try_from(source_before.st_size).map_err(|_| {
+        capability_error(
+            &lexical.public_label,
+            "sursa copiei rebuildable are dimensiune negativă",
+        )
+    })?;
+
+    let parent = match capture_target_parent(&lexical, true) {
+        Ok(Some(parent)) => parent,
+        Ok(None) => {
+            return Err(capability_error(
+                &lexical.public_label,
+                "folderul părinte al copiei rebuildable nu a putut fi capturat",
+            ));
+        }
+        Err(error) => return error.into_operation_result(),
+    };
+    run_test_hook(CapabilityTestStage::AfterTargetParentCaptured);
+    let result = (|| {
+        validate_atomic_destination(
+            &parent.directory,
+            &parent.leaf,
+            CapabilityReplacePolicy::CreateNew,
+            &lexical,
+        )?;
+        atomic_commit(
+            &parent.directory,
+            &parent.leaf,
+            CapabilityReplacePolicy::CreateNew,
+            &target.expected_leaf,
+            &lexical.public_label,
+            |destination| {
+                let bytes_written =
+                    std::io::copy(&mut source_file, destination).map_err(|error| {
+                        capability_error(
+                            &lexical.public_label,
+                            &format!("fluxul copiei rebuildable a eșuat: {error}"),
+                        )
+                    })?;
+                if bytes_written != source_size {
+                    return Err(capability_error(
+                        &lexical.public_label,
+                        "copia rebuildable nu a citit dimensiunea completă a sursei",
+                    ));
+                }
+                let source_after = fs::fstat(&source_file).map_err(|error| {
+                    capability_error(
+                        &lexical.public_label,
+                        &format!(
+                            "sursa copiei rebuildable nu poate fi reverificată după flux: {error}"
+                        ),
+                    )
+                })?;
+                if version_token_for_stat(&source_before) != version_token_for_stat(&source_after)
+                    || source_before.st_nlink != source_after.st_nlink
+                {
+                    return Err(capability_error(
+                        &lexical.public_label,
+                        "sursa copiei rebuildable s-a schimbat în timpul fluxului",
+                    ));
+                }
+                Ok(bytes_written)
+            },
+        )
+    })();
+    settle_after_implicit_parent_creation(parent.created_ancestors, result, &lexical.public_label)
+}
+
 pub(in crate::kernel::write_authority::capability) fn plan_copy(
     target: &WriteTarget,
     source: &Path,

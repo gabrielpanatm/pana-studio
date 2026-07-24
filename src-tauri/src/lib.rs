@@ -1,4 +1,5 @@
 mod app_home;
+mod blocks;
 mod commands;
 mod css;
 mod deploy;
@@ -7,7 +8,6 @@ mod js;
 pub mod kernel;
 mod mcp;
 mod page_assets;
-mod page_components;
 mod preview;
 mod project;
 mod project_model;
@@ -38,21 +38,31 @@ use commands::{
     },
     app_home::read_app_home,
     audit::read_project_audit,
+    blocks::{
+        apply_native_block_contract, plan_native_block_contract, read_block_runtime_snapshot,
+        read_native_block_registry, read_ui_block_graph,
+    },
     command_center::search_command_center,
+    components::apply_component_mutation,
     config::{
-        read_project_app_config, read_project_env, read_zola_base_url, read_zola_project_settings,
-        save_project_app_config, save_project_env, save_zola_base_url, save_zola_project_settings,
+        read_application_settings, read_project_app_config, read_project_env, read_zola_base_url,
+        read_zola_project_settings, save_application_settings, save_project_app_config,
+        save_project_env, save_zola_base_url, save_zola_project_settings,
     },
     css::{
-        cleanup_page_css_contract, find_class_in_scss, get_class_rules,
+        cleanup_page_css_contract, create_scss_variable, find_class_in_scss, get_class_rules,
         get_class_rules_at_viewport, get_css_rule_context, get_scss_variables,
         resolve_page_css_target, set_css_rule, set_css_rule_at_viewport,
         set_page_css_rule_at_viewport, set_scss_variable,
     },
+    data::{apply_data_mutation, read_data_node_editor},
     deploy::{
         cancel_publish_operation, deploy_to_bunny, zola_build, zola_check, zola_check_workspace,
     },
-    design_system::{read_design_class_inventory, rename_design_class},
+    design_system::{
+        apply_theme_style_draft, create_design_class, preview_theme_style_draft,
+        read_design_class_inventory, read_theme_style_catalog, rename_design_class,
+    },
     external_disk::reconcile_clean_external_project_files,
     fonts::{download_google_font_family, get_font_inventory, search_google_fonts},
     js::{
@@ -78,10 +88,7 @@ use commands::{
         configure_codex_mcp, read_ai_context_status, read_codex_mcp_status,
         save_ai_context_snapshot, write_ai_context_snapshot,
     },
-    page_assets::{apply_page_asset_contract, plan_page_asset_contract},
-    page_components::{
-        apply_page_component_contract, plan_page_component_contract, read_page_component_registry,
-    },
+    page_assets::{apply_page_asset_contract, import_project_asset, plan_page_asset_contract},
     preview::{
         acknowledge_canvas_projection_phase, project_project_workspace_preview,
         project_template_workbench_preview, read_preview_document, record_preview_runtime_event,
@@ -106,7 +113,13 @@ use commands::{
     source_graph::{
         create_site_archive_structure, create_site_page_structure, create_site_partial_structure,
         create_site_single_structure, include_site_partial, read_source_graph,
+        read_template_catalog,
     },
+    templates::{
+        workspace_create_template, workspace_delete_template, workspace_duplicate_template,
+        workspace_override_theme_template, workspace_rename_template,
+    },
+    themes::{apply_theme_change, plan_theme_change, read_theme_catalog},
     versioning::{
         cancel_version_network_operation, clear_version_upstream, commit_versioning,
         configure_version_remote, configure_version_upstream, configure_versioning_identity,

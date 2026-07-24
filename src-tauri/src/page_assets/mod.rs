@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::{
     css::page::{page_css_href, page_scss_relative_path, remove_page_stylesheet_link},
-    js::{PageJsConfig, PanaComponent},
+    js::{NativeBlockRuntimeEntry, PageJsConfig},
     zola_links::template_contains_asset_path,
 };
 
@@ -411,22 +411,22 @@ fn remove_block_comments(source: &str) -> String {
 
 fn normalize_page_js_config(config: PageJsConfig) -> PageJsConfig {
     let mut seen = HashSet::new();
-    let components = config
-        .components
+    let blocks = config
+        .blocks
         .into_iter()
-        .filter_map(|component| {
-            let id = component.id.trim().to_string();
+        .filter_map(|block| {
+            let id = block.id.trim().to_string();
             if id.is_empty() || !seen.insert(id.clone()) {
                 None
             } else {
-                Some(PanaComponent { id })
+                Some(NativeBlockRuntimeEntry { id })
             }
         })
         .collect();
 
     PageJsConfig {
         version: Some(config.version.unwrap_or(1)),
-        components,
+        blocks,
         motion: Some(normalize_motion_config(config.motion)),
     }
 }
@@ -482,7 +482,7 @@ fn reconcile_page_js_motion(
 
     PageJsConfig {
         version: Some(config.version.unwrap_or(1)),
-        components: config.components.clone(),
+        blocks: config.blocks.clone(),
         motion: Some(json!({
             "schemaVersion": 1,
             "animeVersion": anime_version,
@@ -604,7 +604,7 @@ mod tests {
     fn filters_motion_items_targeting_removed_data_anim_ids() {
         let page_js_config = PageJsConfig {
             version: Some(1),
-            components: vec![PanaComponent {
+            blocks: vec![NativeBlockRuntimeEntry {
                 id: "accordion".to_string(),
             }],
             motion: Some(json!({
@@ -650,7 +650,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["active", "manual"]);
         assert!(plan.page_js_changed);
-        assert_eq!(plan.page_js_config.components[0].id, "accordion");
+        assert_eq!(plan.page_js_config.blocks[0].id, "accordion");
     }
 
     #[test]

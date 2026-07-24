@@ -36,8 +36,8 @@ function previewPayloadFor(element: HtmlPaletteElement) {
   return {
     id: element.id,
     kind: element.kind,
-    componentId: element.componentId,
-    componentKind: element.componentKind,
+    blockId: element.blockId,
+    blockKind: element.blockKind,
     tag: element.tag,
     label: element.label,
     description: element.description,

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+{% block preload_hero %}<link rel="preload" href="{{ get_url(path='imagini/nord-hero.webp', cachebust=true) }}" as="image">{% endblock %}
+
+{% block content %}
+{% set servicii = get_section(path="servicii/_index.md") %}
+<section class="nord-hero">
+  <div class="container nord-hero__grila">
+    <div class="nord-hero__continut">
+      <p class="supratitlu">{{ site.supratitlu }}</p>
+      <h1>{{ site.titlu_hero }}</h1>
+      <p class="nord-hero__descriere">{{ site.descriere_hero }}</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="{{ site.cta_url }}">{{ site.cta_principal }}</a>
+        <a class="legatura-directionala" href="#servicii">Explorează serviciile <span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+    <figure class="nord-hero__vizual">
+      <img src="{{ get_url(path='imagini/nord-hero.webp', cachebust=true) }}" width="1440" height="1000" alt="Arhitectură contemporană din piatră deschisă și metal albastru" loading="eager" fetchpriority="high">
+      <figcaption>{{ site.legenda_hero }}</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="indicatori" aria-label="Rezultate">
+  <div class="container indicatori__grila">
+    {% for indicator in site.indicatori %}
+    <div class="indicatori__element">
+      <strong>{{ indicator.valoare }}</strong>
+      <span>{{ indicator.eticheta }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section id="servicii" class="section-lg servicii">
+  <div class="container">
+    <div class="cap-sectiune cap-sectiune--doua-coloane">
+      <div>
+        <p class="supratitlu">Expertiză aplicată</p>
+        <h2>Decizii mai clare.<br>Execuție mai bună.</h2>
+      </div>
+      <p>Lucrăm alături de echipele de conducere pentru a transforma obiectivele ambițioase în sisteme care funcționează.</p>
+    </div>
+    <div class="servicii__lista">
+      {% for serviciu in servicii.pages %}
+      <article class="serviciu-card">
+        <span class="serviciu-card__numar">0{{ loop.index }}</span>
+        <div>
+          <h3><a href="{{ serviciu.permalink }}">{{ serviciu.title }}</a></h3>
+          <p>{{ serviciu.description }}</p>
+        </div>
+        <a class="serviciu-card__link" href="{{ serviciu.permalink }}" aria-label="Detalii despre {{ serviciu.title }}">↗</a>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="section-lg metoda">
+  <div class="container metoda__grila">
+    <div class="metoda__intro">
+      <p class="supratitlu supratitlu--deschis">Cum lucrăm</p>
+      <h2>Rigoare fără birocrație.</h2>
+      <p>Un proces scurt, transparent și adaptat ritmului organizației tale.</p>
+    </div>
+    <ol class="metoda__pasi">
+      {% for etapa in site.etape %}
+      <li>
+        <span>0{{ loop.index }}</span>
+        <div>
+          <h3>{{ etapa.titlu }}</h3>
+          <p>{{ etapa.descriere }}</p>
+        </div>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+
+<section class="section-lg marturie">
+  <div class="container marturie__interior">
+    <p class="marturie__citat">„{{ site.marturie.text }}”</p>
+    <div>
+      <strong>{{ site.marturie.autor }}</strong>
+      <span>{{ site.marturie.rol }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="section nord-cta">
+  <div class="container nord-cta__interior">
+    <div>
+      <p class="supratitlu">Următorul pas</p>
+      <h2>{{ site.titlu_cta }}</h2>
+    </div>
+    <a class="btn btn-primary btn-lg" href="{{ site.cta_url }}">{{ site.cta_principal }}</a>
+  </div>
+</section>
+{% endblock %}

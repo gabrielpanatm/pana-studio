@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
 };
 
@@ -12,15 +12,16 @@ use crate::{
         ranges::source_range,
     },
     source_graph::{
-        identity::{source_node_id, source_relation_id},
-        model::{
-            SourceCapabilities, SourceGraph, SourceGraphTemplate, SourceNodeKind,
-            SourceRelationKind,
-        },
-        tera::{parse_tera_items, TeraItem, TeraItemKind},
+        identity::source_relation_id,
+        model::{SourceGraph, SourceGraphTemplate, SourceNode, SourceNodeKind, SourceRelationKind},
     },
 };
 
+/// TeraGraph is a compatibility projection of the canonical SourceGraph.
+///
+/// Parsing and scope construction happen once, while SourceGraph is built from
+/// the lossless CST plus the embedded Tera AST. This projection deliberately
+/// contains no parser and no independent scope stack.
 pub(super) fn build_tera_graph(
     source_graph: &SourceGraph,
     files: &[ProjectModelFile],
@@ -29,6 +30,11 @@ pub(super) fn build_tera_graph(
         .iter()
         .map(|file| (file.relative_path.as_str(), file.contents.as_str()))
         .collect();
+    let nodes_by_id = source_graph
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
     let mut graph = TeraGraph {
         templates: Vec::new(),
         nodes: Vec::new(),
@@ -36,11 +42,13 @@ pub(super) fn build_tera_graph(
     };
 
     for template in &source_graph.templates {
-        let source = source_by_file
-            .get(template.file.as_str())
-            .copied()
-            .unwrap_or("");
-        add_template(template, source, &mut graph);
+        add_template(
+            template,
+            source_by_file.get(template.file.as_str()).copied(),
+            &source_graph.nodes,
+            &nodes_by_id,
+            &mut graph,
+        );
     }
 
     graph
@@ -50,38 +58,26 @@ pub(super) fn build_tera_graph(
         .nodes
         .sort_by(|left, right| left.file.cmp(&right.file).then(left.id.cmp(&right.id)));
     graph
+        .relations
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    graph
 }
 
-fn add_template(template: &SourceGraphTemplate, source: &str, graph: &mut TeraGraph) {
-    let root_kind = if template.is_partial {
-        SourceNodeKind::Partial
-    } else {
-        SourceNodeKind::Template
-    };
-    let root_range = if source.is_empty() {
-        None
-    } else {
-        Some(source_range(source, 0, source.len()))
-    };
-    let root_node_id = source_node_id(
-        &template.file,
-        &root_kind,
-        &template.name,
-        root_range.as_ref().map(|range| range.start),
-        root_range.as_ref().map(|range| range.end),
-    );
-
-    graph.nodes.push(TeraGraphNode {
-        id: root_node_id.clone(),
-        kind: root_kind,
-        file: template.file.clone(),
-        label: template.name.clone(),
-        target: None,
-        range: root_range,
-        parent: None,
-        children: Vec::new(),
-        capabilities: SourceCapabilities::code_only("Rădăcină template în Project Model."),
-    });
+fn add_template(
+    template: &SourceGraphTemplate,
+    source: Option<&str>,
+    source_nodes: &[SourceNode],
+    nodes_by_id: &HashMap<&str, &SourceNode>,
+    graph: &mut TeraGraph,
+) {
+    let included_ids = source_nodes
+        .iter()
+        .filter(|node| node.file == template.file && is_tera_graph_kind(&node.kind))
+        .map(|node| node.id.as_str())
+        .collect::<HashSet<_>>();
+    let root_range = source
+        .filter(|source| !source.is_empty())
+        .map(|source| source_range(source, 0, source.len()));
 
     graph.templates.push(TeraGraphTemplate {
         file: template.file.clone(),
@@ -91,7 +87,7 @@ fn add_template(template: &SourceGraphTemplate, source: &str, graph: &mut TeraGr
         is_partial: template.is_partial,
         source_graph_template_id: template.id.clone(),
         source_graph_node_id: template.node_id.clone(),
-        root_node_id: root_node_id.clone(),
+        root_node_id: template.node_id.clone(),
         extends: template.extends.clone(),
         includes: template.includes.clone(),
         imports: template.imports.clone(),
@@ -99,162 +95,123 @@ fn add_template(template: &SourceGraphTemplate, source: &str, graph: &mut TeraGr
         macros: template.macros.clone(),
     });
 
-    let mut stack: Vec<String> = vec![root_node_id.clone()];
-    for item in parse_tera_items(source) {
-        match item.kind {
-            TeraItemKind::EndScope => {
-                if stack.len() > 1 {
-                    let Some(node_id) = stack.pop() else {
-                        continue;
-                    };
-                    if let Some(node) = graph.nodes.iter_mut().find(|node| node.id == node_id) {
-                        let start = node
-                            .range
-                            .as_ref()
-                            .map(|range| range.start)
-                            .unwrap_or(item.start);
-                        node.range = Some(source_range(source, start, item.end));
-                    }
-                }
-            }
-            TeraItemKind::Node => {
-                let Some(kind) = item.node_kind.clone() else {
-                    continue;
-                };
-                let parent = stack.last().cloned();
-                let node_id = source_node_id(
-                    &template.file,
-                    &kind,
-                    &item.label,
-                    Some(item.start),
-                    Some(item.end),
-                );
-                if let Some(parent_id) = parent.as_ref() {
-                    if let Some(parent_node) =
-                        graph.nodes.iter_mut().find(|node| node.id == *parent_id)
-                    {
-                        if !parent_node.children.contains(&node_id) {
-                            parent_node.children.push(node_id.clone());
-                        }
-                    }
-                    graph.relations.push(TeraGraphRelation {
-                        id: tera_relation_id(
-                            parent_id,
-                            &node_id,
-                            &TeraGraphRelationKind::Contains,
-                            "contains",
-                        ),
-                        from: parent_id.clone(),
-                        to: node_id.clone(),
-                        kind: TeraGraphRelationKind::Contains,
-                        label: "contains".to_string(),
-                    });
-                }
+    for node in source_nodes
+        .iter()
+        .filter(|node| included_ids.contains(node.id.as_str()))
+    {
+        let parent = node
+            .parent
+            .as_ref()
+            .filter(|parent| included_ids.contains(parent.as_str()))
+            .cloned();
+        let children = node
+            .children
+            .iter()
+            .filter(|child| included_ids.contains(child.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let range = if node.id == template.node_id {
+            node.range.clone().or_else(|| root_range.clone())
+        } else {
+            node.range.clone()
+        };
 
-                graph.nodes.push(TeraGraphNode {
-                    id: node_id.clone(),
-                    kind: kind.clone(),
-                    file: template.file.clone(),
-                    label: item.label.clone(),
-                    target: item.target.clone(),
-                    range: Some(source_range(source, item.start, item.end)),
-                    parent,
-                    children: Vec::new(),
-                    capabilities: tera_capabilities(&kind, &item),
-                });
-                add_semantic_relation(&root_node_id, &node_id, &kind, &item, graph);
+        graph.nodes.push(TeraGraphNode {
+            id: node.id.clone(),
+            kind: node.kind.clone(),
+            file: node.file.clone(),
+            label: node.label.clone(),
+            target: target_from_source_node(node),
+            range,
+            parent: parent.clone(),
+            children,
+            capabilities: node.capabilities.clone(),
+        });
 
-                if tera_item_opens_scope(&kind, &item) {
-                    stack.push(node_id);
-                }
-            }
+        if let Some(parent) = parent {
+            graph.relations.push(TeraGraphRelation {
+                id: tera_relation_id(
+                    &parent,
+                    &node.id,
+                    &TeraGraphRelationKind::Contains,
+                    "contains",
+                ),
+                from: parent,
+                to: node.id.clone(),
+                kind: TeraGraphRelationKind::Contains,
+                label: "contains".to_string(),
+            });
+        }
+        if node.id != template.node_id {
+            add_semantic_relation(&template.node_id, node, graph);
         }
     }
+
+    debug_assert!(
+        nodes_by_id.contains_key(template.node_id.as_str()),
+        "SourceGraph template root must exist"
+    );
 }
 
-fn add_semantic_relation(
-    root_node_id: &str,
-    node_id: &str,
-    kind: &SourceNodeKind,
-    item: &TeraItem,
-    graph: &mut TeraGraph,
-) {
-    let Some((relation_kind, label)) = semantic_relation(kind, item) else {
+fn is_tera_graph_kind(kind: &SourceNodeKind) -> bool {
+    matches!(
+        kind,
+        SourceNodeKind::Template
+            | SourceNodeKind::Partial
+            | SourceNodeKind::Extends
+            | SourceNodeKind::Block
+            | SourceNodeKind::Include
+            | SourceNodeKind::Import
+            | SourceNodeKind::Macro
+            | SourceNodeKind::For
+            | SourceNodeKind::If
+            | SourceNodeKind::Elif
+            | SourceNodeKind::Else
+            | SourceNodeKind::Set
+            | SourceNodeKind::SetGlobal
+            | SourceNodeKind::Filter
+            | SourceNodeKind::Break
+            | SourceNodeKind::Continue
+            | SourceNodeKind::Super
+            | SourceNodeKind::TeraVariable
+            | SourceNodeKind::TeraComment
+            | SourceNodeKind::Raw
+            | SourceNodeKind::Tera
+    )
+}
+
+fn target_from_source_node(node: &SourceNode) -> Option<String> {
+    let prefix = match node.kind {
+        SourceNodeKind::Extends => "extends ",
+        SourceNodeKind::Include => "include ",
+        SourceNodeKind::Import => "import ",
+        _ => return None,
+    };
+    node.label.strip_prefix(prefix).map(str::to_string)
+}
+
+fn add_semantic_relation(root_node_id: &str, node: &SourceNode, graph: &mut TeraGraph) {
+    let Some(kind) = relation_kind_for_node(&node.kind) else {
         return;
     };
+    let label = target_from_source_node(node).unwrap_or_else(|| node.label.clone());
     graph.relations.push(TeraGraphRelation {
-        id: tera_relation_id(root_node_id, node_id, &relation_kind, &label),
+        id: tera_relation_id(root_node_id, &node.id, &kind, &label),
         from: root_node_id.to_string(),
-        to: node_id.to_string(),
-        kind: relation_kind,
+        to: node.id.clone(),
+        kind,
         label,
     });
 }
 
-fn semantic_relation(
-    kind: &SourceNodeKind,
-    item: &TeraItem,
-) -> Option<(TeraGraphRelationKind, String)> {
+fn relation_kind_for_node(kind: &SourceNodeKind) -> Option<TeraGraphRelationKind> {
     match kind {
-        SourceNodeKind::Extends => Some((
-            TeraGraphRelationKind::Extends,
-            item.target.clone().unwrap_or_else(|| item.label.clone()),
-        )),
-        SourceNodeKind::Include => Some((
-            TeraGraphRelationKind::Includes,
-            item.target.clone().unwrap_or_else(|| item.label.clone()),
-        )),
-        SourceNodeKind::Import => Some((
-            TeraGraphRelationKind::Imports,
-            item.target.clone().unwrap_or_else(|| item.label.clone()),
-        )),
-        SourceNodeKind::Block => Some((TeraGraphRelationKind::DefinesBlock, item.label.clone())),
-        SourceNodeKind::Macro => Some((TeraGraphRelationKind::DefinesMacro, item.label.clone())),
+        SourceNodeKind::Extends => Some(TeraGraphRelationKind::Extends),
+        SourceNodeKind::Include => Some(TeraGraphRelationKind::Includes),
+        SourceNodeKind::Import => Some(TeraGraphRelationKind::Imports),
+        SourceNodeKind::Block => Some(TeraGraphRelationKind::DefinesBlock),
+        SourceNodeKind::Macro => Some(TeraGraphRelationKind::DefinesMacro),
         _ => None,
-    }
-}
-
-fn tera_item_opens_scope(kind: &SourceNodeKind, item: &TeraItem) -> bool {
-    match kind {
-        SourceNodeKind::Block
-        | SourceNodeKind::Macro
-        | SourceNodeKind::For
-        | SourceNodeKind::With => true,
-        SourceNodeKind::If => !(item.label.starts_with("elif") || item.label == "else"),
-        _ => false,
-    }
-}
-
-fn tera_capabilities(kind: &SourceNodeKind, item: &TeraItem) -> SourceCapabilities {
-    match kind {
-        SourceNodeKind::Block => SourceCapabilities::code_only(
-            "Block Tera; copiii HTML pot deveni editabili doar prin Move Engine.",
-        ),
-        SourceNodeKind::Include => SourceCapabilities::code_only(
-            "Include Tera; mutarea afectează compoziția template-ului.",
-        ),
-        SourceNodeKind::For => SourceCapabilities::code_only(
-            "Loop Tera; mutarea unei instanțe randate este blocată până există model de date.",
-        ),
-        SourceNodeKind::If => {
-            SourceCapabilities::code_only("Ramură Tera condițională; mutarea cere plan de impact.")
-        }
-        SourceNodeKind::Macro => SourceCapabilities::code_only(
-            "Macro Tera; modificarea poate afecta mai multe instanțe.",
-        ),
-        SourceNodeKind::Extends => SourceCapabilities::code_only(
-            "Extends Tera; relație de layout, nu element mutabil vizual.",
-        ),
-        SourceNodeKind::Set => {
-            SourceCapabilities::code_only("Set Tera; face parte din contextul de date.")
-        }
-        SourceNodeKind::With => {
-            SourceCapabilities::code_only("With Tera; schimbă contextul local.")
-        }
-        SourceNodeKind::TeraVariable => SourceCapabilities::code_only("Variabilă Tera."),
-        SourceNodeKind::TeraComment => SourceCapabilities::code_only("Comentariu Tera."),
-        SourceNodeKind::Raw => SourceCapabilities::code_only("Bloc raw Tera."),
-        _ => SourceCapabilities::code_only(format!("Sintaxă Tera: {}", item.label)),
     }
 }
 

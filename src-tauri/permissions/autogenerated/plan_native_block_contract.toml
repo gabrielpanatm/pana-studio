@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-native-block-contract"
+description = "Enables the plan_native_block_contract command without any pre-configured scope."
+commands.allow = ["plan_native_block_contract"]
+
+[[permission]]
+identifier = "deny-plan-native-block-contract"
+description = "Denies the plan_native_block_contract command without any pre-configured scope."
+commands.deny = ["plan_native_block_contract"]

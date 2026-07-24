@@ -83,12 +83,12 @@ struct MoveApplication {
     new_start_line: usize,
 }
 
-pub(super) struct HtmlTag {
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) tag: String,
-    pub(super) is_closing: bool,
-    pub(super) is_self_closing: bool,
+pub(crate) struct HtmlTag {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) tag: String,
+    pub(crate) is_closing: bool,
+    pub(crate) is_self_closing: bool,
 }
 
 struct HtmlNodeSpan {
@@ -701,7 +701,7 @@ pub(super) fn html_tag_at(source: &str, opening_start: usize) -> Result<String, 
         .ok_or_else(|| "Nu am putut citi tag-ul HTML din Source Graph.".to_string())
 }
 
-pub(super) fn parse_html_tag_at(source: &str, start: usize) -> Option<HtmlTag> {
+pub(crate) fn parse_html_tag_at(source: &str, start: usize) -> Option<HtmlTag> {
     let bytes = source.as_bytes();
     if bytes.get(start).copied()? != b'<' {
         return None;
@@ -1000,7 +1000,7 @@ fn is_void_tag(tag: &str) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(tag))
 }
 
-pub(super) fn content_revision(contents: &str) -> String {
+pub(crate) fn content_revision(contents: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     contents.hash(&mut hasher);
     format!("f_{:016x}", hasher.finish())

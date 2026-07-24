@@ -15,7 +15,7 @@ export type PreviewTemplateGate = {
 };
 
 export function createEmptyInspectorPending(): Record<InspectorPendingArea, boolean> {
-  return { html: false, css: false, vars: false, js: false };
+  return { html: false, css: false, js: false };
 }
 
 export function includeTemplateNameForRenderedFile(file: string) {

@@ -282,12 +282,12 @@
     line-height: 1.45;
   }
 
-  .target-path {
+  .policy-summary .target-path {
     padding-top: 2px;
     overflow-wrap: anywhere;
-    color: var(--text-muted) !important;
+    color: var(--text-muted);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px !important;
+    font-size: 12px;
   }
 
   .metric-list {
@@ -357,8 +357,8 @@
     line-height: 1.45;
   }
 
-  .recommendation {
-    color: var(--text) !important;
+  .evidence-block .recommendation {
+    color: var(--text);
   }
 
   .diagnostic-field {

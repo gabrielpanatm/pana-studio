@@ -6,7 +6,7 @@
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
-  import { IconShadow, IconTrash } from "@tabler/icons-svelte";
+  import { IconPlus, IconShadow, IconTrash } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
   import ColorInput from "../controls/ColorInput.svelte";
   import PropInput from "../controls/PropInput.svelte";
@@ -128,7 +128,9 @@
   <!-- ── BOX SHADOW ────────────────────────────────────────────────────── -->
   <div class="sh-subheader">
     <span class="sh-label">Box Shadow</span>
-    <button type="button" class="sh-add" title="Adaugă box shadow" disabled={!boxStructured} onclick={addBox}>+</button>
+    <button type="button" class="sh-add" title="Adaugă box shadow" aria-label="Adaugă box shadow" disabled={!boxStructured} onclick={addBox}>
+      <IconPlus size={13} stroke={1.9} />
+    </button>
   </div>
 
   {#if !boxStructured}
@@ -176,7 +178,9 @@
   <!-- ── TEXT SHADOW ───────────────────────────────────────────────────── -->
   <div class="sh-subheader" style="margin-top: 4px;">
     <span class="sh-label">Text Shadow</span>
-    <button type="button" class="sh-add" title="Adaugă text shadow" disabled={!textStructured} onclick={addText}>+</button>
+    <button type="button" class="sh-add" title="Adaugă text shadow" aria-label="Adaugă text shadow" disabled={!textStructured} onclick={addText}>
+      <IconPlus size={13} stroke={1.9} />
+    </button>
   </div>
 
   {#if !textStructured}

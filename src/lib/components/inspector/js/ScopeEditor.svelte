@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconX } from "@tabler/icons-svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type { PanaMotionScopeItem } from "$lib/types";
 
@@ -91,7 +92,9 @@
         <input class="mono" value={query.id} placeholder="id" oninput={(event) => updateMediaQuery(index, { id: event.currentTarget.value })} />
         <input class="mono" value={query.query} placeholder="(min-width: 768px)" oninput={(event) => updateMediaQuery(index, { query: event.currentTarget.value })} />
         <button type="button" class:active={query.enabled} onclick={() => updateMediaQuery(index, { enabled: !query.enabled })}>{query.enabled ? "on" : "off"}</button>
-        <button type="button" class="remove-btn" onclick={() => removeMediaQuery(index)}>×</button>
+        <button type="button" class="remove-btn" aria-label={`Elimină media query ${query.id}`} onclick={() => removeMediaQuery(index)}>
+          <IconX size={13} stroke={1.9} />
+        </button>
       </div>
     {/each}
   </section>

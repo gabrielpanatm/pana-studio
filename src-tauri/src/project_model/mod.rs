@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn move_engine_rejects_rebased_locations_when_dom_source_ids_are_stale_without_aliases() {
+    fn move_engine_keeps_semantic_ids_valid_after_unrelated_rebasing() {
         let root = unique_test_dir();
         fs::create_dir_all(root.join("content")).unwrap();
         fs::create_dir_all(root.join("templates")).unwrap();
@@ -626,12 +626,8 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!second_plan.allowed);
-        assert!(second_plan.patch.is_none());
-        assert!(second_plan
-            .diagnostic
-            .as_deref()
-            .is_some_and(|diagnostic| diagnostic.contains("Nu am putut ancora sursă")));
+        assert!(second_plan.allowed, "{:?}", second_plan.diagnostic);
+        assert!(second_plan.patch.is_some());
     }
 
     fn unique_test_dir() -> PathBuf {

@@ -278,7 +278,7 @@
       reapplyLiveTextDraft();
       reapplyLiveAttributeDraft();
       syncStructure();
-      notifyPanaComponentsInit(document);
+      notifyPanaBlocksInit(document);
       window.scrollTo(scrollX, scrollY);
       if (active) {
         var focusTarget = document.querySelector("[" + SESSION_ID_ATTR + '=\"' + cssEscapeValue(active) + '\"],[' + SOURCE_ID_ATTR + '=\"' + cssEscapeValue(active) + '\"]');

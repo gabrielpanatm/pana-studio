@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    page_components::{page_component_by_id, page_component_instance_id},
+    blocks::{native_block_by_id, native_block_instance_id},
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
     source_graph::model::SourceNode,
 };
@@ -55,7 +55,7 @@ pub struct ProjectHtmlDuplicatePatch {
     pub line_shift: isize,
     pub tag: String,
     pub html: String,
-    pub component_ids: Vec<String>,
+    pub block_ids: Vec<String>,
     pub data_anim_count: usize,
     pub duplicate_id_count: usize,
     pub zola_image_contract: bool,
@@ -63,7 +63,7 @@ pub struct ProjectHtmlDuplicatePatch {
 
 struct DuplicateHtml {
     html: String,
-    component_ids: Vec<String>,
+    block_ids: Vec<String>,
     data_anim_count: usize,
     duplicate_id_count: usize,
 }
@@ -284,7 +284,7 @@ fn plan_html_duplicate_for_span(
         line_shift: applied.line_shift,
         tag,
         html: duplicate.html,
-        component_ids: duplicate.component_ids,
+        block_ids: duplicate.block_ids,
         data_anim_count: duplicate.data_anim_count,
         duplicate_id_count: duplicate.duplicate_id_count,
         zola_image_contract,
@@ -346,18 +346,18 @@ fn prepare_duplicated_html(model: &ProjectModel, tag: &str, html: &str) -> Dupli
     let data_anim_replacements = build_data_anim_replacements(&next, tag, &mut identity_texts);
     let id_replacements = build_id_replacements(&next, &identity_texts);
     let duplicate_id_count = id_replacements.len();
-    let mut component_ids = BTreeSet::new();
+    let mut block_ids = BTreeSet::new();
 
     next = replace_class_tokens(&next, &data_anim_replacements);
     next = replace_attribute_values(&next, "data-anim", &data_anim_replacements);
     next = replace_attribute_values(&next, "id", &id_replacements);
     next = replace_whitespace_token_references(&next, &id_replacements);
     next = replace_hash_references(&next, &id_replacements);
-    next = update_component_instances(&next, &mut component_ids);
+    next = update_block_instances(&next, &mut block_ids);
 
     DuplicateHtml {
         html: next.trim_end().to_string(),
-        component_ids: component_ids.into_iter().collect(),
+        block_ids: block_ids.into_iter().collect(),
         data_anim_count: data_anim_replacements.len(),
         duplicate_id_count,
     }
@@ -507,16 +507,18 @@ fn replace_hash_references(source: &str, ids: &HashMap<String, String>) -> Strin
         })
 }
 
-fn update_component_instances(source: &str, component_ids: &mut BTreeSet<String>) -> String {
+fn update_block_instances(source: &str, block_ids: &mut BTreeSet<String>) -> String {
     rewrite_opening_tags(source, |tag| {
-        let Some(component_id) = tag_attribute_value(tag, "data-pana-component") else {
+        let block_id = tag_attribute_value(tag, "data-pana-block")
+            .or_else(|| tag_attribute_value(tag, "data-pana-component"));
+        let Some(block_id) = block_id else {
             return tag.to_string();
         };
-        let component_id = component_id.trim();
-        if component_id.is_empty() || page_component_by_id(component_id).is_none() {
+        let block_id = block_id.trim();
+        if block_id.is_empty() || native_block_by_id(block_id).is_none() {
             return tag.to_string();
         }
-        component_ids.insert(component_id.to_string());
+        block_ids.insert(block_id.to_string());
         let Some(data_anim) = tag_attribute_value(tag, "data-anim") else {
             return tag.to_string();
         };
@@ -527,7 +529,7 @@ fn update_component_instances(source: &str, component_ids: &mut BTreeSet<String>
         set_tag_attribute_value(
             tag,
             "data-pana-instance",
-            &page_component_instance_id(component_id, data_anim),
+            &native_block_instance_id(block_id, data_anim),
         )
     })
 }
@@ -884,14 +886,14 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_duplicate_normalizes_registered_component_instance() {
+    fn plan_html_duplicate_normalizes_registered_block_instance() {
         let root = unique_test_dir();
         write_project(
             &root,
             concat!(
                 "{% block content %}\n",
                 "<section>\n",
-                "  <span class=\"counter ps-counter-old\" data-anim=\"ps-counter-old\" data-pana-component=\"counter\" data-pana-instance=\"counter-stale\">0</span>\n",
+                "  <span class=\"counter ps-counter-old\" data-anim=\"ps-counter-old\" data-pana-block=\"counter\" data-pana-instance=\"counter-stale\">0</span>\n",
                 "</section>\n",
                 "{% endblock %}\n",
             ),
@@ -918,8 +920,8 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.unwrap();
-        assert_eq!(patch.component_ids, vec!["counter".to_string()]);
-        assert!(patch.html.contains("data-pana-component=\"counter\""));
+        assert_eq!(patch.block_ids, vec!["counter".to_string()]);
+        assert!(patch.html.contains("data-pana-block=\"counter\""));
         assert!(patch.html.contains("data-anim=\"ps-span-"));
         assert!(patch.html.contains("data-pana-instance=\"counter-span-"));
         assert!(!patch.html.contains("counter-stale"));

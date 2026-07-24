@@ -1,0 +1,30 @@
+marca = "Cadru"
+supratitlu = "Studio independent / Identitate + Digital"
+titlu_hero = "Idei care cer spațiu."
+descriere_hero = "Construim identități și experiențe digitale cu punct de vedere, rigoare și suficient curaj cât să rămână memorabile."
+cta_principal = "Vezi proiectele"
+cta_scurt = "Scrie-ne"
+cta_url = "mailto:studio@cadru.example"
+titlu_cta = "Ai un proiect care nu trebuie să semene cu restul?"
+titlu_subsol = "Facem loc ideilor care merită văzute."
+declaratie = "Designul bun nu decorează o idee. O face imposibil de ignorat."
+email = "studio@cadru.example"
+telefon = "+40 700 000 000"
+adresa = "Strada Academiei 7, București"
+discipline = ["Strategie", "Identitate", "Digital", "Editorial", "Direcție artistică"]
+
+[[servicii]]
+titlu = "Strategie de brand"
+descriere = "Poziționare, arhitectură de mesaj și o direcție care poate ghida deciziile reale."
+
+[[servicii]]
+titlu = "Identitate vizuală"
+descriere = "Sisteme flexibile de semne, tipografie, culoare și compoziție."
+
+[[servicii]]
+titlu = "Experiențe digitale"
+descriere = "Site-uri și produse în care interacțiunea continuă firesc povestea brandului."
+
+[[servicii]]
+titlu = "Direcție artistică"
+descriere = "Un limbaj coerent pentru fotografie, campanii și lansări."

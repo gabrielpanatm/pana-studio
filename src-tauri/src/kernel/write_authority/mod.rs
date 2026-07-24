@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -36,6 +36,7 @@ pub(crate) use root_authority::{ActiveProjectReadLease, CodexConfigLease, Projec
 pub use root_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
 
 static ZOLA_ARTIFACT_PUBLICATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static COMPONENT_VALIDATION_SANDBOX_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Sealed, descriptor-backed authority for one configured Zola output name
 /// and its private sibling generations. It is intentionally separate from
@@ -126,6 +127,195 @@ impl ZolaArtifactPublicationLease {
         .bind_authority(self.authority.clone())
         .map_err(Into::into)
     }
+}
+
+/// Capability sigilat pentru proiecția temporară, completă, validată de Zola
+/// înainte ca o mutație semantică de componentă să intre în ProjectWorkspace.
+/// Sandbox-ul nu este o a doua autoritate de proiect: este rebuildable,
+/// create-only și poate fi consumat doar de validarea componentelor.
+pub(crate) struct ComponentValidationSandboxLease {
+    parent_authority: root_authority::DirectoryAuthority,
+    sandbox_authority: Option<root_authority::DirectoryAuthority>,
+    stable_directory: Option<CapabilitySubprocessDirectory>,
+    sandbox_root: PathBuf,
+    lease_id: u64,
+}
+
+impl ComponentValidationSandboxLease {
+    pub(crate) fn capture(sandbox_root: &Path) -> Result<Self, String> {
+        let parent = sandbox_root.parent().ok_or_else(|| {
+            format!(
+                "Sandbox-ul de validare {} nu are un director părinte sigur.",
+                sandbox_root.display()
+            )
+        })?;
+        let lease_id = COMPONENT_VALIDATION_SANDBOX_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let scope = root_authority::DirectoryAuthorityScope::ComponentValidation { lease_id };
+        let parent_authority = capability::bootstrap_directory_authority(
+            parent,
+            "component-validation/parent",
+            scope.clone(),
+        )?;
+        let create_target = WriteTarget::new(
+            sandbox_root,
+            parent_authority.root_path(),
+            "component-validation/sandbox",
+        )
+        .with_expected_absent()
+        .bind_authority(parent_authority.clone())?;
+        let effect = capability::create_component_validation_directory(&create_target)?;
+        require_durable_maintenance_effect(effect).map_err(|error| error.to_string())?;
+
+        let sandbox_authority = match capability::capture_descendant_authority(
+            &parent_authority,
+            sandbox_root,
+            "component-validation/root",
+            scope,
+        ) {
+            Ok(authority) => authority,
+            Err(error) => {
+                return Err(cleanup_failed_component_validation_capture(
+                    &parent_authority,
+                    sandbox_root,
+                    lease_id,
+                    error,
+                ));
+            }
+        };
+        let stable_directory = match capability::capture_directory_lease_from_authority(
+            &sandbox_authority,
+            sandbox_root,
+            "component-validation/stable-root",
+        ) {
+            Ok(directory) => directory,
+            Err(error) => {
+                drop(sandbox_authority);
+                return Err(cleanup_failed_component_validation_capture(
+                    &parent_authority,
+                    sandbox_root,
+                    lease_id,
+                    error,
+                ));
+            }
+        };
+
+        Ok(Self {
+            parent_authority,
+            sandbox_authority: Some(sandbox_authority),
+            stable_directory: Some(CapabilitySubprocessDirectory {
+                inner: stable_directory,
+            }),
+            sandbox_root: sandbox_root.to_path_buf(),
+            lease_id,
+        })
+    }
+
+    pub(crate) fn current_dir_path(&self) -> PathBuf {
+        self.stable_directory
+            .as_ref()
+            .expect("lease-ul viu păstrează directorul stabil")
+            .current_dir_path()
+    }
+
+    pub(crate) fn write_bytes(&self, relative_path: &Path, bytes: &[u8]) -> Result<(), String> {
+        let relative_path = validation_relative_path(relative_path)?;
+        let target = self.create_only_target(relative_path, "component-validation/projected")?;
+        let effect = capability::atomic_write(
+            &target,
+            bytes,
+            capability::CapabilityReplacePolicy::CreateNew,
+        )?;
+        require_durable_maintenance_effect(effect)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn copy_regular_file(
+        &self,
+        source: &Path,
+        relative_path: &Path,
+    ) -> Result<(), String> {
+        let relative_path = validation_relative_path(relative_path)?;
+        let target = self.create_only_target(relative_path, "component-validation/copied")?;
+        let effect = capability::copy_rebuildable_file(&target, source)?;
+        require_durable_maintenance_effect(effect)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    pub(crate) fn discard(mut self) -> Result<(), String> {
+        self.stable_directory.take();
+        self.sandbox_authority.take();
+        discard_component_validation_sandbox(
+            &self.parent_authority,
+            &self.sandbox_root,
+            self.lease_id,
+        )
+    }
+
+    fn create_only_target(
+        &self,
+        relative_path: &Path,
+        public_label: &str,
+    ) -> Result<WriteTarget, String> {
+        let authority = self
+            .sandbox_authority
+            .as_ref()
+            .ok_or_else(|| "Sandbox-ul de validare a fost deja închis.".to_string())?;
+        WriteTarget::new(
+            self.sandbox_root.join(relative_path),
+            authority.root_path(),
+            public_label,
+        )
+        .with_expected_absent()
+        .bind_authority(authority.clone())
+    }
+}
+
+fn validation_relative_path(path: &Path) -> Result<&Path, String> {
+    if path.as_os_str().is_empty()
+        || path.components().any(
+            |component| !matches!(component, Component::Normal(segment) if !segment.is_empty()),
+        )
+    {
+        return Err(format!(
+            "Sandbox-ul de validare a refuzat path-ul relativ nesigur {}.",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+fn cleanup_failed_component_validation_capture(
+    parent_authority: &root_authority::DirectoryAuthority,
+    sandbox_root: &Path,
+    lease_id: u64,
+    capture_error: String,
+) -> String {
+    match discard_component_validation_sandbox(parent_authority, sandbox_root, lease_id) {
+        Ok(()) => capture_error,
+        Err(cleanup_error) => format!(
+            "{capture_error} În plus, sandbox-ul incomplet nu a putut fi eliminat: {cleanup_error}"
+        ),
+    }
+}
+
+fn discard_component_validation_sandbox(
+    parent_authority: &root_authority::DirectoryAuthority,
+    sandbox_root: &Path,
+    lease_id: u64,
+) -> Result<(), String> {
+    let target = WriteTarget::new(
+        sandbox_root,
+        parent_authority.root_path(),
+        "component-validation/cleanup",
+    )
+    .bind_authority(parent_authority.clone())?;
+    let operation_id = format!("component-validation-cleanup-{lease_id}");
+    let effect = capability::remove_rebuildable_directory_if_exists(&target, &operation_id)?;
+    require_durable_maintenance_effect(effect)
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
@@ -314,9 +504,15 @@ fn observability_target(
 
 #[cfg(test)]
 mod maintenance_tests {
+    use std::{
+        fs,
+        path::Path,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::{
         require_durable_maintenance_effect, CapabilityMaintenanceError,
-        CapabilityMaintenanceRecovery,
+        CapabilityMaintenanceRecovery, ComponentValidationSandboxLease,
     };
     use crate::kernel::write_authority::capability::CapabilityEffect;
 
@@ -358,5 +554,64 @@ mod maintenance_tests {
             require_durable_maintenance_effect(effect).unwrap().changed,
             false
         );
+    }
+
+    #[test]
+    fn component_validation_sandbox_streams_files_and_is_removed_explicitly() {
+        let parent = validation_test_root("lifecycle");
+        fs::create_dir_all(&parent).unwrap();
+        let source = parent.join("source.bin");
+        fs::write(&source, [0_u8, 1, 2, 3, 255]).unwrap();
+        let sandbox_root = parent.join("sandbox");
+
+        let sandbox = ComponentValidationSandboxLease::capture(&sandbox_root).unwrap();
+        sandbox
+            .write_bytes(Path::new("templates/card.html"), b"<article />")
+            .unwrap();
+        sandbox
+            .copy_regular_file(&source, Path::new("static/card.bin"))
+            .unwrap();
+        let stable_root = sandbox.current_dir_path();
+        assert_eq!(
+            fs::read_to_string(stable_root.join("templates/card.html")).unwrap(),
+            "<article />"
+        );
+        assert_eq!(
+            fs::read(stable_root.join("static/card.bin")).unwrap(),
+            [0_u8, 1, 2, 3, 255]
+        );
+
+        sandbox.discard().unwrap();
+        assert!(!sandbox_root.exists());
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn component_validation_sandbox_never_adopts_an_existing_directory() {
+        let parent = validation_test_root("collision");
+        let sandbox_root = parent.join("sandbox");
+        fs::create_dir_all(&sandbox_root).unwrap();
+        fs::write(sandbox_root.join("owner.txt"), b"external").unwrap();
+
+        let error = ComponentValidationSandboxLease::capture(&sandbox_root)
+            .err()
+            .expect("un sandbox existent trebuie refuzat");
+        assert!(error.contains("reutilizarea unui sandbox"));
+        assert_eq!(
+            fs::read_to_string(sandbox_root.join("owner.txt")).unwrap(),
+            "external"
+        );
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    fn validation_test_root(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "pana-component-validation-{label}-{}-{nonce}",
+            std::process::id()
+        ))
     }
 }

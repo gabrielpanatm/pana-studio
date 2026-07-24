@@ -1,0 +1,37 @@
+marca = "Rădăcini"
+localizare_scurta = "Munții Poiana Ruscă"
+supratitlu = "Casă de oaspeți / Transilvania"
+titlu_hero = "Loc pentru zile mai lente."
+descriere_hero = "O casă între pădure și dealuri, cu camere liniștite, mâncare locală și suficient spațiu cât să auzi din nou timpul."
+cta_scurt = "Verifică disponibilitatea"
+cta_principal = "Verifică disponibilitatea"
+cta_url = "mailto:stai@radacini.example"
+altitudine = "780 m"
+detaliu_loc = "La capătul unui drum de țară, la două ore de Timișoara."
+titlu_intro = "Am păstrat ce era adevărat și am adăugat doar confortul necesar."
+descriere_intro = "Rădăcini este o gospodărie veche refăcută cu lemn local, piatră recuperată și meșteșugari din satele apropiate."
+descriere_scurta = "O casă de oaspeți pentru odihnă, natură și ritmuri mai bune."
+titlu_cta = "Păstrează-ți câteva zile fără grabă."
+descriere_cta = "Scrie-ne perioada și numărul de oaspeți. Răspundem personal, de obicei în aceeași zi."
+email = "stai@radacini.example"
+telefon = "+40 700 000 000"
+telefon_link = "+40700000000"
+adresa = "Satul Poieni 24, județul Hunedoara"
+harta_url = "https://www.openstreetmap.org/"
+
+[[experiente]]
+titlu = "Mic dejun din grădină"
+descriere = "Pâine caldă, brânzeturi din sat și ceea ce este copt în dimineața aceea."
+
+[[experiente]]
+titlu = "Poteci fără program"
+descriere = "Trasee scurte sau lungi, cu hărți simple și recomandări după vreme."
+
+[[experiente]]
+titlu = "Saună la marginea pădurii"
+descriere = "Căldură, lemn și o fereastră mare spre liniștea de afară."
+
+[marturie]
+text = "Am venit pentru două nopți și în a doua dimineață am decis să mai rămânem. Totul are grijă de tine fără să se simtă regizat."
+autor = "Mara și Radu"
+context = "oaspeți, București"

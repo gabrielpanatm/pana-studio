@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+{% block preload_hero %}<link rel="preload" href="{{ get_url(path='imagini/cadru-hero.webp', cachebust=true) }}" as="image">{% endblock %}
+
+{% block content %}
+{% set proiecte = get_section(path="proiecte/_index.md") %}
+<section class="cadru-hero">
+  <img class="cadru-hero__imagine" src="{{ get_url(path='imagini/cadru-hero.webp', cachebust=true) }}" width="1440" height="1000" alt="Masă de studio cu studii tipografice, materiale și mostre cromatice" loading="eager" fetchpriority="high">
+  <div class="container cadru-hero__continut">
+    <div class="cadru-hero__indice" aria-hidden="true">01 / 04</div>
+    <div class="cadru-hero__text">
+      <p class="eticheta-cadru">{{ site.supratitlu }}</p>
+      <h1>{{ site.titlu_hero }}</h1>
+      <p>{{ site.descriere_hero }}</p>
+      <a class="legatura-cadru" href="#proiecte">{{ site.cta_principal }} <span aria-hidden="true">↓</span></a>
+    </div>
+  </div>
+</section>
+
+<section class="banda-discipline" aria-label="Discipline">
+  <div class="banda-discipline__continut">
+    {% for disciplina in site.discipline %}
+    <span>{{ disciplina }}</span><i aria-hidden="true">✦</i>
+    {% endfor %}
+  </div>
+</section>
+
+<section id="proiecte" class="section-lg proiecte-cadru">
+  <div class="container">
+    <div class="cap-cadru">
+      <p class="eticheta-cadru">Selecție / 2024–2026</p>
+      <h2>Lucrări care schimbă unghiul.</h2>
+      <p>Identități, produse digitale și spații de comunicare construite în jurul unei idei puternice.</p>
+    </div>
+    <div class="proiecte-cadru__grila">
+      {% for proiect in proiecte.pages %}
+      <article class="proiect-cadru">
+        <a class="proiect-cadru__vizual" href="{{ proiect.permalink }}" aria-label="Deschide proiectul {{ proiect.title }}">
+          <span class="proiect-cadru__numar">0{{ loop.index }}</span>
+          <span class="proiect-cadru__litera" aria-hidden="true">{{ proiect.extra.initiala }}</span>
+          <span class="proiect-cadru__sageata" aria-hidden="true">↗</span>
+        </a>
+        <div class="proiect-cadru__meta">
+          <h3><a href="{{ proiect.permalink }}">{{ proiect.title }}</a></h3>
+          <p>{{ proiect.extra.disciplina }} / {{ proiect.extra.an }}</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="section-lg declaratie-cadru">
+  <div class="container declaratie-cadru__grila">
+    <p class="eticheta-cadru eticheta-cadru--accent">Poziție</p>
+    <p class="declaratie-cadru__text">{{ site.declaratie }}</p>
+  </div>
+</section>
+
+<section id="servicii" class="section-lg servicii-cadru">
+  <div class="container">
+    <div class="cap-cadru cap-cadru--orizontal">
+      <div>
+        <p class="eticheta-cadru">Ce facem</p>
+        <h2>De la idee la sistem.</h2>
+      </div>
+      <p>Intrăm în proiect acolo unde strategia, limbajul și experiența trebuie să devină aceeași poveste.</p>
+    </div>
+    <ol class="servicii-cadru__lista">
+      {% for serviciu in site.servicii %}
+      <li>
+        <span>0{{ loop.index }}</span>
+        <h3>{{ serviciu.titlu }}</h3>
+        <p>{{ serviciu.descriere }}</p>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+
+<section class="section-lg contact-cadru">
+  <div class="container contact-cadru__interior">
+    <p class="eticheta-cadru eticheta-cadru--accent">Proiect nou</p>
+    <h2>{{ site.titlu_cta }}</h2>
+    <a class="contact-cadru__link" href="{{ site.cta_url }}">{{ site.email }} <span aria-hidden="true">↗</span></a>
+  </div>
+</section>
+{% endblock %}

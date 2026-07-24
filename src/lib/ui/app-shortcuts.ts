@@ -13,9 +13,9 @@ export type DeleteShortcutIntent = "none" | "deleteSelectedHtml";
 
 type DeleteShortcutState = {
   activeWorkbenchActivity: string;
+  applicationSurface: string;
   centerView: string;
   selectedElement: unknown;
-  settingsPanelOpen: boolean;
 };
 
 export function isAppTextEditingTarget(target: EventTarget | null) {
@@ -61,9 +61,10 @@ export function appShortcutIntent(event: KeyboardEvent): AppShortcutIntent {
 export function deleteShortcutIntent(event: KeyboardEvent, state: DeleteShortcutState): DeleteShortcutIntent {
   if (event.key !== "Delete" && event.key !== "Backspace") return "none";
   if (event.ctrlKey || event.metaKey || event.altKey) return "none";
+  if (state.applicationSurface !== "workbench") return "none";
   if (state.activeWorkbenchActivity !== "editor") return "none";
-  if (state.centerView === "site" || state.centerView === "kernel") return "none";
+  if (state.centerView === "kernel") return "none";
   if (isAppTextEditingTarget(event.target)) return "none";
-  if (!state.selectedElement || state.settingsPanelOpen) return "none";
+  if (!state.selectedElement) return "none";
   return "deleteSelectedHtml";
 }

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    blocks::{plan_native_block_option_attribute, NativeBlockOptionIntent},
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
     source_graph::model::SourceNode,
 };
@@ -28,6 +29,8 @@ pub struct ProjectHtmlAttributeIntent {
     pub attributes: Vec<ProjectHtmlAttributeMutation>,
     #[serde(default)]
     pub zola_image: Option<ProjectZolaImageIntent>,
+    #[serde(default)]
+    pub native_block_option: Option<NativeBlockOptionIntent>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -109,12 +112,19 @@ fn plan_html_attributes_inner(
     intent: &ProjectHtmlAttributeIntent,
     aliases: &HashMap<String, String>,
 ) -> Result<ProjectHtmlAttributePatch, String> {
-    if intent.zola_image.is_some() && !intent.attributes.is_empty() {
+    let specialized_contracts = usize::from(intent.zola_image.is_some())
+        + usize::from(intent.native_block_option.is_some());
+    if specialized_contracts > 1 {
         return Err(
-            "Contractul imaginii Zola nu poate fi combinat cu mutații HTML generice.".to_string(),
+            "O intenție de atribute poate aplica un singur contract specializat.".to_string(),
         );
     }
-    let attributes = if intent.zola_image.is_some() {
+    if specialized_contracts > 0 && !intent.attributes.is_empty() {
+        return Err(
+            "Contractele specializate nu pot fi combinate cu mutații HTML generice.".to_string(),
+        );
+    }
+    let attributes = if specialized_contracts > 0 {
         BTreeMap::new()
     } else {
         normalize_attribute_mutations(&intent.attributes)?
@@ -203,8 +213,16 @@ fn plan_html_attributes_from_source_node(
             zola_image: applied.presentation,
         });
     }
+    let attributes = resolve_native_block_option_attributes(
+        &file.contents,
+        target_range.start,
+        intent,
+        attributes,
+    )?;
     validate_zola_managed_attributes(&file.contents, target_range.start, &attributes)?;
-    validate_schema_attributes(&target_tag, &attributes)?;
+    if intent.native_block_option.is_none() {
+        validate_schema_attributes(&target_tag, &attributes)?;
+    }
     let applied = apply_html_attributes(
         &file.contents,
         &target_node.file,
@@ -278,7 +296,7 @@ fn plan_html_attributes_from_direct_location(
         });
     }
 
-    if !is_direct_html_attribute_file(file) {
+    if intent.native_block_option.is_none() && !is_direct_html_attribute_file(file) {
         return Err(
             "Atributele prin locație directă sunt active doar pentru fișiere HTML 1:1 din proiect, nu pentru template-uri Tera.".to_string(),
         );
@@ -291,8 +309,12 @@ fn plan_html_attributes_from_direct_location(
         return Err("Locația indică un tag de închidere, nu un element mutabil.".to_string());
     }
     validate_target_tag(intent, &tag.tag)?;
+    let attributes =
+        resolve_native_block_option_attributes(&file.contents, tag.start, intent, attributes)?;
     validate_zola_managed_attributes(&file.contents, tag.start, &attributes)?;
-    validate_schema_attributes(&tag.tag, &attributes)?;
+    if intent.native_block_option.is_none() {
+        validate_schema_attributes(&tag.tag, &attributes)?;
+    }
     let applied =
         apply_html_attributes(&file.contents, &file.relative_path, tag.start, &attributes)?;
     let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
@@ -315,6 +337,27 @@ fn plan_html_attributes_from_direct_location(
         zola_image_contract: false,
         zola_image: None,
     })
+}
+
+fn resolve_native_block_option_attributes(
+    source: &str,
+    opening_start: usize,
+    intent: &ProjectHtmlAttributeIntent,
+    generic_attributes: BTreeMap<String, Option<String>>,
+) -> Result<BTreeMap<String, Option<String>>, String> {
+    let Some(option_intent) = intent.native_block_option.as_ref() else {
+        return Ok(generic_attributes);
+    };
+    let opening = parse_html_tag_at(source, opening_start)
+        .ok_or_else(|| "Range-ul blocului nu mai indică un tag HTML stabil.".to_string())?;
+    if opening.is_closing {
+        return Err("Range-ul blocului indică un tag de închidere.".to_string());
+    }
+    let opening_source = source
+        .get(opening.start..opening.end)
+        .ok_or_else(|| "Nu am putut citi rădăcina blocului din sursa autoritativă.".to_string())?;
+    let (attribute, value) = plan_native_block_option_attribute(opening_source, option_intent)?;
+    Ok(BTreeMap::from([(attribute, value)]))
 }
 
 fn validate_target_tag(
@@ -842,6 +885,7 @@ mod tests {
         build_project_model,
         zola_image_engine::{ProjectZolaImageIntent, ZolaImageFormat, ZolaImageOperation},
     };
+    use crate::source_graph::model::BlockOptionValue;
 
     use super::*;
 
@@ -879,6 +923,7 @@ mod tests {
                     ProjectHtmlAttributeMutation::set("data-anim", "ps-hero-abc123"),
                 ],
                 zola_image: None,
+                native_block_option: None,
             },
             &HashMap::new(),
         );
@@ -892,6 +937,52 @@ mod tests {
         assert!(!patch.contents.contains("title="));
         assert_eq!(patch.tag, "section");
         assert_eq!(patch.source_start_line, 2);
+    }
+
+    #[test]
+    fn native_block_option_uses_rust_registry_to_mutate_protected_attribute() {
+        let root = unique_test_dir();
+        write_project(
+            &root,
+            concat!(
+                "{% block content %}\n",
+                "<div class=\"offcanvas\" data-pana-block=\"offcanvas\" data-pana-offcanvas-side=\"end\"></div>\n",
+                "{% endblock %}\n",
+            ),
+        );
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let block_root = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<div .offcanvas>")
+            .expect("block root");
+
+        let plan = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(block_root.id.clone()),
+                target_location: None,
+                target_tag: Some("div".to_string()),
+                target_selector: Some(".offcanvas".to_string()),
+                attributes: Vec::new(),
+                zola_image: None,
+                native_block_option: Some(NativeBlockOptionIntent {
+                    provider_id: "offcanvas".to_string(),
+                    option_id: "side".to_string(),
+                    value: BlockOptionValue::Text("start".to_string()),
+                }),
+            },
+            &HashMap::new(),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        assert!(plan
+            .patch
+            .expect("native option patch")
+            .contents
+            .contains(r#"data-pana-offcanvas-side="start""#));
     }
 
     #[test]
@@ -929,6 +1020,7 @@ mod tests {
                     ProjectHtmlAttributeMutation::set("alt", "Imagine nouă"),
                 ],
                 zola_image: None,
+                native_block_option: None,
             },
             &HashMap::new(),
         );
@@ -1064,6 +1156,7 @@ mod tests {
                     format: Some(ZolaImageFormat::Webp),
                     quality: Some(82),
                 }),
+                native_block_option: None,
             },
             &HashMap::new(),
         );
@@ -1090,6 +1183,7 @@ mod tests {
                 target_selector: None,
                 attributes: vec![ProjectHtmlAttributeMutation::set("src", "/other.jpg")],
                 zola_image: None,
+                native_block_option: None,
             },
             &HashMap::new(),
         );
@@ -1108,6 +1202,7 @@ mod tests {
                 target_selector: None,
                 attributes: vec![ProjectHtmlAttributeMutation::set("alt", "Nou")],
                 zola_image: None,
+                native_block_option: None,
             },
             &HashMap::new(),
         );

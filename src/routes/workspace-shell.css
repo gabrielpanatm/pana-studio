@@ -6,9 +6,7 @@
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(circle at top left, var(--app-bg-overlay), transparent 28%),
-    var(--app-bg);
+  background: var(--app-bg);
   color: var(--text);
 }
 
@@ -24,10 +22,10 @@
   transform: translate(-50%, -50%);
   padding: 18px;
   border: 1px solid var(--border-3, #3b4541);
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   color: var(--text, #e7ede9);
   background: var(--surface-4, #191c1f);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+  box-shadow: var(--shadow);
 }
 
 .external-reconcile-recovery p {
@@ -40,7 +38,7 @@
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--brand-strong, #2faa8c);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   color: #fff;
   background: var(--brand, #1d7f6a);
   cursor: pointer;
@@ -122,12 +120,11 @@
   place-items: center;
   min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--font-body);
+  font-weight: 600;
   background: var(--surface-7);
-  box-shadow: var(--shadow);
 }
 
 .project-pane-shell {
@@ -183,10 +180,27 @@ body.is-resizing iframe {
   pointer-events: none;
 }
 
-body.is-col-resizing {
-  cursor: col-resize !important;
+:root body.is-resizing.is-col-resizing,
+:root body.is-resizing.is-col-resizing * {
+  cursor: col-resize;
 }
 
-body.is-row-resizing {
-  cursor: row-resize !important;
+:root body.is-resizing.is-row-resizing,
+:root body.is-resizing.is-row-resizing * {
+  cursor: row-resize;
+}
+
+:root body:is(
+  .layers-dragging,
+  .files-dragging,
+  .element-palette-dragging,
+  .tera-palette-dragging
+),
+:root body:is(
+  .layers-dragging,
+  .files-dragging,
+  .element-palette-dragging,
+  .tera-palette-dragging
+) * {
+  cursor: grabbing;
 }

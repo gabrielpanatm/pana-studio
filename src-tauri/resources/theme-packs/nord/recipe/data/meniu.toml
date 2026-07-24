@@ -1,0 +1,15 @@
+[[elemente]]
+eticheta = "Acasă"
+url = "/"
+
+[[elemente]]
+eticheta = "Servicii"
+url = "/#servicii"
+
+[[elemente]]
+eticheta = "Despre"
+url = "/despre/"
+
+[[elemente]]
+eticheta = "Contact"
+url = "mailto:salut@nord.example"

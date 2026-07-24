@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ page.description }}{% endblock %}
+
+{% block content %}
+<article class="detaliu-camera">
+  <header class="detaliu-camera__antet">
+    <div class="container detaliu-camera__grila">
+      <div>
+        <p class="eticheta-organica">{{ page.extra.tip }} / {{ page.extra.suprafata }}</p>
+        <h1>{{ page.title }}</h1>
+      </div>
+      <div>
+        <p>{{ page.description }}</p>
+        <p class="detaliu-camera__pret">de la <strong>{{ page.extra.pret }}</strong> / noapte</p>
+      </div>
+    </div>
+  </header>
+  <div class="detaliu-camera__vizual">
+    <img src="{{ get_url(path='imagini/radacini-hero.webp', cachebust=true) }}" width="1440" height="1000" alt="Priveliște spre dealurile împădurite de la Rădăcini" loading="eager">
+  </div>
+  <div class="container detaliu-camera__continut">
+    <div class="content">{{ page.content | safe }}</div>
+    <aside>
+      <p class="eticheta-organica">Include</p>
+      <ul>{% for dotare in page.extra.dotari %}<li>{{ dotare }}</li>{% endfor %}</ul>
+      <a class="btn btn-accent btn-full" href="{{ site.cta_url }}">Solicită o rezervare</a>
+    </aside>
+  </div>
+</article>
+{% endblock %}

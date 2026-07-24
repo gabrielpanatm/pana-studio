@@ -67,7 +67,7 @@ where
         project_root,
         &projection,
     )?;
-    let patch = match structural_plan_patch_or_block(plan(&before_model), spec) {
+    let mut patch = match structural_plan_patch_or_block(plan(&before_model), spec) {
         Ok(patch) => patch,
         Err(blocked) => return Ok(Err(blocked)),
     };
@@ -100,6 +100,9 @@ where
         )
         .with_coalesce_key(coalesce_key),
     )?;
+    if patch.contents() != commit.primary_contents {
+        patch.replace_authoritative_contents(commit.primary_contents.clone());
+    }
 
     Ok(Ok(PreviewStructuralPlanCommitted {
         before_model,
@@ -133,6 +136,8 @@ pub(super) trait PreviewStructuralPatch {
     fn coalesce_key(&self) -> Option<String> {
         None
     }
+
+    fn replace_authoritative_contents(&mut self, contents: String);
 }
 
 pub(super) trait PreviewStructuralPlan {
@@ -150,6 +155,12 @@ macro_rules! preview_structural_patch {
 
             fn contents(&self) -> &str {
                 &self.contents
+            }
+
+            fn replace_authoritative_contents(&mut self, contents: String) {
+                self.after_revision =
+                    crate::project_model::move_engine::content_revision(&contents);
+                self.contents = contents;
             }
         }
     };
@@ -191,6 +202,11 @@ impl PreviewStructuralPatch for ProjectHtmlAttributePatch {
             self.file, self.resolved_target_id
         ))
     }
+
+    fn replace_authoritative_contents(&mut self, contents: String) {
+        self.after_revision = crate::project_model::move_engine::content_revision(&contents);
+        self.contents = contents;
+    }
 }
 
 impl PreviewStructuralPatch for ProjectHtmlTextPatch {
@@ -207,6 +223,11 @@ impl PreviewStructuralPatch for ProjectHtmlTextPatch {
             "preview.html.text:{}:{}",
             self.file, self.resolved_target_id
         ))
+    }
+
+    fn replace_authoritative_contents(&mut self, contents: String) {
+        self.after_revision = crate::project_model::move_engine::content_revision(&contents);
+        self.contents = contents;
     }
 }
 

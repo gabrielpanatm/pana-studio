@@ -9,6 +9,20 @@ pub fn locate_rule_block(css: &str, selector: &str) -> Option<(usize, usize, usi
     })
 }
 
+pub fn locate_exact_rule_block(
+    css: &str,
+    selector: &str,
+) -> Option<(usize, usize, usize, usize, usize)> {
+    let target = normalize_selector_list(selector);
+    if target.is_empty() {
+        return None;
+    }
+
+    locate_top_level_block(css, |raw_selector| {
+        !raw_selector.starts_with('@') && normalize_selector_list(raw_selector) == target
+    })
+}
+
 pub(super) fn locate_top_level_block(
     css: &str,
     predicate: impl Fn(&str) -> bool,
@@ -85,6 +99,14 @@ fn split_top_level_selector_list(selector: &str) -> Vec<&str> {
     }
     result.push(&selector[start..]);
     result
+}
+
+fn normalize_selector_list(selector: &str) -> String {
+    split_top_level_selector_list(selector)
+        .into_iter()
+        .map(normalize_selector)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn matching_block_end(css: &str, content_start: usize) -> Option<usize> {

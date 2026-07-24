@@ -1,6 +1,6 @@
 import type { HtmlPendingArea, InspectorPendingArea } from "$lib/types";
 
-export type SessionDirtyArea = "workspace" | "html" | "css" | "vars" | "js";
+export type SessionDirtyArea = "workspace" | "html" | "css" | "js";
 
 export type GlobalDirtyState = {
   dirty: boolean;
@@ -23,7 +23,6 @@ export function deriveGlobalDirtyState(input: DirtyStateInput): GlobalDirtyState
   const htmlDirty = Object.values(input.htmlPending).some(Boolean) || input.inspectorPending.html;
   if (htmlDirty) areas.push("html");
   if (input.inspectorPending.css) areas.push("css");
-  if (input.inspectorPending.vars) areas.push("vars");
   if (input.inspectorPending.js) areas.push("js");
 
   const uniqueAreas = [...new Set(areas)];

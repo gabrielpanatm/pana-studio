@@ -66,7 +66,6 @@
   export let editSelectedTeraLayer: () => void | Promise<void>;
   export let deleteSelectedTeraNode: () => void | Promise<void>;
   export let openSelectedTeraSource: () => void | Promise<void>;
-  export let openTemplateWorkbenchSource: (file: string) => void | Promise<void> = () => {};
 
   let collapsedNodes = new Set<string>();
   let dragSourceSelector: string | null = null;
@@ -606,33 +605,6 @@
   <div class="tab-empty-state">Selectează o pagină pentru a vedea structura.</div>
 {:else}
   <div class="layers-tree" role="tree" aria-label="Structura paginii">
-    {#if templateWorkbenchPlan}
-      <div class="workbench-source-chain" aria-label="Ierarhia contextului de template">
-        {#each templateWorkbenchPlan.navigator as entry, index}
-          <button
-            type="button"
-            class="workbench-source-row"
-            class:active-source={entry.role === "active"}
-            class:source-theme={entry.template.origin === "theme"}
-            class:source-local={entry.template.origin === "local"}
-            style="--source-depth: {index};"
-            title={entry.template.file}
-            onclick={() => { void openTemplateWorkbenchSource(entry.template.file); }}
-          >
-            <span class="workbench-source-indent" style="width: {index * 14}px;"></span>
-            <IconChevronDown size={11} stroke={2.2} />
-            <IconCode size={12} stroke={2} />
-            <span class="workbench-source-copy">
-              <small>{entry.role === "active" ? "Template activ" : "Părinte direct"}</small>
-              <strong>{entry.template.name}</strong>
-            </span>
-            <span class="workbench-source-origin">
-              {entry.role === "active" ? "editabil" : entry.template.origin}
-            </span>
-          </button>
-        {/each}
-      </div>
-    {/if}
     {#each visibleRows as row}
       {#if row.kind === "tera"}
         <div
@@ -674,7 +646,7 @@
             <span class="tree-actions" aria-label="Acțiuni Tera">
               <button
                 type="button"
-                class="tree-action-btn"
+                class="ui-icon-button compact quiet tree-action-btn"
                 title="Editează HTML vizual"
                 onclick={handleTeraEditClick}
                 onpointerdown={(event) => event.stopPropagation()}
@@ -683,7 +655,7 @@
               </button>
               <button
                 type="button"
-                class="tree-action-btn"
+                class="ui-icon-button compact quiet tree-action-btn"
                 title="Deschide sursa"
                 onclick={handleTeraSourceClick}
                 onpointerdown={(event) => event.stopPropagation()}
@@ -692,7 +664,7 @@
               </button>
               <button
                 type="button"
-                class="tree-action-btn danger"
+                class="ui-icon-button compact quiet tree-action-btn danger"
                 title="Șterge nodul Tera"
                 onclick={handleTeraDeleteClick}
                 onpointerdown={(event) => event.stopPropagation()}
@@ -744,7 +716,7 @@
           {#if node.hasChildren}
             <button
               type="button"
-              class="toggle-btn"
+              class="ui-icon-button compact quiet toggle-btn"
               aria-label={collapsedNodes.has(node.selector) ? `Extinde ${node.label}` : `Restrânge ${node.label}`}
               aria-expanded={!collapsedNodes.has(node.selector)}
               onclick={(event) => toggleNodeCollapse(node.selector, event)}
@@ -787,7 +759,7 @@
           <span class="tree-actions" aria-label="Acțiuni Tera">
             <button
               type="button"
-              class="tree-action-btn"
+              class="ui-icon-button compact quiet tree-action-btn"
               title="Editează HTML vizual"
               onclick={handleTeraEditClick}
               onpointerdown={(event) => event.stopPropagation()}
@@ -796,7 +768,7 @@
             </button>
             <button
               type="button"
-              class="tree-action-btn"
+              class="ui-icon-button compact quiet tree-action-btn"
               title="Deschide sursa"
               onclick={handleTeraSourceClick}
               onpointerdown={(event) => event.stopPropagation()}
@@ -805,7 +777,7 @@
             </button>
             <button
               type="button"
-              class="tree-action-btn danger"
+              class="ui-icon-button compact quiet tree-action-btn danger"
               title="Șterge nodul Tera"
               onclick={handleTeraDeleteClick}
               onpointerdown={(event) => event.stopPropagation()}
@@ -816,7 +788,7 @@
         {/if}
         <button
           type="button"
-          class="tree-delete-btn"
+          class="ui-icon-button compact quiet tree-delete-btn"
           class:disabled={!canDeleteNode(node)}
           disabled={!canDeleteNode(node)}
           title={canDeleteNode(node) ? "Șterge element" : "Zona selectată este un gate Tera; folosește acțiunile Tera din Straturi sau Inspector."}
@@ -858,7 +830,7 @@
     margin: 2px 0 0;
     padding: 12px 10px;
     border: 1px solid var(--border-2);
-    border-radius: 8px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
     color: var(--text-muted);
     font-size: 12px;
@@ -873,69 +845,6 @@
     gap: 1px;
   }
 
-  .workbench-source-chain {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    margin: 0 0 5px;
-    padding: 4px;
-    border: 1px solid color-mix(in srgb, var(--brand) 24%, var(--border-2));
-    border-radius: 7px;
-    background: color-mix(in srgb, var(--brand) 4%, var(--surface-2));
-  }
-
-  .workbench-source-row {
-    --source-tone: var(--source-origin-local);
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    width: 100%;
-    min-height: 31px;
-    padding: 3px 6px;
-    border: 1px solid transparent;
-    border-radius: 5px;
-    color: var(--text);
-    text-align: left;
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .workbench-source-row.source-theme { --source-tone: var(--source-origin-theme); }
-  .workbench-source-row:hover {
-    border-color: color-mix(in srgb, var(--source-tone) 42%, var(--border-3));
-    background: color-mix(in srgb, var(--source-tone) 7%, var(--surface-3));
-  }
-  .workbench-source-row.active-source {
-    border-color: color-mix(in srgb, var(--source-tone) 58%, var(--border-3));
-    background: color-mix(in srgb, var(--source-tone) 11%, var(--surface-3));
-  }
-  .workbench-source-indent { flex: 0 0 auto; }
-  .workbench-source-copy {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    flex-direction: column;
-    line-height: 1.15;
-  }
-  .workbench-source-copy small {
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-  .workbench-source-copy strong {
-    overflow: hidden;
-    font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .workbench-source-origin {
-    color: var(--source-tone);
-    font-size: 12px;
-    font-weight: 800;
-  }
-
   .tree-row {
     --layer-origin: var(--source-origin-unknown);
     --layer-origin-soft: var(--source-origin-unknown-soft);
@@ -947,7 +856,7 @@
     min-height: 32px;
     padding: 0 4px 0 0;
     border: 1px solid transparent;
-    border-radius: 5px;
+    border-radius: var(--radius-control);
     color: var(--text);
     font-size: 12px;
     text-align: left;
@@ -959,8 +868,8 @@
   }
 
   .tree-row:not(.selected):hover {
-    background: var(--surface-4);
-    border-color: var(--border-3);
+    background: var(--control-hover);
+    border-color: transparent;
   }
 
   .tree-row.source-local {
@@ -987,19 +896,19 @@
   .tree-row.source-local:not(.selected):hover,
   .tree-row.source-theme:not(.selected):hover,
   .tree-row.source-unknown:not(.selected):hover {
-    border-color: color-mix(in srgb, var(--layer-origin) 54%, var(--border-3));
-    background: color-mix(in srgb, var(--layer-origin) 8%, var(--surface-4));
+    border-color: transparent;
+    background: var(--control-hover);
   }
 
   .tree-row.selected {
-    border-color: var(--layer-origin);
-    background: var(--layer-origin-soft);
+    border-color: transparent;
+    background: var(--control-selected);
     color: var(--text-strong);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--layer-origin) 18%, transparent);
+    box-shadow: inset 2px 0 0 var(--brand);
   }
 
   .tree-row.tera-selected {
-    --layer-origin-soft: color-mix(in srgb, var(--layer-origin) 13%, var(--surface-4));
+    background: var(--control-selected);
   }
 
   .tree-row.tera-node {
@@ -1020,11 +929,6 @@
   .tree-row.dragging {
     opacity: 0.55;
     cursor: grabbing;
-  }
-
-  :global(body.layers-dragging),
-  :global(body.layers-dragging *) {
-    cursor: grabbing !important;
   }
 
   .tree-row.drop-inside {
@@ -1100,12 +1004,6 @@
   }
 
   .toggle-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 3px;
     color: var(--text-muted);
     cursor: pointer;
   }
@@ -1189,12 +1087,6 @@
   }
 
   .tree-action-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    border-radius: 5px;
     color: color-mix(in srgb, var(--layer-origin) 82%, var(--text-muted));
     cursor: pointer;
     transition: background 80ms ease, color 80ms ease;
@@ -1215,13 +1107,7 @@
   }
 
   .tree-delete-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 32px;
-    width: 32px;
-    height: 32px;
-    border-radius: 5px;
+    flex: 0 0 auto;
     color: color-mix(in srgb, #cf4a4a 82%, var(--text-muted));
     opacity: 0;
     cursor: pointer;
@@ -1251,7 +1137,7 @@
     color: var(--text-muted);
     font-family: "JetBrains Mono", monospace;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     background: var(--surface-3);
   }
 
@@ -1262,7 +1148,7 @@
     border-radius: 4px;
     color: color-mix(in srgb, var(--layer-origin) 88%, var(--text-strong));
     font-size: 12px;
-    font-weight: 900;
+    font-weight: 650;
     line-height: 1.45;
     text-transform: uppercase;
     background: color-mix(in srgb, var(--layer-origin) 10%, var(--surface-3));

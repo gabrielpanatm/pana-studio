@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-theme-style-draft"
+description = "Enables the preview_theme_style_draft command without any pre-configured scope."
+commands.allow = ["preview_theme_style_draft"]
+
+[[permission]]
+identifier = "deny-preview-theme-style-draft"
+description = "Denies the preview_theme_style_draft command without any pre-configured scope."
+commands.deny = ["preview_theme_style_draft"]

@@ -1,0 +1,15 @@
+[[elemente]]
+eticheta = "Camere"
+url = "/#camere"
+
+[[elemente]]
+eticheta = "Experiențe"
+url = "/#experiente"
+
+[[elemente]]
+eticheta = "Poveste"
+url = "/poveste/"
+
+[[elemente]]
+eticheta = "Contact"
+url = "mailto:stai@radacini.example"

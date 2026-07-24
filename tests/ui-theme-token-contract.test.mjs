@@ -28,3 +28,17 @@ test("interfața folosește tokenul canonic --brand pentru accente", () => {
     "Folosește var(--brand); shell-ul aplicației nu definește --accent.",
   );
 });
+
+test("design system-ul oferă o variantă compactă reutilizabilă pentru micro-acțiuni", () => {
+  const designSystemCss = readFileSync(new URL("../src/routes/design-system.css", import.meta.url), "utf8");
+  const layersSource = readFileSync(
+    new URL("../src/lib/components/project/ProjectLayersTab.svelte", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(designSystemCss, /--control-height-compact:\s*24px/);
+  assert.match(designSystemCss, /\.ui-button\.compact,\s*\n\.ui-icon-button\.compact/);
+  assert.match(designSystemCss, /\.ui-icon-button\.compact\s*\{/);
+  assert.match(layersSource, /class="ui-icon-button compact quiet toggle-btn"/);
+  assert.match(layersSource, /class="ui-icon-button compact quiet tree-delete-btn"/);
+});

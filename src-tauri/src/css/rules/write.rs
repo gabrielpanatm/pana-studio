@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::css::rules::{
     declarations::parse_declarations,
-    selector::{base_selector_of, locate_rule_block},
+    selector::{base_selector_of, locate_exact_rule_block, locate_rule_block},
 };
 
 pub fn upsert_css_rule_desktop(
@@ -51,6 +51,43 @@ pub fn upsert_css_rule_desktop(
             result
         }
     }
+}
+
+pub fn update_exact_css_rule(
+    css: &str,
+    selector: &str,
+    properties: &HashMap<String, String>,
+) -> Option<String> {
+    let (sel_start, selector_end, content_start, content_end, block_end) =
+        locate_exact_rule_block(css, selector)?;
+    let before = &css[..sel_start];
+    let selector_text = &css[sel_start..selector_end];
+    let content = &css[content_start..content_end];
+    let after = &css[block_end..];
+    // Keep an exact empty rule when the last editable declaration is cleared.
+    // The empty block is the stable semantic anchor used by the visual style
+    // registry; deleting it would make a valid inherited target impossible to
+    // edit again without guessing where a new rule belongs.
+    let new_content = update_declarations(content, properties).unwrap_or_default();
+    let selector_prefix = if before.is_empty() || before.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let after_suffix = if after.is_empty() || after.starts_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    Some(format!(
+        "{}{}{} {{{}\n}}{}{}",
+        before,
+        selector_prefix,
+        selector_text.trim(),
+        new_content,
+        after_suffix,
+        after,
+    ))
 }
 
 pub(super) fn insert_after_base_rule(

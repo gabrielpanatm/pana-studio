@@ -1,0 +1,24 @@
+schema_version = 1
+id = "pana-studio"
+display_name = "Pană Studio"
+summary = "Starter Zola echilibrat, cu structură responsive și tokeni de design editabili."
+version = "1.0.0"
+category = "starter"
+preview = "preview.webp"
+capabilities = [
+  "responsive-layout",
+  "design-tokens",
+  "page-styles",
+  "local-template-overrides",
+]
+required_pages = ["content/_index.md"]
+required_data = []
+editor_anchors = [
+  "templates/base.html",
+  "templates/404.html",
+  "sass/css-framework/_baza.scss",
+]
+
+[zola]
+minimum = "0.22.0"
+tested = "0.22.1"

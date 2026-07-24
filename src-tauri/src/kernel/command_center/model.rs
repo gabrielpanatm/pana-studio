@@ -58,7 +58,6 @@ pub enum CommandCenterAppCommand {
     ToggleInspector,
     ToggleTheme,
     OpenSettings,
-    OpenHistory,
     ShowVisual,
     ShowCode,
     ShowMarkdown,

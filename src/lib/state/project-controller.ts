@@ -126,7 +126,7 @@ async function flushProjectDraftsBeforeTransition() {
 }
 
 function createEmptyInspectorPending(): Record<InspectorPendingArea, boolean> {
-  return { html: false, css: false, vars: false, js: false };
+  return { html: false, css: false, js: false };
 }
 
 function createEmptyHtmlPending(): Record<HtmlPendingArea, boolean> {
@@ -187,8 +187,6 @@ export type ProjectControllerHost = {
   projectWorkspaceMutationEpoch: number;
   beginPreviewStructuralWriteBoundary: () => Promise<void>;
   endPreviewStructuralWriteBoundary: () => void;
-  historyPanelOpen: boolean;
-  settingsPanelOpen: boolean;
   activeVersionPreview: unknown | null;
   reattachCurrentProjectSession?: () => Promise<boolean>;
   flushInteractiveEditorDrafts: () => Promise<void>;
@@ -235,8 +233,6 @@ export type ProjectControllerHost = {
   exitTemplateWorkbench: (options?: { deferPreviewRefresh?: boolean }) => Promise<void>;
   cancelPreviewSync: () => void;
   resetPageSections?: () => void;
-  resetProjectLoopDefinitions?: () => void;
-  loadProjectLoopDefinitions?: (projectRoot: string) => void;
   refreshSourceGraph?: (options?: { strict?: boolean }) => Promise<void>;
   resetControlledPreviewState?: () => void;
   scheduleZolaValidation?: (reason?: "project-open") => void;
@@ -339,7 +335,6 @@ async function projectPublishedSessionIntoFrontend(
   host.setSessionProjectRoot(project.root);
   setFileBufferDraftSyncSession(project.root, host.kernelProjectSessionId);
   setPageJsDraftSyncSession(project.root, host.kernelProjectSessionId);
-  host.loadProjectLoopDefinitions?.(project.root);
 
   if (project.isEmpty) {
     host.sourceGraph = null;
@@ -472,12 +467,12 @@ export async function reattachCurrentProjectSession(host: ProjectControllerHost)
   return true;
 }
 
-export async function initZolaProject(host: ProjectControllerHost) {
+export async function initZolaProject(host: ProjectControllerHost, themeId: string) {
   if (!host.scannedProject) return;
   host.projectStatus = "Se inițializează proiectul web Pană Studio...";
   host.setGlobalStatus("Se inițializează proiectul web Pană Studio...", "saving");
   try {
-    await zolaInit(host.scannedProject.root);
+    await zolaInit(host.scannedProject.root, themeId);
     await openProjectRoot(host, host.scannedProject.root);
     host.setGlobalStatus("Proiect web Pană Studio inițializat.", "restored");
   } catch (error) {
@@ -872,7 +867,6 @@ export function resetProjectScopedState(
   if (!options.preserveExternalReconcileBarrier) host.resetExternalDiskState?.();
   host.resetControlledPreviewState?.();
   host.resetPageSections?.();
-  host.resetProjectLoopDefinitions?.();
   host.sourceGraph = null;
   host.sourceCache = {};
   host.templateWorkbenchPlan = null;
@@ -893,8 +887,6 @@ export function resetProjectScopedState(
   host.saveStatus = "Nicio modificare salvata in aceasta sesiune.";
   host.cachebustAssets = false;
   host.diskState = createDiskState();
-  host.historyPanelOpen = false;
-  host.settingsPanelOpen = false;
   host.activeVersionPreview = null;
   host.setSessionProjectRoot();
   host.kernelProjectSessionId = "";
@@ -1354,16 +1346,6 @@ function resetProjectSessionState(host: ProjectControllerHost, shouldResetHistor
   host.previewDocumentMarkup = null;
   host.browserPreviewRoute = "/";
   host.refreshToken += 1;
-}
-
-export async function createContentPage(host: ProjectControllerHost) {
-  if (!host.scannedProject) {
-    host.projectStatus = "Crearea de pagini este disponibila doar pentru un proiect Zola real.";
-    return;
-  }
-  const rawTitle = window.prompt("Titlul paginii noi:");
-  if (rawTitle === null) return;
-  return createContentPageFromInput(host, { title: rawTitle });
 }
 
 export async function createContentPageFromInput(

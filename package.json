@@ -1,6 +1,6 @@
 {
   "name": "pana-studio",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Editor vizual desktop open-source pentru site-uri Zola.",
   "author": "Gabriel Pană",
   "license": "EUPL-1.2-or-later",
@@ -56,6 +56,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
+    "colorjs.io": "^0.6.1",
     "tauri-pty": "^0.2.1"
   },
   "overrides": {

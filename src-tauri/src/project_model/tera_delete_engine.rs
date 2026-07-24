@@ -242,7 +242,11 @@ fn is_tera_delete_anchor_kind(kind: &SourceNodeKind) -> bool {
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
-            | SourceNodeKind::With
+            | SourceNodeKind::SetGlobal
+            | SourceNodeKind::Filter
+            | SourceNodeKind::Break
+            | SourceNodeKind::Continue
+            | SourceNodeKind::Super
             | SourceNodeKind::TeraVariable
             | SourceNodeKind::TeraComment
             | SourceNodeKind::Raw
@@ -266,8 +270,14 @@ fn tera_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Macro => "macro",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
+        SourceNodeKind::Elif => "elif",
+        SourceNodeKind::Else => "else",
         SourceNodeKind::Set => "set",
-        SourceNodeKind::With => "with",
+        SourceNodeKind::SetGlobal => "setGlobal",
+        SourceNodeKind::Filter => "filter",
+        SourceNodeKind::Break => "break",
+        SourceNodeKind::Continue => "continue",
+        SourceNodeKind::Super => "super",
         SourceNodeKind::TeraVariable => "teraVariable",
         SourceNodeKind::TeraComment => "teraComment",
         SourceNodeKind::Raw => "raw",
@@ -503,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_delete_blocks_unspecialized_tera_syntax() {
+    fn plan_tera_delete_handles_filter_as_a_specialized_scope() {
         let root = unique_test_dir();
         write_project(
             &root,
@@ -518,7 +528,7 @@ mod tests {
             .source_graph
             .nodes
             .iter()
-            .find(|node| node.kind == SourceNodeKind::Tera && node.label.contains("filter"))
+            .find(|node| node.kind == SourceNodeKind::Filter)
             .unwrap();
 
         let plan = plan_tera_delete(
@@ -526,14 +536,18 @@ mod tests {
             &ProjectTeraDeleteIntent {
                 target_source_id: Some(node.id.clone()),
                 target_location: None,
-                target_kind: Some("tera".to_string()),
+                target_kind: Some("filter".to_string()),
                 target_label: Some(node.label.clone()),
             },
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!plan.allowed);
-        assert!(plan.diagnostic.unwrap().contains("nespecializată"));
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        assert!(!plan
+            .patch
+            .expect("filter delete patch")
+            .contents
+            .contains("{% filter"));
     }
 
     #[test]

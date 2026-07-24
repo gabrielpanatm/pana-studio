@@ -1,0 +1,11 @@
+[[elemente]]
+eticheta = "Proiecte"
+url = "/#proiecte"
+
+[[elemente]]
+eticheta = "Servicii"
+url = "/#servicii"
+
+[[elemente]]
+eticheta = "Studio"
+url = "/despre/"

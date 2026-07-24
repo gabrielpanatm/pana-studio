@@ -1,5 +1,4 @@
 base_url = "http://127.0.0.1:1111"
-theme = "pana-studio"
 title = "Proiect Pană Studio"
 description = "Un proiect Zola inițializat cu Pană Studio."
 default_language = "ro"

@@ -90,9 +90,8 @@
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     overflow: hidden;
-    box-shadow: var(--shadow);
     background: var(--surface-7);
   }
 
@@ -121,7 +120,7 @@
     min-height: 26px;
     padding: 0 9px;
     border: 1px solid var(--border-3);
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     font-size: 12px;
     font-weight: 700;
     background: var(--surface-5);

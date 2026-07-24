@@ -384,7 +384,7 @@ mod tests {
     fn page_js_config() -> PageJsConfig {
         PageJsConfig {
             version: Some(1),
-            components: Vec::new(),
+            blocks: Vec::new(),
             motion: Some(json!({
                 "schemaVersion": 1,
                 "animeVersion": "4.4.1",

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-template-catalog"
+description = "Enables the read_template_catalog command without any pre-configured scope."
+commands.allow = ["read_template_catalog"]
+
+[[permission]]
+identifier = "deny-read-template-catalog"
+description = "Denies the read_template_catalog command without any pre-configured scope."
+commands.deny = ["read_template_catalog"]

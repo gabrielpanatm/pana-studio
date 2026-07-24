@@ -52,7 +52,7 @@ const expected = {
   transactionId: "tx-undo-1",
 };
 
-test("receipt-ul comenzii v3 acceptă snapshot-ul ProjectWorkspace v2", () => {
+test("receipt-ul comenzii v3 acceptă snapshot-ul ProjectWorkspace curent", () => {
   const value = receipt();
   assert.equal(
     requireProjectWorkspaceUndoRedoCommandReceipt(value, expected),
@@ -196,7 +196,7 @@ test("snapshot-ul și lanțul reviziilor Undo/Redo sunt validate independent", (
       receipt({ workspace: { ...receipt().workspace, schemaVersion: 1 } }),
       expected,
     ),
-    /Snapshot-ul ProjectWorkspace.*schema 1; era necesară 2/,
+    new RegExp(`Snapshot-ul ProjectWorkspace.*schema 1; era necesară ${PROJECT_WORKSPACE_SCHEMA_VERSION}`),
   );
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(
@@ -220,4 +220,16 @@ test("versiunea frontend a comenzii este identică versiunii publicate de Rust",
     Number(match[1]),
     PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION,
   );
+});
+
+test("versiunea frontend ProjectWorkspace este identică versiunii publicate de Rust", () => {
+  const rust = readFileSync(
+    resolve(process.cwd(), "src-tauri/src/kernel/project_workspace/model.rs"),
+    "utf8",
+  );
+  const match = rust.match(
+    /PROJECT_WORKSPACE_SCHEMA_VERSION:\s*u32\s*=\s*(\d+)/,
+  );
+  assert.ok(match, "constanta Rust a contractului ProjectWorkspace trebuie să existe");
+  assert.equal(Number(match[1]), PROJECT_WORKSPACE_SCHEMA_VERSION);
 });

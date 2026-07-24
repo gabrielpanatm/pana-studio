@@ -1,0 +1,34 @@
+schema_version = 1
+id = "nord"
+display_name = "Nord"
+summary = "Temă precisă pentru consultanță, servicii profesionale și companii B2B."
+version = "1.0.0"
+category = "servicii"
+preview = "preview.webp"
+capabilities = [
+  "responsive-layout",
+  "design-tokens",
+  "data-driven-navigation",
+  "content-collections",
+  "accessible-menu",
+  "local-assets",
+]
+required_pages = [
+  "content/_index.md",
+  "content/despre.md",
+  "content/servicii/_index.md",
+]
+required_data = [
+  "data/meniu.toml",
+  "data/site.toml",
+]
+editor_anchors = [
+  "templates/base.html",
+  "templates/index.html",
+  "sass/css-framework/_baza.scss",
+  "sass/tema.scss",
+]
+
+[zola]
+minimum = "0.22.0"
+tested = "0.22.1"

@@ -1,0 +1,64 @@
+.subsol-site {
+  border-top: 1px solid $border-color;
+  background-color: $color-primary-dark;
+}
+
+.subsol-site p,
+.subsol-site a {
+  color: $color-primary-100;
+}
+
+.subsol-site__principal {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  gap: $space-xl;
+  padding-block: $space-xl;
+}
+
+.subsol-site__principal > div {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-2xs;
+}
+
+.marca-site--subsol {
+  margin-bottom: $space-xs;
+  color: $text-inverse;
+}
+
+.subsol-site__eticheta {
+  margin-bottom: $space-2xs;
+  color: $color-accent;
+  font-size: $text-xs;
+  font-weight: $font-bold;
+  letter-spacing: $tracking-wider;
+  text-transform: uppercase;
+}
+
+.subsol-site__legal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-s;
+  padding-block: $space-s;
+  border-top: 1px solid color-mix(in srgb, $color-white 15%, transparent);
+  font-size: $text-sm;
+}
+
+@media (max-width: $bp-tableta) {
+  .subsol-site__principal {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .subsol-site__principal {
+    grid-template-columns: 1fr;
+  }
+
+  .subsol-site__legal {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

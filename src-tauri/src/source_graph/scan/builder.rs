@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use crate::source_graph::{
-    identity::{source_node_id, source_relation_id},
+    identity::{source_relation_id, SourceIdentityAssigner},
     model::{
         SourceCapabilities, SourceDiagnosticSeverity, SourceGraph, SourceGraphAsset,
         SourceGraphDataFile, SourceGraphDiagnostic, SourceGraphPage, SourceGraphScript,
         SourceGraphStyle, SourceGraphTemplate, SourceNode, SourceNodeKind, SourceOrigin,
-        SourceRange, SourceRelation, SourceRelationKind,
+        SourceRange, SourceRelation, SourceRelationKind, SourceStructuredDocument,
     },
 };
 
@@ -17,6 +17,7 @@ pub(super) struct SourceGraphBuilder {
     nodes: Vec<SourceNode>,
     relations: Vec<SourceRelation>,
     diagnostics: Vec<SourceGraphDiagnostic>,
+    identities: SourceIdentityAssigner,
 }
 
 impl SourceGraphBuilder {
@@ -28,6 +29,7 @@ impl SourceGraphBuilder {
             nodes: Vec::new(),
             relations: Vec::new(),
             diagnostics: Vec::new(),
+            identities: SourceIdentityAssigner::default(),
         }
     }
 
@@ -42,13 +44,7 @@ impl SourceGraphBuilder {
         parent: Option<String>,
         capabilities: SourceCapabilities,
     ) -> String {
-        let id = source_node_id(
-            &file,
-            &kind,
-            &label,
-            range.as_ref().map(|range| range.start),
-            range.as_ref().map(|range| range.end),
-        );
+        let id = self.identities.next(&file, &kind, &label);
 
         if let Some(parent_id) = parent.as_ref() {
             if let Some(parent_node) = self.nodes.iter_mut().find(|node| node.id == *parent_id) {
@@ -126,6 +122,7 @@ impl SourceGraphBuilder {
         mut scripts: Vec<SourceGraphScript>,
         mut assets: Vec<SourceGraphAsset>,
         mut data_files: Vec<SourceGraphDataFile>,
+        mut structured_documents: Vec<SourceStructuredDocument>,
     ) -> SourceGraph {
         pages.sort_by(|left, right| left.file.cmp(&right.file));
         templates.sort_by(|left, right| left.file.cmp(&right.file));
@@ -133,6 +130,7 @@ impl SourceGraphBuilder {
         scripts.sort_by(|left, right| left.file.cmp(&right.file));
         assets.sort_by(|left, right| left.file.cmp(&right.file));
         data_files.sort_by(|left, right| left.file.cmp(&right.file));
+        structured_documents.sort_by(|left, right| left.file.cmp(&right.file));
         SourceGraph {
             project_root: self.project_root,
             zola_root: self.zola_root,
@@ -143,6 +141,9 @@ impl SourceGraphBuilder {
             scripts,
             assets,
             data_files,
+            structured_documents,
+            component_graph: Default::default(),
+            block_graph: Default::default(),
             nodes: self.nodes,
             relations: self.relations,
             diagnostics: self.diagnostics,

@@ -111,6 +111,9 @@ function captureSelectionInfo(selection: SelectionInfo | null | undefined): Sele
     sourceLocation: selection.sourceLocation
       ? Object.freeze({ ...selection.sourceLocation })
       : null,
+    blockContext: selection.blockContext
+      ? Object.freeze({ ...selection.blockContext })
+      : null,
   });
 }
 

@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { onDestroy, tick } from "svelte";
   import {
     IconCode,
-    IconColumns2,
     IconEye,
     IconFile,
     IconFileCode,
+    IconLayoutColumns,
     IconLayoutOff,
     IconLayoutRows,
     IconMarkdown,
@@ -53,21 +54,131 @@
   );
   const dirtySet = $derived(new Set(dirtyPaths));
   const canCloseDocuments = $derived((activeGroup?.documents.length ?? 0) > 1);
+  let documentTabsElement: HTMLDivElement;
+  let lastRevealedDocumentKey = "";
+  let wheelScrollTarget = 0;
+  let wheelAnimationFrame: number | null = null;
+  let lastWheelAnimationTime = 0;
 
   function iconKind(path: string): "markdown" | "code" | "file" {
     if (/\.md$/i.test(path)) return "markdown";
     if (/\.(?:html?|tera|scss|sass|css|js|ts|json|toml|ya?ml)$/i.test(path)) return "code";
     return "file";
   }
+
+  function wheelDeltaInPixels(event: WheelEvent, element: HTMLElement): number {
+    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaY * 16;
+    if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaY * element.clientWidth;
+    return event.deltaY;
+  }
+
+  function stopWheelAnimation() {
+    if (wheelAnimationFrame !== null) cancelAnimationFrame(wheelAnimationFrame);
+    wheelAnimationFrame = null;
+    lastWheelAnimationTime = 0;
+    wheelScrollTarget = documentTabsElement?.scrollLeft ?? 0;
+  }
+
+  function animateWheelScroll(time: number) {
+    if (!documentTabsElement) {
+      stopWheelAnimation();
+      return;
+    }
+
+    const elapsed = lastWheelAnimationTime === 0
+      ? 16
+      : Math.min(32, time - lastWheelAnimationTime);
+    lastWheelAnimationTime = time;
+    const distance = wheelScrollTarget - documentTabsElement.scrollLeft;
+
+    if (Math.abs(distance) < 0.5) {
+      documentTabsElement.scrollLeft = wheelScrollTarget;
+      wheelAnimationFrame = null;
+      lastWheelAnimationTime = 0;
+      return;
+    }
+
+    const progress = 1 - Math.exp(-elapsed / 72);
+    documentTabsElement.scrollLeft += distance * progress;
+    wheelAnimationFrame = requestAnimationFrame(animateWheelScroll);
+  }
+
+  function handleDocumentTabsWheel(event: WheelEvent) {
+    const tabs = event.currentTarget as HTMLDivElement;
+    if (event.ctrlKey || event.metaKey) return;
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      stopWheelAnimation();
+      return;
+    }
+
+    const maxScrollLeft = Math.max(0, tabs.scrollWidth - tabs.clientWidth);
+    if (maxScrollLeft === 0) return;
+
+    const delta = wheelDeltaInPixels(event, tabs);
+    if (delta === 0) return;
+
+    const currentTarget = wheelAnimationFrame === null ? tabs.scrollLeft : wheelScrollTarget;
+    const nextTarget = Math.min(maxScrollLeft, Math.max(0, currentTarget + delta));
+    if (nextTarget === currentTarget) return;
+
+    event.preventDefault();
+    wheelScrollTarget = nextTarget;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      stopWheelAnimation();
+      tabs.scrollLeft = nextTarget;
+      wheelScrollTarget = nextTarget;
+      return;
+    }
+    if (wheelAnimationFrame === null) {
+      lastWheelAnimationTime = 0;
+      wheelAnimationFrame = requestAnimationFrame(animateWheelScroll);
+    }
+  }
+
+  function revealActiveDocumentTab(documentId: string) {
+    const tab = Array.from(
+      documentTabsElement?.querySelectorAll<HTMLElement>("[data-document-id]") ?? [],
+    ).find((candidate) => candidate.dataset.documentId === documentId);
+    if (!tab || !documentTabsElement) return;
+
+    const visibleLeft = documentTabsElement.scrollLeft;
+    const visibleRight = visibleLeft + documentTabsElement.clientWidth;
+    const tabLeft = tab.offsetLeft;
+    const tabRight = tabLeft + tab.offsetWidth;
+
+    stopWheelAnimation();
+    if (tabLeft < visibleLeft) {
+      documentTabsElement.scrollLeft = tabLeft;
+    } else if (tabRight > visibleRight) {
+      documentTabsElement.scrollLeft = tabRight - documentTabsElement.clientWidth;
+    }
+  }
+
+  $effect(() => {
+    const documentId = activeGroup?.activeDocumentId ?? "";
+    const documentKey = `${activeGroup?.groupId ?? ""}\u0000${documentId}`;
+    if (!documentId || documentKey === lastRevealedDocumentKey) return;
+    lastRevealedDocumentKey = documentKey;
+    void tick().then(() => revealActiveDocumentTab(documentId));
+  });
+
+  onDestroy(stopWheelAnimation);
 </script>
 
 <header class="document-bar" aria-label="Documente deschise">
-  <div class="document-tabs" role="tablist" aria-label="Documentele spațiului de lucru">
+  <div
+    bind:this={documentTabsElement}
+    class="document-tabs"
+    role="tablist"
+    aria-label="Documentele spațiului de lucru"
+    onwheel={handleDocumentTabsWheel}
+  >
     {#if activeGroup && activeGroup.documents.length > 0}
       {#each activeGroup.documents as document (document.documentId)}
         <div
           class:active={document.documentId === activeGroup.activeDocumentId}
           class="document-tab"
+          data-document-id={document.documentId}
         >
           <button
             type="button"
@@ -166,7 +277,7 @@
       aria-label="Activează split alăturat"
       onclick={() => { void setSplit("vertical"); }}
     >
-      <IconColumns2 size={15} stroke={1.8} />
+      <IconLayoutColumns size={15} stroke={1.8} />
     </button>
     <button
       type="button"
@@ -201,7 +312,7 @@
     min-width: 0;
     min-height: var(--wb-document-bar-height, 36px);
     border-bottom: 1px solid var(--wb-border-subtle, var(--border));
-    background: var(--wb-surface-chrome, var(--surface-2));
+    background: var(--surface-panel);
   }
 
   .document-tabs {
@@ -210,6 +321,8 @@
     min-width: 0;
     flex: 1;
     overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
     scrollbar-width: none;
   }
 
@@ -231,7 +344,7 @@
 
   .document-tab.active {
     color: var(--wb-text-primary, var(--text));
-    background: var(--wb-surface-document, var(--surface));
+    background: var(--surface-raised);
   }
 
   .document-tab.active::after {
@@ -268,7 +381,7 @@
   .surface-switcher button:hover:not(:disabled),
   .layout-switcher button:hover:not(:disabled) {
     color: var(--wb-text-primary, var(--text));
-    background: var(--wb-control-hover, var(--brand-soft));
+    background: var(--control-hover);
   }
 
   .document-select:focus-visible,
@@ -296,8 +409,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-    font-weight: 650;
+    font-size: var(--font-body);
+    font-weight: 600;
   }
 
   .dirty-indicator {

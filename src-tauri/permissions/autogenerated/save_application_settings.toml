@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-application-settings"
+description = "Enables the save_application_settings command without any pre-configured scope."
+commands.allow = ["save_application_settings"]
+
+[[permission]]
+identifier = "deny-save-application-settings"
+description = "Denies the save_application_settings command without any pre-configured scope."
+commands.deny = ["save_application_settings"]

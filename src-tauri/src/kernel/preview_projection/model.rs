@@ -217,6 +217,13 @@ pub enum CanvasPatchOperation {
         target: CanvasPatchAnchor,
         attributes: BTreeMap<String, Option<String>>,
     },
+    SetBlockOption {
+        target: CanvasPatchAnchor,
+        provider_id: String,
+        option_id: String,
+        attribute: String,
+        value: Option<String>,
+    },
     SetText {
         target: CanvasPatchAnchor,
         text: String,

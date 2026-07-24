@@ -368,10 +368,30 @@ fn push_text_change_if_changed(
     });
 }
 
-fn with_bound_css_file_buffer<T>(
+pub(crate) fn with_bound_css_file_buffer<T>(
     state: &AppState,
     identity: &FileBufferRequestIdentity,
     operation: impl FnOnce(&Path, &Path, &ProjectSessionSnapshot, &FileBufferStore) -> Result<T, String>,
+) -> Result<FileBufferCommandReceipt<T>, String> {
+    with_bound_css_file_buffer_revision(
+        state,
+        identity,
+        |project_root, zola_root, session, store, _workspace_revision| {
+            operation(project_root, zola_root, session, store)
+        },
+    )
+}
+
+pub(crate) fn with_bound_css_file_buffer_revision<T>(
+    state: &AppState,
+    identity: &FileBufferRequestIdentity,
+    operation: impl FnOnce(
+        &Path,
+        &Path,
+        &ProjectSessionSnapshot,
+        &FileBufferStore,
+        u64,
+    ) -> Result<T, String>,
 ) -> Result<FileBufferCommandReceipt<T>, String> {
     // Project Transition publică în aceeași ordine. Păstrarea prefixului până
     // după receipt împiedică redeschiderea aceluiași root să schimbe runtime-ul
@@ -402,7 +422,7 @@ fn with_bound_css_file_buffer<T>(
     require_file_buffer_session_binding(&current_root_string, session, store, identity)?;
 
     let zola_root = zola_project_root(project_root);
-    let payload = operation(project_root, &zola_root, session, store)?;
+    let payload = operation(project_root, &zola_root, session, store, workspace.revision)?;
     accepted_disk.require_live_complete(
         &session.runtime_instance_id(),
         &session.project_root,
@@ -411,10 +431,13 @@ fn with_bound_css_file_buffer<T>(
     Ok(FileBufferCommandReceipt::new(session, payload))
 }
 
-fn execute_css_workspace_mutation<R>(
+pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
     app: &AppHandle,
     state: &State<AppState>,
     identity: &FileBufferRequestIdentity,
+    expected_workspace_revision: Option<u64>,
+    source: &str,
+    coalesce_prefix: Option<&str>,
     build: impl FnOnce(
         &Path,
         &Path,
@@ -448,6 +471,13 @@ fn execute_css_workspace_mutation<R>(
         &workspace.documents,
         identity,
     )?;
+    if expected_workspace_revision.is_some_and(|expected| expected != workspace.revision) {
+        return Err(format!(
+            "[theme_style_stale_workspace] Editorul de stil a pornit de la revizia {}, dar ProjectWorkspace este la revizia {}.",
+            expected_workspace_revision.unwrap_or_default(),
+            workspace.revision,
+        ));
+    }
 
     let (input, result_value) = build(project_root, &zola_root, &workspace.documents)?;
     let Some(input) = input else {
@@ -466,6 +496,7 @@ fn execute_css_workspace_mutation<R>(
             contents: change.new_text.clone(),
         })
         .collect::<Vec<_>>();
+    let coalesce_key = coalesce_prefix.map(|prefix| format!("{prefix}:{}", input.target));
     let (mutation, removed_files) =
         commit_project_workspace_session_mutation(app, workspace, |candidate| {
             let workspace_identity = ProjectWorkspaceIdentity {
@@ -477,8 +508,8 @@ fn execute_css_workspace_mutation<R>(
                 &workspace_identity,
                 WorkspaceMutationMetadata {
                     label: input.label,
-                    source: "css.panel".to_string(),
-                    coalesce_key: Some(format!("css.panel:{}", input.target)),
+                    source: source.to_string(),
+                    coalesce_key,
                     transaction_id: None,
                 },
                 input
@@ -531,6 +562,27 @@ fn execute_css_workspace_mutation<R>(
         documents,
         mutation,
     ))
+}
+
+fn execute_css_workspace_mutation<R>(
+    app: &AppHandle,
+    state: &State<AppState>,
+    identity: &FileBufferRequestIdentity,
+    build: impl FnOnce(
+        &Path,
+        &Path,
+        &FileBufferStore,
+    ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
+) -> Result<CssMutationCommandReceipt<R>, String> {
+    execute_css_workspace_mutation_with_metadata(
+        app,
+        state,
+        identity,
+        None,
+        "css.panel",
+        Some("css.panel"),
+        build,
+    )
 }
 
 fn collect_media_query_migration_changes(
@@ -907,6 +959,78 @@ pub fn set_scss_variable(
             Ok((input, ()))
         },
     )
+}
+
+#[tauri::command(async)]
+pub fn create_scss_variable(
+    relative_path: String,
+    name: String,
+    value: String,
+    identity: FileBufferRequestIdentity,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<CssMutationCommandReceipt<()>, String> {
+    let name = validate_scss_variable_name(&name)?;
+    validate_panel_variable_value(&value)?;
+    let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
+    if Path::new(&zola_relative_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        != Some("scss")
+    {
+        return Err("Tokenii noi pot fi adăugați numai într-un fișier SCSS.".to_string());
+    }
+    execute_css_workspace_mutation(
+        &app,
+        &state,
+        &identity,
+        |project_root, _zola_root, store| {
+            let project_relative_path = to_project_relative_path(&zola_relative_path);
+            let source = read_current_zola_text(project_root, store, &zola_relative_path)?
+                .ok_or_else(|| format!("Nu am putut citi {relative_path}."))?;
+            if variable_value_in_source(&source, &name).is_some() {
+                return Err(format!("Variabila ${name} există deja în {relative_path}."));
+            }
+            let separator = if source.is_empty() || source.ends_with('\n') {
+                ""
+            } else {
+                "\n"
+            };
+            let updated = format!("{source}{separator}\n${name}: {};\n", value.trim());
+            Ok((
+                Some(WorkspaceTextResourceMutationInput {
+                    label: format!("Creare variabilă SCSS ${name}"),
+                    target: project_relative_path.clone(),
+                    changes: vec![WorkspaceTextChange {
+                        relative_path: project_relative_path,
+                        new_text: updated,
+                    }],
+                    deletes: Vec::new(),
+                }),
+                (),
+            ))
+        },
+    )
+}
+
+fn validate_scss_variable_name(value: &str) -> Result<String, String> {
+    let value = value.trim().trim_start_matches('$');
+    if value.is_empty() {
+        return Err("Numele tokenului este obligatoriu.".to_string());
+    }
+    if value.len() > 128 {
+        return Err("Numele tokenului depășește limita de 128 de caractere.".to_string());
+    }
+    let mut characters = value.chars();
+    let first = characters.next().unwrap_or_default();
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '-')
+        || !characters.all(|character| {
+            character.is_ascii_alphanumeric() || character == '_' || character == '-'
+        })
+    {
+        return Err("Numele tokenului trebuie să conțină numai litere, cifre, _ și -.".to_string());
+    }
+    Ok(value.to_string())
 }
 
 #[tauri::command(async)]

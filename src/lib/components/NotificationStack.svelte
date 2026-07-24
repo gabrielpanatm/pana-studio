@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconX } from "@tabler/icons-svelte";
   import type { AppNotification } from "$lib/notifications/center";
 
   let {
@@ -61,7 +62,7 @@
             title="Închide"
             onclick={() => dismiss(notification.id)}
           >
-            ×
+            <IconX size={14} stroke={1.9} />
           </button>
         </article>
       {/each}

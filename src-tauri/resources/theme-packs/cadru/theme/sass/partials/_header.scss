@@ -1,0 +1,144 @@
+.sari-la-continut {
+  position: fixed;
+  top: $space-xs;
+  left: $space-xs;
+  z-index: $z-toast;
+  transform: translateY(-200%);
+  padding: $space-2xs $space-xs;
+  background-color: $color-accent;
+  color: $color-gray-900;
+  font-weight: $font-bold;
+}
+
+.sari-la-continut:focus {
+  transform: translateY(0);
+}
+
+.antet-cadru {
+  position: relative;
+  z-index: $z-sticky;
+  border-bottom: 1px solid $border-color;
+  background-color: $bg-body;
+}
+
+.antet-cadru__interior {
+  display: flex;
+  min-height: 5rem;
+  align-items: center;
+  gap: $space-m;
+}
+
+.marca-cadru {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2xs;
+  color: $text-heading;
+  font-family: $font-display;
+  font-size: $text-lg;
+  font-weight: $font-bold;
+  letter-spacing: $tracking-tight;
+  text-transform: uppercase;
+}
+
+.marca-cadru i {
+  display: block;
+  width: 0.5rem;
+  aspect-ratio: 1;
+  background-color: $color-accent;
+}
+
+.navigatie-cadru {
+  display: flex;
+  align-items: center;
+  gap: $space-m;
+  margin-left: auto;
+}
+
+.navigatie-cadru ul {
+  display: flex;
+  align-items: center;
+  gap: $space-xs;
+}
+
+.navigatie-cadru a {
+  color: $text-body;
+  font-size: $text-sm;
+  font-weight: $font-medium;
+}
+
+.navigatie-cadru a:hover {
+  color: $color-accent;
+}
+
+.cadru-contact {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2xs;
+  padding-left: $space-m;
+  border-left: 1px solid $border-color;
+}
+
+.buton-meniu {
+  display: none;
+  width: 2.75rem;
+  aspect-ratio: 1;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-left: auto;
+  border: 1px solid $border-color;
+}
+
+.buton-meniu span[aria-hidden='true'] {
+  width: 1.125rem;
+  height: 0.125rem;
+  background-color: $text-heading;
+}
+
+@media (max-width: $bp-mobil) {
+  .antet-cadru__interior {
+    min-height: 4.5rem;
+  }
+
+  .buton-meniu {
+    display: inline-flex;
+  }
+
+  .navigatie-cadru {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    display: none;
+    align-items: stretch;
+    flex-direction: column;
+    padding: $space-s $container-padding;
+    border-bottom: 1px solid $border-color;
+    background-color: $bg-body;
+    box-shadow: $shadow-l;
+  }
+
+  .navigatie-cadru.este-deschisa {
+    display: flex;
+  }
+
+  .navigatie-cadru ul {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .navigatie-cadru li,
+  .navigatie-cadru a {
+    width: 100%;
+  }
+
+  .navigatie-cadru a {
+    display: block;
+    padding: $space-xs 0;
+    border-bottom: 1px solid $border-color;
+  }
+
+  .cadru-contact {
+    padding-left: 0;
+    border-left: 0;
+  }
+}

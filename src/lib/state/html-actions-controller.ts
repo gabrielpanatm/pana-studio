@@ -33,9 +33,6 @@ import {
 } from "$lib/kernel/preview-structural-lane";
 import { htmlPaletteInsertOptions } from "$lib/project/html-palette";
 import { createZolaImageIntent, resolveZolaImageSource } from "$lib/html/zola-image";
-import {
-  reconcilePageComponentContracts,
-} from "$lib/page-components/contract";
 import { reconcilePageAssetContracts } from "$lib/page-assets/contract";
 import { isZolaTemplatePath, scannedCacheKey, zolaRelativePath } from "$lib/project/files";
 import {
@@ -57,6 +54,7 @@ import type { PreviewInsertDropRequest } from "$lib/state/preview-insert-control
 import type {
   EditableAttributes,
   HtmlPendingArea,
+  NativeBlockOptionIntent,
   ProjectHtmlAttributePatch,
   ProjectHtmlAttributeMutation,
   ProjectZolaImageIntent,
@@ -457,6 +455,7 @@ async function executeSelectedHtmlAttributes(
   attributes: Record<string, string | null>,
   project: (patch: ProjectHtmlAttributePatch, target: HtmlActionTarget) => Promise<void> | void,
   zolaImage: ProjectZolaImageIntent | null = null,
+  nativeBlockOption: NativeBlockOptionIntent | null = null,
 ): Promise<EditorActionOutcome> {
   const result = await runInPreviewStructuralLane(host, async (lease) => {
     const location = sourceLocationForSourceReference(
@@ -480,6 +479,7 @@ async function executeSelectedHtmlAttributes(
         targetSelector: target.selector,
         attributes: attributeMutationsFromRecord(attributes),
         ...(zolaImage ? { zolaImage } : {}),
+        ...(nativeBlockOption ? { nativeBlockOption } : {}),
       },
     }, previewStructuralCommandIdentity(lease));
 
@@ -508,6 +508,55 @@ async function executeSelectedHtmlAttributes(
     return committedAction();
   });
   return result ?? cancelledAction("Aplicarea atributelor a fost anulată odată cu sesiunea structurală.");
+}
+
+export type ApplyNativeBlockOptionRequest = {
+  providerId: string;
+  optionId: string;
+  value: NativeBlockOptionIntent["value"];
+  rootSelector: string;
+  rootTag: string;
+  rootSourceId: string | null;
+  rootLocation: SourceEditLocation | null;
+  rootSessionId: string | null;
+};
+
+export async function applyNativeBlockOptionToHtml(
+  host: HtmlActionsControllerHost,
+  request: ApplyNativeBlockOptionRequest,
+): Promise<EditorActionOutcome> {
+  const target = freezeHtmlActionTarget({
+    selector: request.rootSelector,
+    tag: request.rootTag,
+    sourceId: request.rootSourceId,
+    sourceLocation: request.rootLocation,
+    sessionId: request.rootSessionId,
+  });
+  try {
+    const result = await executeSelectedHtmlAttributes(
+      host,
+      target,
+      {},
+      () => {},
+      null,
+      {
+        providerId: request.providerId,
+        optionId: request.optionId,
+        value: request.value,
+      },
+    );
+    if (result.status === "committed") {
+      host.setGlobalStatus("Proprietatea blocului a fost confirmată în ProjectWorkspace.", "unsaved");
+    }
+    return result;
+  } catch (error) {
+    const outcome = actionErrorOutcome(error);
+    host.setGlobalStatus(
+      `Eroare proprietate bloc: ${outcome.reason ?? outcome.status}`,
+      "error",
+    );
+    return outcome;
+  }
 }
 
 export async function applyZolaImageProcessingToHtml(
@@ -765,9 +814,6 @@ export async function duplicateSelectedHtmlElement(
       );
       await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
         cacheCommittedHtmlPatch(host, patch);
-        if (patch.componentIds.length > 0) {
-          await reconcilePageComponentContracts(host, patch.insertedLocation);
-        }
         host.structureStatus = `Element <${patch.tag}> duplicat prin kernel.`;
       });
       return committedAction();
@@ -840,8 +886,8 @@ async function insertPaletteElementAtTargetInLane(
     return;
   }
 
-  const componentId = request.element.kind === "component" ? request.element.componentId ?? null : null;
-  const options = componentId
+  const blockId = request.element.kind === "block" ? request.element.blockId ?? null : null;
+  const options = blockId
     ? {
         tag: request.element.tag,
         className: request.element.className,
@@ -873,7 +919,7 @@ async function insertPaletteElementAtTargetInLane(
         position: request.position,
         element: {
           kind: request.element.kind ?? "html",
-          componentId,
+          blockId,
           tag: options.tag,
           className: options.className,
           text: options.text,
@@ -888,9 +934,6 @@ async function insertPaletteElementAtTargetInLane(
     );
     await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
       cacheCommittedHtmlPatch(host, patch);
-      if (patch.componentId) {
-        await reconcilePageComponentContracts(host, patch.insertedLocation, { ensureComponentId: patch.componentId });
-      }
       host.structureStatus = `Element <${patch.tag}> adăugat ${label} și salvat prin kernel.`;
     });
   } catch (error) {
@@ -1073,7 +1116,7 @@ async function insertNodeRelativeInLane(
           position: insertPosition,
           element: {
             kind: "html",
-            componentId: null,
+            blockId: null,
             tag: opts.tag,
             className: opts.className,
             text: opts.text,

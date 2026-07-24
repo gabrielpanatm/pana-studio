@@ -8,10 +8,10 @@ pub const CONTEXT_HUB_SCHEMA_VERSION: u32 = 3;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiCenterView {
+    #[serde(alias = "site")]
     Preview,
     Code,
     Markdown,
-    Site,
     Kernel,
 }
 
@@ -260,3 +260,20 @@ impl std::fmt::Display for ContextHubError {
 }
 
 impl std::error::Error for ContextHubError {}
+
+#[cfg(test)]
+mod tests {
+    use super::UiCenterView;
+
+    #[test]
+    fn legacy_site_center_view_migrates_to_preview() {
+        let view: UiCenterView =
+            serde_json::from_str(r#""site""#).expect("legacy site center view");
+
+        assert_eq!(view, UiCenterView::Preview);
+        assert_eq!(
+            serde_json::to_string(&view).expect("preview center view"),
+            r#""preview""#,
+        );
+    }
+}

@@ -4,10 +4,9 @@
     IconDeviceDesktop,
     IconDeviceMobile,
     IconDeviceTablet,
-    IconMinus,
-    IconPlus,
     IconRuler2,
   } from "@tabler/icons-svelte";
+  import PreviewZoomControl from "$lib/components/workbench/PreviewZoomControl.svelte";
   import type {
     WorkbenchCanvasPreset,
     WorkbenchCanvasViewportSnapshot,
@@ -15,14 +14,24 @@
 
   let {
     viewport,
-    documentPath = "",
     breakpoints = [],
     setViewport,
+    setPreviewZoom,
+    commitPreviewZoom,
+    resetPreviewZoom,
+    interactivePreviewEnabled = false,
+    interactivePreviewUrl = "",
+    setInteractivePreviewEnabled,
   }: {
     viewport: WorkbenchCanvasViewportSnapshot;
-    documentPath?: string;
     breakpoints?: Array<{ id: string; label: string; widthPx: number }>;
     setViewport: (viewport: Partial<WorkbenchCanvasViewportSnapshot>) => void | Promise<void>;
+    setPreviewZoom: (value: number) => void;
+    commitPreviewZoom: (value: number) => void | Promise<void>;
+    resetPreviewZoom: () => void;
+    interactivePreviewEnabled?: boolean;
+    interactivePreviewUrl?: string;
+    setInteractivePreviewEnabled: (enabled: boolean) => void;
   } = $props();
 
   const presets: Array<{
@@ -57,23 +66,14 @@
     void setViewport({ mode: "fixed", preset: "custom", widthPx });
   }
 
-  function changeZoom(delta: number) {
-    if (viewport.mode === "fit") return;
-    const zoomPercent = Math.min(200, Math.max(25, viewport.zoomPercent + delta));
-    void setViewport({ zoomPercent });
-  }
 </script>
 
-<div class="canvas-toolbar" aria-label="Canvas responsive">
-  <div class="surface-copy">
-    <strong>Vizual</strong>
-    <span title={documentPath}>{documentPath}</span>
-  </div>
-
+<div class="canvas-toolbar" aria-label="Controale preview">
   <div class="toolbar-controls">
     <div class="segmented" role="group" aria-label="Preset viewport">
       <button
         type="button"
+        class="ui-button compact"
         class:active={viewport.mode === "fit"}
         aria-pressed={viewport.mode === "fit" ? "true" : "false"}
         aria-label="Potrivește canvas-ul în spațiul disponibil"
@@ -86,6 +86,7 @@
       {#each presets as preset (preset.id)}
         <button
           type="button"
+          class="ui-button compact"
           class:active={viewport.mode === "fixed" && viewport.preset === preset.id}
           aria-pressed={viewport.mode === "fixed" && viewport.preset === preset.id ? "true" : "false"}
           aria-label={preset.label}
@@ -104,7 +105,7 @@
       {/each}
     </div>
 
-    <label class="width-field" title="Lățime exactă viewport">
+    <label class="ui-field compact width-field" title="Lățime exactă viewport">
       <span>L</span>
       <input
         type="number"
@@ -122,20 +123,18 @@
       <small>px</small>
     </label>
 
-    <div class="zoom-control" role="group" aria-label="Zoom canvas">
-      <button type="button" disabled={viewport.mode === "fit"} aria-label="Micșorează zoom" onclick={() => { changeZoom(-25); }}>
-        <IconMinus size={13} stroke={2} />
-      </button>
-      <span>{viewport.zoomPercent}%</span>
-      <button type="button" disabled={viewport.mode === "fit"} aria-label="Mărește zoom" onclick={() => { changeZoom(25); }}>
-        <IconPlus size={13} stroke={2} />
-      </button>
-    </div>
+    <PreviewZoomControl
+      previewZoom={viewport.zoomPercent}
+      disabled={viewport.mode === "fit"}
+      {setPreviewZoom}
+      {commitPreviewZoom}
+      {resetPreviewZoom}
+    />
 
     <button
       type="button"
+      class="ui-icon-button compact ruler-toggle"
       class:active={viewport.showRulers}
-      class="ruler-toggle"
       aria-pressed={viewport.showRulers ? "true" : "false"}
       title="Arată sau ascunde rigla și breakpointurile"
       aria-label="Comută rigla canvas-ului"
@@ -155,6 +154,17 @@
       {/if}
     </div>
   </div>
+
+  <button
+    type="button"
+    class="ui-button compact interactive-toggle"
+    class:active={interactivePreviewEnabled}
+    aria-pressed={interactivePreviewEnabled ? "true" : "false"}
+    disabled={!interactivePreviewEnabled && !interactivePreviewUrl}
+    onclick={() => setInteractivePreviewEnabled(!interactivePreviewEnabled)}
+  >
+    {interactivePreviewEnabled ? "Revino la editare sigură" : "Pornește modul interactiv"}
+  </button>
 </div>
 
 <style>
@@ -164,43 +174,22 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    container-type: inline-size;
     gap: 12px;
     min-height: 36px;
-    padding: 3px 7px 3px 10px;
-    border-bottom: 1px solid var(--wb-border-subtle, var(--border-2));
+    padding: 3px 7px;
+    border-top: 1px solid var(--wb-border-subtle, var(--border-2));
     color: var(--wb-text-muted, var(--text-muted));
-    background: var(--wb-surface-chrome, var(--surface-2));
-    font-size: 12px;
+    background: var(--surface-panel);
+    font-size: var(--font-meta);
   }
 
-  .surface-copy,
   .toolbar-controls,
   .segmented,
   .width-field,
-  .zoom-control,
   .breakpoint-summary {
     display: flex;
     align-items: center;
-  }
-
-  .surface-copy {
-    gap: 8px;
-    min-width: 70px;
-    overflow: hidden;
-  }
-
-  .surface-copy strong {
-    color: var(--wb-accent-strong, var(--brand-strong));
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .surface-copy span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .toolbar-controls {
@@ -209,9 +198,14 @@
     min-width: 0;
   }
 
+  .interactive-toggle {
+    flex: 0 0 auto;
+    border-radius: var(--radius-control);
+    font-weight: 600;
+  }
+
   button,
   input {
-    height: 26px;
     border: 1px solid var(--wb-border-subtle, var(--border-3));
     color: var(--wb-text-muted, var(--text-muted));
     background: var(--wb-surface-document, var(--surface));
@@ -229,7 +223,7 @@
   button:hover:not(:disabled),
   button.active {
     color: var(--wb-accent-strong, var(--brand-strong));
-    background: var(--wb-accent-soft, var(--brand-soft));
+    background: var(--control-selected);
   }
 
   button:disabled {
@@ -249,29 +243,30 @@
 
   .segmented button {
     border-right-width: 0;
+    border-radius: 0;
   }
 
   .segmented button:first-child {
-    border-radius: 6px 0 0 6px;
+    border-radius: var(--radius-control) 0 0 var(--radius-control);
   }
 
   .segmented button:last-child {
     border-right-width: 1px;
-    border-radius: 0 6px 6px 0;
+    border-radius: 0 var(--radius-control) var(--radius-control) 0;
   }
 
   .width-field {
     gap: 4px;
-    height: 26px;
     padding-left: 6px;
     border: 1px solid var(--wb-border-subtle, var(--border-3));
-    border-radius: 6px;
+    border-radius: var(--radius-control);
     background: var(--wb-surface-document, var(--surface));
   }
 
   .width-field input {
     width: 54px;
-    height: 22px;
+    height: 100%;
+    min-height: 0;
     padding: 0 3px;
     border: 0;
     color: var(--wb-text-primary, var(--text));
@@ -288,38 +283,9 @@
     opacity: 0.45;
   }
 
-  .zoom-control {
-    gap: 0;
-  }
-
-  .zoom-control button {
-    width: 26px;
-    padding: 0;
-  }
-
-  .zoom-control button:first-child {
-    border-radius: 6px 0 0 6px;
-  }
-
-  .zoom-control button:last-child {
-    border-radius: 0 6px 6px 0;
-  }
-
-  .zoom-control span {
-    display: grid;
-    min-width: 42px;
-    height: 26px;
-    border-block: 1px solid var(--wb-border-subtle, var(--border-3));
-    background: var(--wb-surface-document, var(--surface));
-    place-items: center;
-    color: var(--wb-text-primary, var(--text));
-    font-variant-numeric: tabular-nums;
-  }
-
   .ruler-toggle {
-    width: 28px;
     padding: 0;
-    border-radius: 6px;
+    border-radius: var(--radius-control);
   }
 
   .breakpoint-summary {
@@ -353,10 +319,9 @@
     opacity: 1;
   }
 
-  @media (max-width: 1320px) {
+  @container (max-width: 900px) {
     .breakpoint-summary small,
-    .segmented button span,
-    .surface-copy span {
+    .segmented button span {
       display: none;
     }
   }

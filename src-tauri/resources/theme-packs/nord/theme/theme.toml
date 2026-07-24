@@ -1,0 +1,11 @@
+name = "nord"
+description = "Temă Zola pentru servicii profesionale, consultanță și organizații B2B."
+license = "MIT"
+homepage = "https://pana.tm.ro"
+min_version = "0.22.0"
+
+[extra]
+
+[author]
+name = "Gabriel Pană"
+homepage = "https://pana.tm.ro"

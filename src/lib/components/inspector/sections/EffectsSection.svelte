@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { IconSparkles } from "@tabler/icons-svelte";
+  import { IconPlus, IconSparkles } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
   import TextWithOptions from "../controls/TextWithOptions.svelte";
@@ -236,8 +236,11 @@
       class="add-btn"
       class:active={showFilter}
       title="Adaugă funcție filter"
+      aria-label="Adaugă funcție filter"
       onclick={openFilter}
-    >+</button>
+    >
+      <IconPlus size={13} stroke={1.9} />
+    </button>
   </div>
   <PropInput
     value={getValue("filter")}
@@ -254,8 +257,11 @@
       class="add-btn"
       class:active={showBdFilter}
       title="Adaugă funcție backdrop-filter"
+      aria-label="Adaugă funcție backdrop-filter"
       onclick={openBdFilter}
-    >+</button>
+    >
+      <IconPlus size={13} stroke={1.9} />
+    </button>
   </div>
   <PropInput
     value={getValue("backdrop-filter")}
@@ -380,7 +386,7 @@
     border: 1px solid var(--border-4);
     border-radius: 8px;
     background: var(--surface-2);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    box-shadow: var(--shadow);
   }
 
   .effects-option {

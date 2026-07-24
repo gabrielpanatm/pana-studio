@@ -172,8 +172,8 @@ mod platform {
     #[path = "symlink.rs"]
     mod symlink;
     pub(super) use copy::{
-        classify_copy_recovery, copy_file_wal, execute_copy_recovery, plan_copy,
-        resolve_copy_operator,
+        classify_copy_recovery, copy_file_wal, copy_rebuildable_file, execute_copy_recovery,
+        plan_copy, resolve_copy_operator,
     };
     #[cfg(test)]
     pub(super) use directory::plan_legacy_directory_for_test;
@@ -6903,6 +6903,41 @@ pub(super) fn atomic_write(
         .map(|effect| settle_authority_postflight(effect, &[target]))
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn copy_rebuildable_file(
+    target: &WriteTarget,
+    source: &Path,
+) -> Result<CapabilityEffect, String> {
+    platform::copy_rebuildable_file(target, source)
+        .map(|effect| settle_authority_postflight(effect, &[target]))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn create_component_validation_directory(
+    target: &WriteTarget,
+) -> Result<CapabilityEffect, String> {
+    if target.expected_leaf != ExpectedLeaf::Absent
+        || !matches!(
+            target.authority().map(DirectoryAuthority::scope),
+            Some(DirectoryAuthorityScope::ComponentValidation { .. })
+        )
+    {
+        return Err(
+            "Capability filesystem a refuzat crearea unui sandbox de validare fără authority și baseline Absent."
+                .to_string(),
+        );
+    }
+    let effect = platform::create_directory_all(target)?;
+    let effect = settle_authority_postflight(effect, &[target]);
+    if !effect.changed && !effect.recovery_required {
+        return Err(
+            "Capability filesystem a refuzat reutilizarea unui sandbox de validare existent."
+                .to_string(),
+        );
+    }
+    Ok(effect)
+}
+
 #[cfg(all(target_os = "linux", test))]
 pub(super) fn with_external_backup_committed_test_hook<T>(
     hook: impl Fn() + 'static,
@@ -7893,6 +7928,21 @@ pub(super) fn atomic_write(
     _target: &WriteTarget,
     _bytes: &[u8],
     _replace_policy: CapabilityReplacePolicy,
+) -> Result<CapabilityEffect, String> {
+    unsupported()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn copy_rebuildable_file(
+    _target: &WriteTarget,
+    _source: &Path,
+) -> Result<CapabilityEffect, String> {
+    unsupported()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn create_component_validation_directory(
+    _target: &WriteTarget,
 ) -> Result<CapabilityEffect, String> {
     unsupported()
 }

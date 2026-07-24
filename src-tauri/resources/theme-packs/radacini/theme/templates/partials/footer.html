@@ -1,0 +1,25 @@
+<footer class="subsol-radacini">
+  <div class="container subsol-radacini__grila">
+    <div class="subsol-radacini__marca">
+      <span class="marca-radacini__simbol" aria-hidden="true">R</span>
+      <div>
+        <strong>{{ site.marca }}</strong>
+        <p>{{ site.descriere_scurta }}</p>
+      </div>
+    </div>
+    <div>
+      <p class="subsol-radacini__eticheta">Rezervări</p>
+      <a href="mailto:{{ site.email }}">{{ site.email }}</a>
+      <a href="tel:{{ site.telefon_link }}">{{ site.telefon }}</a>
+    </div>
+    <div>
+      <p class="subsol-radacini__eticheta">Loc</p>
+      <p>{{ site.adresa }}</p>
+      <a href="{{ site.harta_url }}">Vezi pe hartă ↗</a>
+    </div>
+  </div>
+  <div class="container subsol-radacini__legal">
+    <p>© {{ now() | date(format="%Y") }} {{ site.marca }}</p>
+    <a href="/politica-confidentialitate/">Confidențialitate</a>
+  </div>
+</footer>

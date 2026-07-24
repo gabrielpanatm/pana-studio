@@ -81,6 +81,8 @@ function resolveScssTokenForLiveCss(host: PreviewLiveControllerHost, value: stri
 }
 
 function cssDeclarationForLive(host: PreviewLiveControllerHost, property: string, value: string) {
+  // This style is injected into an arbitrary project document and must temporarily
+  // outrank the project's author CSS until the Rust-backed commit is confirmed.
   return `${property}: ${resolveScssTokenForLiveCss(host, value)} !important;`;
 }
 

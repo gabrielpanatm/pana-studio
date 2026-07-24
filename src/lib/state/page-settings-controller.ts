@@ -9,15 +9,6 @@ export type PageSettingsControllerHost = {
   setGlobalStatus: (text: string, kind: SaveState) => void;
 };
 
-export function pageSettingsSource(host: PageSettingsControllerHost) {
-  const relativePath = host.activeScannedPath;
-  if (!relativePath) return "";
-  const zolaPath = zolaRelativePath(relativePath);
-  if (!zolaPath.startsWith("content/") || !zolaPath.endsWith(".md")) return "";
-  const cacheKey = scannedCacheKey({ relativePath });
-  return host.sourceCache[cacheKey] ?? host.source;
-}
-
 export function updatePageFrontmatterSource(
   host: PageSettingsControllerHost,
   relativePath: string,

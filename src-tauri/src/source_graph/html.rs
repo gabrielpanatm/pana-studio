@@ -3,14 +3,18 @@ const SKIP_TAGS: &[&str] = &[
     "input", "area", "col", "embed", "param", "source", "track", "wbr", "noscript", "template",
 ];
 
+pub(crate) fn should_project_html_tag(tag: &str) -> bool {
+    !SKIP_TAGS.contains(&tag)
+}
+
+#[cfg(test)]
 #[derive(Clone)]
 pub struct HtmlItem {
     pub tag: String,
-    pub label: String,
     pub start: usize,
-    pub end: usize,
 }
 
+#[cfg(test)]
 pub fn parse_html_opening_tags(source: &str) -> Vec<HtmlItem> {
     let bytes = source.as_bytes();
     let mut items = Vec::new();
@@ -57,19 +61,14 @@ pub fn parse_html_opening_tags(source: &str) -> Vec<HtmlItem> {
         let Some(end) = opening_tag_end(source, cursor) else {
             break;
         };
-        let raw = &source[index..end];
-        items.push(HtmlItem {
-            label: html_label(&tag, raw),
-            tag,
-            start: index,
-            end,
-        });
+        items.push(HtmlItem { tag, start: index });
         index = end;
     }
 
     items
 }
 
+#[cfg(test)]
 fn opening_tag_end(source: &str, mut index: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut in_double_quote = false;
@@ -93,12 +92,14 @@ fn opening_tag_end(source: &str, mut index: usize) -> Option<usize> {
     None
 }
 
+#[cfg(test)]
 fn is_tera_start(bytes: &[u8], index: usize) -> bool {
     index + 1 < bytes.len()
         && bytes[index] == b'{'
         && matches!(bytes[index + 1], b'%' | b'{' | b'#')
 }
 
+#[cfg(test)]
 fn skip_tera_token(bytes: &[u8], index: usize) -> Option<usize> {
     let (close_a, close_b) = match bytes.get(index + 1).copied()? {
         b'%' => (b'%', b'}'),
@@ -116,7 +117,7 @@ fn skip_tera_token(bytes: &[u8], index: usize) -> Option<usize> {
     None
 }
 
-fn html_label(tag: &str, raw: &str) -> String {
+pub(crate) fn html_label(tag: &str, raw: &str) -> String {
     if let Some(id) = attr_value(raw, "id") {
         return format!("<{tag} #{id}>");
     }

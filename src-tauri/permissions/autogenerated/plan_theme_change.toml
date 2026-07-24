@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-theme-change"
+description = "Enables the plan_theme_change command without any pre-configured scope."
+commands.allow = ["plan_theme_change"]
+
+[[permission]]
+identifier = "deny-plan-theme-change"
+description = "Denies the plan_theme_change command without any pre-configured scope."
+commands.deny = ["plan_theme_change"]

@@ -49,6 +49,68 @@ pub fn plan_template_reference_workspace_mutation(
     let graph = build_source_graph(project_root).map_err(|error| {
         format!("SourceGraphRewrite blocat: Source Graph nu a putut fi construit: {error}.")
     })?;
+    plan_template_reference_workspace_mutation_with_graph(
+        store,
+        &graph,
+        operation,
+        source_relative_path,
+        destination_relative_path,
+        false,
+    )
+}
+
+/// Plans a reference rewrite against the current ProjectWorkspace projection.
+///
+/// Unlike the disk-only planner above, this variant deliberately reads the
+/// current text of draft files. The supplied graph and the FileBufferStore
+/// therefore describe the same in-memory revision and can be staged as one
+/// atomic ProjectWorkspace mutation.
+pub fn plan_template_reference_workspace_mutation_from_graph(
+    project_root: &Path,
+    store: &FileBufferStore,
+    graph: &SourceGraph,
+    operation: SourceGraphRewriteOperation,
+    source_relative_path: &str,
+    destination_relative_path: &str,
+) -> Result<SourceGraphReferenceRewritePlan, String> {
+    validate_store_identity(project_root, store)?;
+    let source_relative_path = normalize_project_relative_path(source_relative_path)?;
+    let destination_relative_path = normalize_project_relative_path(destination_relative_path)?;
+    if source_relative_path == destination_relative_path {
+        return Err("SourceGraphRewrite blocat: sursa și destinația sunt identice.".to_string());
+    }
+
+    plan_template_reference_workspace_mutation_with_graph(
+        store,
+        graph,
+        operation,
+        source_relative_path,
+        destination_relative_path,
+        true,
+    )
+}
+
+fn plan_template_reference_workspace_mutation_with_graph(
+    store: &FileBufferStore,
+    graph: &SourceGraph,
+    operation: SourceGraphRewriteOperation,
+    source_relative_path: String,
+    destination_relative_path: String,
+    allow_current_drafts: bool,
+) -> Result<SourceGraphReferenceRewritePlan, String> {
+    let projected_store = allow_current_drafts.then(|| {
+        let mut projected = store.clone();
+        for entry in projected.files.values_mut() {
+            if entry.draft.is_some() {
+                let current_text = entry.current_text().to_string();
+                entry.baseline_text = current_text;
+                entry.draft = None;
+            }
+        }
+        projected
+    });
+    let store = projected_store.as_ref().unwrap_or(store);
+
     let mut diagnostics = source_graph_diagnostics(&graph);
     if let Some(blocker) = first_blocker(&diagnostics) {
         return Err(blocker.message.clone());
@@ -186,7 +248,7 @@ pub fn plan_template_reference_workspace_mutation(
                 "SourceGraphRewrite blocat pentru {relative_path}: FileBufferStore nu are baseline urmărit."
             )
         })?;
-        if entry.draft.is_some() {
+        if entry.draft.is_some() && !allow_current_drafts {
             return Err(format!(
                 "SourceGraphRewrite blocat pentru {relative_path}: fișierul are draft nesalvat în FileBufferStore."
             ));
@@ -199,7 +261,11 @@ pub fn plan_template_reference_workspace_mutation(
         });
         validate_replacements_do_not_overlap(&relative_path, &replacements)?;
 
-        let mut next_text = entry.baseline_text.clone();
+        let mut next_text = if allow_current_drafts {
+            entry.current_text().to_string()
+        } else {
+            entry.baseline_text.clone()
+        };
         for replacement in &replacements {
             next_text.replace_range(
                 replacement.range_start..replacement.range_end,
@@ -365,6 +431,7 @@ fn validate_replacements_do_not_overlap(
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::{HashMap, HashSet},
         fs,
         path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
@@ -374,9 +441,11 @@ mod tests {
         hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStore, FileBufferStoreLimits,
         TextBufferLanguage, TextBufferRole,
     };
+    use crate::source_graph::build_source_graph_with_projection;
 
     use super::{
-        plan_template_reference_workspace_mutation, SourceGraphRewriteOperation,
+        plan_template_reference_workspace_mutation,
+        plan_template_reference_workspace_mutation_from_graph, SourceGraphRewriteOperation,
         SourceGraphRewriteStatus,
     };
 
@@ -991,6 +1060,55 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("draft nesalvat"));
+    }
+
+    #[test]
+    fn projected_planner_rewrites_the_current_draft_instead_of_the_disk_baseline() {
+        let root = zola_project("rewrite-projected-draft");
+        write_text(
+            &root,
+            "templates/base.html",
+            r#"{% include "partials/header.html" %}"#,
+        );
+        write_text(
+            &root,
+            "templates/partials/header.html",
+            "<header>Header</header>",
+        );
+        let mut store = store_with_files(
+            &root,
+            &[
+                (
+                    "templates/base.html",
+                    r#"{% include "partials/header.html" %}"#,
+                ),
+                ("templates/partials/header.html", "<header>Header</header>"),
+            ],
+        );
+        let draft = r#"{% include "partials/header.html" %}<p>draft păstrat</p>"#;
+        store
+            .set_draft("templates/base.html", draft.to_string(), 2)
+            .unwrap();
+        let graph = build_source_graph_with_projection(
+            &root,
+            &HashMap::from([("templates/base.html".to_string(), draft.to_string())]),
+            &HashSet::new(),
+        )
+        .unwrap();
+
+        let plan = plan_template_reference_workspace_mutation_from_graph(
+            &root,
+            &store,
+            &graph,
+            SourceGraphRewriteOperation::Rename,
+            "templates/partials/header.html",
+            "templates/partials/site-header.html",
+        )
+        .unwrap();
+
+        let text = &plan.workspace_mutation.unwrap().changes[0].new_text;
+        assert!(text.contains(r#"{% include "partials/site-header.html" %}"#));
+        assert!(text.contains("<p>draft păstrat</p>"));
     }
 
     fn zola_project(label: &str) -> PathBuf {

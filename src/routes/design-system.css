@@ -1,26 +1,32 @@
 :root {
   color-scheme: dark;
-  --surface-base: #111315;
-  --surface-panel: #171a1d;
-  --surface-raised: #1d2225;
-  --border-subtle: #29302d;
-  --border-strong: #3a4540;
-  --text: #e7ede9;
-  --text-muted: #96a29b;
-  --text-strong: #f4f8f5;
-  --brand: #1d7f6a;
-  --brand-strong: #43b99b;
-  --brand-soft: rgb(29 127 106 / 18%);
-  --focus-ring: #63d1b4;
-  --success: #35a96b;
-  --warning: #d89a30;
-  --danger: #e16060;
-  --shadow: 0 16px 38px rgb(0 0 0 / 22%);
-  --radius-control: 6px;
-  --radius-panel: 10px;
+  --surface-base: #111614;
+  --surface-panel: #171c1a;
+  --surface-raised: #1d2421;
+  --border-subtle: #2a332f;
+  --border-strong: #3d4944;
+  --text: #e3e9e6;
+  --text-muted: #96a29c;
+  --text-strong: #f7f9f8;
+  --text-on-accent: #ffffff;
+  --brand: #16836f;
+  --brand-strong: #54c0a5;
+  --brand-soft: rgb(22 131 111 / 19%);
+  --focus-ring: #63cdb2;
+  --success: #3db27a;
+  --warning: #d49a38;
+  --danger: #e16464;
+  --info: #5795f5;
+  --control-hover: #222b27;
+  --control-selected: #173a32;
+  --shadow: 0 12px 30px rgb(0 0 0 / 24%);
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 20%);
+  --radius-control: 4px;
+  --radius-panel: 6px;
   --control-height: 32px;
-  --font-body: 12px;
-  --font-meta: 11px;
+  --control-height-compact: 24px;
+  --font-body: 13px;
+  --font-meta: 12px;
   --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
   /* Aliasuri de compatibilitate. Toate se rezolvă în cele trei suprafețe canonice. */
@@ -77,26 +83,30 @@
 
 html[data-pana-theme="light"] {
   color-scheme: light;
-  --surface-base: #edf1ee;
-  --surface-panel: #f8faf9;
+  --surface-base: #f3f5f4;
+  --surface-panel: #fafbfa;
   --surface-raised: #ffffff;
-  --border-subtle: #d8e0db;
-  --border-strong: #bcc9c2;
-  --text: #27312c;
-  --text-muted: #5f6c65;
-  --text-strong: #151c18;
-  --brand: #1d7f6a;
-  --brand-strong: #176c5a;
-  --brand-soft: rgb(29 127 106 / 12%);
-  --focus-ring: #167460;
-  --success: #18794e;
-  --warning: #a6650c;
-  --danger: #c43d3d;
-  --shadow: 0 14px 32px rgb(22 34 28 / 9%);
-  --app-bg-overlay: rgb(59 130 110 / 8%);
-  --selector-bg: #213a33;
+  --border-subtle: #d8e0dd;
+  --border-strong: #c7d1cd;
+  --text: #26312e;
+  --text-muted: #66736f;
+  --text-strong: #17211f;
+  --brand: #16836f;
+  --brand-strong: #116b5b;
+  --brand-soft: rgb(22 131 111 / 11%);
+  --focus-ring: #16836f;
+  --success: #2aa66f;
+  --warning: #c98518;
+  --danger: #d94b4b;
+  --info: #3678d4;
+  --control-hover: #eef3f1;
+  --control-selected: #e2f3ee;
+  --shadow: 0 12px 30px rgb(23 33 31 / 10%);
+  --shadow-float: 0 8px 24px rgb(23 33 31 / 10%);
+  --app-bg-overlay: transparent;
+  --selector-bg: #1d302b;
   --code-text: #155444;
-  --terminal-shell-ring: rgb(29 127 106 / 12%);
+  --terminal-shell-ring: rgb(22 131 111 / 12%);
   --source-origin-local: #2563eb;
   --source-origin-theme: #a95708;
   --source-origin-current: #64748b;
@@ -121,7 +131,7 @@ body {
 }
 
 small {
-  font-size: var(--font-meta) !important;
+  font-size: var(--font-meta);
 }
 
 button,
@@ -131,22 +141,27 @@ select {
   font: inherit;
 }
 
-button,
-input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="hidden"]),
-select {
-  min-height: var(--control-height) !important;
+:where(
+  button,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="hidden"]),
+  select
+) {
+  min-height: var(--control-height);
 }
 
 button {
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
   color: var(--text);
   background: var(--surface-raised);
   cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease, opacity 120ms ease;
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--brand-strong);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+  background: var(--control-hover);
 }
 
 button:disabled,
@@ -158,8 +173,8 @@ select:disabled {
 }
 
 :where(button, input, textarea, select, [tabindex]:not([tabindex="-1"])):focus-visible {
-  outline: 2px solid var(--focus-ring) !important;
-  outline-offset: 2px !important;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .ui-button,
@@ -172,7 +187,7 @@ select:disabled {
   gap: 6px;
   border-radius: var(--radius-control);
   font-size: var(--font-body);
-  font-weight: 750;
+  font-weight: 600;
 }
 
 .ui-button {
@@ -185,16 +200,53 @@ select:disabled {
   background: var(--brand);
 }
 
+.ui-button.primary:hover:not(:disabled) {
+  border-color: var(--brand-strong);
+  color: #fff;
+  background: var(--brand-strong);
+}
+
 .ui-button.quiet,
 .ui-icon-button.quiet {
   border-color: transparent;
   background: transparent;
 }
 
+.ui-button.quiet:hover:not(:disabled),
+.ui-icon-button.quiet:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--control-hover);
+}
+
 .ui-icon-button {
   width: var(--control-height);
   min-width: var(--control-height);
   padding: 0;
+}
+
+.ui-button.compact,
+.ui-icon-button.compact {
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  gap: 4px;
+  font-size: var(--font-meta);
+}
+
+.ui-button.compact {
+  padding: 0 8px;
+}
+
+.ui-icon-button.compact {
+  width: var(--control-height-compact);
+  min-width: var(--control-height-compact);
+  padding: 0;
+}
+
+.ui-field.compact {
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  padding: 0 7px;
+  font-size: var(--font-meta);
 }
 
 .ui-tabs {
@@ -216,13 +268,13 @@ select:disabled {
 .ui-tab[aria-selected="true"],
 .ui-tab.active {
   border-bottom-color: var(--brand);
-  color: var(--text-strong);
+  color: var(--brand-strong);
 }
 
 .ui-field {
   min-height: var(--control-height);
   padding: 0 9px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-control);
   color: var(--text);
   background: var(--surface-raised);
@@ -247,11 +299,11 @@ select:disabled {
   min-height: 22px;
   padding: 0 7px;
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-control);
   color: var(--text-muted);
   background: var(--surface-raised);
   font-size: var(--font-meta);
-  font-weight: 750;
+  font-weight: 600;
 }
 
 .ui-message {

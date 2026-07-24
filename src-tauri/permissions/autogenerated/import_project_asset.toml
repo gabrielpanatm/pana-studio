@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-project-asset"
+description = "Enables the import_project_asset command without any pre-configured scope."
+commands.allow = ["import_project_asset"]
+
+[[permission]]
+identifier = "deny-import-project-asset"
+description = "Denies the import_project_asset command without any pre-configured scope."
+commands.deny = ["import_project_asset"]

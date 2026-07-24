@@ -1,12 +1,11 @@
 <script lang="ts">
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
-  import { IconAdjustments } from "@tabler/icons-svelte";
   import { tick, untrack } from "svelte";
   import HtmlPane from "$lib/components/inspector/HtmlPane.svelte";
   import JsPane  from "$lib/components/inspector/JsPane.svelte";
+  import BlockPropertiesPane from "$lib/components/inspector/BlockPropertiesPane.svelte";
   import CssPane from "$lib/components/inspector/panes/CssPane.svelte";
   import TeraSourceCard from "$lib/components/inspector/TeraSourceCard.svelte";
-  import VariablesPane from "$lib/components/inspector/panes/VariablesPane.svelte";
   import type {
     CssMutationAuthorityReceipt,
     CssProperty,
@@ -32,7 +31,6 @@
     resolvePageCssTarget,
     setCssRuleAtViewport,
     setPageCssRuleAtViewport,
-    setScssVariable,
     type CssRequestIdentity,
     type CssViewport,
   } from "$lib/project/io";
@@ -45,16 +43,12 @@
     CssContinuousEditHandlers,
     CssPendingValueBaseline,
     CssPropertyEditController,
-    ScssVariableEditController,
   } from "$lib/inspector/css-property-edit";
   import {
     captureCssPendingValueBaseline,
     restoreCssPendingValueBaseline,
   } from "$lib/inspector/css-property-edit";
-
-  function toggleVars() {
-    void changeInspectorTab(inspectorTab === "vars" ? "html" : "vars");
-  }
+  import type { ApplyNativeBlockOptionRequest } from "$lib/state/html-actions-controller";
 
   function captureCssIdentity(): CssRequestIdentity {
     return createCssRequestIdentity(projectRoot, runtimeSessionId);
@@ -65,18 +59,14 @@
   }
 
   let queuedCssRuleMutationCount = 0;
-  let queuedScssVariableMutationCount = 0;
 
   function enqueueCssWorkspaceMutation(
     identity: CssRequestIdentity,
     label: string,
     liveEpoch: number | null,
-    area: "css" | "vars",
     mutation: () => Promise<{ authority: CssMutationAuthorityReceipt }>,
-    onCommitted?: () => void,
   ) {
-    if (area === "css") queuedCssRuleMutationCount += 1;
-    else queuedScssVariableMutationCount += 1;
+    queuedCssRuleMutationCount += 1;
     updatePendingIndicators();
     const task = cssWorkspaceMutationTail.then(async () => {
       if (!isCurrentCssIdentity(identity)) return;
@@ -84,7 +74,6 @@
       if (!isCurrentCssIdentity(identity)) return;
       const receipt = await mutation();
       if (!isCurrentCssIdentity(identity)) return;
-      onCommitted?.();
       cssWorkspaceMutationFailure = "";
       onStatusUpdate?.(`${label} este în sesiunea proiectului — Ctrl+S persistă pe disc`, "unsaved");
       if (!onCssWorkspaceMutationCommitted) return;
@@ -107,8 +96,7 @@
         onStatusUpdate?.(`${label} nu a putut fi aplicat în sesiunea proiectului: ${cssWorkspaceMutationFailure}`, "error");
       })
       .finally(() => {
-        if (area === "css") queuedCssRuleMutationCount = Math.max(0, queuedCssRuleMutationCount - 1);
-        else queuedScssVariableMutationCount = Math.max(0, queuedScssVariableMutationCount - 1);
+        queuedCssRuleMutationCount = Math.max(0, queuedCssRuleMutationCount - 1);
         updatePendingIndicators();
       });
   }
@@ -123,23 +111,12 @@
     run: (properties: Record<string, string>) => Promise<{ authority: CssMutationAuthorityReceipt }>;
   };
 
-  type StagedScssVariableMutation = {
-    key: string;
-    identity: CssRequestIdentity;
-    label: string;
-    baseline: CssPendingValueBaseline;
-    run: () => Promise<{ authority: CssMutationAuthorityReceipt }>;
-    onCommitted: () => void;
-  };
-
   const stagedCssRuleMutations = new Map<string, StagedCssRuleMutation>();
-  const stagedScssVariableMutations = new Map<string, StagedScssVariableMutation>();
   let stagedCssFlushPromise: Promise<void> | null = null;
   let stagedCssFlushScheduled = false;
 
   function updatePendingIndicators() {
     onPendingChange?.("css", stagedCssRuleMutations.size > 0 || queuedCssRuleMutationCount > 0);
-    onPendingChange?.("vars", stagedScssVariableMutations.size > 0 || queuedScssVariableMutationCount > 0);
   }
 
   function stageCssRuleMutation(
@@ -161,38 +138,17 @@
     updatePendingIndicators();
   }
 
-  function stageScssVariableMutation(mutation: StagedScssVariableMutation) {
-    const current = stagedScssVariableMutations.get(mutation.key);
-    stagedScssVariableMutations.set(mutation.key, {
-      ...mutation,
-      baseline: current?.baseline ?? mutation.baseline,
-    });
-    updatePendingIndicators();
-  }
-
   async function flushStagedCssPanelMutations() {
     if (stagedCssFlushPromise) return stagedCssFlushPromise;
     stagedCssFlushPromise = (async () => {
-      while (stagedCssRuleMutations.size > 0 || stagedScssVariableMutations.size > 0) {
+      while (stagedCssRuleMutations.size > 0) {
         const cssMutations = Array.from(stagedCssRuleMutations.values());
-        const variableMutations = Array.from(stagedScssVariableMutations.values());
         stagedCssRuleMutations.clear();
-        stagedScssVariableMutations.clear();
         updatePendingIndicators();
 
         for (const entry of cssMutations) {
-          enqueueCssWorkspaceMutation(entry.identity, entry.label, entry.liveEpoch, "css", () =>
+          enqueueCssWorkspaceMutation(entry.identity, entry.label, entry.liveEpoch, () =>
             entry.run(entry.properties));
-        }
-        for (const entry of variableMutations) {
-          enqueueCssWorkspaceMutation(
-            entry.identity,
-            entry.label,
-            null,
-            "vars",
-            entry.run,
-            entry.onCommitted,
-          );
         }
         await cssWorkspaceMutationTail;
       }
@@ -205,7 +161,7 @@
 
   function scheduleStagedCssPanelFlush() {
     if (stagedCssFlushScheduled || stagedCssFlushPromise) return;
-    if (stagedCssRuleMutations.size === 0 && stagedScssVariableMutations.size === 0) return;
+    if (stagedCssRuleMutations.size === 0) return;
     stagedCssFlushScheduled = true;
     queueMicrotask(() => {
       stagedCssFlushScheduled = false;
@@ -228,6 +184,10 @@
     previewDevice = "desktop" as CssViewport,
     refreshToken = 0,
     jsRefreshToken = 0,
+    workspaceRevision = 0,
+    previewRevision = "",
+    blockPropertiesHeight = 220,
+    blockPropertiesCollapsed = false,
     cachebustAssets = false,
     cssFiles = [],
     projectFiles = [],
@@ -267,7 +227,6 @@
     onLivePropertyChange,
     onLivePropertiesChange,
     onCssWorkspaceMutationCommitted,
-    onScssVariableCommitted,
     onInspectorLivePropertiesRejected,
     injectPreviewCss,
     onStatusUpdate,
@@ -277,6 +236,8 @@
     beforeInspectorTabChange,
     onCssCodeTargetChange,
     getOpenCssRuleContext,
+    applyNativeBlockOption,
+    persistBlockPropertiesLayout,
   }: {
     selectedElement?: SelectionInfo | null;
     projectRoot?: string;
@@ -292,6 +253,10 @@
     previewDevice?: CssViewport;
     refreshToken?: number;
     jsRefreshToken?: number;
+    workspaceRevision?: number;
+    previewRevision?: string;
+    blockPropertiesHeight?: number;
+    blockPropertiesCollapsed?: boolean;
     cachebustAssets?: boolean;
     cssFiles?: string[];
     projectFiles?: ProjectFile[];
@@ -338,7 +303,6 @@
       authority: CssMutationAuthorityReceipt,
       liveEpoch: number | null,
     ) => void | Promise<void>;
-    onScssVariableCommitted?: (variable: ScssVariable, value: string) => void;
     onInspectorLivePropertiesRejected?: (liveEpoch: number) => void;
     injectPreviewCss?: (css: string) => void;
     onStatusUpdate?: (text: string, kind: string) => void;
@@ -348,6 +312,8 @@
     beforeInspectorTabChange?: (from: InspectorTab, to: InspectorTab) => void | Promise<void>;
     onCssCodeTargetChange?: (target: { selector: string; file: string }) => void;
     getOpenCssRuleContext?: (file: string, selector: string, viewport: CssViewport) => CssRuleContext | null;
+    applyNativeBlockOption: (request: ApplyNativeBlockOptionRequest) => Promise<EditorActionOutcome>;
+    persistBlockPropertiesLayout?: (height: number, collapsed: boolean) => void;
   } = $props();
 
   // AppState resolves the canonical ProjectWorkspace target and remains the
@@ -393,8 +359,6 @@
   let pendingValues = $state<Record<string, string>>({});
   let currentCssSelector = $derived(selectedElement?.cssSelector ?? null);
 
-  // Vars tab state
-  let pendingVarValues = $state<Record<string, string>>({});
   let searchingClass = $state(false);
   let cssWorkspaceMutationTail: Promise<void> = Promise.resolve();
   let cssWorkspaceMutationFailure = "";
@@ -431,9 +395,7 @@
     cssTargetInfo = null;
     cssWorkspaceMutationFailure = "";
     queuedCssRuleMutationCount = 0;
-    queuedScssVariableMutationCount = 0;
     stagedCssRuleMutations.clear();
-    stagedScssVariableMutations.clear();
     updatePendingIndicators();
   });
 
@@ -590,13 +552,11 @@
     cssRuleContext = null;
     cssTargetInfo = null;
     pendingValues = untrack(() => pendingValuesForCurrentSelector());
-    pendingVarValues = {};
     searchingClass = false;
     loadCallId++;
     sourceDetectionCallId++;
     untrack(() => {
       onPendingChange?.("css", false);
-      onPendingChange?.("vars", false);
       onPendingChange?.("js", false);
     });
 
@@ -1008,196 +968,152 @@
     }
   }
 
-  function updatePendingVarValue(variable: ScssVariable, value: string) {
-    const key = `${variable.file}|${variable.name}`;
-    const baseline = captureCssPendingValueBaseline(pendingVarValues, key);
-    pendingVarValues = { ...pendingVarValues, [key]: value };
-    const identity = captureCssIdentity();
-    stageScssVariableMutation({
-      key: [identity.expectedProjectRoot, identity.expectedSessionId, variable.file, variable.name].join("\u0000"),
-      identity,
-      label: `Variabila ${variable.name}`,
-      baseline,
-      run: () => setScssVariable(variable.file, variable.name, value, identity),
-      onCommitted: () => {
-        if (pendingVarValues[key] === value) {
-          const next = { ...pendingVarValues };
-          delete next[key];
-          pendingVarValues = next;
-        }
-        onScssVariableCommitted?.(variable, value);
-      },
-    });
-    onStatusUpdate?.(`Valoare SCSS în editare: $${variable.name}`, "unsaved");
-  }
-
-  function commitPendingVarValue(variable: ScssVariable, value?: string) {
-    const key = `${variable.file}|${variable.name}`;
-    if (value !== undefined && pendingVarValues[key] !== value) {
-      updatePendingVarValue(variable, value);
-    }
-    scheduleStagedCssPanelFlush();
-  }
-
-  function cancelPendingVarValue(variable: ScssVariable) {
-    const identity = captureCssIdentity();
-    const stageKey = [identity.expectedProjectRoot, identity.expectedSessionId, variable.file, variable.name].join("\u0000");
-    const staged = stagedScssVariableMutations.get(stageKey);
-    if (!staged) return;
-    stagedScssVariableMutations.delete(stageKey);
-    const key = `${variable.file}|${variable.name}`;
-    pendingVarValues = restoreCssPendingValueBaseline(pendingVarValues, key, staged.baseline);
-    updatePendingIndicators();
-    onStatusUpdate?.(`Editarea variabilei $${variable.name} a fost anulată`, "idle");
-  }
-
-  const scssVariableEdit: ScssVariableEditController = {
-    draft: updatePendingVarValue,
-    commit: commitPendingVarValue,
-    cancel: cancelPendingVarValue,
-  };
-
 </script>
 
 <aside
   class="inspector-pane"
   aria-label="Inspector"
 >
-  <div class="pane-title">
-    <h2>Inspector</h2>
-    <div class="pane-title-actions">
-      <span class="pane-title-tag">{selectedElement ? selectedElement.tag : (hasTeraSelection ? "Tera" : "fără selecție")}</span>
-      <button
-        class="vars-toggle-btn"
-        class:active={inspectorTab === "vars"}
-        type="button"
-        title="Variabile SCSS"
-        onclick={toggleVars}
-      >
-        <IconAdjustments size={14} stroke={1.8} />
-      </button>
-    </div>
-  </div>
-
   {#if hasTeraSelection}
-    <TeraSourceCard
-      node={selectedTemplateSourceNode}
-      graph={sourceGraph}
-      previewSelector={previewSelection.kind === "tera" ? previewSelection.selector : null}
-      {editSelectedTeraLayer}
-      {openSelectedTeraSource}
-      {deleteSelectedTeraNode}
-    />
+    <div class="inspector-main tera-main">
+      <div class="inspector-scroll">
+        <TeraSourceCard
+          node={selectedTemplateSourceNode}
+          graph={sourceGraph}
+          previewSelector={previewSelection.kind === "tera" ? previewSelection.selector : null}
+          {editSelectedTeraLayer}
+          {openSelectedTeraSource}
+          {deleteSelectedTeraNode}
+        />
+      </div>
+    </div>
   {:else}
-    <section class="selection-card">
-      <p class="selector">{selectedElement?.cssSelector ?? "Niciun element selectat"}</p>
-      <div class="selection-meta">
-        {#if selectedElement?.classes.length}
-          {#each selectedElement.classes as className}
-            <button
-              class="class-chip"
-              class:active={selectedClass === className}
-              type="button"
-              title="Editează .{className}"
-              onclick={() => { void selectClassForCss(className); }}
+    <div class="inspector-context">
+      <section class="selection-card">
+        <div class="selection-heading">
+          <p class="selector">{selectedElement?.cssSelector ?? "Niciun element selectat"}</p>
+          {#if selectedElement?.blockContext}
+            <span class="block-chip">
+              {selectedElement.blockContext.providerId} › &lt;{selectedElement.tag}&gt;
+            </span>
+          {/if}
+        </div>
+        <div class="selection-meta">
+          {#if selectedElement?.classes.length}
+            {#each selectedElement.classes as className}
+              <button
+                class="class-chip"
+                class:active={selectedClass === className}
+                type="button"
+                title="Editează .{className}"
+                onclick={() => { void selectClassForCss(className); }}
 
-            >{className}</button>
-          {/each}
-        {:else}
-          <span class="subtle-chip">fără clase</span>
+              >{className}</button>
+            {/each}
+          {:else}
+            <span class="subtle-chip">fără clase</span>
+          {/if}
+        </div>
+      </section>
+    </div>
+
+    <div class="inspector-main">
+      <nav class="inspector-tabs" aria-label="Secțiuni inspector">
+        <button class:active={inspectorTab === "html"} type="button" onclick={() => { void changeInspectorTab("html"); }}>
+          HTML
+        </button>
+        <button class:active={inspectorTab === "css"} type="button" onclick={() => { void changeInspectorTab("css"); }}>
+          CSS
+        </button>
+        <button class:active={inspectorTab === "js"} type="button" onclick={() => { void changeInspectorTab("js"); }}>
+          JS
+        </button>
+      </nav>
+      <div class="inspector-scroll">
+
+        {#if inspectorTab === "css"}
+        <CssPane
+          {selectedElement}
+          {selectedClass}
+          {effectiveSelector}
+          {activeSuffix}
+          {viewportLabel}
+          {previewDevice}
+          {targetCssFile}
+          pageCssTarget={cssTargetInfo}
+          cssFileCount={cssFiles.length}
+          {cssRuleContext}
+          {classRules}
+          {pendingValues}
+          {scssVariables}
+          {scannedAssets}
+          {loadingClassRules}
+          {searchingClass}
+          {selectorSuffix}
+          {customSuffix}
+          {usingCustom}
+          {cssPropertyEdit}
+          {searchClassInAllFiles}
+          setSelectorSuffix={(value) => { selectorSuffix = value; }}
+          setCustomSuffix={(value) => { customSuffix = value; }}
+          setUsingCustom={(value) => { usingCustom = value; }}
+        />
+
+        {:else if inspectorTab === "js"}
+        <JsPane
+          {selectedElement}
+          {projectRoot}
+          {runtimeSessionId}
+          refreshToken={jsRefreshToken}
+          onSwitchToHtml={() => { void changeInspectorTab("html"); }}
+        />
+
+        {:else if inspectorTab === "html"}
+        <HtmlPane
+          {selectedElement}
+          canEditHtml={canEditHtmlEffective}
+          {attributeValues}
+          {textContentValue}
+          {imageSourceValue}
+          classEditorValue={classEditorValue}
+          {pendingTag}
+          {scannedAssets}
+          {isActivePreviewHtmlSource}
+          {attributeStatus}
+          {textStatus}
+          {classStatus}
+          {imageStatus}
+          updateAttributeValue={updateAttributeValue}
+          removeAttribute={removeAttribute}
+          applyAttributesToHtml={applyAttributesToHtml}
+          updateTextContentValue={updateTextContentValue}
+          applyTextContentToHtml={applyTextContentToHtml}
+          setClassEditorValue={setClassEditorValue}
+          applyClassesToHtml={applyClassesToHtml}
+          generateClassForSelectedHtml={generateClassForSelectedHtml}
+          generateDataAnimForSelectedHtml={generateDataAnimForSelectedHtml}
+          setImageSourceValue={setImageSourceValue}
+          applyZolaImageProcessingToHtml={applyZolaImageProcessingToHtml}
+          cancelHtmlAttributeDraft={cancelHtmlAttributeDraft}
+          deleteHtmlElement={deleteHtmlElement}
+          changeElementTag={changeElementTag}
+          {tagStatus}
+        />
+
         {/if}
       </div>
-    </section>
-
-    <nav class="inspector-tabs" aria-label="Secțiuni inspector">
-      <button class:active={inspectorTab === "html"} type="button" onclick={() => { void changeInspectorTab("html"); }}>
-        HTML
-      </button>
-      <button class:active={inspectorTab === "css"} type="button" onclick={() => { void changeInspectorTab("css"); }}>
-        CSS
-      </button>
-      <button class:active={inspectorTab === "js"} type="button" onclick={() => { void changeInspectorTab("js"); }}>
-        JS
-      </button>
-    </nav>
-
-    {#if inspectorTab === "css"}
-    <CssPane
-      {selectedElement}
-      {selectedClass}
-      {effectiveSelector}
-      {activeSuffix}
-      {viewportLabel}
-      {previewDevice}
-      {targetCssFile}
-      pageCssTarget={cssTargetInfo}
-      cssFileCount={cssFiles.length}
-      {cssRuleContext}
-      {classRules}
-      {pendingValues}
-      {scssVariables}
-      {scannedAssets}
-      {loadingClassRules}
-      {searchingClass}
-      {selectorSuffix}
-      {customSuffix}
-      {usingCustom}
-      {cssPropertyEdit}
-      {searchClassInAllFiles}
-      setSelectorSuffix={(value) => { selectorSuffix = value; }}
-      setCustomSuffix={(value) => { customSuffix = value; }}
-      setUsingCustom={(value) => { usingCustom = value; }}
-    />
-
-    {:else if inspectorTab === "vars"}
-    <VariablesPane
-      {scssVariables}
-      {pendingVarValues}
-      edit={scssVariableEdit}
-    />
-
-    {:else if inspectorTab === "js"}
-    <JsPane
+    </div>
+    <BlockPropertiesPane
       {selectedElement}
       {projectRoot}
       {runtimeSessionId}
-      refreshToken={jsRefreshToken}
-      onSwitchToHtml={() => { void changeInspectorTab("html"); }}
+      {workspaceRevision}
+      {previewRevision}
+      height={blockPropertiesHeight}
+      collapsed={blockPropertiesCollapsed}
+      onLayoutCommit={persistBlockPropertiesLayout}
+      onApply={applyNativeBlockOption}
     />
-
-    {:else if inspectorTab === "html"}
-    <HtmlPane
-      {selectedElement}
-      canEditHtml={canEditHtmlEffective}
-      {attributeValues}
-      {textContentValue}
-      {imageSourceValue}
-      classEditorValue={classEditorValue}
-      {pendingTag}
-      {scannedAssets}
-      {isActivePreviewHtmlSource}
-      {attributeStatus}
-      {textStatus}
-      {classStatus}
-      {imageStatus}
-      updateAttributeValue={updateAttributeValue}
-      removeAttribute={removeAttribute}
-      applyAttributesToHtml={applyAttributesToHtml}
-      updateTextContentValue={updateTextContentValue}
-      applyTextContentToHtml={applyTextContentToHtml}
-      setClassEditorValue={setClassEditorValue}
-      applyClassesToHtml={applyClassesToHtml}
-      generateClassForSelectedHtml={generateClassForSelectedHtml}
-      generateDataAnimForSelectedHtml={generateDataAnimForSelectedHtml}
-      setImageSourceValue={setImageSourceValue}
-      applyZolaImageProcessingToHtml={applyZolaImageProcessingToHtml}
-      cancelHtmlAttributeDraft={cancelHtmlAttributeDraft}
-      deleteHtmlElement={deleteHtmlElement}
-      changeElementTag={changeElementTag}
-      {tagStatus}
-    />
-
-  {/if}
   {/if}
 </aside>
 
@@ -1206,37 +1122,47 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     min-height: 0;
-    padding: 10px;
     border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow-x: hidden;
-    overflow-y: auto;
+    border-radius: var(--radius-panel);
+    overflow: hidden;
     overscroll-behavior: contain;
-    box-shadow: var(--shadow);
     background: var(--surface);
   }
 
-  .pane-title {
+  .inspector-context {
+    flex: 0 0 auto;
+    padding: 10px 10px 0;
+  }
+
+  .inspector-main {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
   }
 
-  .pane-title h2 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 800;
+  .inspector-scroll {
+    min-height: 0;
+    padding: 10px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
-
 
   .selection-card {
     padding: 10px;
     border: 1px solid var(--border-2);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     background: var(--surface-2);
+  }
+
+  .selection-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
   }
 
   .selector {
@@ -1244,11 +1170,24 @@
     max-width: 100%;
     margin: 0;
     padding: 5px 7px;
-    border-radius: 7px;
+    border-radius: var(--radius-control);
     color: #ffffff;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     font-size: 12px;
     background: var(--selector-bg);
+  }
+
+  .block-chip {
+    overflow: hidden;
+    max-width: 48%;
+    padding: 3px 6px;
+    border-radius: var(--radius-control);
+    color: var(--brand-strong);
+    background: var(--brand-soft);
+    font-size: 11px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .selection-meta {
@@ -1265,9 +1204,9 @@
     min-height: 24px;
     padding: 0 8px;
     border: 1px solid var(--chip-border);
-    border-radius: 7px;
+    border-radius: var(--radius-control);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     background: var(--chip-bg);
     cursor: pointer;
     color: var(--text);
@@ -1275,8 +1214,8 @@
   }
 
   .class-chip:hover {
-    border-color: var(--brand-strong);
-    background: var(--brand-soft);
+    border-color: var(--border-strong);
+    background: var(--control-hover);
   }
 
   .class-chip.active {
@@ -1292,56 +1231,31 @@
     cursor: default;
   }
 
-  .pane-title-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .pane-title-tag {
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .vars-toggle-btn {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: 1px solid var(--border-3);
-    border-radius: 6px;
-    background: var(--surface-4);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: color 120ms, border-color 120ms, background 120ms;
-  }
-  .vars-toggle-btn :global(svg) { display: block; }
-  .vars-toggle-btn:hover { color: var(--text); border-color: var(--border-4); }
-  .vars-toggle-btn.active { border-color: var(--brand); color: var(--brand-strong); background: var(--brand-soft); }
   .inspector-tabs {
     display: grid;
+    flex: 0 0 auto;
     grid-template-columns: repeat(3, 1fr);
-    gap: 5px;
+    gap: 0;
+    margin-top: 10px;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .inspector-tabs button {
-    min-height: 30px;
+    min-height: 32px;
     padding: 0 9px;
-    border: 1px solid var(--border-4);
-    border-radius: 7px;
-    color: var(--text);
-    font-size: 13px;
-    font-weight: 700;
-    background: var(--surface-4);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    background: transparent;
   }
 
   .inspector-tabs .active {
-    border-color: var(--brand);
-    color: #ffffff;
-    background: var(--brand);
+    border-bottom-color: var(--brand);
+    color: var(--brand-strong);
+    background: transparent;
   }
 
 </style>

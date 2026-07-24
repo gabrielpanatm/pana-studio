@@ -49,6 +49,16 @@ export type DomNodeLink = {
   tag: string;
 };
 
+export type BlockSelectionContext = {
+  providerId: string;
+  markerKind: "canonical" | "legacy";
+  rootSelector: string;
+  rootTag: string;
+  rootSourceId: string | null;
+  rootTemplateSourceId: string | null;
+  rootSessionId: string | null;
+};
+
 export type SelectionInfo = {
   selector: string;
   cssSelector: string;
@@ -80,6 +90,7 @@ export type SelectionInfo = {
   sourceId: string | null;
   templateSourceId: string | null;
   sessionId: string | null;
+  blockContext: BlockSelectionContext | null;
 };
 
 export type ZolaImageOperation = "fit_width" | "fit" | "fill";
@@ -137,7 +148,7 @@ export type EditableAttributes = Record<string, string>;
 
 export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "restored" | "error";
 
-export type InspectorPendingArea = "html" | "css" | "vars" | "js";
+export type InspectorPendingArea = "html" | "css" | "js";
 export type HtmlPendingArea = "tag" | "attributes" | "text" | "image" | "classes" | "structure";
 
 export type ScssVariable = {
@@ -378,9 +389,36 @@ export type ZolaProjectSettings = {
 };
 
 export type SourceLanguage = "html" | "css" | "scss" | "js" | "markdown" | "plain";
-export type CenterView = "preview" | "code" | "markdown" | "site" | "kernel";
-export type ProjectPaneTab = "layers" | "files" | "page";
-export type InspectorTab = "html" | "css" | "vars" | "js";
+export type CenterView = "preview" | "code" | "markdown" | "kernel";
+export type ApplicationSurface = "workbench" | "settings";
+export type ApplicationTheme = "light" | "dark";
+export type ApplicationSettingsSnapshot = {
+  schemaVersion: 2;
+  revision: number;
+  initialized: boolean;
+  theme: ApplicationTheme;
+  blockPropertiesHeight: number;
+  blockPropertiesCollapsed: boolean;
+};
+export type AppHomeSnapshot = {
+  schemaVersion: 1;
+  identifier: string;
+  configDir: string;
+  dataDir: string;
+  cacheDir: string;
+  logDir: string;
+  tempDir: string;
+  projectsConfigDir: string;
+  mcpDir: string;
+  sessionsDir: string;
+  kernelDir: string;
+  writeAuthorityWalDir: string;
+  scratchDir: string;
+  previewCacheDir: string;
+  appLogsDir: string;
+};
+export type ProjectPaneTab = "layers" | "files";
+export type InspectorTab = "html" | "css" | "js";
 
 export type VersionRepositoryState =
   | "uninitialized"
@@ -895,6 +933,88 @@ export type ProjectWorkspaceIdentity = {
   expectedRevision: number;
 };
 
+export type ThemeStatus = "available" | "installed" | "active";
+export type ThemeOperation = "install" | "activate";
+
+export type ThemeCompatibilitySnapshot = {
+  minimum: string;
+  tested: string;
+  embedded: string;
+  compatible: boolean;
+};
+
+export type ThemePackSnapshot = {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  category: string;
+  author: string | null;
+  license: string | null;
+  homepage: string | null;
+  previewDataUrl: string;
+  compatibility: ThemeCompatibilitySnapshot;
+  capabilities: string[];
+  requiredPages: string[];
+  requiredData: string[];
+  editorAnchors: string[];
+  themeFileCount: number;
+  themeBytes: number;
+  recipeFileCount: number;
+  recipeBytes: number;
+  status: ThemeStatus;
+  installComplete: boolean;
+  localOverrideCount: number;
+};
+
+export type ThemeCatalogSnapshot = {
+  schemaVersion: 1;
+  registryVersion: string;
+  embeddedZolaVersion: string;
+  projectRoot: string | null;
+  runtimeSessionId: string | null;
+  revision: number | null;
+  activeThemeId: string | null;
+  themes: ThemePackSnapshot[];
+};
+
+export type ThemeImpactItem = {
+  code: string;
+  message: string;
+  relativePath: string | null;
+  blocking: boolean;
+};
+
+export type ThemePlanRequest = {
+  themeId: string;
+  operation: ThemeOperation;
+  identity: ProjectWorkspaceIdentity;
+};
+
+export type ThemePlan = {
+  schemaVersion: 1;
+  themeId: string;
+  operation: ThemeOperation;
+  expectedProjectRoot: string;
+  expectedSessionId: string;
+  expectedRevision: number;
+  planToken: string;
+  changed: boolean;
+  blocking: boolean;
+  affectedFiles: string[];
+  conflicts: ThemeImpactItem[];
+  missingRequirements: ThemeImpactItem[];
+  localOverrides: ThemeImpactItem[];
+  notices: ThemeImpactItem[];
+};
+
+export type ThemeApplyReceipt = {
+  schemaVersion: 1;
+  plan: ThemePlan;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
+};
+
 export type ProjectWorkspaceHistoryIdentity = ProjectWorkspaceIdentity & {
   expectedTransactionId: string;
 };
@@ -1050,7 +1170,9 @@ export type ProjectWorkspaceMutationReceipt = {
   history: WorkspaceHistorySnapshot;
 };
 
-export const PROJECT_WORKSPACE_SCHEMA_VERSION = 2;
+// Keep this in lockstep with
+// src-tauri/src/kernel/project_workspace/model.rs::PROJECT_WORKSPACE_SCHEMA_VERSION.
+export const PROJECT_WORKSPACE_SCHEMA_VERSION = 3;
 export const PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION = 3;
 
 export type WorkspaceEntryMutationReceipt = {
@@ -1092,11 +1214,14 @@ export const WORKBENCH_COMMAND_SCHEMA_VERSION = 1;
 
 export type WorkbenchActivity =
   | "editor"
-  | "site"
+  | "themes"
+  | "templates"
   | "components"
+  | "blocks"
   | "design_system"
   | "assets"
   | "content"
+  | "data"
   | "versioning"
   | "audit"
   | "publish";
@@ -1245,7 +1370,6 @@ export type CommandCenterAppCommand =
   | "toggle_inspector"
   | "toggle_theme"
   | "open_settings"
-  | "open_history"
   | "show_visual"
   | "show_code"
   | "show_markdown";
@@ -2396,7 +2520,16 @@ export type SourceNodeKind =
   | "script"
   | "asset"
   | "dataFile"
+  | "dataTable"
+  | "dataArray"
+  | "dataValue"
+  | "dataComment"
+  | "configFile"
   | "html"
+  | "blockMarker"
+  | "macroCall"
+  | "functionCall"
+  | "shortcode"
   | "extends"
   | "block"
   | "include"
@@ -2404,8 +2537,14 @@ export type SourceNodeKind =
   | "macro"
   | "for"
   | "if"
+  | "elif"
+  | "else"
   | "set"
-  | "with"
+  | "setGlobal"
+  | "filter"
+  | "break"
+  | "continue"
+  | "super"
   | "teraVariable"
   | "teraComment"
   | "raw"
@@ -2507,6 +2646,34 @@ export type SourceGraphPage = {
   contentNodeId: string;
   templateNodeId: string | null;
   pageTemplateNodeId: string | null;
+  frontmatterFormat: SourceDataFormat | null;
+  frontmatterParseError: string | null;
+  frontmatterNodes: SourceDataNode[];
+  shortcodeParseError: string | null;
+  shortcodes: ZolaShortcodeInvocation[];
+};
+
+export type ZolaShortcodeRange = {
+  start: number;
+  end: number;
+};
+
+export type ZolaShortcodeValue =
+  | { kind: "string"; value: string }
+  | { kind: "integer"; value: number }
+  | { kind: "float"; value: number }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "array"; value: ZolaShortcodeValue[] };
+
+export type ZolaShortcodeInvocation = {
+  name: string;
+  arguments: Record<string, ZolaShortcodeValue>;
+  range: ZolaShortcodeRange;
+  callRange: ZolaShortcodeRange;
+  bodyRange: ZolaShortcodeRange | null;
+  nth: number;
+  inner: ZolaShortcodeInvocation[];
+  sourceNodeId: string | null;
 };
 
 export type SourceGraphTemplate = {
@@ -2518,6 +2685,10 @@ export type SourceGraphTemplate = {
   isPartial: boolean;
   extends: string | null;
   includes: string[];
+  includeGroups: Array<{
+    targets: string[];
+    ignoreMissing: boolean;
+  }>;
   imports: string[];
   getPages: string[];
   getSections: string[];
@@ -2529,7 +2700,513 @@ export type SourceGraphTemplate = {
   imageResizes: string[];
   blocks: string[];
   macros: string[];
+  semantics: TeraSemanticDocument | null;
   nodeId: string;
+};
+
+export type TeraSemanticDocument = {
+  nodes: TeraSemanticNode[];
+};
+
+export type TeraSemanticNode =
+  | { kind: "super" }
+  | { kind: "text"; value: string }
+  | { kind: "variable"; expression: TeraSemanticExpression }
+  | {
+      kind: "macroDefinition";
+      name: string;
+      arguments: Record<string, TeraSemanticExpression | null>;
+      body: TeraSemanticNode[];
+    }
+  | { kind: "extends"; template: string }
+  | { kind: "include"; templates: string[]; ignoreMissing: boolean }
+  | { kind: "import"; template: string; namespace: string }
+  | { kind: "set"; key: string; global: boolean; value: TeraSemanticExpression }
+  | { kind: "raw"; value: string }
+  | { kind: "filterSection"; filter: TeraSemanticCall; body: TeraSemanticNode[] }
+  | { kind: "block"; name: string; body: TeraSemanticNode[] }
+  | {
+      kind: "for";
+      key: string | null;
+      value: string;
+      container: TeraSemanticExpression;
+      body: TeraSemanticNode[];
+      emptyBody: TeraSemanticNode[] | null;
+    }
+  | {
+      kind: "if";
+      branches: Array<{ condition: TeraSemanticExpression; body: TeraSemanticNode[] }>;
+      otherwise: TeraSemanticNode[] | null;
+    }
+  | { kind: "break" }
+  | { kind: "continue" }
+  | { kind: "comment"; value: string };
+
+export type TeraSemanticExpression = {
+  value: TeraSemanticValue;
+  negated: boolean;
+  filters: TeraSemanticCall[];
+};
+
+export type TeraSemanticCall = {
+  namespace: string | null;
+  name: string;
+  arguments: Record<string, TeraSemanticExpression>;
+};
+
+export type TeraSemanticValue =
+  | { kind: "string"; value: string }
+  | { kind: "integer"; value: number }
+  | { kind: "float"; value: number }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "identifier"; value: string }
+  | {
+      kind: "math";
+      value: {
+        operator: string;
+        left: TeraSemanticExpression;
+        right: TeraSemanticExpression;
+      };
+    }
+  | {
+      kind: "logic";
+      value: {
+        operator: string;
+        left: TeraSemanticExpression;
+        right: TeraSemanticExpression;
+      };
+    }
+  | {
+      kind: "test";
+      value: {
+        identifier: string;
+        name: string;
+        negated: boolean;
+        arguments: TeraSemanticExpression[];
+      };
+    }
+  | { kind: "macroCall"; value: TeraSemanticCall }
+  | { kind: "functionCall"; value: TeraSemanticCall }
+  | { kind: "array"; value: TeraSemanticExpression[] }
+  | { kind: "stringConcat"; value: TeraSemanticValue[] }
+  | {
+      kind: "in";
+      value: {
+        negated: boolean;
+        needle: TeraSemanticExpression;
+        haystack: TeraSemanticExpression;
+      };
+    };
+
+export type ComponentDefinitionKind =
+  | "templateFile"
+  | "partial"
+  | "macroLibrary"
+  | "macro"
+  | "shortcode"
+  | "templateBlock"
+  | "inlineRepeat";
+
+export type ComponentInvocationKind =
+  | "include"
+  | "macroCall"
+  | "shortcode"
+  | "repeat";
+
+export type ComponentOrigin = "project" | "theme";
+export type ComponentResolutionStatus =
+  | "resolved"
+  | "fallbackResolved"
+  | "ambiguous"
+  | "dynamic"
+  | "external"
+  | "unresolved";
+export type ComponentDependencyKind =
+  | "template"
+  | "data"
+  | "content"
+  | "style"
+  | "script"
+  | "asset"
+  | "context"
+  | "runtime";
+
+export type ComponentParameter = {
+  name: string;
+  required: boolean;
+  defaultValue: TeraSemanticExpression | null;
+};
+
+export type ComponentArgument = {
+  name: string;
+  expression: TeraSemanticExpression;
+};
+
+export type ComponentDataBinding = {
+  name: string;
+  path: string;
+  producer: string;
+  sourceNodeId: string | null;
+};
+
+export type ComponentDependency = {
+  kind: ComponentDependencyKind;
+  reference: string;
+  sourceNodeId: string | null;
+  targetNodeId: string | null;
+  resolved: boolean;
+};
+
+export type ComponentCapabilities = {
+  canCreate: boolean;
+  canEdit: boolean;
+  canDuplicate: boolean;
+  canMove: boolean;
+  canRename: boolean;
+  canExtract: boolean;
+  canDelete: boolean;
+  reason: string | null;
+};
+
+export type ComponentDiagnostic = {
+  code: string;
+  message: string;
+  severity: SourceDiagnosticSeverity;
+  file: string | null;
+  sourceNodeId: string | null;
+};
+
+export type ComponentDefinition = {
+  id: string;
+  kind: ComponentDefinitionKind;
+  name: string;
+  displayName: string;
+  origin: ComponentOrigin;
+  themeName: string | null;
+  file: string | null;
+  templateName: string | null;
+  sourceNodeId: string | null;
+  ownerDefinitionId: string | null;
+  symbol: string | null;
+  parameters: ComponentParameter[];
+  contextDependencies: string[];
+  dataBindings: ComponentDataBinding[];
+  dependencies: ComponentDependency[];
+  consumerInvocationIds: string[];
+  shadowedBy: string | null;
+  active: boolean;
+  capabilities: ComponentCapabilities;
+  diagnostics: ComponentDiagnostic[];
+};
+
+export type ComponentInvocation = {
+  id: string;
+  kind: ComponentInvocationKind;
+  name: string;
+  file: string;
+  sourceNodeId: string | null;
+  ownerDefinitionId: string | null;
+  parentInvocationId: string | null;
+  targetReference: string;
+  resolvedDefinitionIds: string[];
+  fallbackReferences: string[];
+  arguments: ComponentArgument[];
+  contextDependencies: string[];
+  dataBindings: ComponentDataBinding[];
+  status: ComponentResolutionStatus;
+  diagnostics: ComponentDiagnostic[];
+};
+
+export type RenderedComponentInstance = {
+  id: string;
+  definitionId: string | null;
+  invocationId: string | null;
+  renderInstanceId: string;
+  route: string;
+  sourceNodeId: string | null;
+  parentInstanceId: string | null;
+  templateStack: string[];
+  scopePath: string[];
+  bindingKey: string | null;
+  bindingPath: string | null;
+};
+
+export type ComponentGraph = {
+  schemaVersion: number;
+  definitions: ComponentDefinition[];
+  invocations: ComponentInvocation[];
+  renderedInstances: RenderedComponentInstance[];
+  diagnostics: ComponentDiagnostic[];
+};
+
+export type BlockOrigin = "native" | "application" | "theme" | "project";
+export type BlockScale = "element" | "section" | "composition";
+export type BlockResolutionStatus = "resolved" | "unknownProvider" | "invalidContract";
+export type BlockRequirementKind = "runtime" | "stylesheet" | "markup";
+export type BlockOptionControl = "toggle" | "number" | "text" | "select";
+export type BlockOptionValue =
+  | { kind: "boolean"; value: boolean }
+  | { kind: "integer"; value: number }
+  | { kind: "text"; value: string };
+
+export type BlockCapabilities = {
+  canInsert: boolean;
+  canEditProperties: boolean;
+  supportsVariants: boolean;
+  supportsSlots: boolean;
+};
+
+export type BlockRequirement = {
+  id: string;
+  kind: BlockRequirementKind;
+  minimumVersion: number;
+  required: boolean;
+};
+
+export type BlockOptionDefinition = {
+  id: string;
+  label: string;
+  description: string;
+  control: BlockOptionControl;
+  attribute: string;
+  defaultValue: BlockOptionValue;
+  omitWhenDefault: boolean;
+  constraints: {
+    minimum: number | null;
+    maximum: number | null;
+    step: number | null;
+    maximumLength: number | null;
+  };
+  choices: Array<{ value: string; label: string }>;
+};
+
+export type BlockSlotDefinition = {
+  id: string;
+  label: string;
+  required: boolean;
+  multiple: boolean;
+};
+
+export type BlockDefinition = {
+  id: string;
+  schemaVersion: number;
+  providerId: string;
+  familyId: string;
+  variantId: string;
+  displayName: string;
+  description: string;
+  origin: BlockOrigin;
+  scale: BlockScale;
+  capabilities: BlockCapabilities;
+  requirements: BlockRequirement[];
+  options: BlockOptionDefinition[];
+  slots: BlockSlotDefinition[];
+};
+
+export type BlockDiagnostic = {
+  code: string;
+  message: string;
+  severity: SourceDiagnosticSeverity;
+  file: string | null;
+  sourceNodeId: string | null;
+};
+
+export type BlockSourceInstance = {
+  id: string;
+  definitionId: string | null;
+  providerId: string;
+  file: string;
+  sourceNodeId: string;
+  status: BlockResolutionStatus;
+  diagnostics: BlockDiagnostic[];
+};
+
+export type RenderedBlockInstance = {
+  id: string;
+  definitionId: string | null;
+  sourceInstanceId: string | null;
+  renderInstanceId: string;
+  route: string;
+  sourceNodeId: string | null;
+  parentInstanceId: string | null;
+  bindingKey: string | null;
+  bindingPath: string | null;
+};
+
+export type BlockGraph = {
+  schemaVersion: number;
+  definitions: BlockDefinition[];
+  sourceInstances: BlockSourceInstance[];
+  diagnostics: BlockDiagnostic[];
+};
+
+export type NativeBlockMarkerKind = "canonical" | "legacy";
+
+export type NativeBlockOptionState = {
+  id: string;
+  value: BlockOptionValue;
+  isDefault: boolean;
+};
+
+export type UiBlockSourceInstance = {
+  id: string;
+  definitionId: string | null;
+  providerId: string;
+  file: string;
+  markerSourceNodeId: string;
+  rootSourceNodeId: string | null;
+  rootLocation: ProjectSourceEditLocation | null;
+  status: BlockResolutionStatus;
+  markerKind: NativeBlockMarkerKind | null;
+  editable: boolean;
+  diagnostic: string | null;
+  options: NativeBlockOptionState[];
+};
+
+export type UiBlockGraphSnapshot = {
+  schemaVersion: 1;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  modelRevision: string;
+  previewRevision: string | null;
+  canvasAvailable: boolean;
+  definitions: BlockDefinition[];
+  sourceInstances: UiBlockSourceInstance[];
+  renderedInstances: RenderedBlockInstance[];
+  diagnostics: string[];
+};
+
+export type ComponentMutationOperation =
+  | "create"
+  | "update"
+  | "duplicate"
+  | "move"
+  | "rename"
+  | "extract"
+  | "delete"
+  | "override_theme";
+
+export type ComponentDraftKind =
+  | "partial"
+  | "macro_library"
+  | "shortcode_html"
+  | "shortcode_markdown";
+
+export type ComponentCompanionKind = "style" | "script" | "data";
+
+export type ComponentCompanionDraft = {
+  kind: ComponentCompanionKind;
+  relativePath: string;
+  contents: string;
+  createOnly: boolean;
+};
+
+export type ComponentExtractionRange = {
+  start: number;
+  end: number;
+};
+
+export type ComponentMutationInput = {
+  operation: ComponentMutationOperation;
+  definitionId: string | null;
+  kind: ComponentDraftKind | null;
+  name: string | null;
+  destinationName: string | null;
+  contents: string | null;
+  sourceFile: string | null;
+  sourceRange: ComponentExtractionRange | null;
+  companions: ComponentCompanionDraft[];
+};
+
+export type ComponentPlannedWrite = {
+  relativePath: string;
+  contents: string;
+  createOnly: boolean;
+};
+
+export type ComponentMutationDiagnostic = {
+  code: string;
+  message: string;
+  relativePath: string | null;
+};
+
+export type ComponentMutationPlan = {
+  schemaVersion: 1;
+  operation: ComponentMutationOperation;
+  definitionId: string | null;
+  sourceRelativePath: string | null;
+  destinationRelativePath: string | null;
+  writes: ComponentPlannedWrite[];
+  deletes: string[];
+  touchedFiles: string[];
+  diagnostics: ComponentMutationDiagnostic[];
+};
+
+export type ComponentMutationApplyReceipt = {
+  plan: ComponentMutationPlan;
+  workspace: WorkspaceEntryMutationReceipt;
+};
+
+export type DataMutationOperation =
+  | "create_file"
+  | "update_node"
+  | "insert_child"
+  | "delete_node";
+
+export type DataDraftKind =
+  | "string"
+  | "integer"
+  | "float"
+  | "boolean"
+  | "datetime"
+  | "array"
+  | "inline_table"
+  | "table"
+  | "array_of_tables";
+
+export type DataMutationInput = {
+  operation: DataMutationOperation;
+  file: string;
+  nodeId: string | null;
+  key: string | null;
+  draftKind: DataDraftKind | null;
+  value: string | null;
+};
+
+export type DataMutationPlan = {
+  schemaVersion: 1;
+  operation: DataMutationOperation;
+  file: string;
+  nodeId: string | null;
+  touchedFiles: string[];
+};
+
+export type DataMutationApplyReceipt = {
+  plan: DataMutationPlan;
+  workspace: WorkspaceEntryMutationReceipt;
+};
+
+export type DataNodeEditorSnapshot = {
+  schemaVersion: 1;
+  file: string;
+  nodeId: string;
+  key: string | null;
+  draftKind: DataDraftKind | null;
+  value: string | null;
+  editableKey: boolean;
+  editableValue: boolean;
+};
+
+export type BlockRuntimeSnapshot = {
+  schemaVersion: 1;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  previewRevision: string | null;
+  available: boolean;
+  instances: RenderedBlockInstance[];
+  diagnostics: string[];
 };
 
 export type SourceGraphAsset = {
@@ -2557,6 +3234,64 @@ export type SourceGraphDataFile = {
   themeName: string | null;
   logicalPath: string;
   nodeId: string;
+  format: SourceDataFormat;
+  parseError: string | null;
+  nodes: SourceDataNode[];
+};
+
+export type SourceStructuredDocumentKind = "zolaConfig" | "themeConfig";
+
+export type SourceStructuredDocument = {
+  id: string;
+  file: string;
+  kind: SourceStructuredDocumentKind;
+  nodeId: string;
+  parseError: string | null;
+  nodes: SourceDataNode[];
+};
+
+export type SourceDataFormat = "toml" | "json" | "yaml" | "csv" | "bibtex" | "xml" | "unknown";
+
+export type SourceDataNodeKind =
+  | "document"
+  | "table"
+  | "arrayOfTables"
+  | "tableElement"
+  | "array"
+  | "arrayElement"
+  | "inlineTable"
+  | "value"
+  | "comment"
+  | "opaque";
+
+export type SourceDataValueKind =
+  | "string"
+  | "integer"
+  | "float"
+  | "boolean"
+  | "datetime"
+  | "array"
+  | "inlineTable"
+  | "table"
+  | "arrayOfTables"
+  | "null"
+  | "unknown";
+
+export type SourceDataPathSegment =
+  | { kind: "key"; value: string }
+  | { kind: "index"; value: number };
+
+export type SourceDataNode = {
+  id: string;
+  kind: SourceDataNodeKind;
+  path: SourceDataPathSegment[];
+  key: string | null;
+  valueKind: SourceDataValueKind | null;
+  valuePreview: string | null;
+  range: SourceRange | null;
+  keyRange: SourceRange | null;
+  parentId: string | null;
+  children: string[];
 };
 
 export type SourceGraphStyle = {
@@ -2578,9 +3313,82 @@ export type SourceGraph = {
   scripts: SourceGraphScript[];
   assets: SourceGraphAsset[];
   dataFiles: SourceGraphDataFile[];
+  structuredDocuments: SourceStructuredDocument[];
+  componentGraph: ComponentGraph;
+  blockGraph: BlockGraph;
   nodes: SourceGraphNode[];
   relations: SourceGraphRelation[];
   diagnostics: SourceGraphDiagnostic[];
+};
+
+export type TemplateCatalogRole = "page" | "layout" | "partial" | "macro_library";
+export type TemplateCatalogReferenceKind = "extends" | "includes" | "imports";
+
+export type TemplateCatalogTemplateUsage = {
+  file: string;
+  name: string;
+  kind: TemplateCatalogReferenceKind;
+};
+
+export type TemplateCatalogPageUsage = {
+  file: string;
+  title: string;
+  url: string;
+};
+
+export type TemplateCatalogEntry = {
+  id: string;
+  file: string;
+  name: string;
+  origin: SourceOrigin;
+  themeName: string | null;
+  roles: TemplateCatalogRole[];
+  editable: boolean;
+  effective: boolean;
+  localOverridePath: string;
+  extends: string | null;
+  includes: string[];
+  imports: string[];
+  blocks: string[];
+  macros: string[];
+  usedByTemplates: TemplateCatalogTemplateUsage[];
+  affectedPages: TemplateCatalogPageUsage[];
+  canDelete: boolean;
+  deleteBlockedReason: string | null;
+  nodeId: string;
+};
+
+export type TemplateCatalogSnapshot = {
+  schemaVersion: number;
+  activeTheme: string | null;
+  entries: TemplateCatalogEntry[];
+};
+
+export const TEMPLATE_CATALOG_SCHEMA_VERSION = 1 as const;
+
+export type TemplateDraftRole = TemplateCatalogRole;
+
+export type CreateTemplateInput = {
+  name: string;
+  role: TemplateDraftRole;
+};
+
+export type DuplicateTemplateInput = {
+  sourceRelativePath: string;
+  destinationName: string;
+};
+
+export type OverrideThemeTemplateInput = {
+  sourceRelativePath: string;
+};
+
+export type RenameTemplateInput = {
+  sourceRelativePath: string;
+  destinationName: string;
+};
+
+export type DeleteTemplateInput = {
+  relativePath: string;
 };
 
 export type ProjectModelFileKind =
@@ -2748,6 +3556,81 @@ export type DesignClassRenameReceipt = {
   workspace: WorkspaceEntryMutationReceipt;
 };
 
+export const THEME_STYLE_CATALOG_SCHEMA_VERSION = 1;
+
+export type ThemeStyleControlKind = "text" | "color" | "choice";
+
+export type ThemeStyleControlOption = {
+  value: string;
+  label: string;
+};
+
+export type ThemeStylePropertySnapshot = {
+  id: string;
+  label: string;
+  control: ThemeStyleControlKind;
+  options: ThemeStyleControlOption[];
+  value: string | null;
+  effectiveValue: string | null;
+  inheritedFrom: string | null;
+  tokenName: string | null;
+  canClear: boolean;
+};
+
+export type ThemeStyleTargetSnapshot = {
+  id: string;
+  categoryId: string;
+  label: string;
+  description: string;
+  selector: string;
+  parentId: string | null;
+  previewKind: string;
+  sampleText: string;
+  sourcePath: string;
+  editable: boolean;
+  diagnostic: string | null;
+  hasOverrides: boolean;
+  properties: ThemeStylePropertySnapshot[];
+};
+
+export type ThemeStyleCategorySnapshot = {
+  id: string;
+  label: string;
+  targetCount: number;
+};
+
+export type ThemeStyleCatalogSnapshot = {
+  schemaVersion: typeof THEME_STYLE_CATALOG_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  sourcePath: string;
+  sourceOrigin: string;
+  categories: ThemeStyleCategorySnapshot[];
+  targets: ThemeStyleTargetSnapshot[];
+  warnings: string[];
+};
+
+export type ThemeStylePropertyInput = {
+  id: string;
+  value: string;
+};
+
+export type ThemeStylePreviewProperty = {
+  id: string;
+  value: string;
+  inherited: boolean;
+};
+
+export type ThemeStyleDraftPreview = {
+  schemaVersion: typeof THEME_STYLE_CATALOG_SCHEMA_VERSION;
+  targetId: string;
+  selector: string;
+  sourcePath: string;
+  css: string;
+  properties: ThemeStylePreviewProperty[];
+};
+
 export type PublishOperationKind = "build" | "deploy";
 
 export type PublishOperationCancelReceipt = {
@@ -2841,8 +3724,8 @@ export type ProjectHtmlMoveIntent = {
 };
 
 export type ProjectHtmlInsertElement = {
-  kind?: "html" | "component" | null;
-  componentId?: string | null;
+  kind?: "html" | "block" | null;
+  blockId?: string | null;
   tag: string;
   className?: string | null;
   text?: string | null;
@@ -2863,6 +3746,12 @@ export type ProjectHtmlAttributeMutation =
   | { kind: "setAttribute"; name: string; value: string }
   | { kind: "removeAttribute"; name: string };
 
+export type NativeBlockOptionIntent = {
+  providerId: string;
+  optionId: string;
+  value: BlockOptionValue;
+};
+
 export type ProjectHtmlAttributeIntent = {
   targetSourceId: string | null;
   targetLocation?: ProjectSourceEditLocation | null;
@@ -2870,6 +3759,7 @@ export type ProjectHtmlAttributeIntent = {
   targetSelector?: string | null;
   attributes: ProjectHtmlAttributeMutation[];
   zolaImage?: ProjectZolaImageIntent | null;
+  nativeBlockOption?: NativeBlockOptionIntent | null;
 };
 
 export type ProjectZolaImageIntent = {
@@ -3061,18 +3951,22 @@ export type ProjectHtmlInsertPatch = {
   className: string;
   text: string;
   html: string;
-  componentId: string | null;
+  blockId: string | null;
   dataAnim: string | null;
-  componentInstanceId: string | null;
+  blockInstanceId: string | null;
 };
 
-export type PageComponentContractTextPlan = {
+export type NativeBlockContractTextPlan = {
   changed: boolean;
   contents: string;
 };
 
-export type PageComponentRegistryItem = {
+export type NativeBlockRegistryItem = {
   id: string;
+  schemaVersion: number;
+  familyId: string;
+  variantId: string;
+  scale: BlockScale;
   kind: "css" | "js";
   label: string;
   description: string;
@@ -3080,51 +3974,55 @@ export type PageComponentRegistryItem = {
   text: string;
   className: string;
   html: string;
+  capabilities: BlockCapabilities;
+  requirements: BlockRequirement[];
+  options: BlockOptionDefinition[];
+  slots: BlockSlotDefinition[];
 };
 
-export type PageComponentRegistryGroup = {
+export type NativeBlockRegistryGroup = {
   label: string;
-  elements: PageComponentRegistryItem[];
+  elements: NativeBlockRegistryItem[];
 };
 
-export type PageComponentRegistrySnapshot = {
+export type NativeBlockRegistrySnapshot = {
   schemaVersion: number;
-  components: PageComponentRegistryItem[];
-  groups: PageComponentRegistryGroup[];
+  blocks: NativeBlockRegistryItem[];
+  groups: NativeBlockRegistryGroup[];
 };
 
-export type PageComponentContractInput = {
+export type NativeBlockContractInput = {
   templatePath: string;
   templateSource: string;
   stylesheetSource?: string | null;
   pageJsConfig?: PageJsConfig | null;
-  ensureComponentId?: string | null;
+  ensureBlockId?: string | null;
   cachebustAssets?: boolean | null;
 };
 
-export type PageComponentContractApplyInput = {
+export type NativeBlockContractApplyInput = {
   expectedProjectRoot: string;
   expectedSessionId: string;
   templatePath: string;
-  ensureComponentId?: string | null;
+  ensureBlockId?: string | null;
   cachebustAssets?: boolean | null;
 };
 
-export type PageComponentContractPlan = {
+export type NativeBlockContractPlan = {
   templatePath: string;
   stylesheetPath: string;
   stylesheetHref: string;
-  activeComponentIds: string[];
-  template: PageComponentContractTextPlan;
-  stylesheet: PageComponentContractTextPlan;
+  activeBlockIds: string[];
+  template: NativeBlockContractTextPlan;
+  stylesheet: NativeBlockContractTextPlan;
   pageJsConfig: PageJsConfig;
   pageJsChanged: boolean;
   previewCss: string;
   diagnostics: string[];
 };
 
-export type PageComponentContractApplyReceipt = {
-  plan: PageComponentContractPlan;
+export type NativeBlockContractApplyReceipt = {
+  plan: NativeBlockContractPlan;
   workspaceMutation: ProjectWorkspaceMutationReceipt | null;
   pageJs: PageJsDraftStageReceipt | null;
   authority: PageContractAuthorityReceipt;
@@ -3201,6 +4099,14 @@ export type CanvasPatchAnchor = {
 
 export type CanvasPatchOperation =
   | { kind: "setAttributes"; target: CanvasPatchAnchor; attributes: Record<string, string | null> }
+  | {
+      kind: "setBlockOption";
+      target: CanvasPatchAnchor;
+      providerId: string;
+      optionId: string;
+      attribute: string;
+      value: string | null;
+    }
   | { kind: "setText"; target: CanvasPatchAnchor; text: string }
   | { kind: "replaceTag"; target: CanvasPatchAnchor; newTag: string }
   | { kind: "insert"; target: CanvasPatchAnchor; position: ProjectMovePosition; html: string }
@@ -3362,7 +4268,7 @@ export type ProjectHtmlDuplicatePatch = {
   lineShift: number;
   tag: string;
   html: string;
-  componentIds: string[];
+  blockIds: string[];
   dataAnimCount: number;
   duplicateIdCount: number;
   zolaImageContract: boolean;
@@ -3842,7 +4748,7 @@ export type SourceNodeRange = {
 
 // ── JS / Motion tab types ─────────────────────────────────────────────────────
 
-export type PanaComponent = {
+export type NativeBlockRuntimeEntry = {
   id: string;
 };
 
@@ -4231,7 +5137,7 @@ export type PanaMotionConfig = {
 
 export type PageJsConfig = {
   version?: 1;
-  components: PanaComponent[];
+  blocks: NativeBlockRuntimeEntry[];
   motion?: PanaMotionConfig;
 };
 

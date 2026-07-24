@@ -1,14 +1,12 @@
 <script lang="ts">
-  import HistoryPanel from "$lib/components/HistoryPanel.svelte";
   import ContextMenuLayer from "$lib/components/context-menu/ContextMenuLayer.svelte";
   import NotificationStack from "$lib/components/NotificationStack.svelte";
-  import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import Topbar from "$lib/components/Topbar.svelte";
   import CommandCenter from "$lib/components/workbench/CommandCenter.svelte";
   import { contextMenu } from "$lib/context-menu/store.svelte";
   import type { AppState } from "$lib/state/app.svelte";
-  import type { CommandCenterAction, SaveState } from "$lib/types";
+  import type { CommandCenterAction } from "$lib/types";
   import type { Snippet } from "svelte";
 
   let {
@@ -46,14 +44,6 @@
   const activeWorkbenchActivity = $derived(
     app.workbenchSnapshot?.activeActivity ?? "editor",
   );
-  const showPreviewZoom = $derived(
-    (activeWorkbenchActivity === "editor"
-      && (app.centerView === "preview" || app.workbenchSnapshot?.split !== "none")
-      && app.previewCanvasMode === "fixed")
-      || activeWorkbenchActivity === "site"
-      || activeWorkbenchActivity === "content",
-  );
-
   async function toggleRightInspectorPane() {
     if (!app.rightPaneCollapsed) {
       try {
@@ -79,8 +69,7 @@
   leftPaneCollapsed={app.leftPaneCollapsed}
   rightPaneCollapsed={app.rightPaneCollapsed}
   terminalPaneOpen={app.terminalPaneOpen}
-  sidebarsAvailable={activeWorkbenchActivity === "editor"}
-  historyPanelOpen={app.historyPanelOpen}
+  sidebarsAvailable={app.applicationSurface === "workbench" && activeWorkbenchActivity === "editor"}
   openProjectFolder={() => app.openProjectFolder()}
   openCurrentProjectInBrowser={() => app.openCurrentProjectInBrowser()}
   canOpenInBrowser={app.scannedProject?.isZola ?? false}
@@ -91,13 +80,6 @@
   toggleLeftPane={() => { app.leftPaneCollapsed = !app.leftPaneCollapsed; }}
   toggleRightPane={toggleRightInspectorPane}
   toggleTerminalPane={() => { void app.toggleTerminalPane(); }}
-  toggleHistoryPanel={() => {
-    const next = !app.historyPanelOpen;
-    app.historyPanelOpen = next;
-    if (next) {
-      app.settingsPanelOpen = false;
-    }
-  }}
   {openCommandCenter}
 />
 </div>
@@ -114,11 +96,6 @@
   saveStatus={app.saveStatus}
   controlledPreview={app.controlledPreview}
   canvasPatchPerformance={app.canvasPatchPerformance}
-  previewZoom={app.previewZoom}
-  {showPreviewZoom}
-  setPreviewZoom={(value) => app.setPreviewZoom(value)}
-  commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
-  resetPreviewZoom={() => app.resetPreviewZoom()}
   sourceLabel={statusSourceLabel}
   sourceValue={statusSourceValue}
   sourceOpenable={statusSourceOpenable}
@@ -142,23 +119,6 @@
   dismiss={(id) => app.dismissNotification(id)}
   save={() => app.saveActiveFile()}
   action={(notification, actionId) => app.handleNotificationAction(notification, actionId)}
-/>
-
-<SettingsPanel
-  open={app.settingsPanelOpen}
-  aiContextStatus={app.aiContextStatus}
-  onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as SaveState)}
-  openPublishCenter={async () => { await app.setWorkbenchActivity("publish"); }}
-  close={() => { app.settingsPanelOpen = false; }}
-/>
-
-<HistoryPanel
-  open={app.historyPanelOpen}
-  workspace={app.projectWorkspaceSnapshot}
-  {undoAction}
-  {redoAction}
-  discardSession={async () => { await app.discardSessionAndReloadFromDisk(); }}
-  close={() => { app.historyPanelOpen = false; }}
 />
 
 <style>

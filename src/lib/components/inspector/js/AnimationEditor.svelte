@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconX } from "@tabler/icons-svelte";
   import {
     ANIME_ALL_KNOWN_PROPS,
     ANIME_ANIMATION_TRIGGERS,
@@ -461,7 +462,9 @@
         <span>Categorie</span>
         <SelectControl value={property.category} options={categories} ariaLabel="Categorie proprietate Anime" onchange={(value) => updateProperty({ category: value as PanaMotionProperty["category"] })} />
       </label>
-      <button type="button" class="danger remove-prop" onclick={removeProperty}>×</button>
+      <button type="button" class="danger remove-prop" aria-label="Elimină proprietatea animației" onclick={removeProperty}>
+        <IconX size={13} stroke={1.9} />
+      </button>
     </div>
     <div class="field-grid">
       <label>
@@ -644,7 +647,7 @@
   }
 
   .danger {
-    color: var(--danger) !important;
+    color: var(--danger);
   }
 
   .remove-prop {

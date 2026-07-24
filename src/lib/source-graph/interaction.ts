@@ -12,7 +12,6 @@ export const TERA_SOURCE_KINDS = new Set<SourceNodeKind>([
   "for",
   "if",
   "set",
-  "with",
   "teraVariable",
   "teraComment",
   "raw",

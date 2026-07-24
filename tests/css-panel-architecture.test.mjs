@@ -9,17 +9,27 @@ function source(path) {
 test("CSS panel has one Rust/ProjectWorkspace write authority", () => {
   const inspector = source("src/lib/components/InspectorPane.svelte");
   const app = source("src/lib/state/app.svelte.ts");
+  const design = source("src/lib/components/creation/DesignSystemWorkspace.svelte");
   const sourceSync = source("src/lib/css/source-sync.ts");
 
   assert.match(inspector, /setCssRuleAtViewport/);
   assert.match(inspector, /setPageCssRuleAtViewport/);
-  assert.match(inspector, /setScssVariable/);
+  assert.doesNotMatch(inspector, /setScssVariable|VariablesPane|inspectorTab === "vars"/);
+  assert.match(app, /async updateDesignSystemVariable[\s\S]*setScssVariable/);
+  assert.match(design, /app\.updateDesignSystemVariable/);
   assert.match(inspector, /stageCssRuleMutation/);
   assert.match(inspector, /flushStagedCssPanelMutations/);
   assert.match(inspector, /registerEditFlushHandler\("inspector-css-workspace"/);
   assert.doesNotMatch(inspector, /applyCssPanelEditToOpenSource/);
   assert.doesNotMatch(app, /applyCssPanelEditToOpenSource|projectOpenSourceInspectorCssMutation/);
   assert.doesNotMatch(sourceSync, /upsertCssPropertyInSource|upsertDeclarationInBlock/);
+});
+
+test("Inspectorul începe cu conținutul util, fără antet redundant", () => {
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+
+  assert.doesNotMatch(inspector, /<h2>Inspector<\/h2>|pane-title-tag|vars-toggle-btn/);
+  assert.match(inspector, /<aside[\s\S]*\{#if hasTeraSelection\}/);
 });
 
 test("CSS receipt projects exact FileBuffer snapshots into CodeMirror state", () => {

@@ -11,8 +11,9 @@ use crate::{
     },
     project_model::zola_image_engine::{inspect_zola_image_at, ZolaImagePresentation},
     source_graph::{
-        html::parse_html_opening_tags,
-        identity::source_node_id,
+        html::{html_label, should_project_html_tag},
+        identity::SourceIdentityAssigner,
+        mixed_cst::{parse_mixed_cst, MixedCstKind},
         model::SourceNodeKind,
         tera::{for_collection_root, parse_tera_items, set_assignment_name, TeraItemKind},
     },
@@ -110,7 +111,10 @@ impl SourceIdIndex {
             let path = entry.path();
             if path.is_dir() {
                 self.collect_templates(zola_root, &path)?;
-            } else if path.extension().and_then(|extension| extension.to_str()) == Some("html") {
+            } else if matches!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("html" | "md")
+            ) {
                 self.index_template_file(zola_root, &path)?;
             }
         }
@@ -131,27 +135,36 @@ impl SourceIdIndex {
 
     pub(super) fn index_template_source(&mut self, source: &str, relative_path: &str) {
         let graph_file = relative_path.trim_start_matches('/').to_string();
-        let tera_scopes = self.index_tera_source(source, relative_path, &graph_file);
-        for item in parse_html_opening_tags(source) {
-            let (line, column) = line_column(source, item.start);
+        let mut identities = SourceIdentityAssigner::default();
+        let tera_scopes =
+            self.index_tera_source(source, relative_path, &graph_file, &mut identities);
+        let mixed = parse_mixed_cst(source, relative_path);
+        debug_assert!(mixed.is_lossless());
+        for element in &mixed.elements {
+            let Some(opening) = mixed.nodes.get(element.opening_node) else {
+                continue;
+            };
+            let MixedCstKind::StartTag(tag) = &opening.kind else {
+                continue;
+            };
+            if !should_project_html_tag(&tag.name) {
+                continue;
+            }
+            let raw = opening.full_text(source);
+            let label = html_label(&tag.name, raw);
+            let (line, column) = line_column(source, opening.start);
             let source_location = format!("{}:{}:{}", relative_path, line, column);
-            let source_id = source_node_id(
-                &graph_file,
-                &SourceNodeKind::Html,
-                &item.label,
-                Some(item.start),
-                Some(item.end),
-            );
+            let source_id = identities.next(&graph_file, &SourceNodeKind::Html, &label);
             self.by_source_location.insert(source_location, source_id);
-            if item.tag.eq_ignore_ascii_case("img") {
-                if let Ok(Some(presentation)) = inspect_zola_image_at(source, item.start) {
+            if tag.name.eq_ignore_ascii_case("img") {
+                if let Ok(Some(presentation)) = inspect_zola_image_at(source, opening.start) {
                     self.zola_image_by_source_location.insert(
                         format!("{}:{}:{}", relative_path, line, column),
                         presentation,
                     );
                 }
             }
-            if let Some(scope) = innermost_tera_scope(&tera_scopes, item.start, item.end) {
+            if let Some(scope) = innermost_tera_scope(&tera_scopes, opening.start, opening.end) {
                 self.template_source_by_html_location.insert(
                     format!("{}:{}:{}", relative_path, line, column),
                     scope.node_id.clone(),
@@ -165,6 +178,7 @@ impl SourceIdIndex {
         source: &str,
         relative_path: &str,
         graph_file: &str,
+        identities: &mut SourceIdentityAssigner,
     ) -> Vec<TeraScopeAnchor> {
         let is_partial = is_partial_template_relative_path(relative_path);
         let mut scope_stack: Vec<TeraScopeAnchor> = Vec::new();
@@ -187,19 +201,13 @@ impl SourceIdIndex {
                     {
                         continue;
                     }
-                    let node_id = source_node_id(
-                        graph_file,
-                        &kind,
-                        &item.label,
-                        Some(item.start),
-                        Some(item.end),
-                    );
+                    let node_id = identities.next(graph_file, &kind, &item.label);
                     let (line, column) = line_column(source, item.start);
                     let source_location = format!("{}:{}:{}", relative_path, line, column);
                     self.by_template_source_location
                         .insert(source_location.clone(), node_id.clone());
                     let parent = scope_stack.last().map(|scope| scope.node_id.clone());
-                    if kind == SourceNodeKind::Set {
+                    if matches!(kind, SourceNodeKind::Set | SourceNodeKind::SetGlobal) {
                         if let Some(variable) = set_assignment_name(&item.label) {
                             set_preludes.push(SetPreludeAnchor {
                                 variable,
@@ -209,7 +217,7 @@ impl SourceIdIndex {
                             });
                         }
                     }
-                    if tera_item_opens_scope(&kind) {
+                    if item.opens_scope() {
                         let prelude = if kind == SourceNodeKind::For {
                             take_loop_prelude_for(&item.label, parent.as_ref(), &mut set_preludes)
                         } else {
@@ -261,18 +269,9 @@ fn is_partial_template_relative_path(relative_path: &str) -> bool {
             .unwrap_or(normalized.as_str())
     };
 
-    logical.starts_with("partials/") || logical.starts_with("macros/")
-}
-
-fn tera_item_opens_scope(kind: &SourceNodeKind) -> bool {
-    matches!(
-        kind,
-        SourceNodeKind::Block
-            | SourceNodeKind::Macro
-            | SourceNodeKind::For
-            | SourceNodeKind::If
-            | SourceNodeKind::With
-    )
+    logical.starts_with("partials/")
+        || logical.starts_with("macros/")
+        || logical.starts_with("shortcodes/")
 }
 
 fn innermost_tera_scope<'a>(

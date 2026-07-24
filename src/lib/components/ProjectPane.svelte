@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
   import {
-    IconFileText,
     IconFiles,
     IconHierarchy2,
     IconPlus,
@@ -25,7 +24,6 @@
   import type { TeraMoveRequest, TeraPaletteItem } from "$lib/tera/model";
   import ProjectFilesTab from "$lib/components/project/ProjectFilesTab.svelte";
   import ProjectLayersTab from "$lib/components/project/ProjectLayersTab.svelte";
-  import ProjectPageSettingsTab from "$lib/components/project/ProjectPageSettingsTab.svelte";
   import ProjectStructureTab from "$lib/components/project/ProjectStructureTab.svelte";
 
   export let scannedProject = false;
@@ -42,12 +40,10 @@
   export let selectedElement: SelectionInfo | null = null;
   export let previewSelection: PreviewSelectionState = { kind: "none" };
   export let sourceGraph: SourceGraph | null = null;
-  export let loopPaletteItems: TeraPaletteItem[] = [];
   export let activeRenderedTemplatePath: string | null = null;
   export let templateHtmlEditSourceId: string | null = null;
   export let templateWorkbenchPlan: TemplateWorkbenchPlan | null = null;
   export let fileMoveBlockedReason = "";
-  export let pageSource = "";
 
   let projectPaneTab: ProjectPaneTab = "layers";
   let elementPaletteOpen = false;
@@ -57,11 +53,6 @@
   let fileCollapsedDirs = new Set<string>();
   let fileKnownDirPaths = new Set<string>();
   let fileTreeMemoryProjectRoot: string | null = null;
-  $: projectPaneTitle = projectPaneTab === "files"
-    ? "Fișiere"
-    : projectPaneTab === "page"
-      ? "Pagină"
-      : "Straturi";
 
   async function setElementPaletteOpen(open: boolean, restoreFocus = true) {
     elementPaletteOpen = open;
@@ -99,7 +90,7 @@
     if (elementPaletteOpen) void setElementPaletteOpen(false, false);
   }
 
-  const projectPaneTabs: ProjectPaneTab[] = ["layers", "files", "page"];
+  const projectPaneTabs: ProjectPaneTab[] = ["layers", "files"];
   async function focusProjectPaneTab(tab: ProjectPaneTab) {
     selectProjectPaneTab(tab);
     await tick();
@@ -142,42 +133,24 @@
   export let editSelectedTeraLayer: () => void | Promise<void>;
   export let deleteSelectedTeraNode: () => void | Promise<void>;
   export let openSelectedTeraSource: () => void | Promise<void>;
-  export let openTemplateWorkbenchSource: (file: string) => void | Promise<void> = () => {};
-  export let updatePageFrontmatterSource: (relativePath: string, source: string) => void;
 
 </script>
 
 <aside class="project-pane" aria-label="Navigator proiect">
-  <div class="pane-title">
-    <div class="pane-title-main">
-      {#if projectPaneTab === "files"}
-        <IconFiles size={16} stroke={1.8} />
-      {:else if projectPaneTab === "page"}
-        <IconFileText size={16} stroke={1.8} />
-      {:else if projectPaneTab === "layers"}
-        <IconHierarchy2 size={16} stroke={1.8} />
-      {/if}
-      <h2>{projectPaneTitle}</h2>
-    </div>
-    <div class="pane-title-actions">
-      {#if projectPaneTab === "layers"}
-        <button
-          bind:this={elementPaletteTrigger}
-          class="ui-icon-button pane-action-btn"
-          class:active={elementPaletteOpen}
-          type="button"
-          title="Deschide panoul Adaugă element"
-          aria-label="Adaugă element"
-          aria-haspopup="dialog"
-          aria-expanded={elementPaletteOpen}
-          aria-controls="element-palette-dialog"
-          onclick={() => { void setElementPaletteOpen(!elementPaletteOpen); }}
-        >
-          <IconPlus size={14} stroke={1.9} />
-        </button>
-      {/if}
-    </div>
-  </div>
+  <button
+    bind:this={elementPaletteTrigger}
+    class="ui-button primary pane-add-element-btn"
+    class:active={elementPaletteOpen}
+    type="button"
+    title="Deschide panoul Adaugă element"
+    aria-haspopup="dialog"
+    aria-expanded={elementPaletteOpen}
+    aria-controls="element-palette-dialog"
+    onclick={() => { void setElementPaletteOpen(!elementPaletteOpen); }}
+  >
+    <IconPlus size={15} stroke={2} />
+    <span>Adaugă element</span>
+  </button>
 
   <div class="ui-tabs pane-tabs" role="tablist" aria-label="Zonele panoului de proiect">
     <button id="project-pane-tab-layers" class="ui-tab tab-btn" class:active={projectPaneTab === "layers"} type="button" role="tab" title="Straturi"
@@ -189,11 +162,6 @@
       aria-selected={projectPaneTab === "files"} aria-controls="project-pane-panel-files" tabindex={projectPaneTab === "files" ? 0 : -1}
       onclick={() => selectProjectPaneTab("files")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "files")}>
       <IconFiles size={14} stroke={1.8} /><span>Fișiere</span>
-    </button>
-    <button id="project-pane-tab-page" class="ui-tab tab-btn" class:active={projectPaneTab === "page"} type="button" role="tab" title="Pagină Markdown"
-      aria-selected={projectPaneTab === "page"} aria-controls="project-pane-panel-page" tabindex={projectPaneTab === "page" ? 0 : -1}
-      onclick={() => selectProjectPaneTab("page")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "page")}>
-      <IconFileText size={14} stroke={1.8} /><span>Pagină</span>
     </button>
   </div>
 
@@ -220,7 +188,6 @@
       {editSelectedTeraLayer}
       {deleteSelectedTeraNode}
       {openSelectedTeraSource}
-      {openTemplateWorkbenchSource}
     />
     </div>
   {/if}
@@ -247,20 +214,6 @@
       {moveProjectFile}
       {renameProjectFile}
       {deleteProjectFile}
-    />
-    </div>
-  {/if}
-
-  <!-- ── PAGE SETTINGS TAB ── -->
-  {#if projectPaneTab === "page"}
-    <div class="pane-tab-panel" id="project-pane-panel-page" role="tabpanel" aria-labelledby="project-pane-tab-page">
-    <ProjectPageSettingsTab
-      {activeScannedPath}
-      {scannedPages}
-      {scannedTemplates}
-      activeTheme={sourceGraph?.activeTheme ?? null}
-      {pageSource}
-      {updatePageFrontmatterSource}
     />
     </div>
   {/if}
@@ -297,7 +250,6 @@
         <ProjectStructureTab
           {selectedElement}
           {sourceGraph}
-          {loopPaletteItems}
           {startElementPaletteDrag}
           {startTeraPaletteDrag}
         />
@@ -316,29 +268,24 @@
     min-height: 0;
     padding: 10px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     overflow: auto;
     overscroll-behavior: contain;
-    box-shadow: var(--shadow);
     background: var(--surface);
   }
 
-  .pane-title { display: flex; align-items: center; justify-content: space-between; }
-  .pane-title h2 { margin: 0; font-size: 13px; font-weight: 800; letter-spacing: 0.01em; }
-  .pane-title-main { display: inline-flex; align-items: center; gap: 6px; }
-  .pane-title-main :global(svg) { display: block; flex: 0 0 auto; }
-  .pane-title-actions { display: inline-flex; align-items: center; gap: 4px; }
+  .pane-add-element-btn { flex: 0 0 auto; width: 100%; }
+  .pane-add-element-btn :global(svg) { display: block; flex: 0 0 auto; }
   .pane-tab-panel { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
   .pane-action-btn {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 24px; height: 24px; padding: 0;
-    border: 1px solid var(--border-3); border-radius: 6px;
-    background: var(--surface-4); color: var(--text-muted); cursor: pointer;
+    width: 32px; height: 32px; padding: 0;
+    border: 1px solid transparent; border-radius: var(--radius-control);
+    background: transparent; color: var(--text-muted); cursor: pointer;
     transition: color 120ms, border-color 120ms, background 120ms;
   }
   .pane-action-btn :global(svg) { display: block; }
-  .pane-action-btn:hover { color: var(--text); border-color: var(--border-4); }
-  .pane-action-btn.active { border-color: var(--brand); color: var(--brand-strong); background: var(--brand-soft); }
+  .pane-action-btn:hover { color: var(--text-strong); border-color: transparent; background: var(--control-hover); }
   .pane-action-btn:focus-visible,
   .tab-btn:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--brand-strong)); outline-offset: 1px; }
   /* ── Tabs ── */
@@ -346,21 +293,21 @@
     position: relative;
     z-index: 2;
     flex: 0 0 auto;
-    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 3px; padding: 3px; border: 1px solid var(--border-3);
-    border-radius: 8px; background: var(--surface-2);
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0; padding: 0; border: 0; border-bottom: 1px solid var(--border-subtle);
+    border-radius: 0; background: transparent;
   }
   .tab-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-    width: 100%; min-height: 26px; padding: 0 5px;
-    border: 1px solid transparent; border-radius: 6px;
+    width: 100%; min-height: 32px; padding: 0 5px;
+    border: 0; border-bottom: 2px solid transparent; border-radius: 0;
     color: var(--text-muted); font-size: 12px; font-weight: 600;
     background: transparent; cursor: pointer;
     transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
   }
   .tab-btn :global(svg) { display: block; flex: 0 0 auto; }
-  .tab-btn.active { border-color: var(--border-4); color: var(--text-strong); background: var(--surface-5); }
-  .tab-btn:hover:not(.active) { color: var(--text); }
+  .tab-btn.active { border-bottom-color: var(--brand); color: var(--brand-strong); background: transparent; }
+  .tab-btn:hover:not(.active) { color: var(--text-strong); background: var(--control-hover); }
 
   .element-palette-dialog {
     position: absolute;
@@ -373,7 +320,7 @@
     border-radius: inherit;
     overflow: hidden;
     background: var(--surface);
-    box-shadow: 0 18px 40px rgba(0, 0, 0, .24);
+    box-shadow: var(--shadow-float);
   }
 
   .element-palette-header {
@@ -387,7 +334,7 @@
   }
 
   .element-palette-header > div { display: grid; gap: 4px; min-width: 0; }
-  .element-palette-header h2 { margin: 0; color: var(--text-strong); font-size: 14px; }
+  .element-palette-header h2 { margin: 0; color: var(--text-strong); font-size: 14px; font-weight: 650; }
   .element-palette-header p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
   .element-palette-body { min-height: 0; padding: 8px; overflow: auto; }
 

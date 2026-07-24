@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ page.description | default(value=config.description) }}{% endblock %}
+
+{% block content %}
+<article class="pagina-cadru">
+  <header class="pagina-cadru__antet">
+    <div class="container">
+      <p class="eticheta-cadru">Cadru / Informații</p>
+      <h1>{{ page.title }}</h1>
+      {% if page.description %}<p class="pagina-cadru__descriere">{{ page.description }}</p>{% endif %}
+    </div>
+  </header>
+  <div class="container pagina-cadru__continut content">{{ page.content | safe }}</div>
+</article>
+{% endblock %}

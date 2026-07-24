@@ -21,7 +21,23 @@ use workspace::{
     read_current_project_text_from_state, workspace_mutation_input, zola_to_project_relative_path,
 };
 
-pub use model::{ProjectAppConfig, ProjectAppConfigInput, ZolaProjectSettings};
+pub use model::{
+    ApplicationSettingsInput, ApplicationSettingsSnapshot, ProjectAppConfig, ProjectAppConfigInput,
+    ZolaProjectSettings,
+};
+
+#[tauri::command]
+pub fn read_application_settings(app: AppHandle) -> Result<ApplicationSettingsSnapshot, String> {
+    app_config::read_application_settings(&app)
+}
+
+#[tauri::command]
+pub fn save_application_settings(
+    app: AppHandle,
+    settings: ApplicationSettingsInput,
+) -> Result<ApplicationSettingsSnapshot, String> {
+    app_config::write_application_settings(&app, settings)
+}
 
 #[tauri::command]
 pub fn read_project_app_config(

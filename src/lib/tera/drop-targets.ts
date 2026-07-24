@@ -45,7 +45,6 @@ function isStructuralTeraNode(node: SourceGraphNode) {
     "for",
     "if",
     "set",
-    "with",
     "teraVariable",
     "teraComment",
     "raw",
@@ -54,7 +53,7 @@ function isStructuralTeraNode(node: SourceGraphNode) {
 }
 
 function isBodyTeraNode(node: SourceGraphNode) {
-  return ["block", "macro", "for", "if", "with", "raw"].includes(node.kind);
+  return ["block", "macro", "for", "if", "raw"].includes(node.kind);
 }
 
 function canReceiveTeraInsideTag(tag: string) {

@@ -134,6 +134,25 @@ fn updates_the_existing_grouped_rule_instead_of_creating_a_duplicate_selector() 
 }
 
 #[test]
+fn exact_rule_access_distinguishes_heading_group_from_individual_heading() {
+    let source = "h1, h2, h3 {\n  color: red;\n}\n\nh1 { font-size: 3rem; }\n";
+    let group = get_exact_rule_properties(source, "h1, h2, h3").unwrap();
+    let heading = get_exact_rule_properties(source, "h1").unwrap();
+
+    assert_eq!(group[0].property, "color");
+    assert_eq!(heading[0].property, "font-size");
+
+    let updated = update_exact_css_rule(
+        source,
+        "h1",
+        &HashMap::from([("font-size".to_string(), "4rem".to_string())]),
+    )
+    .unwrap();
+    assert!(updated.contains("h1, h2, h3 {\n  color: red;"));
+    assert!(updated.contains("h1 {\n  font-size: 4rem;"));
+}
+
+#[test]
 fn appends_new_property_to_existing_block() {
     let css = ".button {\n  color: red;\n}\n";
     let mut props = HashMap::new();

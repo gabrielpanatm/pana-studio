@@ -127,10 +127,16 @@ fn template_edit_permission_scope(
         | SourceNodeKind::Macro
         | SourceNodeKind::For
         | SourceNodeKind::If
-        | SourceNodeKind::With => Ok(TemplateEditPermissionScope::TeraScope),
+        | SourceNodeKind::Filter => Ok(TemplateEditPermissionScope::TeraScope),
         SourceNodeKind::Extends
         | SourceNodeKind::Import
         | SourceNodeKind::Set
+        | SourceNodeKind::SetGlobal
+        | SourceNodeKind::Elif
+        | SourceNodeKind::Else
+        | SourceNodeKind::Break
+        | SourceNodeKind::Continue
+        | SourceNodeKind::Super
         | SourceNodeKind::TeraVariable
         | SourceNodeKind::TeraComment
         | SourceNodeKind::Raw
@@ -154,8 +160,14 @@ fn source_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Macro => "macro",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
+        SourceNodeKind::Elif => "elif",
+        SourceNodeKind::Else => "else",
         SourceNodeKind::Set => "set",
-        SourceNodeKind::With => "with",
+        SourceNodeKind::SetGlobal => "setGlobal",
+        SourceNodeKind::Filter => "filter",
+        SourceNodeKind::Break => "break",
+        SourceNodeKind::Continue => "continue",
+        SourceNodeKind::Super => "super",
         SourceNodeKind::TeraVariable => "teraVariable",
         SourceNodeKind::TeraComment => "teraComment",
         SourceNodeKind::Raw => "raw",

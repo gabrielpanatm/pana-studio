@@ -318,6 +318,9 @@ fn authority_scope_label(scope: &DirectoryAuthorityScope) -> String {
         DirectoryAuthorityScope::ZolaArtifactPublication { lease_id } => {
             format!("zola_artifact_publication:{lease_id}")
         }
+        DirectoryAuthorityScope::ComponentValidation { lease_id } => {
+            format!("component_validation:{lease_id}")
+        }
         DirectoryAuthorityScope::ExternalCodex { lease_id } => {
             format!("external_codex:{lease_id}")
         }

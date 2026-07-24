@@ -396,7 +396,7 @@ fn can_receive_tera_inside(anchor: &SourceNode, intent: &ProjectTeraMoveIntent) 
             | SourceNodeKind::Macro
             | SourceNodeKind::For
             | SourceNodeKind::If
-            | SourceNodeKind::With
+            | SourceNodeKind::Filter
             | SourceNodeKind::Tera
     )
 }
@@ -512,7 +512,11 @@ fn is_movable_tera_kind(kind: &SourceNodeKind) -> bool {
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
-            | SourceNodeKind::With
+            | SourceNodeKind::SetGlobal
+            | SourceNodeKind::Filter
+            | SourceNodeKind::Break
+            | SourceNodeKind::Continue
+            | SourceNodeKind::Super
             | SourceNodeKind::TeraVariable
             | SourceNodeKind::TeraComment
             | SourceNodeKind::Raw
@@ -531,7 +535,11 @@ fn is_tera_move_anchor_kind(kind: &SourceNodeKind) -> bool {
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
-            | SourceNodeKind::With
+            | SourceNodeKind::SetGlobal
+            | SourceNodeKind::Filter
+            | SourceNodeKind::Break
+            | SourceNodeKind::Continue
+            | SourceNodeKind::Super
             | SourceNodeKind::TeraVariable
             | SourceNodeKind::TeraComment
             | SourceNodeKind::Raw
@@ -549,8 +557,14 @@ fn tera_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Macro => "macro",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
+        SourceNodeKind::Elif => "elif",
+        SourceNodeKind::Else => "else",
         SourceNodeKind::Set => "set",
-        SourceNodeKind::With => "with",
+        SourceNodeKind::SetGlobal => "setGlobal",
+        SourceNodeKind::Filter => "filter",
+        SourceNodeKind::Break => "break",
+        SourceNodeKind::Continue => "continue",
+        SourceNodeKind::Super => "super",
         SourceNodeKind::TeraVariable => "teraVariable",
         SourceNodeKind::TeraComment => "teraComment",
         SourceNodeKind::Raw => "raw",
@@ -907,7 +921,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_move_blocks_unspecialized_tera_source() {
+    fn plan_tera_move_handles_filter_as_a_specialized_source() {
         let root = unique_test_dir();
         write_project(
             &root,
@@ -919,7 +933,7 @@ mod tests {
             ),
         );
         let model = build_project_model(&root, &HashMap::new()).unwrap();
-        let source = find_node(&model, SourceNodeKind::Tera, "filter");
+        let source = find_node(&model, SourceNodeKind::Filter, "filter");
         let target = model
             .source_graph
             .nodes
@@ -934,7 +948,7 @@ mod tests {
                 target_source_id: Some(target.id.clone()),
                 source_location: None,
                 target_location: None,
-                source_kind: Some("tera".to_string()),
+                source_kind: Some("filter".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),
@@ -944,12 +958,12 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!plan.allowed);
-        assert!(plan.diagnostic.unwrap().contains("nespecializată"));
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        assert!(plan.patch.is_some());
     }
 
     #[test]
-    fn plan_tera_move_blocks_unspecialized_tera_destination() {
+    fn plan_tera_move_handles_filter_as_a_specialized_destination() {
         let root = unique_test_dir();
         write_project(
             &root,
@@ -962,7 +976,7 @@ mod tests {
         );
         let model = build_project_model(&root, &HashMap::new()).unwrap();
         let source = find_node(&model, SourceNodeKind::Include, "partials/a.html");
-        let target = find_node(&model, SourceNodeKind::Tera, "filter");
+        let target = find_node(&model, SourceNodeKind::Filter, "filter");
 
         let plan = plan_tera_move(
             &model,
@@ -972,7 +986,7 @@ mod tests {
                 source_location: None,
                 target_location: None,
                 source_kind: Some("include".to_string()),
-                target_kind: Some("tera".to_string()),
+                target_kind: Some("filter".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: None,
                 target_selector: None,
@@ -981,8 +995,8 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!plan.allowed);
-        assert!(plan.diagnostic.unwrap().contains("destinație sigură"));
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        assert!(plan.patch.is_some());
     }
 
     #[test]

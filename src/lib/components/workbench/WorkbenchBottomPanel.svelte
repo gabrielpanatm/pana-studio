@@ -414,10 +414,9 @@
     min-width: 0;
     min-height: 0;
     border: 1px solid var(--wb-border-subtle, var(--border));
-    border-radius: 8px;
+    border-radius: var(--radius-panel);
     overflow: hidden;
     background: var(--wb-surface-document, var(--surface));
-    box-shadow: var(--shadow);
   }
 
   .panel-header,

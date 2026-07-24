@@ -35,3 +35,31 @@ pub fn normalize_zola_config_after_init<R: Runtime>(
 
     Ok(())
 }
+
+pub fn activate_theme_after_init<R: Runtime>(
+    app: &AppHandle<R>,
+    bootstrap: &ProjectBootstrapLease,
+    root: &Path,
+    theme_id: &str,
+) -> Result<(), String> {
+    let config = ["zola.toml", "config.toml"]
+        .into_iter()
+        .map(|name| root.join(name))
+        .find(|path| path.is_file())
+        .ok_or_else(|| "Inițializarea nu conține o configurație Zola.".to_string())?;
+    let source = std::fs::read_to_string(&config)
+        .map_err(|error| format!("Nu am putut citi configurația inițială Zola: {error}"))?;
+    let patched = crate::zola_theme::set_active_theme_in_source(&source, theme_id)?;
+    let intent = WriteIntent::new(
+        WriteCategory::ProjectSourceWrite,
+        WriteOwner::ProjectInitializer,
+        WriteOperationKind::WriteText,
+        bootstrap.target(config, "theme-pack/activation/zola-config")?,
+        WritePolicy::project_creation_write(),
+        "Project initializer selected theme activation",
+    );
+    WriteAuthority::new(app)
+        .write_text(intent, &patched)
+        .map_err(|error| error.into_terminal_diagnostic())?;
+    Ok(())
+}

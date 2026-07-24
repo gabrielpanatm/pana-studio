@@ -934,11 +934,6 @@
     background: color-mix(in srgb, #ef4444 10%, var(--surface-4));
   }
 
-  :global(body.files-dragging),
-  :global(body.files-dragging *) {
-    cursor: grabbing !important;
-  }
-
   :global(body.files-dragging) .row-actions {
     display: none;
   }
@@ -1241,9 +1236,9 @@
     overflow-wrap: anywhere;
   }
 
-  .delete-modal-note {
-    margin-top: 7px !important;
-    color: #cf4a4a !important;
+  .delete-modal-body .delete-modal-note {
+    margin-top: 7px;
+    color: #cf4a4a;
     font-weight: 800;
   }
 

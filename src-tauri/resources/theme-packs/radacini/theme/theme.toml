@@ -1,0 +1,11 @@
+name = "radacini"
+description = "Temă Zola pentru pensiuni, retreaturi, wellness și ospitalitate locală."
+license = "MIT"
+homepage = "https://pana.tm.ro"
+min_version = "0.22.0"
+
+[extra]
+
+[author]
+name = "Gabriel Pană"
+homepage = "https://pana.tm.ro"

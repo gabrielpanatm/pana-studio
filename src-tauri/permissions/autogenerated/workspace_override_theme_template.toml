@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-override-theme-template"
+description = "Enables the workspace_override_theme_template command without any pre-configured scope."
+commands.allow = ["workspace_override_theme_template"]
+
+[[permission]]
+identifier = "deny-workspace-override-theme-template"
+description = "Denies the workspace_override_theme_template command without any pre-configured scope."
+commands.deny = ["workspace_override_theme_template"]

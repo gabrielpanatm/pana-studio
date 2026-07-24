@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+{% block preload_hero %}<link rel="preload" href="{{ get_url(path='imagini/radacini-hero.webp', cachebust=true) }}" as="image">{% endblock %}
+
+{% block content %}
+{% set camere = get_section(path="camere/_index.md") %}
+<section class="radacini-hero">
+  <img class="radacini-hero__imagine" src="{{ get_url(path='imagini/radacini-hero.webp', cachebust=true) }}" width="1440" height="1000" alt="Terasă din lemn și piatră orientată spre dealuri împădurite" loading="eager" fetchpriority="high">
+  <div class="container radacini-hero__interior">
+    <div class="radacini-hero__card">
+      <p class="eticheta-organica">{{ site.supratitlu }}</p>
+      <h1>{{ site.titlu_hero }}</h1>
+      <p>{{ site.descriere_hero }}</p>
+      <div class="hero-actions">
+        <a class="btn btn-accent btn-lg" href="{{ site.cta_url }}">{{ site.cta_principal }}</a>
+        <a class="legatura-organica" href="#camere">Descoperă locul</a>
+      </div>
+    </div>
+    <div class="radacini-hero__detaliu">
+      <span>{{ site.altitudine }}</span>
+      <p>{{ site.detaliu_loc }}</p>
+    </div>
+  </div>
+</section>
+
+<section class="section-lg introducere-radacini">
+  <div class="container introducere-radacini__grila">
+    <p class="eticheta-organica">Povestea locului</p>
+    <div>
+      <h2>{{ site.titlu_intro }}</h2>
+      <p>{{ site.descriere_intro }}</p>
+      <a class="legatura-organica" href="/poveste/">Citește povestea noastră ↗</a>
+    </div>
+  </div>
+</section>
+
+<section id="camere" class="section-lg camere-radacini">
+  <div class="container">
+    <div class="cap-organic">
+      <div>
+        <p class="eticheta-organica">Spații de odihnă</p>
+        <h2>Camere cu liniște în jur.</h2>
+      </div>
+      <p>Materiale naturale, lumină bună și lucruri alese pentru confort, nu pentru decor.</p>
+    </div>
+    <div class="camere-radacini__grila">
+      {% for camera in camere.pages %}
+      <article class="camera-card">
+        <a class="camera-card__vizual" href="{{ camera.permalink }}">
+          <span class="camera-card__tip">{{ camera.extra.tip }}</span>
+          <span class="camera-card__simbol" aria-hidden="true">{{ camera.extra.simbol }}</span>
+        </a>
+        <div class="camera-card__continut">
+          <div>
+            <h3><a href="{{ camera.permalink }}">{{ camera.title }}</a></h3>
+            <p>{{ camera.description }}</p>
+          </div>
+          <p class="camera-card__pret">de la <strong>{{ camera.extra.pret }}</strong> / noapte</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section id="experiente" class="section-lg experiente-radacini">
+  <div class="container experiente-radacini__grila">
+    <div>
+      <p class="eticheta-organica eticheta-organica--deschis">Dincolo de cameră</p>
+      <h2>Ritmul zilei îl alegi tu.</h2>
+    </div>
+    <div class="experiente-radacini__lista">
+      {% for experienta in site.experiente %}
+      <article>
+        <span aria-hidden="true">0{{ loop.index }}</span>
+        <div>
+          <h3>{{ experienta.titlu }}</h3>
+          <p>{{ experienta.descriere }}</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="section-lg marturie-radacini">
+  <div class="container marturie-radacini__interior">
+    <span class="marturie-radacini__semn" aria-hidden="true">“</span>
+    <blockquote>
+      <p>{{ site.marturie.text }}</p>
+      <cite>{{ site.marturie.autor }} · {{ site.marturie.context }}</cite>
+    </blockquote>
+  </div>
+</section>
+
+<section class="section-lg rezervare-radacini">
+  <div class="container rezervare-radacini__interior">
+    <div>
+      <p class="eticheta-organica">Următoarea pauză</p>
+      <h2>{{ site.titlu_cta }}</h2>
+    </div>
+    <div>
+      <p>{{ site.descriere_cta }}</p>
+      <a class="btn btn-accent btn-lg" href="{{ site.cta_url }}">{{ site.cta_principal }}</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

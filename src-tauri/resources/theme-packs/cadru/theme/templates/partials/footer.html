@@ -1,0 +1,16 @@
+<footer class="subsol-cadru">
+  <div class="container subsol-cadru__grila">
+    <div>
+      <p class="subsol-cadru__titlu">{{ site.titlu_subsol }}</p>
+      <a class="subsol-cadru__email" href="mailto:{{ site.email }}">{{ site.email }}</a>
+    </div>
+    <div class="subsol-cadru__date">
+      <p>{{ site.adresa }}</p>
+      <p>{{ site.telefon }}</p>
+    </div>
+  </div>
+  <div class="container subsol-cadru__legal">
+    <p>© {{ now() | date(format="%Y") }} {{ site.marca }}</p>
+    <p>Creat local. Fără dependențe externe.</p>
+  </div>
+</footer>

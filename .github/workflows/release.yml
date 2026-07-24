@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tagul existent pentru care se construiește draftul de release
+        description: Tagul existent pentru care se construiește release-ul
         required: true
-        default: v0.1.0
+        default: v0.1.1
         type: string
 
 permissions:
@@ -73,10 +73,11 @@ jobs:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: Pană Studio ${{ env.RELEASE_TAG }}
           releaseBody: |
-            Primul preview public Pană Studio pentru Linux x86_64.
+            Versiune publică de test Pană Studio pentru Linux x86_64.
 
             Verifică fișierul AppImage cu fișierul `.sha256` înainte de rulare.
             Acest preview nu este încă semnat criptografic.
+            Schimbările detaliate sunt documentate în CHANGELOG.md.
           releaseDraft: true
           prerelease: true
           generateReleaseNotes: true
@@ -107,3 +108,12 @@ jobs:
           printf '%s  %s\n' "$appimage_digest" "$remote_appimage_name" > "$checksum_path"
 
           gh release upload "$RELEASE_TAG" "$checksum_path" --clobber
+
+      - name: Publish verified prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "$RELEASE_TAG" \
+            --title "Pană Studio $RELEASE_TAG" \
+            --draft=false \
+            --prerelease

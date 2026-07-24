@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconChevronDown, IconChevronUp } from "@tabler/icons-svelte";
   import { MOTION_ELEMENT_FAMILY_GROUPS, MOTION_FAMILIES } from "$lib/js/motion-config";
   import type { MotionFamilyDefinition, MotionFamilyGroup } from "$lib/js/motion-config";
   import type { PanaMotionFamily } from "$lib/types";
@@ -30,7 +31,11 @@
       <section class="family-group advanced-group">
         <button type="button" class="advanced-toggle" class:active={activeGroupId === "advanced"} onclick={() => { advancedOpen = !advancedOpen; }}>
           <span>{group.label}</span>
-          <strong>{showAdvanced ? "▴" : "▾"}</strong>
+          {#if showAdvanced}
+            <IconChevronUp size={14} stroke={1.9} />
+          {:else}
+            <IconChevronDown size={14} stroke={1.9} />
+          {/if}
         </button>
         {#if showAdvanced}
           <div class="group-grid">
@@ -192,7 +197,4 @@
     text-transform: uppercase;
   }
 
-  .advanced-toggle strong {
-    font-size: 12px;
-  }
 </style>

@@ -40,9 +40,6 @@ export function teraSnippetForItem(item: TeraPaletteItem) {
   if (item.kind === "set") {
     return `{% set ${item.expression || "name = value"} %}`;
   }
-  if (item.kind === "with") {
-    return `{% with ${item.expression || "value = value"} %}\n{% endwith %}`;
-  }
   if (item.kind === "teraVariable") {
     return `{{ ${item.expression || "value"} }}`;
   }
@@ -79,7 +76,7 @@ function partialItems(graph: SourceGraph | null): TeraPaletteItem[] {
   });
 }
 
-export function teraPaletteGroups(graph: SourceGraph | null, loopItems: TeraPaletteItem[] = []): TeraPaletteGroup[] {
+export function teraPaletteGroups(graph: SourceGraph | null): TeraPaletteGroup[] {
   const partials = partialItems(graph);
   return [
     {
@@ -128,17 +125,18 @@ export function teraPaletteGroups(graph: SourceGraph | null, loopItems: TeraPale
           items: partials,
         }]
       : []),
-    ...(loopItems.length > 0
-      ? [{
-          label: "Bucle create",
-          description: "Blocuri configurate în Editor.",
-          items: loopItems,
-        }]
-      : []),
     {
       label: "Logică Tera",
       description: "Condiții, bucle și context.",
       items: [
+        item({
+          id: "for:items",
+          kind: "for",
+          family: "logic",
+          label: "Listă dinamică",
+          description: "Creează un bloc for real, proiectat apoi în ComponentGraph.",
+          expression: "item in items",
+        }),
         item({
           id: "if:condition",
           kind: "if",
@@ -146,14 +144,6 @@ export function teraPaletteGroups(graph: SourceGraph | null, loopItems: TeraPale
           label: "Condiție",
           description: "Condiție Tera.",
           expression: "condition",
-        }),
-        item({
-          id: "with:value",
-          kind: "with",
-          family: "logic",
-          label: "Context local",
-          description: "Context local pentru variabile.",
-          expression: "value = value",
         }),
       ],
     },

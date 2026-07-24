@@ -14,38 +14,27 @@
     saveStatus = "",
     controlledPreview = undefined,
     canvasPatchPerformance = undefined,
-    previewZoom = 100,
-    showPreviewZoom = true,
     sourceLabel = "",
     sourceValue = "",
     sourceOpenable = false,
     aiCoordinationSnapshot = null,
     externalReconciling = false,
     projectionRecoveryRequired = false,
-    setPreviewZoom = () => {},
-    commitPreviewZoom = () => {},
-    resetPreviewZoom = () => {},
     openSource = () => {},
   }: {
     saveState?: SaveState;
     saveStatus?: string;
     controlledPreview?: ControlledPreviewState;
     canvasPatchPerformance?: CanvasPatchPerformanceSnapshot;
-    previewZoom?: number;
-    showPreviewZoom?: boolean;
     sourceLabel?: string;
     sourceValue?: string;
     sourceOpenable?: boolean;
     aiCoordinationSnapshot?: AiCoordinationSnapshot | null;
     externalReconciling?: boolean;
     projectionRecoveryRequired?: boolean;
-    setPreviewZoom?: (value: number) => void;
-    commitPreviewZoom?: (value: number) => void | Promise<void>;
-    resetPreviewZoom?: () => void;
     openSource?: () => void | Promise<void>;
   } = $props();
 
-  const zoomProgress = $derived(Math.max(0, Math.min(100, ((previewZoom - 25) / 175) * 100)));
   const previewLabel = $derived(controlledPreview ? previewFreshnessLabel(controlledPreview) : "");
   const zolaLabel = $derived(controlledPreview ? zolaValidationLabel(controlledPreview) : "");
 </script>
@@ -57,7 +46,6 @@
   class:saved={saveState === "saved"}
   class:restored={saveState === "restored"}
   class:error={saveState === "error"}
-  class:without-zoom={!showPreviewZoom}
   role="status"
   aria-live="polite"
 >
@@ -69,25 +57,6 @@
       <span class="text idle">Pană Studio</span>
     {/if}
   </div>
-
-  {#if showPreviewZoom}
-    <div class="zoom-control" aria-label="Zoom previzualizare">
-      <button type="button" class="zoom-reset" onclick={resetPreviewZoom}>Restabilește</button>
-      <input
-        class="zoom-slider"
-        type="range"
-        min="25"
-        max="200"
-        step="5"
-        value={previewZoom}
-        style={`--zoom-progress: ${zoomProgress}%`}
-        title={`Zoom previzualizare ${previewZoom}%`}
-        oninput={(event) => setPreviewZoom(Number(event.currentTarget.value))}
-        onchange={(event) => { void commitPreviewZoom(Number(event.currentTarget.value)); }}
-      />
-      <span class="zoom-value">{previewZoom}%</span>
-    </div>
-  {/if}
 
   <div class="status-right">
     <AiEditAuthorityIndicator
@@ -138,28 +107,23 @@
 <style>
   .status-bar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
     gap: 10px;
     padding: 0 10px;
     height: 36px;
     flex-shrink: 0;
     border-top: 1px solid var(--border);
-    background: var(--surface-2);
-    font-size: 12px;
+    background: var(--surface-panel);
+    font-size: var(--font-meta);
     font-weight: 500;
     color: var(--text-muted);
     user-select: none;
   }
 
   .status-left,
-  .status-right,
-  .zoom-control {
+  .status-right {
     min-width: 0;
-  }
-
-  .status-bar.without-zoom {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
   .status-left {
@@ -204,89 +168,6 @@
     text-overflow: ellipsis;
   }
 
-  .zoom-control {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    color: var(--text-muted);
-  }
-
-  .zoom-reset {
-    min-height: 32px;
-    padding: 0 4px;
-    border: 0;
-    border-radius: 0;
-    color: inherit;
-    background: transparent;
-    font-size: 12px;
-    cursor: pointer;
-  }
-
-  .zoom-reset:hover {
-    color: var(--text);
-  }
-
-  .zoom-slider {
-    width: 160px;
-    height: 32px;
-    padding: 0;
-    appearance: none;
-    -webkit-appearance: none;
-    background: transparent;
-    cursor: pointer;
-  }
-
-  .zoom-slider::-webkit-slider-runnable-track {
-    height: 4px;
-    border-radius: 999px;
-    background: linear-gradient(
-      to right,
-      var(--brand) 0%,
-      var(--brand) var(--zoom-progress, 0%),
-      var(--border-4) var(--zoom-progress, 0%),
-      var(--border-4) 100%
-    );
-  }
-
-  .zoom-slider::-webkit-slider-thumb {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
-    margin-top: -4px;
-    border: 1px solid var(--border-4);
-    border-radius: 50%;
-    background: var(--surface-2);
-  }
-
-  .zoom-slider::-moz-range-track {
-    height: 4px;
-    border-radius: 999px;
-    background: var(--border-4);
-  }
-
-  .zoom-slider::-moz-range-progress {
-    height: 4px;
-    border-radius: 999px;
-    background: var(--brand);
-  }
-
-  .zoom-slider::-moz-range-thumb {
-    width: 12px;
-    height: 12px;
-    border-width: 1px;
-    border-color: var(--border-4);
-    background: var(--surface-2);
-  }
-
-  .zoom-value {
-    min-width: 38px;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    color: var(--text);
-  }
-
   .source-chip {
     display: inline-flex;
     align-items: center;
@@ -296,10 +177,10 @@
     min-height: 22px;
     padding: 0 6px;
     border: 1px solid var(--border-3);
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     color: var(--text-muted);
-    background: color-mix(in srgb, var(--surface-4) 70%, transparent);
-    font-size: 12px;
+    background: var(--surface-raised);
+    font-size: var(--font-meta);
     white-space: nowrap;
   }
 
@@ -311,45 +192,45 @@
     height: 22px;
     padding: 0 6px;
     border: 1px solid var(--border-3);
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     overflow: hidden;
     color: var(--text-muted);
-    background: color-mix(in srgb, var(--surface-3) 74%, transparent);
-    font-size: 12px;
+    background: var(--surface-raised);
+    font-size: var(--font-meta);
     white-space: nowrap;
     text-overflow: ellipsis;
   }
 
   .preview-live,
   .preview-saved {
-    border-color: color-mix(in srgb, #10b981 44%, var(--border-3));
-    color: #10b981;
+    border-color: color-mix(in srgb, var(--success) 44%, var(--border-3));
+    color: var(--success);
   }
 
   .preview-refreshing,
   .zola-running,
   .zola-queued {
-    border-color: color-mix(in srgb, #6366f1 44%, var(--border-3));
-    color: #6366f1;
+    border-color: color-mix(in srgb, var(--info) 44%, var(--border-3));
+    color: var(--info);
   }
 
   .preview-canonical,
   .zola-valid {
-    border-color: color-mix(in srgb, #14b8a6 44%, var(--border-3));
-    color: #14b8a6;
+    border-color: color-mix(in srgb, var(--success) 44%, var(--border-3));
+    color: var(--success);
   }
 
   .preview-stale,
   .zola-idle {
-    border-color: color-mix(in srgb, #d97706 38%, var(--border-3));
-    color: #d97706;
+    border-color: color-mix(in srgb, var(--warning) 38%, var(--border-3));
+    color: var(--warning);
   }
 
   .preview-error,
   .zola-invalid,
   .zola-error {
-    border-color: color-mix(in srgb, #ef4444 48%, var(--border-3));
-    color: #ef4444;
+    border-color: color-mix(in srgb, var(--danger) 48%, var(--border-3));
+    color: var(--danger);
   }
 
   button.source-chip {
@@ -365,7 +246,7 @@
   .source-label {
     flex-shrink: 0;
     color: var(--brand-strong);
-    font-weight: 800;
+    font-weight: 650;
   }
 
   .source-path {
@@ -381,23 +262,22 @@
     letter-spacing: 0.04em;
   }
 
-  .unsaved .dot { background: #d97706; }
-  .unsaved      { color: #d97706; }
+  .unsaved .dot { background: var(--warning); }
+  .unsaved      { color: var(--warning); }
 
-  .saving .dot  { background: #6366f1; }
-  .saving       { color: #6366f1; }
+  .saving .dot  { background: var(--info); }
+  .saving       { color: var(--info); }
 
-  .saved .dot   { background: #10b981; }
-  .saved        { color: #10b981; }
+  .saved .dot   { background: var(--success); }
+  .saved        { color: var(--success); }
 
-  .restored .dot { background: #0ea5e9; }
-  .restored      { color: #0ea5e9; }
+  .restored .dot { background: var(--info); }
+  .restored      { color: var(--info); }
 
-  .error .dot   { background: #ef4444; }
-  .error        { color: #ef4444; }
+  .error .dot   { background: var(--danger); }
+  .error        { color: var(--danger); }
 
-  button:focus-visible,
-  input:focus-visible {
+  button:focus-visible {
     outline: 2px solid var(--focus-ring, var(--brand));
     outline-offset: 2px;
   }

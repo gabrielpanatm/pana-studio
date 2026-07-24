@@ -6,6 +6,7 @@
     IconGitBranch,
     IconGitCommit,
     IconEye,
+    IconMinus,
     IconPlus,
     IconRefresh,
     IconRestore,
@@ -1115,7 +1116,9 @@
                     <strong>{remote.name}</strong>
                     <small title={remote.fetchUrl}>{remote.fetchUrl}</small>
                   </button>
-                  <button type="button" class="mini-button" title="Elimină remote" disabled={!!busyAction || !!mutationBlockedReason} onclick={() => { pendingRemoteRemoval = remote.name; remoteRemovalConfirmation = ""; }}>×</button>
+                  <button type="button" class="mini-button" title="Elimină remote" aria-label={`Elimină remote ${remote.name}`} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => { pendingRemoteRemoval = remote.name; remoteRemovalConfirmation = ""; }}>
+                    <IconX size={13} stroke={1.9} />
+                  </button>
                   {#if remote.diagnostic}<p>{remote.diagnostic}</p>{/if}
                 </article>
               {/each}
@@ -1227,7 +1230,9 @@
                 <div><strong>{branch.name}</strong><small>{branch.current ? "activ" : branch.syncState.replaceAll("_", " ")}</small></div>
                 {#if !branch.current}
                   <button type="button" disabled={!!busyAction || !!mutationBlockedReason || !snapshot.clean || !branch.oid} onclick={() => switchBranch(branch.name, branch.oid)}>Deschide</button>
-                  <button type="button" class="mini-button" title="Șterge dacă este integrat" disabled={!!busyAction || !!mutationBlockedReason} onclick={() => { pendingBranchRemoval = branch.name; branchRemovalConfirmation = ""; }}>×</button>
+                  <button type="button" class="mini-button" title="Șterge dacă este integrat" aria-label={`Șterge ramura ${branch.name} dacă este integrată`} disabled={!!busyAction || !!mutationBlockedReason} onclick={() => { pendingBranchRemoval = branch.name; branchRemovalConfirmation = ""; }}>
+                    <IconX size={13} stroke={1.9} />
+                  </button>
                 {/if}
               </article>
             {/each}
@@ -1258,7 +1263,9 @@
                   <button type="button" class="file-main" title="Arată diff staged" onclick={() => showFileDiff(file, "staged")}>
                     <b>{kindLabel(file)}</b><span>{file.path}</span>
                   </button>
-                  <button type="button" class="mini-button" title="Unstage" disabled={!!busyAction || workspaceDirty} onclick={() => runFileMutation(`Scos din staged: ${file.path}`, () => unstageVersioningPaths(mutationIdentity(), [file.path]))}>−</button>
+                  <button type="button" class="mini-button" title="Unstage" aria-label={`Scoate ${file.path} din staged`} disabled={!!busyAction || workspaceDirty} onclick={() => runFileMutation(`Scos din staged: ${file.path}`, () => unstageVersioningPaths(mutationIdentity(), [file.path]))}>
+                    <IconMinus size={13} stroke={1.9} />
+                  </button>
                 </article>
               {/each}
             </div>
@@ -1365,24 +1372,24 @@
 
 <style>
   .versions-panel { position: relative; display: flex; flex-direction: column; gap: 11px; width: min(100%, 1120px); height: 100%; margin: 0 auto; padding: 18px 20px 30px; overflow-y: auto; border-right: 1px solid var(--wb-border-subtle, var(--border)); border-left: 1px solid var(--wb-border-subtle, var(--border)); background: var(--wb-surface-document, var(--surface)); color: var(--wb-text-primary, var(--text)); }
-  .versions-panel .panel-header { position: sticky; top: -18px; z-index: 3; min-height: 76px; margin: -18px -20px 3px; padding: 12px 20px; border-bottom: 1px solid var(--wb-border-subtle, var(--border)); background: color-mix(in srgb, var(--wb-surface-chrome, var(--surface)) 94%, transparent); backdrop-filter: blur(12px); }
+  .versions-panel .panel-header { position: sticky; top: -18px; z-index: 3; min-height: 76px; margin: -18px -20px 3px; padding: 12px 20px; border-bottom: 1px solid var(--wb-border-subtle, var(--border)); background: var(--wb-surface-chrome, var(--surface)); }
   .panel-header, .title-block, .header-actions, .repository-state, .section-heading, .file-row, .file-main, .commit-row, .guard-message, summary, .primary-button, .load-more, .empty-row { display: flex; align-items: center; }
   .panel-header, .section-heading { justify-content: space-between; gap: 10px; }
   .title-block { gap: 12px; min-width: 0; }
   .title-block > div { min-width: 0; }
-  .title-icon { display: grid; flex: 0 0 auto; width: 40px; height: 40px; place-items: center; border-radius: 10px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
+  .title-icon { display: grid; flex: 0 0 auto; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-panel); color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
   .panel-header h1, .eyebrow, .section-label, p { margin: 0; }
-  .panel-header h1 { margin-top: 2px; color: var(--text-strong); font-size: 24px; line-height: 1.15; }
+  .panel-header h1 { margin-top: 2px; color: var(--text-strong); font-size: 20px; font-weight: 650; line-height: 1.15; }
   .title-block p { margin-top: 4px; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; }
-  .eyebrow, .section-label { color: var(--text-muted); font-size: 12px; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
+  .eyebrow, .section-label { color: var(--text-muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
   .header-actions { gap: 6px; }
   button, input, textarea, select { font: inherit; }
   button { cursor: pointer; }
   button:disabled { cursor: default; opacity: .45; }
   .mini-button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border-3); border-radius: 7px; background: var(--surface-3); color: var(--text-muted); }
-  .refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--wb-radius-control, 7px); color: var(--wb-text-primary, var(--text)); background: var(--wb-surface-document, var(--surface)); font-size: 12px; font-weight: 750; }
+  .refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--wb-radius-control, 4px); color: var(--wb-text-primary, var(--text)); background: var(--wb-surface-document, var(--surface)); font-size: 12px; font-weight: 600; }
   .mini-button { flex: 0 0 27px; width: 27px; height: 27px; }
-  .repository-card, .setup-card, .identity-card, .remote-card, .sync-card, .branches-card, .changes-section, .commit-card, .diff-card, .history-section, .preview-banner, .network-progress, .restore-card, .recovery-section { border: 1px solid var(--border-3); border-radius: 9px; background: var(--surface-2); }
+  .repository-card, .setup-card, .identity-card, .remote-card, .sync-card, .branches-card, .changes-section, .commit-card, .diff-card, .history-section, .preview-banner, .network-progress, .restore-card, .recovery-section { border: 1px solid var(--border-3); border-radius: var(--radius-panel); background: var(--surface-2); }
   .repository-card { display: grid; gap: 9px; padding: 10px; }
   .repository-card.problem { border-color: color-mix(in srgb, var(--danger, #d64545) 50%, var(--border)); }
   .repository-state { gap: 8px; min-width: 0; }
@@ -1425,7 +1432,7 @@
   .file-main b { width: 13px; color: var(--text-muted); font-size: 12px; }
   .file-main span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .commit-card { padding: 9px; }
-  .primary-button { justify-content: center; gap: 7px; min-height: 34px; border: 1px solid color-mix(in srgb, var(--brand) 70%, var(--border)); border-radius: 7px; background: color-mix(in srgb, var(--brand) 18%, var(--surface-3)); color: var(--text-strong); }
+  .primary-button { justify-content: center; gap: 7px; min-height: 34px; border: 1px solid var(--brand); border-radius: var(--radius-control); background: var(--brand); color: #fff; }
   .empty-row, .empty-text { color: var(--text-muted); font-size: 12px; }
   .empty-row { justify-content: center; gap: 5px; padding: 9px; }
   .empty-text { padding: 15px 5px; text-align: center; }

@@ -1,10 +1,11 @@
 use std::{collections::HashMap, path::Path};
 
 use crate::source_graph::{
-    html::{parse_html_opening_tags, HtmlItem},
+    html::{html_label, should_project_html_tag},
+    mixed_cst::{parse_mixed_cst, MixedCstDocument, MixedCstKind},
     model::{
-        SourceCapabilities, SourceDiagnosticSeverity, SourceNodeKind, SourceOrigin,
-        SourceRelationKind,
+        SourceCapabilities, SourceDiagnosticSeverity, SourceGraphInclude, SourceNodeKind,
+        SourceOrigin, SourceRelationKind,
     },
     scan::{
         builder::SourceGraphBuilder,
@@ -12,7 +13,7 @@ use crate::source_graph::{
         ranges::source_range,
         summary::{TemplateSummary, TeraScopeSummary},
     },
-    tera::{parse_tera_items, TeraItemKind},
+    tera::{tera_items_from_document, TeraItemKind},
     zola::extract_zola_template_references,
 };
 
@@ -35,7 +36,9 @@ pub(super) fn scan_template(
 ) -> TemplateSummary {
     let file = relative_project_path(project_root, path);
     let name = template_name(zola_root, path, theme_name.as_deref());
-    let is_partial = name.starts_with("partials/") || name.starts_with("macros/");
+    let is_partial = name.starts_with("partials/")
+        || name.starts_with("macros/")
+        || name.starts_with("shortcodes/");
     let file_node_kind = if is_partial {
         SourceNodeKind::Partial
     } else {
@@ -53,9 +56,26 @@ pub(super) fn scan_template(
     );
 
     let source = read_source(path, &file, draft_sources, builder);
+    let mixed_document = parse_mixed_cst(&source, &name);
+    debug_assert!(mixed_document.is_lossless());
+    let tera_document = &mixed_document.tera;
+    if !tera_document.is_valid_tera() {
+        builder.add_diagnostic(
+            SourceDiagnosticSeverity::Error,
+            format!(
+                "Template-ul nu respectă gramatica Tera folosită de Zola: {}",
+                tera_document
+                    .validation_error()
+                    .unwrap_or("eroare Tera necunoscută")
+            ),
+            Some(file.clone()),
+            None,
+        );
+    }
     let mut scope_stack = vec![node_id.clone()];
     let mut extends = None;
     let mut includes = Vec::new();
+    let mut include_groups = Vec::new();
     let mut imports = Vec::new();
     let mut blocks = Vec::new();
     let mut macros = Vec::new();
@@ -63,7 +83,7 @@ pub(super) fn scan_template(
     let mut completed_scopes: Vec<TeraScopeSummary> = Vec::new();
     let mut set_preludes: Vec<SetPrelude> = Vec::new();
 
-    for item in parse_tera_items(&source) {
+    for item in tera_items_from_document(&tera_document) {
         match item.kind {
             TeraItemKind::EndScope => {
                 if scope_stack.len() > 1 {
@@ -133,7 +153,15 @@ pub(super) fn scan_template(
                         }
                         extends = item.target.clone();
                     }
-                    SourceNodeKind::Include => push_unique(&mut includes, item.target.clone()),
+                    SourceNodeKind::Include => {
+                        for target in &item.targets {
+                            push_unique(&mut includes, Some(target.clone()));
+                        }
+                        include_groups.push(SourceGraphInclude {
+                            targets: item.targets.clone(),
+                            ignore_missing: item.ignore_missing,
+                        });
+                    }
                     SourceNodeKind::Import => push_unique(&mut imports, item.target.clone()),
                     SourceNodeKind::Block => {
                         if blocks.iter().any(|(block, _)| block == &item.label) {
@@ -156,7 +184,7 @@ pub(super) fn scan_template(
                     _ => {}
                 }
 
-                if kind == SourceNodeKind::Set {
+                if matches!(kind, SourceNodeKind::Set | SourceNodeKind::SetGlobal) {
                     if let Some(variable) =
                         crate::source_graph::tera::set_assignment_name(&item.label)
                     {
@@ -169,7 +197,7 @@ pub(super) fn scan_template(
                     }
                 }
 
-                if tera_item_opens_scope(&kind) {
+                if item.opens_scope() {
                     let scope_start = if kind == SourceNodeKind::For {
                         take_loop_prelude_start(
                             &source,
@@ -202,18 +230,44 @@ pub(super) fn scan_template(
         completed_scopes.push(scope);
     }
 
-    for item in parse_html_opening_tags(&source) {
-        add_html_node(
-            &file,
-            &source,
-            &node_id,
-            origin.clone(),
-            theme_name.clone(),
-            &completed_scopes,
-            item,
-            builder,
-        );
+    if let Some(semantics) = tera_document.semantics() {
+        let facts = semantics.template_facts();
+        let cst_block_names = blocks
+            .iter()
+            .map(|(block, _)| block.clone())
+            .collect::<Vec<_>>();
+        if !is_partial && cst_block_names != facts.blocks {
+            builder.add_diagnostic(
+                SourceDiagnosticSeverity::Error,
+                "CST-ul lossless și AST-ul Tera nu au reconciliat aceleași block-uri.",
+                Some(file.clone()),
+                None,
+            );
+        }
+        extends = facts.extends;
+        includes = facts.includes;
+        include_groups = facts
+            .include_groups
+            .into_iter()
+            .map(|include| SourceGraphInclude {
+                targets: include.targets,
+                ignore_missing: include.ignore_missing,
+            })
+            .collect();
+        imports = facts.imports;
+        macros = facts.macros;
     }
+
+    add_mixed_html_nodes(
+        &file,
+        &source,
+        &node_id,
+        origin.clone(),
+        theme_name.clone(),
+        &completed_scopes,
+        &mixed_document,
+        builder,
+    );
 
     let zola_references = extract_zola_template_references(&source);
 
@@ -227,6 +281,7 @@ pub(super) fn scan_template(
         is_partial,
         extends,
         includes,
+        include_groups,
         imports,
         get_pages: zola_references.get_pages,
         get_sections: zola_references.get_sections,
@@ -238,6 +293,7 @@ pub(super) fn scan_template(
         image_resizes: zola_references.image_resizes,
         blocks,
         macros,
+        semantics: tera_document.semantics().cloned(),
     }
 }
 
@@ -260,36 +316,120 @@ fn take_loop_prelude_start(
     Some(set_preludes.remove(set_preludes.len() - 1 - index).start)
 }
 
-fn add_html_node(
+fn add_mixed_html_nodes(
     file: &str,
     source: &str,
     template_node_id: &str,
     origin: SourceOrigin,
     theme_name: Option<String>,
     tera_scopes: &[TeraScopeSummary],
-    item: HtmlItem,
+    document: &MixedCstDocument,
     builder: &mut SourceGraphBuilder,
 ) {
-    let range = source_range(source, item.start, item.end);
-    let label = if item.label.is_empty() {
-        format!("<{}>", item.tag)
-    } else {
-        item.label
-    };
-    let parent_scope = innermost_tera_scope(tera_scopes, item.start, item.end);
-    let parent_node_id = parent_scope
-        .map(|scope| scope.node_id.as_str())
-        .unwrap_or(template_node_id);
-    builder.add_node(
-        SourceNodeKind::Html,
-        file.to_string(),
-        origin,
-        theme_name,
-        label,
-        Some(range),
-        Some(parent_node_id.to_string()),
-        html_capabilities(parent_scope),
-    );
+    let mut projected_elements = HashMap::<usize, (String, usize)>::new();
+
+    for (element_index, element) in document.elements.iter().enumerate() {
+        let Some(opening_node) = document.nodes.get(element.opening_node) else {
+            continue;
+        };
+        let MixedCstKind::StartTag(tag) = &opening_node.kind else {
+            continue;
+        };
+        if !should_project_html_tag(&tag.name) {
+            continue;
+        }
+
+        let parent_scope = innermost_tera_scope(tera_scopes, opening_node.start, opening_node.end);
+        let html_parent =
+            projected_html_parent(element.parent, &document.elements, &projected_elements);
+        let parent_node_id = match (parent_scope, html_parent.as_ref()) {
+            (Some(scope), Some((html_node_id, html_start))) if *html_start > scope.start => {
+                html_node_id.as_str()
+            }
+            (Some(scope), _) => scope.node_id.as_str(),
+            (None, Some((html_node_id, _))) => html_node_id.as_str(),
+            (None, None) => template_node_id,
+        };
+        let raw = opening_node.full_text(source);
+        let element_end = element
+            .closing_node
+            .and_then(|closing_node| document.nodes.get(closing_node))
+            .map(|closing_node| closing_node.end)
+            .unwrap_or(opening_node.end);
+        let node_id = builder.add_node(
+            SourceNodeKind::Html,
+            file.to_string(),
+            origin.clone(),
+            theme_name.clone(),
+            html_label(&tag.name, raw),
+            Some(source_range(source, opening_node.start, element_end)),
+            Some(parent_node_id.to_string()),
+            html_capabilities(parent_scope),
+        );
+        let block_marker_attribute = ["data-pana-block", "data-pana-component"]
+            .into_iter()
+            .find(|attribute| html_attribute_value(source, tag, attribute).is_some());
+        if let Some((marker_attribute, block_id)) = block_marker_attribute
+            .and_then(|attribute| {
+                html_attribute_value(source, tag, attribute).map(|value| (attribute, value))
+            })
+            .map(|(attribute, value)| (attribute, value.trim()))
+            .filter(|(_, value)| !value.is_empty())
+        {
+            let marker_range = tag
+                .attributes
+                .iter()
+                .find(|attribute| attribute.name.eq_ignore_ascii_case(marker_attribute))
+                .map(|attribute| {
+                    source_range(
+                        source,
+                        attribute.name_start,
+                        attribute.value_end.unwrap_or(attribute.name_end),
+                    )
+                });
+            builder.add_node(
+                SourceNodeKind::BlockMarker,
+                file.to_string(),
+                origin.clone(),
+                theme_name.clone(),
+                block_id.to_string(),
+                marker_range,
+                Some(node_id.clone()),
+                SourceCapabilities::code_only(
+                    "Marcaj furnizat de registrul blocurilor native Rust.",
+                ),
+            );
+        }
+        projected_elements.insert(element_index, (node_id, opening_node.start));
+    }
+}
+
+fn html_attribute_value<'a>(
+    source: &'a str,
+    tag: &crate::source_graph::mixed_cst::HtmlStartTagCst,
+    name: &str,
+) -> Option<&'a str> {
+    let attribute = tag
+        .attributes
+        .iter()
+        .find(|attribute| attribute.name.eq_ignore_ascii_case(name))?;
+    source.get(attribute.value_start?..attribute.value_end?)
+}
+
+fn projected_html_parent(
+    mut parent: Option<usize>,
+    elements: &[crate::source_graph::mixed_cst::HtmlElementCst],
+    projected: &HashMap<usize, (String, usize)>,
+) -> Option<(String, usize)> {
+    while let Some(parent_index) = parent {
+        if let Some(parent_node) = projected.get(&parent_index) {
+            return Some(parent_node.clone());
+        }
+        parent = elements
+            .get(parent_index)
+            .and_then(|element| element.parent);
+    }
+    None
 }
 
 fn innermost_tera_scope<'a>(
@@ -318,9 +458,11 @@ fn html_capabilities(parent_scope: Option<&TeraScopeSummary>) -> SourceCapabilit
         SourceNodeKind::Macro => SourceCapabilities::code_only(
             "Element definit într-un macro Tera; modificarea poate afecta mai multe folosiri.",
         ),
-        SourceNodeKind::Set | SourceNodeKind::With => SourceCapabilities::code_only(
-            "Element aflat într-un scope Tera local; editarea se face în cod.",
-        ),
+        SourceNodeKind::Set | SourceNodeKind::SetGlobal | SourceNodeKind::Filter => {
+            SourceCapabilities::code_only(
+                "Element aflat într-un scope Tera local; editarea se face în cod.",
+            )
+        }
         SourceNodeKind::Raw => SourceCapabilities::code_only(
             "Element aflat într-un bloc raw Tera; editarea vizuală este dezactivată.",
         ),
@@ -338,17 +480,6 @@ fn push_unique(values: &mut Vec<String>, value: Option<String>) {
     }
 }
 
-fn tera_item_opens_scope(kind: &SourceNodeKind) -> bool {
-    matches!(
-        kind,
-        SourceNodeKind::Block
-            | SourceNodeKind::Macro
-            | SourceNodeKind::For
-            | SourceNodeKind::If
-            | SourceNodeKind::With
-    )
-}
-
 fn tera_reason(kind: &SourceNodeKind) -> &'static str {
     match kind {
         SourceNodeKind::Extends => "Moștenire Tera.",
@@ -358,9 +489,19 @@ fn tera_reason(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Macro => "Macro Tera.",
         SourceNodeKind::For => "Buclă Tera.",
         SourceNodeKind::If => "Condiție Tera.",
+        SourceNodeKind::Elif => "Ramură elif Tera.",
+        SourceNodeKind::Else => "Ramură else Tera.",
         SourceNodeKind::Set => "Setare Tera.",
-        SourceNodeKind::With => "Context Tera.",
+        SourceNodeKind::SetGlobal => "Setare globală Tera.",
+        SourceNodeKind::Filter => "Bloc filter Tera.",
+        SourceNodeKind::Break => "Break Tera.",
+        SourceNodeKind::Continue => "Continue Tera.",
+        SourceNodeKind::Super => "Apel super() Tera.",
         SourceNodeKind::TeraVariable => "Variabilă Tera.",
+        SourceNodeKind::MacroCall => "Apel de macro Tera.",
+        SourceNodeKind::FunctionCall => "Apel de funcție Tera/Zola.",
+        SourceNodeKind::Shortcode => "Invocare shortcode Zola.",
+        SourceNodeKind::BlockMarker => "Marcaj al unui provider de bloc nativ.",
         SourceNodeKind::TeraComment => "Comentariu Tera.",
         SourceNodeKind::Raw => "Bloc raw Tera.",
         _ => "Sintaxă Tera.",

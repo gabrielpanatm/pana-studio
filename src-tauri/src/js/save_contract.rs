@@ -544,7 +544,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::js::PanaComponent;
+    use crate::js::NativeBlockRuntimeEntry;
 
     fn request(template_source: Option<&str>, config: PageJsConfig) -> PageJsSaveContractRequest {
         PageJsSaveContractRequest {
@@ -767,7 +767,7 @@ mod tests {
             "templates/foo/bar.html",
             PageJsConfig {
                 version: Some(1),
-                components: vec![PanaComponent {
+                blocks: vec![NativeBlockRuntimeEntry {
                     id: "tabs".to_string(),
                 }],
                 motion: None,
@@ -851,7 +851,7 @@ mod tests {
             "templates/index.html",
             PageJsConfig {
                 version: Some(1),
-                components: vec![PanaComponent {
+                blocks: vec![NativeBlockRuntimeEntry {
                     id: "tabs".to_string(),
                 }],
                 motion: None,
@@ -966,7 +966,7 @@ mod tests {
             ),
             PageJsConfig {
                 version: Some(1),
-                components: vec![PanaComponent {
+                blocks: vec![NativeBlockRuntimeEntry {
                     id: "accordion".to_string(),
                 }],
                 motion: None,
@@ -984,7 +984,7 @@ mod tests {
     fn skips_page_js_write_when_generated_source_is_unchanged() {
         let config = PageJsConfig {
             version: Some(1),
-            components: vec![PanaComponent {
+            blocks: vec![NativeBlockRuntimeEntry {
                 id: "tabs".to_string(),
             }],
             motion: None,
@@ -1011,7 +1011,7 @@ mod tests {
             None,
             PageJsConfig {
                 version: Some(1),
-                components: vec![PanaComponent {
+                blocks: vec![NativeBlockRuntimeEntry {
                     id: "tabs".to_string(),
                 }],
                 motion: None,
@@ -1041,7 +1041,7 @@ mod tests {
             None,
             PageJsConfig {
                 version: Some(1),
-                components: vec![PanaComponent {
+                blocks: vec![NativeBlockRuntimeEntry {
                     id: "tabs".to_string(),
                 }],
                 motion: None,

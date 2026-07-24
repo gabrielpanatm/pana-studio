@@ -1,0 +1,11 @@
+name = "cadru"
+description = "Temă Zola editorială pentru studiouri creative, portofolii și agenții."
+license = "MIT"
+homepage = "https://pana.tm.ro"
+min_version = "0.22.0"
+
+[extra]
+
+[author]
+name = "Gabriel Pană"
+homepage = "https://pana.tm.ro"

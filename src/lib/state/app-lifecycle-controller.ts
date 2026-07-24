@@ -12,6 +12,7 @@ import type { AppState } from "$lib/state/app.svelte";
 export async function initFromStorage(app: AppState, storage: Storage) {
   startAiCoordinationPolling(app);
   initUiFromStorageFromController(app.uiControllerHost(), storage);
+  await app.initApplicationSettings();
   try {
     await app.reattachCurrentProjectSession();
   } catch {

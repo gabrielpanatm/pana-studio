@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { IconChevronDown, IconChevronRight, IconX } from "@tabler/icons-svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
+  import PanaColorPicker from "$lib/components/ui/PanaColorPicker.svelte";
   import { ANIME_EASING_OPTIONS } from "$lib/js/anime-catalog";
   import type { PanaMotionPlayback, PanaMotionTimelineItem, PanaMotionTimelineTrack } from "$lib/types";
 
@@ -117,12 +119,13 @@
     </div>
     {#each timeline.tracks as track}
       <div class="track-row">
-        <input
-          class="track-color"
-          type="color"
+        <PanaColorPicker
           value={track.color}
-          oninput={(event) => patchTrack(track, { color: event.currentTarget.value })}
-          aria-label="Culoare pistă"
+          width={24}
+          height={25}
+          label={`Culoare pistă ${track.name}`}
+          oninput={(value) => patchTrack(track, { color: value })}
+          oncancel={(value) => patchTrack(track, { color: value })}
         />
         <input
           value={track.name}
@@ -134,8 +137,13 @@
           class:active={track.collapsed}
           onclick={() => patchTrack(track, { collapsed: !track.collapsed })}
           title={track.collapsed ? "Extinde pista" : "Restrânge pista"}
+          aria-label={track.collapsed ? `Extinde pista ${track.name}` : `Restrânge pista ${track.name}`}
         >
-          {track.collapsed ? "▸" : "▾"}
+          {#if track.collapsed}
+            <IconChevronRight size={14} stroke={1.9} />
+          {:else}
+            <IconChevronDown size={14} stroke={1.9} />
+          {/if}
         </button>
         <button
           type="button"
@@ -143,8 +151,9 @@
           onclick={() => onDeleteTrack?.(track.id)}
           disabled={timeline.tracks.length <= 1 || !onDeleteTrack}
           title="Șterge pista"
+          aria-label={`Șterge pista ${track.name}`}
         >
-          ×
+          <IconX size={13} stroke={1.9} />
         </button>
       </div>
     {/each}
@@ -162,7 +171,9 @@
         <div class="label-row">
           <input value={label.name} oninput={(event) => patchLabel(label.id, { name: event.currentTarget.value })} aria-label="Nume reper" />
           <input class="mono" value={label.position} oninput={(event) => patchLabel(label.id, { position: event.currentTarget.value })} aria-label="Poziție reper" />
-          <button type="button" class="delete-btn" onclick={() => deleteLabel(label.id)} title="Șterge reperul">×</button>
+          <button type="button" class="delete-btn" onclick={() => deleteLabel(label.id)} title="Șterge reperul" aria-label={`Șterge reperul ${label.name}`}>
+            <IconX size={13} stroke={1.9} />
+          </button>
         </div>
       {/each}
     {/if}
@@ -291,12 +302,6 @@
     grid-template-columns: 24px minmax(0, 1fr) 26px 26px;
     gap: 4px;
     align-items: center;
-  }
-
-  .track-color {
-    width: 24px;
-    height: 25px;
-    padding: 2px;
   }
 
   .label-row {

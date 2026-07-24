@@ -31,9 +31,17 @@ export function initUiFromStorage(host: UiControllerHost, storage: Storage) {
 }
 
 export function toggleUiTheme(host: UiControllerHost, storage: Storage = window.localStorage) {
-  host.uiTheme = host.uiTheme === "dark" ? "light" : "dark";
-  saveUiTheme(storage, host.uiTheme);
-  syncDocumentTheme(host.uiTheme);
+  setUiTheme(host, host.uiTheme === "dark" ? "light" : "dark", storage);
+}
+
+export function setUiTheme(
+  host: UiControllerHost,
+  theme: "dark" | "light",
+  storage: Storage = window.localStorage,
+) {
+  host.uiTheme = theme;
+  saveUiTheme(storage, theme);
+  syncDocumentTheme(theme);
 }
 
 function syncDocumentTheme(theme: "dark" | "light") {

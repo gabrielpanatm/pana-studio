@@ -2,7 +2,7 @@
   import {
     IconCode, IconFingerprint, IconAlignLeft, IconLink, IconPhoto,
     IconAdjustments, IconAccessible, IconDatabase, IconForms, IconTag,
-    IconVideo, IconVolume2, IconBrowser, IconPointer, IconTrash,
+    IconVideo, IconVolume2, IconBrowser, IconPointer, IconTrash, IconPlus, IconX,
   } from "@tabler/icons-svelte";
   import InspectorSection from "./InspectorSection.svelte";
   import AssetPicker from "./controls/AssetPicker.svelte";
@@ -543,7 +543,9 @@
   <div class="hf-subheader">
     <span class="hf-sublabel">Clase</span>
     {#if canEdit}
-      <button type="button" class="hf-add-btn" onclick={() => { addingClass = true; }}>+</button>
+      <button type="button" class="hf-add-btn" aria-label="Adaugă o clasă" onclick={() => { addingClass = true; }}>
+        <IconPlus size={13} stroke={1.9} />
+      </button>
     {/if}
   </div>
 
@@ -559,7 +561,9 @@
         <span class="cls-chip">
           <span class="cls-chip-name">{cls}</span>
           {#if canEdit}
-            <button type="button" class="cls-chip-del" onclick={() => removeClass(cls)}>×</button>
+            <button type="button" class="cls-chip-del" aria-label={`Elimină clasa ${cls}`} onclick={() => removeClass(cls)}>
+              <IconX size={12} stroke={2} />
+            </button>
           {/if}
         </span>
       {/each}
@@ -1147,8 +1151,10 @@
         oninput={(e) => setAttr(key, e.currentTarget.value)}
         onblur={(e) => commitAttribute(key, e.currentTarget.value)} />
       {#if canEdit}
-        <button type="button" class="hf-del-btn"
-          onclick={() => commitAttributeRemoval(key)}>×</button>
+        <button type="button" class="hf-del-btn" aria-label={`Elimină atributul ${key}`}
+          onclick={() => commitAttributeRemoval(key)}>
+          <IconX size={13} stroke={1.9} />
+        </button>
       {/if}
     </div>
   {/each}

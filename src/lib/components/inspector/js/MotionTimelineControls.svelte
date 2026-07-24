@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconPlayerPause, IconPlayerPlay } from "@tabler/icons-svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type { SelectControlOption } from "$lib/components/ui/SelectControl.svelte";
   import { formatMotionTimelinePosition } from "$lib/js/motion-timeline";
@@ -52,8 +53,13 @@
     onclick={onTogglePlayback}
     disabled={!hasSteps || !previewPlayable}
     title={playing ? "Oprește linia" : "Redă linia"}
+    aria-label={playing ? "Oprește linia temporală" : "Redă linia temporală"}
   >
-    {playing ? "⏸" : "▶"}
+    {#if playing}
+      <IconPlayerPause size={14} stroke={1.9} />
+    {:else}
+      <IconPlayerPlay size={14} stroke={1.9} />
+    {/if}
   </button>
   <input
     class="motion-playhead-range"

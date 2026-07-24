@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+
+{% block content %}
+<section class="pagina-cadru">
+  <header class="pagina-cadru__antet">
+    <div class="container">
+      <p class="eticheta-cadru">Colecție</p>
+      <h1>{{ section.title }}</h1>
+      {% if section.description %}<p class="pagina-cadru__descriere">{{ section.description }}</p>{% endif %}
+    </div>
+  </header>
+  <div class="container section-lg proiecte-cadru__grila">
+    {% for proiect in section.pages %}
+    <article class="proiect-cadru">
+      <a class="proiect-cadru__vizual" href="{{ proiect.permalink }}">
+        <span class="proiect-cadru__numar">0{{ loop.index }}</span>
+        <span class="proiect-cadru__litera" aria-hidden="true">{{ proiect.extra.initiala | default(value="C") }}</span>
+        <span class="proiect-cadru__sageata" aria-hidden="true">↗</span>
+      </a>
+      <div class="proiect-cadru__meta">
+        <h2><a href="{{ proiect.permalink }}">{{ proiect.title }}</a></h2>
+        <p>{{ proiect.description }}</p>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

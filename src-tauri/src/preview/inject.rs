@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use tauri_utils::html::{parse, serialize_node, NodeRef};
 
 use crate::{
+    blocks::NATIVE_BLOCK_RUNTIME_SCRIPT,
     preview::CanvasProjectionIdentity,
     project_model::html_editor_schema::{
         has_active_script_scheme, is_forbidden_attribute_name, is_forbidden_element,
@@ -202,8 +203,16 @@ fn remove_authored_content_security_policy(document: &NodeRef) {
 
 fn append_interactive_runtime(document: &NodeRef) -> Result<(), String> {
     let runtime_document = parse(format!(
-        "<!doctype html><html><body><script id=\"pana-interactive-runtime\">{INTERACTIVE_RUNTIME_SCRIPT}</script></body></html>"
+        "<!doctype html><html><body><script id=\"pana-block-runtime\">{NATIVE_BLOCK_RUNTIME_SCRIPT}</script><script id=\"pana-interactive-runtime\">{INTERACTIVE_RUNTIME_SCRIPT}</script></body></html>"
     ));
+    let block_runtime = runtime_document
+        .select_first("script#pana-block-runtime")
+        .map_err(|_| "Runtime-ul canonic al blocurilor nu a putut fi construit.".to_string())?
+        .as_node()
+        .clone();
+    if block_runtime.text_contents() != NATIVE_BLOCK_RUNTIME_SCRIPT {
+        return Err("Parserul HTML a modificat runtime-ul canonic al blocurilor.".to_string());
+    }
     let runtime = runtime_document
         .select_first("script#pana-interactive-runtime")
         .map_err(|_| "Runtime-ul Previzualizare interactivă nu a putut fi construit.".to_string())?
@@ -212,10 +221,12 @@ fn append_interactive_runtime(document: &NodeRef) -> Result<(), String> {
     if runtime.text_contents() != INTERACTIVE_RUNTIME_SCRIPT {
         return Err("Parserul HTML a modificat runtime-ul Previzualizare interactivă.".to_string());
     }
+    block_runtime.detach();
     runtime.detach();
     let body = document
         .select_first("body")
         .map_err(|_| "Documentul Previzualizare interactivă nu are body normalizat.".to_string())?;
+    body.as_node().append(block_runtime);
     body.as_node().append(runtime);
     Ok(())
 }

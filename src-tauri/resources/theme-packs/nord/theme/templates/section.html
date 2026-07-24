@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+
+{% block content %}
+<section class="pagina">
+  <header class="pagina__antet">
+    <div class="container">
+      <p class="supratitlu">Colecție</p>
+      <h1>{{ section.title }}</h1>
+      {% if section.description %}<p class="pagina__descriere">{{ section.description }}</p>{% endif %}
+    </div>
+  </header>
+  <div class="container section servicii__lista">
+    {% for articol in section.pages %}
+    <article class="serviciu-card">
+      <span class="serviciu-card__numar">0{{ loop.index }}</span>
+      <div>
+        <h2><a href="{{ articol.permalink }}">{{ articol.title }}</a></h2>
+        <p>{{ articol.description }}</p>
+      </div>
+      <a class="serviciu-card__link" href="{{ articol.permalink }}" aria-label="Deschide {{ articol.title }}">↗</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

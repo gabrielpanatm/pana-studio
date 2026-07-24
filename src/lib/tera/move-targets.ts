@@ -27,7 +27,7 @@ export type TeraMoveResolution =
       anchor?: SourceGraphNode | null;
     };
 
-const BODY_TERA_KINDS = new Set(["block", "macro", "for", "if", "with", "raw"]);
+const BODY_TERA_KINDS = new Set(["block", "macro", "for", "if", "raw"]);
 const MOVABLE_TERA_KINDS = new Set([
   "block",
   "include",
@@ -36,7 +36,6 @@ const MOVABLE_TERA_KINDS = new Set([
   "for",
   "if",
   "set",
-  "with",
   "teraVariable",
   "teraComment",
   "raw",

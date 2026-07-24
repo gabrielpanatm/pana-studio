@@ -8,7 +8,6 @@
   import { resetPreviewFrameDocumentAccess } from "$lib/preview/frame-origin";
   import type {
     SourceLanguage,
-    TemplateWorkbenchPlan,
     WorkbenchCanvasMode,
     WorkbenchCanvasPreset,
     WorkbenchCanvasViewportSnapshot,
@@ -20,7 +19,7 @@
   } from "$lib/types";
   import type { InteractivePreviewDomNode } from "$lib/preview/interactive";
 
-  type CenterView = "preview" | "code" | "markdown" | "site" | "kernel";
+  type CenterView = "preview" | "code" | "markdown" | "kernel";
 
   export let centerView: CenterView = "preview";
   export let previewZoom = 100;
@@ -31,12 +30,8 @@
   export let responsiveBreakpoints: Array<{ id: string; label: string; widthPx: number }> = [];
   export let previewDocumentMarkup: string | null = null;
   export let previewSrc = "";
-  export let templateWorkbenchActive = false;
-  export let templateWorkbenchTarget: string | null = null;
-  export let templateWorkbenchPlan: TemplateWorkbenchPlan | null = null;
   export let interactivePreviewEnabled = false;
   export let interactivePreviewUrl = "";
-  export let interactiveDomNodeCount = 0;
   export let refreshToken = 0;
   export let currentSourcePath = "";
   export let source = "";
@@ -59,9 +54,11 @@
   export let setCanvasViewport: (
     viewport: Partial<WorkbenchCanvasViewportSnapshot>,
   ) => void | Promise<void> = () => {};
+  export let setPreviewZoom: (value: number) => void = () => {};
+  export let commitPreviewZoom: (value: number) => void | Promise<void> = () => {};
+  export let resetPreviewZoom: () => void = () => {};
   export let onMarkdownChange: (nextSource: string, path: string) => void = () => {};
   export let attachPreviewInspector: () => void;
-  export let exitTemplateWorkbench: () => void | Promise<void> = () => {};
   export let setInteractivePreviewEnabled: (enabled: boolean) => void = () => {};
   export let onInteractiveLifecycleError: (message: string) => void = () => {};
   export let onInteractiveDomSnapshot: (nodes: InteractivePreviewDomNode[]) => void = () => {};
@@ -179,50 +176,6 @@
     style={`--wb-split-ratio: ${splitRatioBasisPoints / 100}%;`}
   >
   <div class:hidden-stage={!showPreview} class="preview-shell" aria-label="Suprafață vizuală">
-    <ResponsiveCanvasToolbar
-      viewport={canvasViewport}
-      documentPath={currentSourcePath}
-      breakpoints={responsiveBreakpoints}
-      setViewport={setCanvasViewport}
-    />
-    <div class="editor-context-bar" role="status" aria-live="polite">
-      <span class="editor-context-copy">
-        <strong>
-          {templateWorkbenchActive
-            ? "Context de template"
-            : interactivePreviewEnabled
-              ? "Previzualizare interactivă"
-              : "Editare sigură"}
-        </strong>
-        {#if templateWorkbenchActive}
-          <span>{templateWorkbenchTarget}</span>
-          {#if templateWorkbenchPlan}
-            <small class:fixture={!templateWorkbenchPlan.renderContext.canonicalTruth}
-              title={templateWorkbenchPlan.renderContext.explanation}>
-              {templateWorkbenchPlan.renderContext.label}
-            </small>
-          {/if}
-        {:else}
-          <span>
-            {interactivePreviewEnabled
-              ? `JavaScript izolat · DOM numai pentru citire: ${interactiveDomNodeCount} noduri · fără acces la Tauri sau fișiere.`
-              : "JavaScript-ul proiectului este oprit în editor. Deschiderea externă rulează site-ul complet."}
-          </span>
-        {/if}
-      </span>
-      <span class="editor-context-actions">
-        {#if templateWorkbenchActive}
-          <button type="button" onclick={() => { void exitTemplateWorkbench(); }}>Înapoi la site</button>
-        {/if}
-        <button
-          type="button"
-          disabled={!interactivePreviewEnabled && !interactivePreviewUrl}
-          onclick={() => setInteractivePreviewEnabled(!interactivePreviewEnabled)}
-        >
-          {interactivePreviewEnabled ? "Revino la editare sigură" : "Pornește modul interactiv"}
-        </button>
-      </span>
-    </div>
     <div
       class:canvas-fit={previewCanvasMode === "fit"}
       class:canvas-fixed={previewCanvasMode === "fixed"}
@@ -280,6 +233,17 @@
         {/if}
       </div>
     </div>
+    <ResponsiveCanvasToolbar
+      viewport={canvasViewport}
+      breakpoints={responsiveBreakpoints}
+      setViewport={setCanvasViewport}
+      {setPreviewZoom}
+      {commitPreviewZoom}
+      {resetPreviewZoom}
+      {interactivePreviewEnabled}
+      {interactivePreviewUrl}
+      {setInteractivePreviewEnabled}
+    />
   </div>
 
   {#if splitActive}
@@ -333,9 +297,8 @@
     min-height: 0;
     height: 100%;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     overflow: hidden;
-    box-shadow: var(--shadow);
     background: var(--surface);
   }
 
@@ -404,98 +367,13 @@
     pointer-events: none;
   }
 
-  .editor-context-bar {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    min-height: 40px;
-    padding: 4px 10px;
-    border-bottom: 1px solid var(--border-2);
-    color: var(--text-muted);
-    font-size: 12px;
-    background: var(--surface-2);
-  }
-
-  .editor-context-copy,
-  .editor-context-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .editor-context-copy {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .editor-context-copy > span:not(.editor-context-actions) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .editor-context-copy small {
-    flex: 0 0 auto;
-    padding: 2px 6px;
-    border: 1px solid color-mix(in srgb, var(--source-origin-local) 35%, var(--border-3));
-    border-radius: 999px;
-    color: var(--source-origin-local);
-    font-size: 12px;
-    font-weight: 800;
-    background: var(--surface);
-  }
-
-  .editor-context-copy small.fixture {
-    border-color: color-mix(in srgb, #d97706 38%, var(--border-3));
-    color: #b45309;
-  }
-
-  .editor-context-bar strong {
-    flex: 0 0 auto;
-    color: var(--brand-strong);
-    font-weight: 850;
-  }
-
-  .editor-context-actions {
-    flex: 0 0 auto;
-  }
-
-  .editor-context-actions button {
-    min-height: 32px;
-    padding: 0 9px;
-    border: 1px solid var(--border-3);
-    border-radius: 6px;
-    color: var(--text-strong);
-    font-size: 12px;
-    font-weight: 800;
-    background: var(--surface);
-    cursor: pointer;
-  }
-
-  .editor-context-actions button:hover:not(:disabled) {
-    border-color: var(--brand);
-  }
-
-  .editor-context-actions button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .editor-context-actions button:focus-visible {
-    outline: 2px solid var(--focus-ring, var(--brand));
-    outline-offset: 2px;
-  }
-
   .preview-stage {
     position: relative;
     display: block;
+    flex: 1 1 auto;
     box-sizing: border-box;
     width: 100%;
-    height: 100%;
+    height: auto;
     min-height: 0;
     min-width: 0;
     padding: 0;
@@ -688,13 +566,13 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     font-size: 13px;
-    font-weight: 800;
+    font-weight: 650;
   }
 
   .source-header h2 strong {
     color: var(--wb-accent-strong, var(--brand-strong));
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 650;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -712,11 +590,11 @@
     min-height: 22px;
     padding: 0 7px;
     border: 1px solid var(--border-4);
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     color: var(--text-muted);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 600;
     background: var(--surface-2);
   }
 

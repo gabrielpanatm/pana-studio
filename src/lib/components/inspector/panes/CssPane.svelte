@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconPlus } from "@tabler/icons-svelte";
   import ClassEditor from "$lib/components/inspector/ClassEditor.svelte";
   import type { CssProperty, CssRuleContext, PageCssTarget, ProjectFile, ScssVariable, SelectionInfo } from "$lib/types";
   import type { CssViewport } from "$lib/project/io";
@@ -84,12 +85,15 @@
         class="pseudo-btn pseudo-custom-btn"
         class:active={usingCustom}
         title="Selector personalizat"
+        aria-label="Comută selectorul personalizat"
         onclick={() => {
           const next = !usingCustom;
           setUsingCustom(next);
           if (!next) setCustomSuffix("");
         }}
-      >+</button>
+      >
+        <IconPlus size={13} stroke={1.9} />
+      </button>
     </div>
 
     {#if usingCustom}

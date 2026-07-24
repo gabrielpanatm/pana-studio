@@ -32,14 +32,12 @@ const VISUAL_TERA_GATE_KINDS = new Set<SourceNodeKind>([
   "include",
   "for",
   "if",
-  "with",
   "macro",
 ]);
 const PRIMARY_VISUAL_TERA_GATE_KINDS = new Set<SourceNodeKind>([
   "for",
   "include",
   "macro",
-  "with",
 ]);
 const TEMPLATE_SOURCE_ID_ATTR = "data-pana-template-source-id";
 const TEMPLATE_SOURCE_STACK_ATTR = "data-pana-template-source-stack";

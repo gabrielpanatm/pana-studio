@@ -4,12 +4,92 @@ use tauri::AppHandle;
 
 use crate::{
     app_home::{app_config_path, project_app_config_path, projects_config_dir},
-    commands::config::model::{GlobalAppConfig, ProjectAppConfig, ProjectAppConfigInput},
+    commands::config::model::{
+        ApplicationSettingsInput, ApplicationSettingsSnapshot, GlobalAppConfig, ProjectAppConfig,
+        ProjectAppConfigInput, APPLICATION_SETTINGS_SCHEMA_VERSION,
+        DEFAULT_BLOCK_PROPERTIES_HEIGHT, MAX_BLOCK_PROPERTIES_HEIGHT, MIN_BLOCK_PROPERTIES_HEIGHT,
+    },
     kernel::write_authority::{
         WriteAuthority, WriteCategory, WriteIntent, WriteOperationKind, WriteOwner, WritePolicy,
         WriteTarget,
     },
 };
+
+pub(super) fn read_application_settings(
+    app: &AppHandle,
+) -> Result<ApplicationSettingsSnapshot, String> {
+    let config = read_global_app_config(app)?;
+    Ok(application_settings_snapshot(&config))
+}
+
+pub(super) fn write_application_settings(
+    app: &AppHandle,
+    input: ApplicationSettingsInput,
+) -> Result<ApplicationSettingsSnapshot, String> {
+    let mut config = read_global_app_config(app)?;
+    if input.expected_revision != config.revision {
+        return Err(format!(
+            "[application_settings_stale] Setările aplicației așteptau revizia {}, dar Rust deține revizia {}.",
+            input.expected_revision, config.revision
+        ));
+    }
+    let block_properties_height = input
+        .block_properties_height
+        .clamp(MIN_BLOCK_PROPERTIES_HEIGHT, MAX_BLOCK_PROPERTIES_HEIGHT);
+    if config.theme == Some(input.theme)
+        && config.block_properties_height == Some(block_properties_height)
+        && config.block_properties_collapsed == Some(input.block_properties_collapsed)
+    {
+        return Ok(application_settings_snapshot(&config));
+    }
+
+    config.revision = config.revision.saturating_add(1);
+    config.version = 2;
+    config.theme = Some(input.theme);
+    config.block_properties_height = Some(block_properties_height);
+    config.block_properties_collapsed = Some(input.block_properties_collapsed);
+    let body = serde_json::to_string_pretty(&config)
+        .map_err(|error| format!("Nu am putut serializa setările Pană Studio: {error}"))?;
+    let path = app_config_path(app)?;
+    let boundary = path
+        .parent()
+        .ok_or_else(|| "Config-ul Pană Studio nu are folder părinte.".to_string())?
+        .to_path_buf();
+    write_internal_config(
+        app,
+        path,
+        boundary,
+        "config/config.json",
+        "Scriere setări globale Pană Studio",
+        format!("{body}\n"),
+    )?;
+    Ok(application_settings_snapshot(&config))
+}
+
+fn read_global_app_config(app: &AppHandle) -> Result<GlobalAppConfig, String> {
+    let path = app_config_path(app)?;
+    if !path.exists() {
+        return Ok(GlobalAppConfig::default());
+    }
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("Nu am putut citi setările Pană Studio: {error}"))?;
+    serde_json::from_str(&source)
+        .map_err(|error| format!("Setările globale Pană Studio sunt invalide: {error}"))
+}
+
+fn application_settings_snapshot(config: &GlobalAppConfig) -> ApplicationSettingsSnapshot {
+    ApplicationSettingsSnapshot {
+        schema_version: APPLICATION_SETTINGS_SCHEMA_VERSION,
+        revision: config.revision,
+        initialized: config.theme.is_some(),
+        theme: config.theme.unwrap_or_default(),
+        block_properties_height: config
+            .block_properties_height
+            .unwrap_or(DEFAULT_BLOCK_PROPERTIES_HEIGHT)
+            .clamp(MIN_BLOCK_PROPERTIES_HEIGHT, MAX_BLOCK_PROPERTIES_HEIGHT),
+        block_properties_collapsed: config.block_properties_collapsed.unwrap_or(false),
+    }
+}
 
 pub(crate) fn read_project_app_config_for_root(
     app: &AppHandle,
@@ -92,7 +172,7 @@ fn default_project_app_config(project_path: String) -> ProjectAppConfig {
     }
 }
 
-fn write_internal_config(
+pub(super) fn write_internal_config(
     app: &AppHandle,
     path: impl Into<std::path::PathBuf>,
     boundary: impl Into<std::path::PathBuf>,

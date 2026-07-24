@@ -226,7 +226,6 @@ async function settleFrontendProjection(
   const noNewFrontendMutation = host.editorMutationEpoch === mutationEpoch;
   if (noNewFrontendMutation) {
     host.setInspectorPending("css", false);
-    host.setInspectorPending("vars", false);
     host.setInspectorPending("js", false);
   }
   for (const path of [...receipt.writtenFiles, ...receipt.removedFiles]) {

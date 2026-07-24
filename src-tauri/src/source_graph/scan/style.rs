@@ -43,6 +43,17 @@ pub(super) fn conventional_style_files_for_template(
     resolver.conventional_style_files_for_template(&template.name, &template_origin(template), true)
 }
 
+pub(super) fn conventional_script_files_for_template(
+    resolver: &ZolaThemeResolver,
+    template: &TemplateSummary,
+) -> Vec<String> {
+    resolver.conventional_script_files_for_template(
+        &template.name,
+        &template_origin(template),
+        true,
+    )
+}
+
 fn template_origin(template: &TemplateSummary) -> ZolaTemplateOrigin {
     match (&template.origin, template.theme_name.as_ref()) {
         (SourceOrigin::Theme, Some(theme)) => ZolaTemplateOrigin::Theme(theme.clone()),

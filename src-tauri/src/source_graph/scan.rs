@@ -8,8 +8,9 @@ mod builder;
 mod data_file;
 mod files;
 mod page;
-mod ranges;
+pub(crate) mod ranges;
 mod relations;
+mod structured_document;
 mod style;
 mod summary;
 mod template;
@@ -28,16 +29,19 @@ use crate::{
             data_file::{scan_data_file, ZOLA_DATA_FILE_EXTENSIONS},
             files::{
                 apply_virtual_file_projection, collect_all_files, collect_files_with_extension,
-                collect_files_with_extensions, require_safe_deleted_source_paths,
-                require_safe_draft_source_paths, require_safe_scan_root,
+                collect_files_with_extensions, relative_project_path,
+                require_safe_deleted_source_paths, require_safe_draft_source_paths,
+                require_safe_scan_root,
             },
             page::scan_content_page,
             relations::{
                 add_template_asset_relations, add_template_content_relations,
                 add_template_load_data_relations, add_template_relations,
-                add_template_style_relations, asset_reference_map, block_node_map,
-                content_node_map, data_file_reference_map, template_node_map, template_summary_map,
+                add_template_script_relations, add_template_style_relations, asset_reference_map,
+                block_node_map, content_node_map, data_file_reference_map, template_node_map,
+                template_summary_map,
             },
+            structured_document::scan_structured_toml_document,
             style::{scan_style, style_scope_for_file},
             template::scan_template,
         },
@@ -128,6 +132,7 @@ fn build_source_graph_internal(
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         ));
     }
 
@@ -139,7 +144,7 @@ fn build_source_graph_internal(
     let mut template_files = if workspace_projection.is_some() {
         Vec::new()
     } else {
-        collect_files_with_extension(&zola_root.join("templates"), "html")?
+        collect_files_with_extensions(&zola_root.join("templates"), &["html", "md"])?
     };
     let mut style_files = if workspace_projection.is_some() {
         Vec::new()
@@ -169,7 +174,7 @@ fn build_source_graph_internal(
         let theme_root = zola_root.join("themes").join(theme);
         if workspace_projection.is_none() {
             theme_template_files =
-                collect_files_with_extension(&theme_root.join("templates"), "html")?;
+                collect_files_with_extensions(&theme_root.join("templates"), &["html", "md"])?;
             theme_style_files = collect_files_with_extension(&theme_root.join("sass"), "scss")?;
             theme_style_files.extend(collect_files_with_extensions(
                 &theme_root.join("static"),
@@ -189,7 +194,7 @@ fn build_source_graph_internal(
     apply_virtual_file_projection(
         &root,
         &zola_root.join("templates"),
-        Some(&["html"]),
+        Some(&["html", "md"]),
         draft_sources,
         deleted_sources,
         &mut template_files,
@@ -231,7 +236,7 @@ fn build_source_graph_internal(
         apply_virtual_file_projection(
             &root,
             &theme_root.join("templates"),
-            Some(&["html"]),
+            Some(&["html", "md"]),
             draft_sources,
             deleted_sources,
             &mut theme_template_files,
@@ -344,6 +349,7 @@ fn build_source_graph_internal(
             &path,
             crate::source_graph::model::SourceOrigin::Local,
             None,
+            draft_sources,
             &mut builder,
         ));
     }
@@ -355,6 +361,10 @@ fn build_source_graph_internal(
         .iter()
         .map(|style| (style.file.clone(), style.node_id.clone()))
         .collect();
+    let asset_node_by_file: HashMap<String, String> = assets
+        .iter()
+        .map(|asset| (asset.file.clone(), asset.node_id.clone()))
+        .collect();
     let asset_node_by_reference = asset_reference_map(&assets);
     let data_file_node_by_reference = data_file_reference_map(&data_files);
     add_template_relations(
@@ -364,6 +374,12 @@ fn build_source_graph_internal(
         &mut builder,
     );
     add_template_style_relations(&templates, &style_by_file, &theme_resolver, &mut builder);
+    add_template_script_relations(
+        &templates,
+        &asset_node_by_file,
+        &theme_resolver,
+        &mut builder,
+    );
     add_template_asset_relations(&templates, &asset_node_by_reference, &mut builder);
 
     let mut pages = Vec::new();
@@ -401,6 +417,7 @@ fn build_source_graph_internal(
             is_partial: template.is_partial,
             extends: template.extends,
             includes: template.includes,
+            include_groups: template.include_groups,
             imports: template.imports,
             get_pages: template.get_pages,
             get_sections: template.get_sections,
@@ -416,6 +433,7 @@ fn build_source_graph_internal(
                 .map(|(block, _node_id)| block)
                 .collect(),
             macros: template.macros,
+            semantics: template.semantics,
             node_id: template.node_id,
         })
         .collect();
@@ -462,17 +480,53 @@ fn build_source_graph_internal(
             theme_name: data_file.theme_name,
             logical_path: data_file.logical_path,
             node_id: data_file.node_id,
+            format: data_file.format,
+            parse_error: data_file.parse_error,
+            nodes: data_file.nodes,
         })
         .collect();
+    let mut structured_documents = Vec::new();
+    if let Some(config_path) = ["zola.toml", "config.toml"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| {
+            path.is_file() || draft_sources.contains_key(&relative_project_path(&root, path))
+        })
+    {
+        structured_documents.push(scan_structured_toml_document(
+            &root,
+            &config_path,
+            crate::source_graph::model::SourceStructuredDocumentKind::ZolaConfig,
+            draft_sources,
+            &mut builder,
+        ));
+    }
+    if let Some(theme) = active_theme.as_ref() {
+        let theme_config = zola_root.join("themes").join(theme).join("theme.toml");
+        if theme_config.is_file()
+            || draft_sources.contains_key(&relative_project_path(&root, &theme_config))
+        {
+            structured_documents.push(scan_structured_toml_document(
+                &root,
+                &theme_config,
+                crate::source_graph::model::SourceStructuredDocumentKind::ThemeConfig,
+                draft_sources,
+                &mut builder,
+            ));
+        }
+    }
 
-    let graph = builder.finish(
+    let mut graph = builder.finish(
         pages,
         graph_templates,
         graph_styles,
         graph_scripts,
         graph_assets,
         graph_data_files,
+        structured_documents,
     );
+    graph.component_graph = crate::source_graph::component_graph::build_component_graph(&graph);
+    graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
     let read_errors = graph
         .diagnostics
         .iter()
@@ -566,7 +620,8 @@ mod tests {
     };
 
     use crate::source_graph::model::{
-        SourceNodeKind, SourceOrigin, SourceRelationKind, SourceStyleScope,
+        ComponentDefinitionKind, ComponentDependencyKind, SourceNodeKind, SourceOrigin,
+        SourceRelationKind, SourceStyleScope,
     };
 
     use super::*;
@@ -609,6 +664,7 @@ mod tests {
     #[test]
     fn source_graph_rejects_unsafe_virtual_draft_path() {
         let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
         fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
         let drafts =
@@ -630,6 +686,7 @@ mod tests {
         fs::create_dir_all(root.join("templates/partials")).unwrap();
         fs::create_dir_all(root.join("sass/pagini")).unwrap();
         fs::create_dir_all(root.join("sass/partials")).unwrap();
+        fs::create_dir_all(root.join("static/js")).unwrap();
 
         fs::write(
             root.join("config.toml"),
@@ -658,11 +715,37 @@ mod tests {
         .unwrap();
         fs::write(root.join("sass/pagini/index.scss"), ".hero {}\n").unwrap();
         fs::write(root.join("sass/partials/_header.scss"), "header {}\n").unwrap();
+        fs::write(
+            root.join("static/js/header.js"),
+            "document.querySelector('header');\n",
+        )
+        .unwrap();
 
         let graph = build_source_graph(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert_eq!(graph.pages.len(), 1);
+        let zola_config = graph
+            .structured_documents
+            .iter()
+            .find(|document| {
+                document.kind
+                    == crate::source_graph::model::SourceStructuredDocumentKind::ZolaConfig
+            })
+            .expect("zola config projection");
+        assert!(zola_config.nodes.iter().any(|node| {
+            node.key.as_deref() == Some("base_url")
+                && node.value_preview.as_deref() == Some("http://example.test")
+        }));
+        assert_eq!(
+            graph.pages[0].frontmatter_format,
+            Some(crate::source_graph::model::SourceDataFormat::Toml)
+        );
+        assert!(graph.pages[0].frontmatter_nodes.iter().any(|node| {
+            node.kind == crate::source_graph::model::SourceDataNodeKind::Value
+                && node.key.as_deref() == Some("title")
+                && node.value_preview.as_deref() == Some("Acasă")
+        }));
         assert!(graph.templates.iter().any(|template| {
             template.name == "index.html" && template.extends.as_deref() == Some("base.html")
         }));
@@ -702,6 +785,33 @@ mod tests {
             relation.kind == SourceRelationKind::UsesStyle
                 && relation.from == header_template.node_id
                 && relation.to == header_style.node_id
+        }));
+        let header_script = graph
+            .scripts
+            .iter()
+            .find(|script| script.file == "static/js/header.js")
+            .unwrap();
+        assert!(graph.relations.iter().any(|relation| {
+            relation.kind == SourceRelationKind::UsesScript
+                && relation.from == header_template.node_id
+                && relation.to == header_script.node_id
+        }));
+        let header_component = graph
+            .component_graph
+            .definitions
+            .iter()
+            .find(|definition| {
+                definition.kind == ComponentDefinitionKind::Partial
+                    && definition.template_name.as_deref() == Some("partials/header.html")
+            })
+            .unwrap();
+        assert!(header_component.dependencies.iter().any(|dependency| {
+            dependency.kind == ComponentDependencyKind::Style
+                && dependency.reference == "sass/partials/_header.scss"
+        }));
+        assert!(header_component.dependencies.iter().any(|dependency| {
+            dependency.kind == ComponentDependencyKind::Script
+                && dependency.reference == "static/js/header.js"
         }));
         assert!(graph
             .nodes
@@ -1013,6 +1123,25 @@ mod tests {
             .nodes
             .iter()
             .any(|node| node.kind == SourceNodeKind::DataFile && node.file == "date/meniu.toml"));
+        assert_eq!(
+            data_file.format,
+            crate::source_graph::model::SourceDataFormat::Toml
+        );
+        assert!(data_file.parse_error.is_none());
+        assert!(data_file.nodes.iter().any(|node| {
+            node.kind == crate::source_graph::model::SourceDataNodeKind::ArrayOfTables
+                && node.key.as_deref() == Some("item")
+        }));
+        assert!(data_file.nodes.iter().any(|node| {
+            node.kind == crate::source_graph::model::SourceDataNodeKind::Value
+                && node.key.as_deref() == Some("label")
+                && node.value_preview.as_deref() == Some("Acasă")
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == SourceNodeKind::DataValue
+                && node.file == "date/meniu.toml"
+                && node.label == "label"
+        }));
         assert!(graph.relations.iter().any(|relation| {
             relation.kind == SourceRelationKind::DataFileLoad
                 && relation.from == template.node_id
@@ -1112,11 +1241,24 @@ mod tests {
             ".theme-main { color: red; }",
         )
         .unwrap();
+        fs::write(
+            root.join("themes/test-theme/theme.toml"),
+            "name = \"Test Theme\"\n",
+        )
+        .unwrap();
 
         let graph = build_source_graph(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert_eq!(graph.active_theme.as_deref(), Some("test-theme"));
+        assert!(graph.structured_documents.iter().any(|document| {
+            document.kind == crate::source_graph::model::SourceStructuredDocumentKind::ThemeConfig
+                && document.file == "themes/test-theme/theme.toml"
+                && document
+                    .nodes
+                    .iter()
+                    .any(|node| node.key.as_deref() == Some("name"))
+        }));
         let page = graph.pages.iter().find(|page| page.url == "/").unwrap();
         let template = page
             .template_node_id
@@ -1275,6 +1417,63 @@ mod tests {
             .find(|node| Some(node.id.as_str()) == section.parent.as_deref())
             .unwrap();
         assert!(matches!(section_parent.kind, SourceNodeKind::Partial));
+    }
+
+    #[test]
+    fn mixed_html_and_tera_nodes_follow_the_nearest_real_structural_parent() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            r#"{% block content %}
+<section class="outer">
+  {% if visible %}
+    <article class="card">
+      <h2>{{ title }}</h2>
+    </article>
+  {% endif %}
+</section>
+{% endblock %}
+"#,
+        )
+        .unwrap();
+
+        let graph = build_source_graph(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        let node = |label: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.kind == SourceNodeKind::Html && node.label == label)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "lipsește {label}; noduri HTML: {:?}",
+                        graph
+                            .nodes
+                            .iter()
+                            .filter(|node| node.kind == SourceNodeKind::Html)
+                            .map(|node| node.label.as_str())
+                            .collect::<Vec<_>>()
+                    )
+                })
+        };
+        let parent = |node: &crate::source_graph::model::SourceNode| {
+            graph
+                .nodes
+                .iter()
+                .find(|candidate| Some(candidate.id.as_str()) == node.parent.as_deref())
+                .unwrap()
+        };
+        let section = node("<section .outer>");
+        let article = node("<article .card>");
+        let heading = node("<h2>");
+
+        assert_eq!(parent(section).kind, SourceNodeKind::Block);
+        assert_eq!(parent(article).kind, SourceNodeKind::If);
+        assert_eq!(parent(heading).id, article.id);
     }
 
     fn unique_test_dir() -> PathBuf {

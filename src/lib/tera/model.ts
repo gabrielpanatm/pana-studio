@@ -10,7 +10,6 @@ export type TeraConstructKind =
   | "for"
   | "if"
   | "set"
-  | "with"
   | "teraVariable"
   | "teraComment"
   | "raw";
@@ -80,7 +79,6 @@ export const teraConstructKinds: TeraConstructKind[] = [
   "for",
   "if",
   "set",
-  "with",
   "teraVariable",
   "teraComment",
   "raw",

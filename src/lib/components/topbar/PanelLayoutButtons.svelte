@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
-    IconLayoutBottombar,
+    IconLayoutBottombarCollapse,
+    IconLayoutBottombarExpand,
     IconLayoutSidebarLeftCollapse,
     IconLayoutSidebarLeftExpand,
     IconLayoutSidebarRightCollapse,
@@ -37,7 +38,11 @@
   segmented
   onclick={toggleTerminalPane}
 >
-  <IconLayoutBottombar size={17} stroke={1.8} />
+  {#if terminalPaneOpen}
+    <IconLayoutBottombarCollapse size={16} stroke={1.8} />
+  {:else}
+    <IconLayoutBottombarExpand size={16} stroke={1.8} />
+  {/if}
 </ToolbarButton>
 {#if showSidebars}
   <ToolbarButton

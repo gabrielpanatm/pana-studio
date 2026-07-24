@@ -1,6 +1,6 @@
 use crate::source_graph::model::SourceRange;
 
-pub(super) fn source_range(source: &str, start: usize, end: usize) -> SourceRange {
+pub(crate) fn source_range(source: &str, start: usize, end: usize) -> SourceRange {
     let start = start.min(source.len());
     let end = end.min(source.len());
     let (line, column) = line_column(source, start);

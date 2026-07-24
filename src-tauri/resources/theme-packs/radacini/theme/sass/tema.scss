@@ -1,0 +1,502 @@
+@import './css-framework/variabile';
+
+.eticheta-organica {
+  color: $color-primary;
+  font-size: $text-xs;
+  font-weight: $font-bold;
+  letter-spacing: $tracking-wider;
+  text-transform: uppercase;
+}
+
+.eticheta-organica--deschis {
+  color: $color-accent-light;
+}
+
+.radacini-hero {
+  position: relative;
+  min-height: calc(100dvh - 5.5rem);
+  overflow: hidden;
+  background-color: $color-primary-dark;
+}
+
+.radacini-hero__imagine {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+}
+
+.radacini-hero::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(90deg, transparent 42%, color-mix(in srgb, $color-primary-dark 18%, transparent) 100%);
+}
+
+.radacini-hero__interior {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: calc(100dvh - 5.5rem);
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-block: $space-xl;
+}
+
+.radacini-hero__card {
+  display: flex;
+  width: min(36rem, 100%);
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-s;
+  padding: $space-xl;
+  border-radius: 45% 55% 8% 8% / 10% 10% 8% 8%;
+  background-color: color-mix(in srgb, $bg-body 94%, transparent);
+  box-shadow: $shadow-xl;
+  backdrop-filter: blur(0.5rem);
+}
+
+.radacini-hero__card h1 {
+  max-width: 11ch;
+  font-size: clamp(3.25rem, 6vw, 6rem);
+  font-weight: $font-normal;
+  line-height: 0.98;
+}
+
+.radacini-hero__card > p:not(.eticheta-organica) {
+  max-width: 42ch;
+  color: $color-gray-600;
+  font-size: $text-lg;
+}
+
+.radacini-hero__detaliu {
+  position: absolute;
+  left: $container-padding;
+  bottom: $space-xl;
+  display: flex;
+  max-width: 16rem;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-2xs;
+  padding: $space-s;
+  border-left: 2px solid $color-accent-light;
+  background-color: color-mix(in srgb, $color-primary-dark 78%, transparent);
+  backdrop-filter: blur(0.5rem);
+}
+
+.radacini-hero__detaliu span {
+  color: $color-white;
+  font-family: $font-display;
+  font-size: $text-xl;
+}
+
+.radacini-hero__detaliu p {
+  color: $color-primary-100;
+  font-size: $text-sm;
+}
+
+.legatura-organica {
+  display: inline-flex;
+  padding-bottom: $space-3xs;
+  border-bottom: 1px solid $color-primary;
+  color: $color-primary;
+  font-weight: $font-bold;
+}
+
+.introducere-radacini {
+  background-color: $bg-body;
+}
+
+.introducere-radacini__grila {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.45fr) minmax(0, 1.55fr);
+  align-items: start;
+  gap: $space-2xl;
+}
+
+.introducere-radacini h2 {
+  max-width: 20ch;
+  margin-bottom: $space-s;
+  font-size: $text-4xl;
+  font-weight: $font-normal;
+}
+
+.introducere-radacini__grila > div p {
+  max-width: 52ch;
+  margin-bottom: $space-s;
+  font-size: $text-lg;
+}
+
+.camere-radacini {
+  background-color: $bg-surface;
+}
+
+.cap-organic {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+  align-items: end;
+  gap: $space-xl;
+  margin-bottom: $space-xl;
+}
+
+.cap-organic h2 {
+  max-width: 14ch;
+  margin-top: $space-2xs;
+  font-size: $text-4xl;
+  font-weight: $font-normal;
+}
+
+.camere-radacini__grila {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: $space-s;
+}
+
+.camera-card {
+  overflow: hidden;
+  border: 1px solid $border-color;
+  border-radius: $radius-xl;
+  background-color: $bg-body;
+}
+
+.camera-card__vizual {
+  position: relative;
+  display: grid;
+  min-height: 19rem;
+  place-items: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 30% 30%, color-mix(in srgb, $color-accent-light 46%, transparent), transparent 34%),
+    $color-primary-100;
+  color: $color-primary-dark;
+}
+
+.camera-card:nth-child(2) .camera-card__vizual {
+  background:
+    radial-gradient(circle at 70% 24%, color-mix(in srgb, $color-primary-light 42%, transparent), transparent 38%),
+    $color-gray-100;
+}
+
+.camera-card:nth-child(3) .camera-card__vizual {
+  background:
+    radial-gradient(circle at 38% 72%, color-mix(in srgb, $color-accent 28%, transparent), transparent 36%),
+    $color-primary-dark;
+  color: $color-accent-light;
+}
+
+.camera-card__tip {
+  position: absolute;
+  top: $space-s;
+  left: $space-s;
+  font-size: $text-xs;
+  font-weight: $font-bold;
+  letter-spacing: $tracking-wider;
+  text-transform: uppercase;
+}
+
+.camera-card__simbol {
+  font-family: $font-display;
+  font-size: 10rem;
+  font-style: italic;
+  line-height: 1;
+  transition: transform $transition-slow;
+}
+
+.camera-card__vizual:hover .camera-card__simbol {
+  transform: scale(1.08) rotate(-3deg);
+}
+
+.camera-card__continut {
+  display: flex;
+  min-height: 12rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-direction: column;
+  gap: $space-s;
+  padding: $space-s;
+}
+
+.camera-card__continut h3,
+.camera-card__continut h2 {
+  margin-bottom: $space-2xs;
+  font-size: $text-xl;
+  font-weight: $font-normal;
+}
+
+.camera-card__continut p {
+  font-size: $text-sm;
+}
+
+.camera-card__pret {
+  width: 100%;
+  padding-top: $space-xs;
+  border-top: 1px solid $border-color;
+  color: $text-light;
+}
+
+.experiente-radacini {
+  background-color: $color-primary-dark;
+}
+
+.experiente-radacini__grila {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: $space-2xl;
+}
+
+.experiente-radacini h2 {
+  max-width: 12ch;
+  margin-top: $space-2xs;
+  color: $color-white;
+  font-size: $text-4xl;
+  font-weight: $font-normal;
+}
+
+.experiente-radacini__lista {
+  border-top: 1px solid color-mix(in srgb, $color-white 16%, transparent);
+}
+
+.experiente-radacini__lista article {
+  display: grid;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  gap: $space-s;
+  padding-block: $space-m;
+  border-bottom: 1px solid color-mix(in srgb, $color-white 16%, transparent);
+}
+
+.experiente-radacini__lista span {
+  color: $color-accent-light;
+  font-family: $font-mono;
+  font-size: $text-xs;
+}
+
+.experiente-radacini__lista h3 {
+  margin-bottom: $space-2xs;
+  color: $color-white;
+  font-family: $font-primary;
+  font-size: $text-lg;
+}
+
+.experiente-radacini__lista p {
+  color: $color-primary-100;
+}
+
+.marturie-radacini {
+  background-color: $color-accent-light;
+}
+
+.marturie-radacini__interior {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  align-items: start;
+  gap: $space-xl;
+}
+
+.marturie-radacini__semn {
+  color: $color-accent-dark;
+  font-family: $font-display;
+  font-size: 10rem;
+  line-height: 0.7;
+}
+
+.marturie-radacini blockquote {
+  max-width: 52rem;
+  border: 0;
+  padding: 0;
+  color: $color-primary-dark;
+  font-style: normal;
+}
+
+.marturie-radacini blockquote p {
+  color: $color-primary-dark;
+  font-family: $font-display;
+  font-size: $text-3xl;
+  line-height: $leading-tight;
+}
+
+.marturie-radacini cite {
+  color: $color-accent-dark;
+}
+
+.rezervare-radacini {
+  background-color: $bg-body;
+}
+
+.rezervare-radacini__interior {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(18rem, 0.9fr);
+  align-items: end;
+  gap: $space-2xl;
+  padding: $space-xl;
+  border: 1px solid $border-color;
+  border-radius: $radius-xl;
+  background-color: $bg-surface;
+}
+
+.rezervare-radacini h2 {
+  max-width: 13ch;
+  margin-top: $space-2xs;
+  font-size: $text-4xl;
+  font-weight: $font-normal;
+}
+
+.rezervare-radacini__interior > div:last-child {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-s;
+}
+
+.pagina-radacini__antet,
+.detaliu-camera__antet {
+  padding-block: $space-2xl;
+  border-bottom: 1px solid $border-color;
+  background-color: $bg-surface;
+}
+
+.pagina-radacini__antet h1,
+.detaliu-camera__antet h1 {
+  max-width: 15ch;
+  margin-top: $space-xs;
+  font-size: $text-5xl;
+  font-weight: $font-normal;
+}
+
+.pagina-radacini__descriere {
+  max-width: 52ch;
+  margin-top: $space-s;
+  font-size: $text-lg;
+}
+
+.pagina-radacini__continut {
+  max-width: 50rem;
+  padding-block: $space-xl;
+}
+
+.pagina-radacini__continut > * + *,
+.detaliu-camera__continut .content > * + * {
+  margin-top: $space-s;
+}
+
+.pagina-radacini--404 {
+  display: grid;
+  min-height: 72dvh;
+  align-items: center;
+}
+
+.detaliu-camera__grila {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+  align-items: end;
+  gap: $space-xl;
+}
+
+.detaliu-camera__pret {
+  margin-top: $space-s;
+  color: $color-primary;
+}
+
+.detaliu-camera__vizual img {
+  width: 100%;
+  max-height: 44rem;
+  border-radius: 0;
+  object-fit: cover;
+}
+
+.detaliu-camera__continut {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: $space-2xl;
+  padding-block: $space-xl;
+}
+
+.detaliu-camera__continut aside {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: $space-s;
+  padding: $space-m;
+  border: 1px solid $border-color;
+  border-radius: $radius-xl;
+  background-color: $bg-surface;
+}
+
+.detaliu-camera__continut ul {
+  display: grid;
+  gap: $space-2xs;
+}
+
+.detaliu-camera__continut li {
+  padding-bottom: $space-2xs;
+  border-bottom: 1px solid $border-color;
+}
+
+@media (max-width: $bp-tableta) {
+  .radacini-hero__detaliu {
+    display: none;
+  }
+
+  .camere-radacini__grila {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .camera-card:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .experiente-radacini__grila,
+  .detaliu-camera__continut {
+    grid-template-columns: 1fr;
+  }
+
+  .detaliu-camera__continut aside {
+    max-width: 32rem;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .radacini-hero,
+  .radacini-hero__interior {
+    min-height: 44rem;
+  }
+
+  .radacini-hero__interior {
+    align-items: flex-end;
+  }
+
+  .radacini-hero__card {
+    padding: $space-m;
+    border-radius: $radius-xl;
+  }
+
+  .radacini-hero__card h1 {
+    font-size: $text-4xl;
+  }
+
+  .introducere-radacini__grila,
+  .cap-organic,
+  .camere-radacini__grila,
+  .marturie-radacini__interior,
+  .rezervare-radacini__interior,
+  .detaliu-camera__grila {
+    grid-template-columns: 1fr;
+  }
+
+  .camera-card:nth-child(3) {
+    grid-column: auto;
+  }
+
+  .marturie-radacini__semn {
+    font-size: 6rem;
+  }
+
+  .marturie-radacini blockquote p {
+    font-size: $text-2xl;
+  }
+
+  .rezervare-radacini__interior {
+    padding: $space-m;
+  }
+}

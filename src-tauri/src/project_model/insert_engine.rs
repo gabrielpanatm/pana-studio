@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    page_components::{
-        component_root_class_name, page_component_by_id, render_page_component_html,
-        unique_page_component_identity,
+    blocks::{
+        native_block_by_id, native_block_root_class_name, render_native_block_html,
+        unique_native_block_identity,
     },
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
     source_graph::model::SourceNode,
@@ -36,7 +36,8 @@ pub struct ProjectHtmlInsertIntent {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHtmlInsertElement {
     pub kind: Option<String>,
-    pub component_id: Option<String>,
+    #[serde(default, alias = "componentId")]
+    pub block_id: Option<String>,
     pub tag: String,
     pub class_name: Option<String>,
     pub text: Option<String>,
@@ -70,9 +71,9 @@ pub struct ProjectHtmlInsertPatch {
     pub class_name: String,
     pub text: String,
     pub html: String,
-    pub component_id: Option<String>,
+    pub block_id: Option<String>,
     pub data_anim: Option<String>,
-    pub component_instance_id: Option<String>,
+    pub block_instance_id: Option<String>,
 }
 
 struct InsertApplication {
@@ -211,9 +212,9 @@ fn plan_html_insert_from_source_node(
         class_name: snippet.class_name.clone(),
         text: snippet.text.clone(),
         html: snippet.html.clone(),
-        component_id: snippet.component_id.clone(),
+        block_id: snippet.block_id.clone(),
         data_anim: snippet.data_anim.clone(),
-        component_instance_id: snippet.component_instance_id.clone(),
+        block_instance_id: snippet.block_instance_id.clone(),
     })
 }
 
@@ -288,9 +289,9 @@ fn plan_html_insert_from_direct_location(
         class_name: snippet.class_name.clone(),
         text: snippet.text.clone(),
         html: snippet.html.clone(),
-        component_id: snippet.component_id.clone(),
+        block_id: snippet.block_id.clone(),
         data_anim: snippet.data_anim.clone(),
-        component_instance_id: snippet.component_instance_id.clone(),
+        block_instance_id: snippet.block_instance_id.clone(),
     })
 }
 
@@ -327,9 +328,9 @@ struct InsertSnippet {
     class_name: String,
     text: String,
     html: String,
-    component_id: Option<String>,
+    block_id: Option<String>,
     data_anim: Option<String>,
-    component_instance_id: Option<String>,
+    block_instance_id: Option<String>,
 }
 
 fn build_insert_snippet(
@@ -339,13 +340,13 @@ fn build_insert_snippet(
     if element
         .kind
         .as_deref()
-        .is_some_and(|kind| kind.trim() == "component")
+        .is_some_and(|kind| matches!(kind.trim(), "block" | "component"))
         || element
-            .component_id
+            .block_id
             .as_deref()
             .is_some_and(|value| !value.trim().is_empty())
     {
-        return build_component_insert_snippet(model, element);
+        return build_native_block_insert_snippet(model, element);
     }
 
     let tag = normalize_tag(&element.tag)?;
@@ -356,56 +357,55 @@ fn build_insert_snippet(
         tag,
         class_name,
         text,
-        component_id: None,
+        block_id: None,
         data_anim: None,
-        component_instance_id: None,
+        block_instance_id: None,
     })
 }
 
-fn build_component_insert_snippet(
+fn build_native_block_insert_snippet(
     model: &ProjectModel,
     element: &ProjectHtmlInsertElement,
 ) -> Result<InsertSnippet, String> {
-    let component_id = element
-        .component_id
+    let block_id = element
+        .block_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Inserarea componentei nu a primit componentId.".to_string())?;
-    let component = page_component_by_id(component_id).ok_or_else(|| {
-        format!("Componenta {component_id} nu există în Page Component Registry Rust.")
-    })?;
+        .ok_or_else(|| "Inserarea blocului nu a primit blockId.".to_string())?;
+    let block = native_block_by_id(block_id)
+        .ok_or_else(|| format!("Blocul {block_id} nu există în NativeBlockRegistry Rust."))?;
     let provided_tag = element.tag.trim().to_ascii_lowercase();
-    if !provided_tag.is_empty() && provided_tag != component.tag {
+    if !provided_tag.is_empty() && provided_tag != block.tag {
         return Err(format!(
-            "Componenta {} cere tag <{}>, dar UI-ul a cerut <{}>.",
-            component.id, component.tag, provided_tag
+            "Blocul {} cere tag <{}>, dar UI-ul a cerut <{}>.",
+            block.id, block.tag, provided_tag
         ));
     }
 
     let seed = format!(
         "{}:{}:{}:{}",
         model.revision,
-        component.id,
-        element.label.as_deref().unwrap_or(component.label),
-        component.tag
+        block.id,
+        element.label.as_deref().unwrap_or(block.label),
+        block.tag
     );
-    let identity = unique_page_component_identity(component.id, &seed, |candidate| {
+    let identity = unique_native_block_identity(block.id, &seed, |candidate| {
         model
             .files
             .iter()
             .any(|file| file.contents.contains(candidate))
     });
-    let html = render_page_component_html(component, &identity);
+    let html = render_native_block_html(block, &identity);
 
     Ok(InsertSnippet {
-        tag: component.tag.to_string(),
-        class_name: component_root_class_name(component, &identity),
-        text: component.text.to_string(),
+        tag: block.tag.to_string(),
+        class_name: native_block_root_class_name(block, &identity),
+        text: block.text.to_string(),
         html,
-        component_id: Some(component.id.to_string()),
+        block_id: Some(block.id.to_string()),
         data_anim: Some(identity.data_anim),
-        component_instance_id: Some(identity.instance_id),
+        block_instance_id: Some(identity.instance_id),
     })
 }
 
@@ -767,7 +767,7 @@ mod tests {
                 position: ProjectMovePosition::Inside,
                 element: ProjectHtmlInsertElement {
                     kind: Some("html".to_string()),
-                    component_id: None,
+                    block_id: None,
                     tag: "p".to_string(),
                     class_name: Some("lede".to_string()),
                     text: Some("Salut".to_string()),
@@ -808,7 +808,7 @@ mod tests {
                 position: ProjectMovePosition::Inside,
                 element: ProjectHtmlInsertElement {
                     kind: Some("component".to_string()),
-                    component_id: Some("counter".to_string()),
+                    block_id: Some("counter".to_string()),
                     tag: "span".to_string(),
                     class_name: None,
                     text: None,
@@ -821,8 +821,8 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.unwrap();
-        assert_eq!(patch.component_id.as_deref(), Some("counter"));
-        assert!(patch.html.contains(r#"data-pana-component="counter""#));
+        assert_eq!(patch.block_id.as_deref(), Some("counter"));
+        assert!(patch.html.contains(r#"data-pana-block="counter""#));
         assert!(patch.html.contains("ps-counter-"));
         assert!(!patch.html.contains("__PANA_"));
         assert!(patch
@@ -865,7 +865,7 @@ mod tests {
                 position: ProjectMovePosition::Inside,
                 element: ProjectHtmlInsertElement {
                     kind: Some("html".to_string()),
-                    component_id: None,
+                    block_id: None,
                     tag: "p".to_string(),
                     class_name: Some("lede".to_string()),
                     text: Some("Salut".to_string()),
@@ -886,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_insert_blocks_unknown_component_id() {
+    fn plan_html_insert_blocks_unknown_block_id() {
         let root = unique_test_dir();
         write_project(&root, "<section></section>\n");
         let model = build_project_model(&root, &HashMap::new()).unwrap();
@@ -908,7 +908,7 @@ mod tests {
                 position: ProjectMovePosition::Inside,
                 element: ProjectHtmlInsertElement {
                     kind: Some("component".to_string()),
-                    component_id: Some("hero-card".to_string()),
+                    block_id: Some("hero-card".to_string()),
                     tag: "section".to_string(),
                     class_name: None,
                     text: None,
@@ -923,7 +923,7 @@ mod tests {
         assert!(plan
             .diagnostic
             .unwrap()
-            .contains("Page Component Registry Rust"));
+            .contains("NativeBlockRegistry Rust"));
     }
 
     fn write_project(root: &PathBuf, template: &str) {

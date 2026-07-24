@@ -1,0 +1,481 @@
+@import './css-framework/variabile';
+
+.eticheta-cadru {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: $text-xs;
+  letter-spacing: $tracking-wider;
+  text-transform: uppercase;
+}
+
+.eticheta-cadru--accent {
+  color: $color-accent;
+}
+
+.cadru-hero {
+  position: relative;
+  min-height: calc(100dvh - 5rem);
+  overflow: hidden;
+  background-color: $color-black;
+}
+
+.cadru-hero::after {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(90deg, transparent 24%, color-mix(in srgb, $color-black 24%, transparent) 54%, color-mix(in srgb, $color-black 82%, transparent) 100%);
+}
+
+.cadru-hero__imagine {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+}
+
+.cadru-hero__continut {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-height: calc(100dvh - 5rem);
+  grid-template-columns: 1fr minmax(22rem, 0.78fr);
+  align-items: end;
+  gap: $space-xl;
+  padding-block: $space-xl;
+}
+
+.cadru-hero__indice {
+  align-self: start;
+  padding-top: $space-m;
+  color: $color-gray-300;
+  font-family: $font-mono;
+  font-size: $text-xs;
+}
+
+.cadru-hero__text {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-s;
+}
+
+.cadru-hero__text h1 {
+  max-width: 9ch;
+  color: $color-white;
+  font-size: clamp(4rem, 8.5vw, 8.5rem);
+  line-height: 0.86;
+  text-transform: uppercase;
+}
+
+.cadru-hero__text p:not(.eticheta-cadru) {
+  max-width: 40ch;
+  color: $color-gray-100;
+  font-size: $text-lg;
+}
+
+.legatura-cadru {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-xs;
+  padding-bottom: $space-3xs;
+  border-bottom: 2px solid $color-accent;
+  color: $text-heading;
+  font-weight: $font-bold;
+}
+
+.legatura-cadru span {
+  color: $color-accent;
+  transition: transform $transition-fast;
+}
+
+.legatura-cadru:hover span {
+  transform: translate(0.25rem, -0.25rem);
+}
+
+.banda-discipline {
+  overflow: hidden;
+  border-block: 1px solid $border-color;
+  background-color: $color-primary;
+}
+
+.banda-discipline__continut {
+  display: flex;
+  width: max-content;
+  align-items: center;
+  gap: $space-m;
+  padding-block: $space-xs;
+  padding-inline: $space-m;
+}
+
+.banda-discipline span {
+  color: $color-white;
+  font-family: $font-display;
+  font-size: $text-lg;
+  font-weight: $font-bold;
+  text-transform: uppercase;
+}
+
+.banda-discipline i {
+  color: $color-accent;
+  font-style: normal;
+}
+
+.proiecte-cadru {
+  background-color: $bg-body;
+}
+
+.cap-cadru {
+  display: grid;
+  max-width: 64rem;
+  gap: $space-s;
+  margin-bottom: $space-xl;
+}
+
+.cap-cadru h2 {
+  max-width: 13ch;
+  font-size: $text-5xl;
+  text-transform: uppercase;
+}
+
+.cap-cadru > p:last-child {
+  max-width: 48ch;
+  font-size: $text-lg;
+}
+
+.cap-cadru--orizontal {
+  max-width: none;
+  grid-template-columns: minmax(0, 1.25fr) minmax(18rem, 0.75fr);
+  align-items: end;
+  gap: $space-xl;
+}
+
+.proiecte-cadru__grila {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: $space-m;
+}
+
+.proiect-cadru {
+  grid-column: span 7;
+}
+
+.proiect-cadru:nth-child(2) {
+  grid-column: 8 / span 5;
+  margin-top: $space-2xl;
+}
+
+.proiect-cadru:nth-child(3) {
+  grid-column: 3 / span 8;
+  margin-top: $space-l;
+}
+
+.proiect-cadru__vizual {
+  position: relative;
+  display: grid;
+  min-height: 30rem;
+  place-items: center;
+  overflow: hidden;
+  background-color: $color-primary;
+  color: $color-white;
+}
+
+.proiect-cadru:nth-child(2) .proiect-cadru__vizual {
+  min-height: 23rem;
+  background-color: $color-accent;
+  color: $color-gray-900;
+}
+
+.proiect-cadru:nth-child(3) .proiect-cadru__vizual {
+  background-color: $color-gray-50;
+  color: $color-gray-900;
+}
+
+.proiect-cadru__numar {
+  position: absolute;
+  top: $space-s;
+  left: $space-s;
+  font-family: $font-mono;
+  font-size: $text-xs;
+}
+
+.proiect-cadru__litera {
+  font-family: $font-display;
+  font-size: clamp(8rem, 22vw, 20rem);
+  font-weight: $font-bold;
+  line-height: 0.7;
+  text-transform: uppercase;
+  transition: transform $transition-slow;
+}
+
+.proiect-cadru__sageata {
+  position: absolute;
+  right: $space-s;
+  bottom: $space-s;
+  display: grid;
+  width: 3rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: $radius-full;
+}
+
+.proiect-cadru__vizual:hover .proiect-cadru__litera {
+  transform: scale(1.07) rotate(-2deg);
+}
+
+.proiect-cadru__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: $space-s;
+  padding-top: $space-xs;
+}
+
+.proiect-cadru__meta h3,
+.proiect-cadru__meta h2 {
+  font-size: $text-lg;
+}
+
+.proiect-cadru__meta p {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: $text-xs;
+  text-transform: uppercase;
+}
+
+.declaratie-cadru {
+  border-block: 1px solid $border-color;
+  background-color: $color-gray-50;
+}
+
+.declaratie-cadru__grila {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  align-items: start;
+  gap: $space-xl;
+}
+
+.declaratie-cadru__text {
+  max-width: 24ch;
+  color: $color-gray-900;
+  font-family: $font-display;
+  font-size: $text-3xl;
+  font-weight: $font-bold;
+  line-height: $leading-tight;
+  text-transform: uppercase;
+}
+
+.servicii-cadru {
+  background-color: $bg-surface;
+}
+
+.servicii-cadru__lista {
+  counter-reset: serviciu;
+  border-top: 1px solid $border-strong;
+}
+
+.servicii-cadru__lista li {
+  display: grid;
+  grid-template-columns: 4rem minmax(12rem, 0.7fr) minmax(0, 1fr);
+  align-items: start;
+  gap: $space-m;
+  padding-block: $space-m;
+  border-bottom: 1px solid $border-color;
+}
+
+.servicii-cadru__lista span {
+  color: $color-accent;
+  font-family: $font-mono;
+  font-size: $text-xs;
+}
+
+.servicii-cadru__lista h3 {
+  font-size: $text-xl;
+  text-transform: uppercase;
+}
+
+.contact-cadru {
+  background-color: $color-primary;
+}
+
+.contact-cadru__interior {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-m;
+}
+
+.contact-cadru h2 {
+  max-width: 11ch;
+  color: $color-white;
+  font-size: $text-5xl;
+  text-transform: uppercase;
+}
+
+.contact-cadru__link {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-s;
+  color: $color-white;
+  font-size: $text-xl;
+  font-weight: $font-bold;
+}
+
+.pagina-cadru__antet,
+.studiu-caz__antet {
+  padding-block: $space-2xl;
+  border-bottom: 1px solid $border-color;
+  background-color: $bg-surface;
+}
+
+.pagina-cadru__antet h1,
+.studiu-caz__antet h1 {
+  max-width: 10ch;
+  margin-top: $space-xs;
+  font-size: $text-5xl;
+  text-transform: uppercase;
+}
+
+.pagina-cadru__descriere {
+  max-width: 50ch;
+  margin-top: $space-s;
+  font-size: $text-lg;
+}
+
+.pagina-cadru__continut {
+  max-width: 52rem;
+  padding-block: $space-xl;
+}
+
+.pagina-cadru__continut > * + *,
+.studiu-caz__continut .content > * + * {
+  margin-top: $space-s;
+}
+
+.pagina-cadru--404 {
+  display: grid;
+  min-height: 72dvh;
+  align-items: center;
+}
+
+.studiu-caz__grila {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+  align-items: end;
+  gap: $space-xl;
+}
+
+.studiu-caz__vizual {
+  display: grid;
+  min-height: 38rem;
+  place-items: center;
+  margin-block: $space-l;
+  overflow: hidden;
+  background-color: $color-primary;
+}
+
+.studiu-caz__vizual span {
+  color: $color-white;
+  font-family: $font-display;
+  font-size: clamp(12rem, 35vw, 32rem);
+  font-weight: $font-bold;
+  line-height: 0.7;
+}
+
+.studiu-caz__continut {
+  display: grid;
+  grid-template-columns: 14rem minmax(0, 1fr);
+  gap: $space-xl;
+  padding-block: $space-xl;
+}
+
+.studiu-caz__continut aside {
+  display: flex;
+  flex-direction: column;
+  gap: $space-s;
+}
+
+.studiu-caz__continut ul {
+  display: grid;
+  gap: $space-2xs;
+}
+
+@media (max-width: $bp-tableta) {
+  .cadru-hero__continut {
+    grid-template-columns: 1fr;
+  }
+
+  .cadru-hero__indice {
+    display: none;
+  }
+
+  .cadru-hero__text {
+    max-width: 42rem;
+    margin-left: auto;
+  }
+
+  .proiect-cadru,
+  .proiect-cadru:nth-child(2),
+  .proiect-cadru:nth-child(3) {
+    grid-column: span 6;
+    margin-top: 0;
+  }
+
+  .proiect-cadru:nth-child(3) {
+    grid-column: 3 / span 8;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .cadru-hero {
+    min-height: 42rem;
+  }
+
+  .cadru-hero::after {
+    background: linear-gradient(0deg, color-mix(in srgb, $color-black 92%, transparent) 0%, color-mix(in srgb, $color-black 22%, transparent) 100%);
+  }
+
+  .cadru-hero__continut {
+    min-height: 42rem;
+  }
+
+  .cadru-hero__text h1 {
+    font-size: $text-4xl;
+  }
+
+  .banda-discipline__continut {
+    flex-wrap: wrap;
+  }
+
+  .cap-cadru--orizontal,
+  .declaratie-cadru__grila,
+  .studiu-caz__grila,
+  .studiu-caz__continut {
+    grid-template-columns: 1fr;
+  }
+
+  .proiect-cadru,
+  .proiect-cadru:nth-child(2),
+  .proiect-cadru:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .proiect-cadru__vizual,
+  .proiect-cadru:nth-child(2) .proiect-cadru__vizual {
+    min-height: 22rem;
+  }
+
+  .servicii-cadru__lista li {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+
+  .servicii-cadru__lista p {
+    grid-column: 2;
+  }
+
+  .contact-cadru h2 {
+    font-size: $text-4xl;
+  }
+}

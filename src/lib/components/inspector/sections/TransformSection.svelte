@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
-  import { IconTransform } from "@tabler/icons-svelte";
+  import { IconPlus, IconTransform } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
   import TextWithOptions from "../controls/TextWithOptions.svelte";
@@ -182,8 +182,11 @@
       class="add-btn"
       class:active={showTr}
       title="Preseturi tranziție"
+      aria-label="Deschide presetările pentru tranziție"
       onclick={openTr}
-    >+</button>
+    >
+      <IconPlus size={13} stroke={1.9} />
+    </button>
   </div>
   <PropInput
     value={getValue("transition")}
@@ -200,8 +203,11 @@
       class="add-btn"
       class:active={showTf}
       title="Adaugă funcție transform"
+      aria-label="Adaugă funcție transform"
       onclick={openTf}
-    >+</button>
+    >
+      <IconPlus size={13} stroke={1.9} />
+    </button>
   </div>
 
   <div class="row-label">Transform</div>

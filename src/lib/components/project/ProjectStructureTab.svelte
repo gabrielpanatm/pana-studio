@@ -21,8 +21,8 @@
     type HtmlPaletteElement,
     type HtmlPaletteGroup,
   } from "$lib/project/html-palette";
-  import { readPageComponentRegistry } from "$lib/project/io";
-  import { pageComponentPaletteGroupsFromRegistry } from "$lib/page-components/registry";
+  import { readNativeBlockRegistry } from "$lib/project/io";
+  import { nativeBlockPaletteGroupsFromRegistry } from "$lib/blocks/registry";
   import {
     teraPaletteGroups,
   } from "$lib/tera/palette";
@@ -31,20 +31,19 @@
 
   export let selectedElement: SelectionInfo | null = null;
   export let sourceGraph: SourceGraph | null = null;
-  export let loopPaletteItems: TeraPaletteItem[] = [];
   export let startElementPaletteDrag: (element: HtmlPaletteElement, event: PointerEvent) => void;
   export let startTeraPaletteDrag: (item: TeraPaletteItem, event: PointerEvent) => void;
 
-  let componentPaletteGroups: HtmlPaletteGroup[] = [];
+  let blockPaletteGroups: HtmlPaletteGroup[] = [];
 
   onMount(() => {
     let cancelled = false;
-    readPageComponentRegistry()
+    readNativeBlockRegistry()
       .then((registry) => {
-        if (!cancelled) componentPaletteGroups = pageComponentPaletteGroupsFromRegistry(registry);
+        if (!cancelled) blockPaletteGroups = nativeBlockPaletteGroupsFromRegistry(registry);
       })
       .catch(() => {
-        if (!cancelled) componentPaletteGroups = [];
+        if (!cancelled) blockPaletteGroups = [];
       });
     return () => {
       cancelled = true;
@@ -59,13 +58,13 @@
   </div>
 
   <div class="palette-groups">
-    <section class="palette-mode component-mode" aria-label="Componente mici">
+    <section class="palette-mode component-mode" aria-label="Blocuri native">
       <div class="palette-mode-heading">
-        <strong>Componente mici</strong>
-        <span>contract pagina</span>
+        <strong>Blocuri</strong>
+        <span>provideri Rust</span>
       </div>
 
-      {#each componentPaletteGroups as group}
+      {#each blockPaletteGroups as group}
         <section class="palette-group" aria-label={group.label}>
           <h4>{group.label}</h4>
           <div class="palette-grid">
@@ -81,7 +80,7 @@
                 </span>
                 <span class="palette-copy">
                   <strong>{element.label}</strong>
-                  <small>{element.componentKind?.toUpperCase() ?? "CSS"} · {element.description}</small>
+                  <small>{element.blockKind?.toUpperCase() ?? "CSS"} · {element.description}</small>
                 </span>
               </button>
             {/each}
@@ -140,7 +139,7 @@
         <span>template, block, include</span>
       </div>
 
-      {#each teraPaletteGroups(sourceGraph, loopPaletteItems) as group}
+      {#each teraPaletteGroups(sourceGraph) as group}
         <section class="palette-group" aria-label={group.label}>
           <h4>{group.label}</h4>
           <div class="palette-grid">
@@ -349,10 +348,4 @@
     line-height: 1.2;
   }
 
-  :global(body.element-palette-dragging),
-  :global(body.element-palette-dragging *),
-  :global(body.tera-palette-dragging),
-  :global(body.tera-palette-dragging *) {
-    cursor: grabbing !important;
-  }
 </style>

@@ -1,4 +1,7 @@
-use crate::source_graph::model::{SourceNodeKind, SourceOrigin};
+use crate::source_graph::model::{
+    SourceDataFormat, SourceDataNode, SourceGraphInclude, SourceNodeKind, SourceOrigin,
+};
+use crate::source_graph::tera_semantics::TeraSemanticDocument;
 
 #[derive(Clone)]
 pub(super) struct TemplateSummary {
@@ -11,6 +14,7 @@ pub(super) struct TemplateSummary {
     pub(super) is_partial: bool,
     pub(super) extends: Option<String>,
     pub(super) includes: Vec<String>,
+    pub(super) include_groups: Vec<SourceGraphInclude>,
     pub(super) imports: Vec<String>,
     pub(super) get_pages: Vec<String>,
     pub(super) get_sections: Vec<String>,
@@ -22,6 +26,7 @@ pub(super) struct TemplateSummary {
     pub(super) image_resizes: Vec<String>,
     pub(super) blocks: Vec<(String, String)>,
     pub(super) macros: Vec<String>,
+    pub(super) semantics: Option<TeraSemanticDocument>,
 }
 
 #[derive(Clone)]
@@ -49,6 +54,9 @@ pub(super) struct DataFileSummary {
     pub(super) origin: SourceOrigin,
     pub(super) theme_name: Option<String>,
     pub(super) logical_path: String,
+    pub(super) format: SourceDataFormat,
+    pub(super) parse_error: Option<String>,
+    pub(super) nodes: Vec<SourceDataNode>,
 }
 
 #[derive(Clone)]

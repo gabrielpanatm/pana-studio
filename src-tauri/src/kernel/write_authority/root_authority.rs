@@ -32,6 +32,7 @@ pub(super) enum DirectoryAuthorityScope {
     ProjectRoot,
     ProjectBootstrap { lease_id: u64 },
     ZolaArtifactPublication { lease_id: u64 },
+    ComponentValidation { lease_id: u64 },
     ExternalCodex { lease_id: u64 },
 }
 

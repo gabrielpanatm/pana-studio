@@ -11,7 +11,12 @@ use tauri_utils::html::{parse, serialize_node, NodeRef};
 use walkdir::WalkDir;
 
 use crate::{
-    js::parse_page_js, project_model::model::ProjectModel, source_graph::model::SourceRelationKind,
+    js::parse_page_js,
+    project_model::model::ProjectModel,
+    source_graph::model::{
+        ComponentInvocationKind, RenderedBlockInstance, RenderedComponentInstance,
+        SourceRelationKind,
+    },
 };
 
 pub const CANVAS_PROJECTION_SCHEMA_VERSION: u32 = 1;
@@ -136,6 +141,13 @@ pub(crate) struct CanvasRenderNode {
     pub source_node_id: Option<String>,
     pub template_source_node_id: Option<String>,
     pub parent_render_instance_id: Option<String>,
+    pub provenance_stack: Vec<String>,
+    pub component_definition_ids: Vec<String>,
+    pub component_invocation_ids: Vec<String>,
+    pub block_definition_ids: Vec<String>,
+    pub block_source_instance_ids: Vec<String>,
+    pub binding_key: Option<String>,
+    pub binding_path: Option<String>,
     pub tag: String,
     pub occurrence: usize,
     pub origin: CanvasNodeOrigin,
@@ -152,7 +164,7 @@ pub(crate) struct CanvasDocumentGraph {
 #[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum CanvasRuntimeKind {
-    Component,
+    NativeBlock,
     Motion,
     ArbitraryScript,
 }
@@ -187,8 +199,181 @@ pub(crate) struct CanvasGraph {
     pub preview_revision: String,
     pub model_revision: String,
     pub documents: Vec<CanvasDocumentGraph>,
+    pub component_instances: Vec<RenderedComponentInstance>,
+    pub block_instances: Vec<RenderedBlockInstance>,
     pub runtime_nodes: Vec<CanvasRuntimeNode>,
     pub diagnostics: Vec<CanvasGraphDiagnostic>,
+}
+
+struct CanvasSemanticIndex<'a> {
+    live_source_ids: HashSet<&'a str>,
+    definition_ids_by_source: HashMap<String, Vec<String>>,
+    invocation_ids_by_source: HashMap<String, Vec<String>>,
+    definition_ids_by_invocation: HashMap<String, Vec<String>>,
+    block_definition_ids_by_source: HashMap<String, Vec<String>>,
+    block_source_instance_ids_by_source: HashMap<String, Vec<String>>,
+    block_definition_by_source_instance: HashMap<String, Option<String>>,
+    binding_path_by_source: HashMap<String, String>,
+    repeated_sources: HashSet<String>,
+}
+
+impl<'a> CanvasSemanticIndex<'a> {
+    fn from_model(model: &'a ProjectModel) -> Self {
+        let live_source_ids = model
+            .source_graph
+            .nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<HashSet<_>>();
+        let mut definition_ids_by_source = HashMap::<String, Vec<String>>::new();
+        let mut invocation_ids_by_source = HashMap::<String, Vec<String>>::new();
+        let mut definition_ids_by_invocation = HashMap::<String, Vec<String>>::new();
+        let mut block_definition_ids_by_source = HashMap::<String, Vec<String>>::new();
+        let mut block_source_instance_ids_by_source = HashMap::<String, Vec<String>>::new();
+        let mut block_definition_by_source_instance = HashMap::<String, Option<String>>::new();
+        let mut binding_path_by_source = HashMap::<String, String>::new();
+        let mut repeated_sources = HashSet::new();
+        let nodes_by_id = model
+            .source_graph
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect::<HashMap<_, _>>();
+
+        for definition in &model.source_graph.component_graph.definitions {
+            if let Some(source_node_id) = definition.source_node_id.as_ref() {
+                push_unique_map_value(
+                    &mut definition_ids_by_source,
+                    source_node_id,
+                    &definition.id,
+                );
+                if definition.kind
+                    == crate::source_graph::model::ComponentDefinitionKind::InlineRepeat
+                {
+                    repeated_sources.insert(source_node_id.clone());
+                    if let Some(binding) = definition.data_bindings.first() {
+                        binding_path_by_source.insert(source_node_id.clone(), binding.path.clone());
+                    }
+                }
+            }
+        }
+
+        for invocation in &model.source_graph.component_graph.invocations {
+            definition_ids_by_invocation.insert(
+                invocation.id.clone(),
+                invocation.resolved_definition_ids.clone(),
+            );
+            let Some(source_node_id) = invocation.source_node_id.as_ref() else {
+                continue;
+            };
+            push_unique_map_value(
+                &mut invocation_ids_by_source,
+                source_node_id,
+                &invocation.id,
+            );
+            for definition_id in &invocation.resolved_definition_ids {
+                push_unique_map_value(&mut definition_ids_by_source, source_node_id, definition_id);
+            }
+            if invocation.kind == ComponentInvocationKind::Repeat {
+                repeated_sources.insert(source_node_id.clone());
+                if let Some(binding) = invocation.data_bindings.first() {
+                    binding_path_by_source.insert(source_node_id.clone(), binding.path.clone());
+                }
+            }
+        }
+
+        for instance in &model.source_graph.block_graph.source_instances {
+            block_definition_by_source_instance
+                .insert(instance.id.clone(), instance.definition_id.clone());
+            let rendered_source_id = nodes_by_id
+                .get(instance.source_node_id.as_str())
+                .and_then(|node| node.parent.as_ref())
+                .unwrap_or(&instance.source_node_id);
+            push_unique_map_value(
+                &mut block_source_instance_ids_by_source,
+                rendered_source_id,
+                &instance.id,
+            );
+            if let Some(definition_id) = instance.definition_id.as_ref() {
+                push_unique_map_value(
+                    &mut block_definition_ids_by_source,
+                    rendered_source_id,
+                    definition_id,
+                );
+            }
+        }
+
+        Self {
+            live_source_ids,
+            definition_ids_by_source,
+            invocation_ids_by_source,
+            definition_ids_by_invocation,
+            block_definition_ids_by_source,
+            block_source_instance_ids_by_source,
+            block_definition_by_source_instance,
+            binding_path_by_source,
+            repeated_sources,
+        }
+    }
+
+    fn component_ids(&self, provenance: &[String]) -> (Vec<String>, Vec<String>) {
+        let mut definitions = Vec::new();
+        let mut invocations = Vec::new();
+        for source_id in provenance {
+            if let Some(values) = self.definition_ids_by_source.get(source_id) {
+                push_unique_all(&mut definitions, values);
+            }
+            if let Some(values) = self.invocation_ids_by_source.get(source_id) {
+                push_unique_all(&mut invocations, values);
+            }
+        }
+        (definitions, invocations)
+    }
+
+    fn block_ids(&self, provenance: &[String]) -> (Vec<String>, Vec<String>) {
+        let mut definitions = Vec::new();
+        let mut source_instances = Vec::new();
+        for source_id in provenance {
+            if let Some(values) = self.block_definition_ids_by_source.get(source_id) {
+                push_unique_all(&mut definitions, values);
+            }
+            if let Some(values) = self.block_source_instance_ids_by_source.get(source_id) {
+                push_unique_all(&mut source_instances, values);
+            }
+        }
+        (definitions, source_instances)
+    }
+
+    fn repeated_binding_path(&self, provenance: &[String]) -> Option<String> {
+        provenance
+            .iter()
+            .rev()
+            .find(|source_id| self.repeated_sources.contains(*source_id))
+            .and_then(|source_id| self.binding_path_by_source.get(source_id))
+            .cloned()
+    }
+
+    fn is_repeated(&self, provenance: &[String]) -> bool {
+        provenance
+            .iter()
+            .any(|source_id| self.repeated_sources.contains(source_id))
+    }
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if !values.iter().any(|candidate| candidate == value) {
+        values.push(value.to_string());
+    }
+}
+
+fn push_unique_all(values: &mut Vec<String>, candidates: &[String]) {
+    for candidate in candidates {
+        push_unique(values, candidate);
+    }
+}
+
+fn push_unique_map_value(values: &mut HashMap<String, Vec<String>>, key: &str, value: &str) {
+    push_unique(values.entry(key.to_string()).or_default(), value);
 }
 
 impl CanvasGraph {
@@ -197,23 +382,22 @@ impl CanvasGraph {
         route: &str,
         html: &str,
     ) -> Result<String, String> {
-        let live_source_ids = model
-            .source_graph
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect::<HashSet<_>>();
+        let semantic_index = CanvasSemanticIndex::from_model(model);
         let document = parse(html.to_string());
         let mut occurrences = HashMap::new();
+        let mut binding_occurrences = HashMap::new();
         let mut nodes = Vec::new();
         let mut diagnostics = Vec::new();
         let mut total_nodes = 0usize;
+        let mut provenance_stack = Vec::new();
         collect_render_nodes(
             &document,
             route,
             None,
-            &live_source_ids,
+            &semantic_index,
+            &mut provenance_stack,
             &mut occurrences,
+            &mut binding_occurrences,
             &mut nodes,
             &mut diagnostics,
             &mut total_nodes,
@@ -229,12 +413,7 @@ impl CanvasGraph {
         documents: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<Self, String> {
         require_nonempty_preview_revision(preview_revision)?;
-        let live_source_ids = model
-            .source_graph
-            .nodes
-            .iter()
-            .map(|node| node.id.as_str())
-            .collect::<HashSet<_>>();
+        let semantic_index = CanvasSemanticIndex::from_model(model);
         let mut result_documents = Vec::new();
         let mut diagnostics = Vec::new();
         let mut total_nodes = 0usize;
@@ -248,12 +427,16 @@ impl CanvasGraph {
             let document = parse(html.to_string());
             let mut nodes = Vec::new();
             let mut occurrences = HashMap::new();
+            let mut binding_occurrences = HashMap::new();
+            let mut provenance_stack = Vec::new();
             collect_render_nodes(
                 &document,
                 route,
                 None,
-                &live_source_ids,
+                &semantic_index,
+                &mut provenance_stack,
                 &mut occurrences,
+                &mut binding_occurrences,
                 &mut nodes,
                 &mut diagnostics,
                 &mut total_nodes,
@@ -264,6 +447,8 @@ impl CanvasGraph {
             });
         }
         result_documents.sort_by(|left, right| left.route.cmp(&right.route));
+        let component_instances = derive_component_instances(&semantic_index, &result_documents);
+        let block_instances = derive_block_instances(&semantic_index, &result_documents);
         let runtime_nodes = derive_runtime_nodes(model, &result_documents);
 
         Ok(Self {
@@ -272,9 +457,344 @@ impl CanvasGraph {
             preview_revision: preview_revision.to_string(),
             model_revision: model.revision.clone(),
             documents: result_documents,
+            component_instances,
+            block_instances,
             runtime_nodes,
             diagnostics,
         })
+    }
+}
+
+fn derive_block_instances(
+    semantic_index: &CanvasSemanticIndex<'_>,
+    documents: &[CanvasDocumentGraph],
+) -> Vec<RenderedBlockInstance> {
+    let mut pending = Vec::<(RenderedBlockInstance, Option<String>, usize)>::new();
+
+    for document in documents {
+        let nodes_by_render_id = document
+            .nodes
+            .iter()
+            .map(|node| (node.render_instance_id.as_str(), node))
+            .collect::<HashMap<_, _>>();
+
+        for node in &document.nodes {
+            let parent_node = node
+                .parent_render_instance_id
+                .as_deref()
+                .and_then(|parent_id| nodes_by_render_id.get(parent_id))
+                .copied();
+            for (depth, source_instance_id) in node.block_source_instance_ids.iter().enumerate() {
+                if parent_node.is_some_and(|parent| {
+                    parent
+                        .block_source_instance_ids
+                        .iter()
+                        .any(|candidate| candidate == source_instance_id)
+                }) {
+                    continue;
+                }
+                let definition_id = semantic_index
+                    .block_definition_by_source_instance
+                    .get(source_instance_id)
+                    .cloned()
+                    .flatten();
+                pending.push((
+                    rendered_block_instance(
+                        document,
+                        node,
+                        definition_id,
+                        Some(source_instance_id.clone()),
+                    ),
+                    node.parent_render_instance_id.clone(),
+                    depth,
+                ));
+            }
+        }
+    }
+
+    let mut instance_indices_by_render_id = HashMap::<String, Vec<usize>>::new();
+    for (index, (instance, _, _)) in pending.iter().enumerate() {
+        instance_indices_by_render_id
+            .entry(instance.render_instance_id.clone())
+            .or_default()
+            .push(index);
+    }
+    let render_parents = documents
+        .iter()
+        .flat_map(|document| {
+            document.nodes.iter().map(|node| {
+                (
+                    node.render_instance_id.clone(),
+                    node.parent_render_instance_id.clone(),
+                )
+            })
+        })
+        .collect::<HashMap<_, _>>();
+
+    for index in 0..pending.len() {
+        let (render_instance_id, render_parent_id, depth) = {
+            let (instance, parent, depth) = &pending[index];
+            (instance.render_instance_id.clone(), parent.clone(), *depth)
+        };
+        let local_parent = if depth > 0 {
+            instance_indices_by_render_id
+                .get(&render_instance_id)
+                .and_then(|indices| {
+                    indices
+                        .iter()
+                        .copied()
+                        .filter(|candidate| *candidate != index && pending[*candidate].2 < depth)
+                        .max_by_key(|candidate| pending[*candidate].2)
+                })
+        } else {
+            None
+        };
+        let ancestor_parent = local_parent.or_else(|| {
+            let mut cursor = render_parent_id;
+            while let Some(render_id) = cursor {
+                if let Some(candidate) = instance_indices_by_render_id
+                    .get(&render_id)
+                    .and_then(|indices| indices.last())
+                    .copied()
+                {
+                    return Some(candidate);
+                }
+                cursor = render_parents.get(&render_id).cloned().flatten();
+            }
+            None
+        });
+        pending[index].0.parent_instance_id =
+            ancestor_parent.map(|parent| pending[parent].0.id.clone());
+    }
+
+    let mut instances = pending
+        .into_iter()
+        .map(|(instance, _, _)| instance)
+        .collect::<Vec<_>>();
+    instances.sort_by(|left, right| {
+        left.route
+            .cmp(&right.route)
+            .then_with(|| left.render_instance_id.cmp(&right.render_instance_id))
+            .then_with(|| left.source_instance_id.cmp(&right.source_instance_id))
+            .then_with(|| left.definition_id.cmp(&right.definition_id))
+    });
+    instances
+}
+
+fn rendered_block_instance(
+    document: &CanvasDocumentGraph,
+    node: &CanvasRenderNode,
+    definition_id: Option<String>,
+    source_instance_id: Option<String>,
+) -> RenderedBlockInstance {
+    let mut hasher = Sha256::new();
+    hasher.update(b"block-instance");
+    hasher.update([0]);
+    hasher.update(document.route.as_bytes());
+    hasher.update([0]);
+    hasher.update(node.render_instance_id.as_bytes());
+    hasher.update([0]);
+    if let Some(source_instance_id) = source_instance_id.as_deref() {
+        hasher.update(source_instance_id.as_bytes());
+    }
+    hasher.update([0]);
+    if let Some(definition_id) = definition_id.as_deref() {
+        hasher.update(definition_id.as_bytes());
+    }
+    RenderedBlockInstance {
+        id: format!("block_instance_{}", short_hex(&hasher.finalize())),
+        definition_id,
+        source_instance_id,
+        render_instance_id: node.render_instance_id.clone(),
+        route: document.route.clone(),
+        source_node_id: node
+            .source_node_id
+            .clone()
+            .or_else(|| node.template_source_node_id.clone()),
+        parent_instance_id: None,
+        binding_key: node.binding_key.clone(),
+        binding_path: node.binding_path.clone(),
+    }
+}
+
+fn derive_component_instances(
+    semantic_index: &CanvasSemanticIndex<'_>,
+    documents: &[CanvasDocumentGraph],
+) -> Vec<RenderedComponentInstance> {
+    let mut pending = Vec::<(RenderedComponentInstance, Option<String>, usize)>::new();
+
+    for document in documents {
+        let nodes_by_render_id = document
+            .nodes
+            .iter()
+            .map(|node| (node.render_instance_id.as_str(), node))
+            .collect::<HashMap<_, _>>();
+
+        for node in &document.nodes {
+            let parent_node = node
+                .parent_render_instance_id
+                .as_deref()
+                .and_then(|parent_id| nodes_by_render_id.get(parent_id))
+                .copied();
+            let mut depth = 0usize;
+
+            for invocation_id in &node.component_invocation_ids {
+                if parent_node.is_some_and(|parent| {
+                    parent
+                        .component_invocation_ids
+                        .iter()
+                        .any(|candidate| candidate == invocation_id)
+                }) {
+                    continue;
+                }
+                let definition_id = semantic_index
+                    .definition_ids_by_invocation
+                    .get(invocation_id)
+                    .and_then(|definitions| definitions.first())
+                    .cloned();
+                pending.push((
+                    rendered_component_instance(
+                        document,
+                        node,
+                        definition_id,
+                        Some(invocation_id.clone()),
+                    ),
+                    node.parent_render_instance_id.clone(),
+                    depth,
+                ));
+                depth = depth.saturating_add(1);
+            }
+
+            if node.component_invocation_ids.is_empty() {
+                for definition_id in &node.component_definition_ids {
+                    if parent_node.is_some_and(|parent| {
+                        parent
+                            .component_definition_ids
+                            .iter()
+                            .any(|candidate| candidate == definition_id)
+                    }) {
+                        continue;
+                    }
+                    pending.push((
+                        rendered_component_instance(
+                            document,
+                            node,
+                            Some(definition_id.clone()),
+                            None,
+                        ),
+                        node.parent_render_instance_id.clone(),
+                        depth,
+                    ));
+                    depth = depth.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    let mut instance_indices_by_render_id = HashMap::<String, Vec<usize>>::new();
+    for (index, (instance, _, _)) in pending.iter().enumerate() {
+        instance_indices_by_render_id
+            .entry(instance.render_instance_id.clone())
+            .or_default()
+            .push(index);
+    }
+    let render_parents = documents
+        .iter()
+        .flat_map(|document| {
+            document.nodes.iter().map(|node| {
+                (
+                    node.render_instance_id.clone(),
+                    node.parent_render_instance_id.clone(),
+                )
+            })
+        })
+        .collect::<HashMap<_, _>>();
+
+    for index in 0..pending.len() {
+        let (render_instance_id, render_parent_id, depth) = {
+            let (instance, parent, depth) = &pending[index];
+            (instance.render_instance_id.clone(), parent.clone(), *depth)
+        };
+        let local_parent = if depth > 0 {
+            instance_indices_by_render_id
+                .get(&render_instance_id)
+                .and_then(|indices| {
+                    indices
+                        .iter()
+                        .copied()
+                        .filter(|candidate| *candidate != index && pending[*candidate].2 < depth)
+                        .max_by_key(|candidate| pending[*candidate].2)
+                })
+        } else {
+            None
+        };
+        let ancestor_parent = local_parent.or_else(|| {
+            let mut cursor = render_parent_id;
+            while let Some(render_id) = cursor {
+                if let Some(candidate) = instance_indices_by_render_id
+                    .get(&render_id)
+                    .and_then(|indices| indices.last())
+                    .copied()
+                {
+                    return Some(candidate);
+                }
+                cursor = render_parents.get(&render_id).cloned().flatten();
+            }
+            None
+        });
+        pending[index].0.parent_instance_id =
+            ancestor_parent.map(|parent| pending[parent].0.id.clone());
+    }
+
+    let mut instances = pending
+        .into_iter()
+        .map(|(instance, _, _)| instance)
+        .collect::<Vec<_>>();
+    instances.sort_by(|left, right| {
+        left.route
+            .cmp(&right.route)
+            .then_with(|| left.render_instance_id.cmp(&right.render_instance_id))
+            .then_with(|| left.invocation_id.cmp(&right.invocation_id))
+            .then_with(|| left.definition_id.cmp(&right.definition_id))
+    });
+    instances
+}
+
+fn rendered_component_instance(
+    document: &CanvasDocumentGraph,
+    node: &CanvasRenderNode,
+    definition_id: Option<String>,
+    invocation_id: Option<String>,
+) -> RenderedComponentInstance {
+    let mut hasher = Sha256::new();
+    hasher.update(b"component-instance");
+    hasher.update([0]);
+    hasher.update(document.route.as_bytes());
+    hasher.update([0]);
+    hasher.update(node.render_instance_id.as_bytes());
+    hasher.update([0]);
+    if let Some(invocation_id) = invocation_id.as_deref() {
+        hasher.update(invocation_id.as_bytes());
+    }
+    hasher.update([0]);
+    if let Some(definition_id) = definition_id.as_deref() {
+        hasher.update(definition_id.as_bytes());
+    }
+    RenderedComponentInstance {
+        id: format!("component_instance_{}", short_hex(&hasher.finalize())),
+        definition_id,
+        invocation_id,
+        render_instance_id: node.render_instance_id.clone(),
+        route: document.route.clone(),
+        source_node_id: node
+            .source_node_id
+            .clone()
+            .or_else(|| node.template_source_node_id.clone()),
+        parent_instance_id: None,
+        template_stack: node.provenance_stack.clone(),
+        scope_path: node.component_invocation_ids.clone(),
+        binding_key: node.binding_key.clone(),
+        binding_path: node.binding_path.clone(),
     }
 }
 
@@ -321,13 +841,13 @@ fn derive_runtime_nodes(
         routes.dedup();
 
         let config = parse_page_js(&file.contents);
-        for component in &config.components {
+        for block in &config.blocks {
             runtime_nodes.push(canvas_runtime_node(
                 script,
                 &routes,
-                CanvasRuntimeKind::Component,
+                CanvasRuntimeKind::NativeBlock,
                 CanvasNodeOrigin::PanaRuntime,
-                &component.id,
+                &block.id,
             ));
         }
         if let Some(items) = config
@@ -374,7 +894,7 @@ fn canvas_runtime_node(
     key: &str,
 ) -> CanvasRuntimeNode {
     let kind_key = match kind {
-        CanvasRuntimeKind::Component => "component",
+        CanvasRuntimeKind::NativeBlock => "native-block",
         CanvasRuntimeKind::Motion => "motion",
         CanvasRuntimeKind::ArbitraryScript => "arbitrary",
     };
@@ -408,16 +928,45 @@ fn collect_render_nodes(
     node: &NodeRef,
     route: &str,
     parent_render_instance_id: Option<String>,
-    live_source_ids: &HashSet<&str>,
+    semantic_index: &CanvasSemanticIndex<'_>,
+    provenance_stack: &mut Vec<String>,
     occurrences: &mut HashMap<(String, String, String), usize>,
+    binding_occurrences: &mut HashMap<(String, String, String, String), usize>,
     nodes: &mut Vec<CanvasRenderNode>,
     diagnostics: &mut Vec<CanvasGraphDiagnostic>,
     total_nodes: &mut usize,
 ) -> Result<(), String> {
+    if let Some(comment) = node.as_comment() {
+        apply_provenance_marker(
+            comment.borrow().as_str(),
+            provenance_stack,
+            route,
+            diagnostics,
+        );
+        return Ok(());
+    }
+
     let mut descendant_parent = parent_render_instance_id;
     if let Some(element) = node.as_element() {
-        let (source_node_id, template_source_node_id) = {
+        let (source_node_id, template_source_node_id, binding_key) = {
             let attributes = element.attributes.borrow();
+            let binding_key = [
+                "data-pana-key",
+                "data-key",
+                "data-id",
+                "data-pana-instance",
+                "id",
+                "href",
+                "src",
+            ]
+            .iter()
+            .find_map(|name| {
+                attributes
+                    .get(*name)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!("{name}:{value}"))
+            });
             (
                 attributes
                     .get("data-pana-source-id")
@@ -427,10 +976,18 @@ fn collect_render_nodes(
                     .get("data-pana-template-source-id")
                     .map(str::to_string)
                     .filter(|value| !value.trim().is_empty()),
+                binding_key,
             )
         };
+        let mut provenance_stack_snapshot = provenance_stack.clone();
+        if let Some(template_source_node_id) = template_source_node_id.as_ref() {
+            push_unique(&mut provenance_stack_snapshot, template_source_node_id);
+        }
+        if let Some(source_node_id) = source_node_id.as_ref() {
+            push_unique(&mut provenance_stack_snapshot, source_node_id);
+        }
 
-        if source_node_id.is_some() || template_source_node_id.is_some() {
+        if !provenance_stack_snapshot.is_empty() {
             *total_nodes = total_nodes.saturating_add(1);
             if *total_nodes > MAX_CANVAS_NODES {
                 return Err(format!(
@@ -438,27 +995,54 @@ fn collect_render_nodes(
                 ));
             }
             let tag = element.name.local.to_string();
-            let provenance = source_node_id
+            let primary_provenance = source_node_id
                 .as_deref()
                 .or(template_source_node_id.as_deref())
+                .or_else(|| provenance_stack_snapshot.last().map(String::as_str))
                 .expect("marked render node has provenance")
                 .to_string();
-            let key = (route.to_string(), provenance.clone(), tag.clone());
+            let key = (route.to_string(), primary_provenance.clone(), tag.clone());
             let occurrence = occurrences.entry(key).or_insert(0);
             let current_occurrence = *occurrence;
             *occurrence = occurrence.saturating_add(1);
-            let render_instance_id =
-                render_instance_id(route, &provenance, &tag, current_occurrence);
+            let binding_duplicate = binding_key.as_ref().map(|binding_key| {
+                let key = (
+                    route.to_string(),
+                    primary_provenance.clone(),
+                    tag.clone(),
+                    binding_key.clone(),
+                );
+                let duplicate = binding_occurrences.entry(key).or_default();
+                let current = *duplicate;
+                *duplicate = duplicate.saturating_add(1);
+                current
+            });
+            if binding_duplicate.is_some_and(|duplicate| duplicate > 0) {
+                diagnostics.push(CanvasGraphDiagnostic {
+                    code: "duplicate_render_binding".to_string(),
+                    message: format!(
+                        "Cheia randată {:?} apare de mai multe ori pentru aceeași proveniență; identitatea include un discriminator de coliziune.",
+                        binding_key.as_deref().unwrap_or_default()
+                    ),
+                    route: Some(route.to_string()),
+                    source_node_id: Some(primary_provenance.clone()),
+                });
+            }
+            let render_instance_id = render_instance_id(
+                route,
+                &primary_provenance,
+                &tag,
+                binding_key.as_deref(),
+                binding_duplicate.unwrap_or(current_occurrence),
+                current_occurrence,
+            );
             element
                 .attributes
                 .borrow_mut()
                 .insert("data-pana-render-instance-id", render_instance_id.clone());
 
-            for candidate in [source_node_id.as_ref(), template_source_node_id.as_ref()]
-                .into_iter()
-                .flatten()
-            {
-                if !live_source_ids.contains(candidate.as_str()) {
+            for candidate in &provenance_stack_snapshot {
+                if !semantic_index.live_source_ids.contains(candidate.as_str()) {
                     diagnostics.push(CanvasGraphDiagnostic {
                         code: "unknown_source_provenance".to_string(),
                         message: format!(
@@ -471,11 +1055,32 @@ fn collect_render_nodes(
             }
 
             let source_backed = source_node_id.is_some();
+            let (component_definition_ids, component_invocation_ids) =
+                semantic_index.component_ids(&provenance_stack_snapshot);
+            let (block_definition_ids, block_source_instance_ids) =
+                semantic_index.block_ids(&provenance_stack_snapshot);
+            let binding_path = semantic_index.repeated_binding_path(&provenance_stack_snapshot);
+            if semantic_index.is_repeated(&provenance_stack_snapshot) && binding_key.is_none() {
+                diagnostics.push(CanvasGraphDiagnostic {
+                    code: "unstable_repeated_render_identity".to_string(),
+                    message: "Instanța repetată nu expune data-pana-key, data-key, data-id, id, href sau src; identitatea randată folosește temporar ordinea."
+                        .to_string(),
+                    route: Some(route.to_string()),
+                    source_node_id: Some(primary_provenance.clone()),
+                });
+            }
             nodes.push(CanvasRenderNode {
                 render_instance_id: render_instance_id.clone(),
                 source_node_id,
                 template_source_node_id,
                 parent_render_instance_id: descendant_parent.clone(),
+                provenance_stack: provenance_stack_snapshot,
+                component_definition_ids,
+                component_invocation_ids,
+                block_definition_ids,
+                block_source_instance_ids,
+                binding_key,
+                binding_path,
                 tag,
                 occurrence: current_occurrence,
                 origin: if source_backed {
@@ -493,13 +1098,16 @@ fn collect_render_nodes(
         }
     }
 
+    let mut descendant_provenance = provenance_stack.clone();
     for child in node.children() {
         collect_render_nodes(
             &child,
             route,
             descendant_parent.clone(),
-            live_source_ids,
+            semantic_index,
+            &mut descendant_provenance,
             occurrences,
+            binding_occurrences,
             nodes,
             diagnostics,
             total_nodes,
@@ -508,7 +1116,14 @@ fn collect_render_nodes(
     Ok(())
 }
 
-fn render_instance_id(route: &str, source_id: &str, tag: &str, occurrence: usize) -> String {
+fn render_instance_id(
+    route: &str,
+    source_id: &str,
+    tag: &str,
+    binding_key: Option<&str>,
+    binding_occurrence: usize,
+    source_occurrence: usize,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(route.as_bytes());
     hasher.update([0]);
@@ -516,8 +1131,64 @@ fn render_instance_id(route: &str, source_id: &str, tag: &str, occurrence: usize
     hasher.update([0]);
     hasher.update(tag.as_bytes());
     hasher.update([0]);
-    hasher.update(occurrence.to_le_bytes());
+    if let Some(binding_key) = binding_key {
+        hasher.update(b"binding");
+        hasher.update([0]);
+        hasher.update(binding_key.as_bytes());
+        hasher.update([0]);
+        hasher.update(binding_occurrence.to_le_bytes());
+    } else {
+        hasher.update(b"occurrence");
+        hasher.update([0]);
+        hasher.update(source_occurrence.to_le_bytes());
+    }
     format!("ri_{}", short_hex(&hasher.finalize()))
+}
+
+fn apply_provenance_marker(
+    comment: &str,
+    stack: &mut Vec<String>,
+    route: &str,
+    diagnostics: &mut Vec<CanvasGraphDiagnostic>,
+) {
+    let marker = comment.trim();
+    let start = marker
+        .strip_prefix("pana-template-source-start:")
+        .or_else(|| marker.strip_prefix("pana-template-expression-start:"));
+    if let Some(source_id) = start.map(str::trim).filter(|value| !value.is_empty()) {
+        stack.push(source_id.to_string());
+        return;
+    }
+    let end = marker
+        .strip_prefix("pana-template-source-end:")
+        .or_else(|| marker.strip_prefix("pana-template-expression-end:"));
+    let Some(source_id) = end.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    if stack.last().is_some_and(|active| active == source_id) {
+        stack.pop();
+        return;
+    }
+    if let Some(position) = stack.iter().rposition(|active| active == source_id) {
+        stack.truncate(position);
+        diagnostics.push(CanvasGraphDiagnostic {
+            code: "recovered_provenance_stack".to_string(),
+            message: format!(
+                "CanvasGraph a recuperat o închidere de proveniență neordonată pentru {source_id}."
+            ),
+            route: Some(route.to_string()),
+            source_node_id: Some(source_id.to_string()),
+        });
+    } else {
+        diagnostics.push(CanvasGraphDiagnostic {
+            code: "unmatched_provenance_end".to_string(),
+            message: format!(
+                "CanvasGraph a întâlnit un marker final fără început pentru {source_id}."
+            ),
+            route: Some(route.to_string()),
+            source_node_id: Some(source_id.to_string()),
+        });
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
@@ -891,6 +1562,8 @@ impl CanvasProjectionTransaction {
             preview_revision: preview_revision.to_string(),
             model_revision: "test-model".to_string(),
             documents: Vec::new(),
+            component_instances: Vec::new(),
+            block_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
         };
@@ -976,6 +1649,7 @@ mod tests {
         kernel::project_workspace::WorkspaceProjectionLease,
         project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
         project_model::build_project_model_from_workspace_projection,
+        source_graph::model::SourceNodeKind,
     };
     use std::{
         collections::{HashMap, HashSet},
@@ -1065,6 +1739,143 @@ mod tests {
                 node.render_instance_id
             )));
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canvas_graph_keeps_keyed_render_identity_stable_across_reordering() {
+        let root = test_project_root("stable-keyed-render-identity");
+        let model = test_project_model(
+            &root,
+            31,
+            HashMap::from([
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
+                (
+                    "templates/index.html".to_string(),
+                    "<main><article>Card</article></main>".to_string(),
+                ),
+            ]),
+        );
+        let source_id = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::Html && node.label.contains("article"))
+            .map(|node| node.id.clone())
+            .unwrap();
+        let first = format!(
+            "<article data-pana-source-id=\"{source_id}\" data-key=\"alpha\">A</article>\
+             <article data-pana-source-id=\"{source_id}\" data-key=\"beta\">B</article>"
+        );
+        let reordered = format!(
+            "<article data-pana-source-id=\"{source_id}\" data-key=\"beta\">B</article>\
+             <article data-pana-source-id=\"{source_id}\" data-key=\"alpha\">A</article>"
+        );
+        let first_graph = CanvasGraph::from_rendered_documents(
+            &model,
+            31,
+            "preview-31-a",
+            [("/", first.as_str())],
+        )
+        .unwrap();
+        let reordered_graph = CanvasGraph::from_rendered_documents(
+            &model,
+            31,
+            "preview-31-b",
+            [("/", reordered.as_str())],
+        )
+        .unwrap();
+        let identities = |graph: &CanvasGraph| {
+            graph.documents[0]
+                .nodes
+                .iter()
+                .map(|node| {
+                    (
+                        node.binding_key.clone().unwrap(),
+                        node.render_instance_id.clone(),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        assert_eq!(identities(&first_graph), identities(&reordered_graph));
+        assert!(first_graph.diagnostics.is_empty());
+        assert!(reordered_graph.diagnostics.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canvas_graph_projects_include_provenance_to_component_instances() {
+        let root = test_project_root("component-instance-provenance");
+        let model = test_project_model(
+            &root,
+            32,
+            HashMap::from([
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
+                (
+                    "templates/index.html".to_string(),
+                    "{% include \"partials/card.html\" %}".to_string(),
+                ),
+                (
+                    "templates/partials/card.html".to_string(),
+                    "<article class=\"card\">Card</article>".to_string(),
+                ),
+            ]),
+        );
+        let invocation = model
+            .source_graph
+            .component_graph
+            .invocations
+            .iter()
+            .find(|invocation| invocation.kind == ComponentInvocationKind::Include)
+            .unwrap();
+        let invocation_source_id = invocation.source_node_id.clone().unwrap();
+        let resolved_definition_id = invocation.resolved_definition_ids[0].clone();
+        let article_source_id = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Html
+                    && node.file == "templates/partials/card.html"
+                    && node.label.contains("article")
+            })
+            .map(|node| node.id.clone())
+            .unwrap();
+        let rendered = format!(
+            "<html><body>\
+             <!-- pana-template-source-start:{invocation_source_id} -->\
+             <article data-pana-source-id=\"{article_source_id}\">Card</article>\
+             <!-- pana-template-source-end:{invocation_source_id} -->\
+             </body></html>"
+        );
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            32,
+            "preview-32",
+            [("/", rendered.as_str())],
+        )
+        .unwrap();
+
+        assert_eq!(graph.documents[0].nodes.len(), 1);
+        assert_eq!(graph.component_instances.len(), 1);
+        let instance = &graph.component_instances[0];
+        assert_eq!(
+            instance.invocation_id.as_deref(),
+            Some(invocation.id.as_str())
+        );
+        assert_eq!(
+            instance.definition_id.as_deref(),
+            Some(resolved_definition_id.as_str())
+        );
+        assert_eq!(
+            instance.render_instance_id,
+            graph.documents[0].nodes[0].render_instance_id
+        );
+        assert!(instance
+            .template_stack
+            .iter()
+            .any(|source_id| source_id == &invocation_source_id));
+        assert!(graph.diagnostics.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1188,7 +1999,7 @@ mod tests {
         .unwrap();
 
         assert!(graph.runtime_nodes.iter().any(|node| {
-            node.kind == CanvasRuntimeKind::Component
+            node.kind == CanvasRuntimeKind::NativeBlock
                 && node.origin == CanvasNodeOrigin::PanaRuntime
                 && node.key == "accordion"
         }));
@@ -1257,6 +2068,8 @@ mod tests {
             preview_revision: "preview-9".to_string(),
             model_revision: "model-9".to_string(),
             documents: Vec::new(),
+            component_instances: Vec::new(),
+            block_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
         };
@@ -1431,5 +2244,37 @@ mod tests {
         ));
         fs::create_dir_all(root.join("templates")).unwrap();
         root
+    }
+
+    fn test_project_model(
+        root: &Path,
+        revision: u64,
+        source_texts: HashMap<String, String>,
+    ) -> ProjectModel {
+        let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
+        let session = format!("canvas-test-{revision}");
+        let changed_paths = source_texts.keys().cloned().collect::<HashSet<_>>();
+        let lease = WorkspaceProjectionLease {
+            project_root: canonical.clone(),
+            runtime_session_id: session.clone(),
+            revision,
+            workspace_transaction_id: Some(format!("canvas-test-{revision}")),
+            source_texts,
+            resource_bytes: HashMap::new(),
+            deleted_sources: HashSet::new(),
+            changed_paths,
+            accepted_disk: AcceptedProjectDiskManifest::new(
+                session,
+                canonical.clone(),
+                ProjectDiskManifest {
+                    root: canonical,
+                    files: Vec::new(),
+                    truncated: false,
+                    max_files: 100,
+                },
+            )
+            .unwrap(),
+        };
+        build_project_model_from_workspace_projection(root, &lease).unwrap()
     }
 }

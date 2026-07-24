@@ -1,0 +1,48 @@
+marca = "Nord"
+supratitlu = "Consultanță de business / Timișoara"
+titlu_hero = "Ordine în deciziile care contează."
+descriere_hero = "Clarificăm strategia, simplificăm procesele și construim sisteme de lucru pe care echipa ta le poate susține."
+legenda_hero = "Claritate structurală pentru organizații în creștere"
+descriere_scurta = "Consultanță pragmatică pentru companii care vor să crească fără să piardă controlul."
+cta_scurt = "Programează o discuție"
+cta_principal = "Programează o discuție"
+cta_url = "mailto:salut@nord.example"
+titlu_cta = "Ai o problemă care nu încape într-un șablon?"
+email = "salut@nord.example"
+telefon = "+40 700 000 000"
+telefon_link = "+40700000000"
+adresa = "Piața Unirii 1, Timișoara"
+program = "Luni–Vineri, 09:00–17:00"
+
+[[indicatori]]
+valoare = "48"
+eticheta = "proiecte finalizate"
+
+[[indicatori]]
+valoare = "12 ani"
+eticheta = "experiență aplicată"
+
+[[indicatori]]
+valoare = "3,4×"
+eticheta = "randament mediu"
+
+[[indicatori]]
+valoare = "92%"
+eticheta = "clienți recurenți"
+
+[[etape]]
+titlu = "Diagnostic"
+descriere = "Mapăm contextul, blocajele și deciziile amânate."
+
+[[etape]]
+titlu = "Direcție"
+descriere = "Alegem puține priorități, cu rezultate și responsabilități clare."
+
+[[etape]]
+titlu = "Implementare"
+descriere = "Punem sistemul în lucru alături de oamenii care îl vor folosi."
+
+[marturie]
+text = "Nord ne-a ajutat să vedem afacerea ca un sistem, nu ca o listă nesfârșită de urgențe."
+autor = "Andrei M."
+rol = "Director operațional, companie de producție"

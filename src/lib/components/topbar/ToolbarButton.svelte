@@ -34,8 +34,8 @@
     min-width: 32px;
     min-height: 30px;
     padding: 0;
-    border: 1px solid var(--border-4);
-    border-radius: 7px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-control);
     color: var(--text);
     line-height: 0;
     background: var(--surface-4);
@@ -43,9 +43,9 @@
   }
 
   .toolbar-icon-button:hover:not(:disabled) {
-    border-color: var(--brand);
-    color: var(--brand-strong);
-    background: var(--brand-soft);
+    border-color: var(--border-strong);
+    color: var(--text-strong);
+    background: var(--control-hover);
   }
 
   .toolbar-icon-button.segmented {
@@ -54,7 +54,7 @@
     height: 28px;
     min-height: 28px;
     border-color: transparent;
-    border-radius: 6px;
+    border-radius: 3px;
     background: transparent;
   }
 
@@ -63,9 +63,9 @@
   }
 
   .toolbar-icon-button.active {
-    border-color: var(--brand);
-    color: #ffffff;
-    background: var(--brand);
+    border-color: transparent;
+    color: var(--brand-strong);
+    background: var(--control-selected);
   }
 
   .toolbar-icon-button:disabled {
@@ -90,8 +90,8 @@
   }
 
   .toolbar-icon-button.pending {
-    border-color: #f59e0b;
-    color: #f59e0b;
+    border-color: var(--warning);
+    color: var(--warning);
   }
 
   .save-pending-dot {
@@ -101,7 +101,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #f59e0b;
+    background: var(--warning);
   }
 
   .toolbar-icon-button :global(svg) {

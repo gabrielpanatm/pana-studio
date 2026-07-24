@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-design-class"
+description = "Enables the create_design_class command without any pre-configured scope."
+commands.allow = ["create_design_class"]
+
+[[permission]]
+identifier = "deny-create-design-class"
+description = "Denies the create_design_class command without any pre-configured scope."
+commands.deny = ["create_design_class"]

@@ -1,0 +1,53 @@
+.subsol-cadru {
+  border-top: 1px solid $border-color;
+  background-color: $color-black;
+}
+
+.subsol-cadru__grila {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(16rem, 0.5fr);
+  align-items: end;
+  gap: $space-xl;
+  padding-block: $space-2xl;
+}
+
+.subsol-cadru__titlu {
+  max-width: 16ch;
+  margin-bottom: $space-s;
+  color: $text-heading;
+  font-family: $font-display;
+  font-size: $text-3xl;
+  font-weight: $font-bold;
+  line-height: $leading-tight;
+}
+
+.subsol-cadru__email {
+  color: $color-accent;
+  font-size: $text-lg;
+}
+
+.subsol-cadru__date {
+  display: grid;
+  gap: $space-2xs;
+}
+
+.subsol-cadru__legal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-s;
+  padding-block: $space-s;
+  border-top: 1px solid $border-color;
+  font-size: $text-sm;
+}
+
+@media (max-width: $bp-mobil) {
+  .subsol-cadru__grila {
+    grid-template-columns: 1fr;
+  }
+
+  .subsol-cadru__legal {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

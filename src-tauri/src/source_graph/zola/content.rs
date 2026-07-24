@@ -265,7 +265,7 @@ fn valid_markdown_content_path(path: &str) -> Option<&str> {
     (!path.trim().is_empty() && path.ends_with(".md")).then_some(path)
 }
 
-fn zola_frontmatter_range(source: &str) -> Option<(usize, usize)> {
+pub(crate) fn zola_frontmatter_range(source: &str) -> Option<(usize, usize)> {
     let bom_len = if source.starts_with('\u{feff}') {
         '\u{feff}'.len_utf8()
     } else {

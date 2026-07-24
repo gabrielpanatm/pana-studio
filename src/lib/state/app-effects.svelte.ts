@@ -141,8 +141,7 @@ export function registerAppEffects(app: AppState) {
       ? secondaryDocument?.surface ?? null
       : null;
     if (
-      app.workbenchSnapshot?.activeActivity === "design_system"
-      || app.centerView === "site"
+      (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor"
       || app.centerView === "kernel"
     ) {
       app.codeEditorController?.destroy();

@@ -7,6 +7,7 @@ use crate::{
     js::PageJsDraftStore,
     kernel::{
         ai_coordination::EditAuthority,
+        component_legacy_migration::migrate_legacy_component_catalog,
         disk_conflict::scan_disk_conflicts,
         file_buffer_store::{
             bootstrap_file_buffer_store, now_ms as file_buffer_now_ms,
@@ -949,6 +950,7 @@ pub fn recover_project_workspace_save(
         PageJsDraftStore::new(&session),
     )?;
     restore_project_workspace_recovery(&app, &mut rebuilt)?;
+    migrate_legacy_component_catalog(&root, &mut rebuilt, now_ms())?;
     let workspace_snapshot = rebuilt.snapshot();
 
     {
@@ -1417,6 +1419,7 @@ pub fn open_project(
     if recovery_resolution == ProjectOpenRecoveryResolution::Restore {
         restore_project_workspace_recovery(&app, &mut next_project_workspace)?;
     }
+    migrate_legacy_component_catalog(&root, &mut next_project_workspace, now_ms())?;
     let retire_abandoned_recovery = recovery_assessment.as_ref().is_some_and(|assessment| {
         matches!(
             assessment.status,
@@ -1543,8 +1546,12 @@ pub fn open_project(
 }
 
 #[tauri::command]
-pub fn zola_init(path: String, app: AppHandle) -> Result<String, String> {
-    init_project_with_starter(&app, &PathBuf::from(path))
+pub async fn zola_init(path: String, theme_id: String, app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        init_project_with_starter(&app, &PathBuf::from(path), &theme_id)
+    })
+    .await
+    .map_err(|error| format!("Inițializarea proiectului a căzut în task-ul de fundal: {error}"))?
 }
 
 #[tauri::command]

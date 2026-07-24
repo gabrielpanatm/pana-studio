@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::zola_links::public_asset_href;
+use toml_edit::{value, DocumentMut, Item, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ZolaTemplateOrigin {
@@ -83,6 +84,15 @@ impl ZolaThemeResolver {
     ) -> Vec<String> {
         conventional_style_files_for_template(template_name, origin, project_relative)
     }
+
+    pub fn conventional_script_files_for_template(
+        &self,
+        template_name: &str,
+        origin: &ZolaTemplateOrigin,
+        project_relative: bool,
+    ) -> Vec<String> {
+        conventional_script_files_for_template(template_name, origin, project_relative)
+    }
 }
 
 pub fn read_active_theme(zola_root: &Path) -> Option<String> {
@@ -110,6 +120,34 @@ pub fn active_theme_from_source(source: &str) -> Option<String> {
     }
 
     None
+}
+
+pub fn set_active_theme_in_source(source: &str, theme_id: &str) -> Result<String, String> {
+    if !is_safe_theme_directory_name(theme_id) {
+        return Err(format!(
+            "Configurația Zola a refuzat ID-ul de temă nesigur `{theme_id}`."
+        ));
+    }
+    let mut document = source
+        .parse::<DocumentMut>()
+        .map_err(|error| format!("Configurația Zola nu este TOML valid: {error}."))?;
+    match document.get_mut("theme") {
+        Some(Item::Value(Value::String(current))) => {
+            let decor = current.decor().clone();
+            let mut replacement = toml_edit::Formatted::new(theme_id.to_string());
+            *replacement.decor_mut() = decor;
+            *current = replacement;
+        }
+        Some(_) => {
+            return Err(
+                "Cheia top-level `theme` există, dar nu este un string Zola valid.".to_string(),
+            );
+        }
+        None => {
+            document["theme"] = value(theme_id);
+        }
+    }
+    Ok(document.to_string())
 }
 
 pub fn is_template_relative_path(relative_path: &str) -> bool {
@@ -277,27 +315,73 @@ pub fn conventional_style_files_for_template(
 
     if let Some(partial_name) = name.strip_prefix("partials/") {
         let partial_name = partial_name.trim_start_matches('/');
-        return vec![
-            format!("{}/partials/_{}.scss", style_root, partial_name),
-            format!("{}/partials/{}.scss", style_root, partial_name),
-        ];
+        return conventional_partial_style_files(&style_root, "partials", partial_name);
     }
 
     if let Some(component_name) = name.strip_prefix("components/") {
         let component_name = component_name.trim_start_matches('/');
-        return vec![
-            format!("{}/componente/_{}.scss", style_root, component_name),
-            format!("{}/componente/{}.scss", style_root, component_name),
-        ];
+        return conventional_partial_style_files(&style_root, "componente", component_name);
     }
 
     vec![format!("{}/pagini/{}.scss", style_root, name)]
+}
+
+pub fn conventional_script_files_for_template(
+    template_name: &str,
+    origin: &ZolaTemplateOrigin,
+    project_relative: bool,
+) -> Vec<String> {
+    let script_root = script_root_for_origin(origin, project_relative);
+    let name = logical_template_name(template_name)
+        .trim_end_matches(".html")
+        .to_string();
+    let component_name = name
+        .strip_prefix("partials/")
+        .or_else(|| name.strip_prefix("components/"))
+        .unwrap_or(&name)
+        .trim_start_matches('/');
+
+    if component_name.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!("{}/js/{}.js", script_root, component_name)]
+    }
+}
+
+fn conventional_partial_style_files(
+    style_root: &str,
+    scope: &str,
+    component_name: &str,
+) -> Vec<String> {
+    let path = Path::new(component_name);
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Vec::new();
+    };
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .and_then(Path::to_str)
+        .map(|parent| format!("/{parent}"))
+        .unwrap_or_default();
+    let root = format!("{style_root}/{scope}{directory}");
+
+    vec![
+        format!("{root}/_{file_name}.scss"),
+        format!("{root}/{file_name}.scss"),
+    ]
 }
 
 fn style_root_for_origin(origin: &ZolaTemplateOrigin, _project_relative: bool) -> String {
     match origin {
         ZolaTemplateOrigin::Local => "sass".to_string(),
         ZolaTemplateOrigin::Theme(theme) => format!("themes/{}/sass", theme),
+    }
+}
+
+fn script_root_for_origin(origin: &ZolaTemplateOrigin, _project_relative: bool) -> String {
+    match origin {
+        ZolaTemplateOrigin::Local => "static".to_string(),
+        ZolaTemplateOrigin::Theme(theme) => format!("themes/{}/static", theme),
     }
 }
 
@@ -585,6 +669,39 @@ theme = "ignored-after-table"
                 true,
             ),
             vec!["sass/partials/_header.scss", "sass/partials/header.scss"]
+        );
+        assert_eq!(
+            resolver.conventional_style_files_for_template(
+                "partials/product/card.html",
+                &ZolaTemplateOrigin::Local,
+                true,
+            ),
+            vec![
+                "sass/partials/product/_card.scss",
+                "sass/partials/product/card.scss"
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_project_relative_script_paths_for_nested_components() {
+        let resolver = ZolaThemeResolver::new(Some("test-theme".to_string()));
+
+        assert_eq!(
+            resolver.conventional_script_files_for_template(
+                "partials/product/card.html",
+                &ZolaTemplateOrigin::Local,
+                true,
+            ),
+            vec!["static/js/product/card.js"]
+        );
+        assert_eq!(
+            resolver.conventional_script_files_for_template(
+                "partials/product/card.html",
+                &ZolaTemplateOrigin::Theme("test-theme".to_string()),
+                true,
+            ),
+            vec!["themes/test-theme/static/js/product/card.js"]
         );
     }
 

@@ -62,6 +62,8 @@ export function ensurePreviewInspectorStyles(previewDocument: Document) {
 
   const styleElement = previewDocument.createElement("style");
   styleElement.id = "pana-studio-inspector-style";
+  // Inspector mode must override cursor declarations from the inspected project,
+  // not application chrome; this is an intentional preview-boundary override.
   styleElement.textContent = `
     * {
       cursor: crosshair !important;

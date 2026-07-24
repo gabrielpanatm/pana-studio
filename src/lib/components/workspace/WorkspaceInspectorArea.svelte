@@ -20,7 +20,8 @@
         .map((file) => file.relativePath)
     : []);
   const activityUsesFullWorkspace = $derived(
-    (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
+    app.applicationSurface !== "workbench"
+      || (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
   );
 </script>
 
@@ -55,6 +56,10 @@
       previewDevice={app.previewDevice}
       refreshToken={app.refreshToken}
       jsRefreshToken={app.jsRefreshToken}
+      workspaceRevision={app.projectWorkspaceSnapshot?.revision ?? 0}
+      previewRevision={app.activeCanvasIdentity?.previewRevision ?? ""}
+      blockPropertiesHeight={app.applicationSettings?.blockPropertiesHeight ?? 220}
+      blockPropertiesCollapsed={app.applicationSettings?.blockPropertiesCollapsed ?? false}
       cachebustAssets={app.cachebustAssets}
       {cssFiles}
       projectFiles={app.scannedProject?.files ?? []}
@@ -98,13 +103,6 @@
       onLivePropertiesChange={(sel, properties, viewport) => app.applyInspectorLiveProperties(sel, properties, viewport)}
       onCssWorkspaceMutationCommitted={(authority, liveEpoch) =>
         app.projectCommittedInspectorCssMutation(authority, liveEpoch)}
-      onScssVariableCommitted={(variable, value) => {
-        app.scssVariables = app.scssVariables.map((candidate) => (
-          candidate.file === variable.file && candidate.name === variable.name
-            ? { ...candidate, value }
-            : candidate
-        ));
-      }}
       onInspectorLivePropertiesRejected={(liveEpoch) => app.clearInspectorLiveProperties(liveEpoch)}
       injectPreviewCss={(css) => app.injectRawCss("pana-animation-preview", css)}
       onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as SaveState)}
@@ -119,6 +117,10 @@
       onCssCodeTargetChange={(target) => app.setCssCodeRevealTarget(target)}
       getOpenCssRuleContext={(file, selector, viewport) =>
         app.cssRuleContextFromOpenSource(file, selector, viewport)}
+      applyNativeBlockOption={(request) => app.applyNativeBlockOption(request)}
+      persistBlockPropertiesLayout={(height, collapsed) => {
+        void app.persistBlockPropertiesLayout(height, collapsed);
+      }}
     />
   </div>
 {/if}

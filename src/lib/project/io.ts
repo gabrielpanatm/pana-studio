@@ -14,6 +14,10 @@ import type {
   FileBufferTextSnapshot,
   GoogleFontCatalogFamily,
   GoogleFontDownloadResult,
+  ThemeStyleCatalogSnapshot,
+  ThemeStyleDraftPreview,
+  ThemeStylePropertyInput,
+  ThemeStyleTargetSnapshot,
   PageCssTarget,
   PageCssCleanupResult,
   PageCssWriteResult,
@@ -21,16 +25,23 @@ import type {
   AiContextStatus,
   AiCoordinationSnapshot,
   CodexMcpStatus,
+  ComponentMutationApplyReceipt,
+  ComponentMutationInput,
+  DataMutationApplyReceipt,
+  DataMutationInput,
+  DataNodeEditorSnapshot,
+  BlockRuntimeSnapshot,
+  UiBlockGraphSnapshot,
   EditTransitionReceipt,
   PageAssetContractApplyInput,
   PageAssetContractInput,
   PageAssetContractApplyReceipt,
   PageAssetContractPlan,
-  PageComponentContractApplyReceipt,
-  PageComponentContractApplyInput,
-  PageComponentContractInput,
-  PageComponentContractPlan,
-  PageComponentRegistrySnapshot,
+  NativeBlockContractApplyReceipt,
+  NativeBlockContractApplyInput,
+  NativeBlockContractInput,
+  NativeBlockContractPlan,
+  NativeBlockRegistrySnapshot,
   PreviewHtmlDeleteExecutionInput,
   PreviewHtmlDeleteExecutionReceipt,
   PreviewHtmlAttributesExecutionInput,
@@ -83,6 +94,10 @@ import type {
   ProjectWorkspaceSaveRecoveryAction,
   ProjectWorkspaceSaveRecoveryCommandResult,
   ProjectWorkspaceSnapshot,
+  ThemeApplyReceipt,
+  ThemeCatalogSnapshot,
+  ThemePlan,
+  ThemePlanRequest,
   ProjectWorkspaceUndoRedoCommandReceipt,
   WorkspaceHistorySnapshot,
   KernelDiskConflictSnapshot,
@@ -113,6 +128,12 @@ import type {
   RecoveryCoordinatorScan,
   ScssVariable,
   SourceGraph,
+  TemplateCatalogSnapshot,
+  CreateTemplateInput,
+  DeleteTemplateInput,
+  DuplicateTemplateInput,
+  OverrideThemeTemplateInput,
+  RenameTemplateInput,
   ZolaProjectSettings,
   UiQuiescenceAcknowledgement,
   VersionDiffInput,
@@ -143,6 +164,7 @@ import {
   DESIGN_CLASS_RENAME_SCHEMA_VERSION,
   PROJECT_AUDIT_SCHEMA_VERSION,
   PROJECT_WORKSPACE_SCHEMA_VERSION,
+  TEMPLATE_CATALOG_SCHEMA_VERSION,
 } from "$lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
@@ -523,20 +545,20 @@ export function executePreviewTeraMoveDropIntent(
   return invoke<PreviewTeraMoveDropExecutionReceipt>("execute_preview_tera_move_drop_intent", { input, identity });
 }
 
-export function planPageComponentContract(
-  input: PageComponentContractInput,
-): Promise<PageComponentContractPlan> {
-  return invoke<PageComponentContractPlan>("plan_page_component_contract", { input });
+export function planNativeBlockContract(
+  input: NativeBlockContractInput,
+): Promise<NativeBlockContractPlan> {
+  return invoke<NativeBlockContractPlan>("plan_native_block_contract", { input });
 }
 
-export function applyPageComponentContract(
-  input: PageComponentContractApplyInput,
-): Promise<PageComponentContractApplyReceipt> {
-  return invoke<PageComponentContractApplyReceipt>("apply_page_component_contract", { input });
+export function applyNativeBlockContract(
+  input: NativeBlockContractApplyInput,
+): Promise<NativeBlockContractApplyReceipt> {
+  return invoke<NativeBlockContractApplyReceipt>("apply_native_block_contract", { input });
 }
 
-export function readPageComponentRegistry(): Promise<PageComponentRegistrySnapshot> {
-  return invoke<PageComponentRegistrySnapshot>("read_page_component_registry");
+export function readNativeBlockRegistry(): Promise<NativeBlockRegistrySnapshot> {
+  return invoke<NativeBlockRegistrySnapshot>("read_native_block_registry");
 }
 
 export function planPageAssetContract(
@@ -549,6 +571,19 @@ export function applyPageAssetContract(
   input: PageAssetContractApplyInput,
 ): Promise<PageAssetContractApplyReceipt> {
   return invoke<PageAssetContractApplyReceipt>("apply_page_asset_contract", { input });
+}
+
+export function importProjectAsset(
+  sourcePath: string,
+  destinationDirectory: string,
+  fileName: string,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "import_project_asset",
+    { sourcePath, destinationDirectory, fileName, identity },
+    identity,
+  );
 }
 
 export function readFileBufferStore(): Promise<FileBufferStoreSnapshot | null> {
@@ -810,6 +845,16 @@ export async function chooseProjectFolder(): Promise<string | null> {
   return selected;
 }
 
+export async function chooseAssetFile(): Promise<string | null> {
+  const selected = await openDialog({
+    directory: false,
+    multiple: false,
+    title: "Alege resursa pentru import",
+  });
+  if (!selected || Array.isArray(selected)) return null;
+  return selected;
+}
+
 export function scanProject(path: string): Promise<ProjectScan> {
   return invoke<ProjectScan>("scan_project", { path });
 }
@@ -823,6 +868,24 @@ export function readSourceGraph(
     ));
   }
   return invoke<SourceGraph>("read_source_graph", { identity });
+}
+
+export function readTemplateCatalog(
+  identity: PreviewStructuralCommandIdentity,
+): Promise<TemplateCatalogSnapshot> {
+  if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
+    return Promise.reject(new Error(
+      "[template_catalog_identity_invalid] Catalogul șabloanelor cere ProjectRoot și runtime session ID.",
+    ));
+  }
+  return invoke<TemplateCatalogSnapshot>("read_template_catalog", { identity }).then((snapshot) => {
+    if (snapshot.schemaVersion !== TEMPLATE_CATALOG_SCHEMA_VERSION) {
+      throw new Error(
+        `Catalog șabloane incompatibil: ${snapshot.schemaVersion}; așteptat ${TEMPLATE_CATALOG_SCHEMA_VERSION}.`,
+      );
+    }
+    return snapshot;
+  });
 }
 
 export function readProjectModel(draftSources?: Record<string, string>): Promise<ProjectModelSnapshot> {
@@ -850,6 +913,18 @@ export async function readDesignClassInventory(): Promise<DesignClassInventorySn
     );
   }
   return snapshot;
+}
+
+export function createDesignClass(
+  name: string,
+  relativePath: string,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "create_design_class",
+    { name, relativePath, identity },
+    identity,
+  );
 }
 
 export async function renameDesignClass(
@@ -918,6 +993,132 @@ export function createProjectTextFile(
     { relativePath, contents, identity },
     identity,
   );
+}
+
+export function createTemplate(
+  input: CreateTemplateInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation("workspace_create_template", { input, identity }, identity);
+}
+
+export function duplicateTemplate(
+  input: DuplicateTemplateInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation("workspace_duplicate_template", { input, identity }, identity);
+}
+
+export function overrideThemeTemplate(
+  input: OverrideThemeTemplateInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_override_theme_template",
+    { input, identity },
+    identity,
+  );
+}
+
+export function renameTemplate(
+  input: RenameTemplateInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation("workspace_rename_template", { input, identity }, identity);
+}
+
+export function deleteTemplate(
+  input: DeleteTemplateInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation("workspace_delete_template", { input, identity }, identity);
+}
+
+export async function applyComponentMutation(
+  input: ComponentMutationInput,
+  identity: FileBufferRequestIdentity,
+): Promise<ComponentMutationApplyReceipt> {
+  requireProjectFileRequestIdentity(identity);
+  const receipt = await invoke<ComponentMutationApplyReceipt>("apply_component_mutation", {
+    input,
+    identity,
+  });
+  requireProjectFileReceiptIdentity(receipt.workspace, identity, "apply_component_mutation");
+  if (receipt.plan.schemaVersion !== 1) {
+    throw new Error(
+      `Plan de componentă incompatibil: ${receipt.plan.schemaVersion}; așteptat 1.`,
+    );
+  }
+  return receipt;
+}
+
+export async function applyDataMutation(
+  input: DataMutationInput,
+  identity: FileBufferRequestIdentity,
+): Promise<DataMutationApplyReceipt> {
+  requireProjectFileRequestIdentity(identity);
+  const receipt = await invoke<DataMutationApplyReceipt>("apply_data_mutation", {
+    input,
+    identity,
+  });
+  requireProjectFileReceiptIdentity(receipt.workspace, identity, "apply_data_mutation");
+  if (receipt.plan.schemaVersion !== 1) {
+    throw new Error(
+      `Plan de date incompatibil: ${receipt.plan.schemaVersion}; așteptat 1.`,
+    );
+  }
+  return receipt;
+}
+
+export async function readDataNodeEditor(
+  file: string,
+  nodeId: string,
+  identity: FileBufferRequestIdentity,
+): Promise<DataNodeEditorSnapshot> {
+  requireProjectFileRequestIdentity(identity);
+  const snapshot = await invoke<DataNodeEditorSnapshot>("read_data_node_editor", {
+    file,
+    nodeId,
+    identity,
+  });
+  if (snapshot.schemaVersion !== 1 || snapshot.file !== file || snapshot.nodeId !== nodeId) {
+    throw new Error("Snapshot-ul nodului TOML nu corespunde selecției curente.");
+  }
+  return snapshot;
+}
+
+export async function readBlockRuntimeSnapshot(
+  identity: FileBufferRequestIdentity,
+): Promise<BlockRuntimeSnapshot> {
+  requireProjectFileRequestIdentity(identity);
+  const snapshot = await invoke<BlockRuntimeSnapshot>("read_block_runtime_snapshot", {
+    identity,
+  });
+  if (
+    snapshot.schemaVersion !== 1
+    || snapshot.projectRoot !== identity.expectedProjectRoot
+    || snapshot.runtimeSessionId !== identity.expectedSessionId
+  ) {
+    throw new Error("Snapshot-ul blocurilor din CanvasGraph nu aparține sesiunii curente.");
+  }
+  return snapshot;
+}
+
+export async function readUiBlockGraph(
+  identity: FileBufferRequestIdentity,
+): Promise<UiBlockGraphSnapshot> {
+  requireProjectFileRequestIdentity(identity);
+  const snapshot = await invoke<UiBlockGraphSnapshot>("read_ui_block_graph", {
+    identity,
+  });
+  if (
+    snapshot.schemaVersion !== 1
+    || snapshot.projectRoot !== identity.expectedProjectRoot
+    || snapshot.runtimeSessionId !== identity.expectedSessionId
+  ) {
+    throw new Error("UiBlockGraph nu aparține sesiunii curente.");
+  }
+  return snapshot;
 }
 
 export function readProjectFile(relativePath: string): Promise<string> {
@@ -1397,6 +1598,38 @@ export function getScssVariables(identity: CssRequestIdentity): Promise<ScssVari
   return invokeBoundCss<ScssVariable[]>("get_scss_variables", {}, identity);
 }
 
+export function readThemeStyleCatalog(
+  identity: CssRequestIdentity,
+): Promise<ThemeStyleCatalogSnapshot> {
+  return invokeBoundCss<ThemeStyleCatalogSnapshot>("read_theme_style_catalog", {}, identity);
+}
+
+export function previewThemeStyleDraft(
+  targetId: string,
+  properties: ThemeStylePropertyInput[],
+  expectedWorkspaceRevision: number,
+  identity: CssRequestIdentity,
+): Promise<ThemeStyleDraftPreview> {
+  return invokeBoundCss<ThemeStyleDraftPreview>(
+    "preview_theme_style_draft",
+    { targetId, properties, expectedWorkspaceRevision },
+    identity,
+  );
+}
+
+export function applyThemeStyleDraft(
+  targetId: string,
+  properties: ThemeStylePropertyInput[],
+  expectedWorkspaceRevision: number,
+  identity: CssRequestIdentity,
+): Promise<CssMutationCommandReceipt<ThemeStyleTargetSnapshot>> {
+  return invokeBoundCssMutation<ThemeStyleTargetSnapshot>(
+    "apply_theme_style_draft",
+    { targetId, properties, expectedWorkspaceRevision },
+    identity,
+  );
+}
+
 export function getFontInventory(): Promise<FontInventory> {
   return invoke<FontInventory>("get_font_inventory");
 }
@@ -1420,6 +1653,19 @@ export function setScssVariable(
   identity: CssRequestIdentity,
 ): Promise<CssMutationCommandReceipt<void>> {
   return invokeBoundCssMutation<void>("set_scss_variable", { relativePath, name, value }, identity);
+}
+
+export function createScssVariable(
+  relativePath: string,
+  name: string,
+  value: string,
+  identity: CssRequestIdentity,
+): Promise<CssMutationCommandReceipt<void>> {
+  return invokeBoundCssMutation<void>(
+    "create_scss_variable",
+    { relativePath, name, value },
+    identity,
+  );
 }
 
 export function getClassRules(
@@ -1606,8 +1852,27 @@ export function saveZolaBaseUrl(url: string): Promise<void> {
   return invoke("save_zola_base_url", { url });
 }
 
-export function zolaInit(path: string): Promise<string> {
-  return invoke<string>("zola_init", { path });
+export function readThemeCatalog(
+  identity: ProjectWorkspaceIdentity | null,
+): Promise<ThemeCatalogSnapshot> {
+  return invoke<ThemeCatalogSnapshot>("read_theme_catalog", { identity });
+}
+
+export function planThemeChange(request: ThemePlanRequest): Promise<ThemePlan> {
+  return invoke<ThemePlan>("plan_theme_change", { request });
+}
+
+export function applyThemeChange(
+  plan: ThemePlanRequest,
+  expectedPlanToken: string,
+): Promise<ThemeApplyReceipt> {
+  return invoke<ThemeApplyReceipt>("apply_theme_change", {
+    request: { plan, expectedPlanToken },
+  });
+}
+
+export function zolaInit(path: string, themeId: string): Promise<string> {
+  return invoke<string>("zola_init", { path, themeId });
 }
 
 export function zolaBuild(): Promise<string> {

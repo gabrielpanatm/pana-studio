@@ -647,6 +647,30 @@ impl ProjectWorkspace {
         Ok(self.mutation_receipt(revision_before, Vec::new(), None, Some(entry_snapshot)))
     }
 
+    /// Stages one application-owned project bundle as a single History entry.
+    ///
+    /// Unlike a version-tree restore, callers use this boundary for a planned
+    /// mixed text/binary publication such as an immutable bundled Zola theme.
+    /// The same baseline, size, path and exact-identity checks remain active.
+    pub(crate) fn stage_project_bundle_changes(
+        &mut self,
+        identity: &ProjectWorkspaceIdentity,
+        metadata: WorkspaceMutationMetadata,
+        text_changes: Vec<WorkspaceResourceMutation>,
+        text_deletes: Vec<WorkspaceResourceDelete>,
+        binary_changes: Vec<WorkspaceBinaryRestoreChange>,
+        now_ms: u128,
+    ) -> Result<ProjectWorkspaceMutationReceipt, String> {
+        self.stage_version_tree_restore(
+            identity,
+            metadata,
+            text_changes,
+            text_deletes,
+            binary_changes,
+            now_ms,
+        )
+    }
+
     pub fn stage_resource_changes(
         &mut self,
         identity: &ProjectWorkspaceIdentity,
@@ -1248,7 +1272,7 @@ impl ProjectWorkspace {
         Ok(())
     }
 
-    pub(super) fn require_identity(
+    pub(crate) fn require_identity(
         &self,
         identity: &ProjectWorkspaceIdentity,
     ) -> Result<(), String> {
@@ -1634,7 +1658,7 @@ mod tests {
     };
 
     use crate::{
-        js::{PageJsConfig, PanaComponent},
+        js::{NativeBlockRuntimeEntry, PageJsConfig},
         kernel::{
             file_buffer_store::{
                 hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStoreLimits,
@@ -1787,7 +1811,7 @@ mod tests {
         let staged = workspace
             .stage_page_js(
                 &identity(&workspace),
-                metadata("Tabs", Some("js.components")),
+                metadata("Tabs", Some("js.blocks")),
                 PageJsDraftStageInput {
                     template_path: "templates/index.html".to_string(),
                     expected_project_root: project_root,
@@ -1795,12 +1819,12 @@ mod tests {
                     base_config: PageJsConfig::default(),
                     current_config: PageJsConfig {
                         version: Some(1),
-                        components: vec![PanaComponent { id: "tabs".into() }],
+                        blocks: vec![NativeBlockRuntimeEntry { id: "tabs".into() }],
                         motion: None,
                     },
                     cachebust_assets: false,
                     source: Some("inspector.js".into()),
-                    coalesce_key: Some("js.components".into()),
+                    coalesce_key: Some("js.blocks".into()),
                     transaction_id: Some("js-1".into()),
                 },
                 20,

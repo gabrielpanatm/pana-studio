@@ -2,7 +2,10 @@ pub mod ai_coordination;
 pub mod audit;
 mod bounded_journal_reader;
 pub mod command_center;
+pub mod component_legacy_migration;
+pub mod component_mutation;
 pub mod context_hub;
+pub mod data_mutation;
 pub mod design_system;
 pub mod disk_conflict;
 pub mod file_buffer_store;
@@ -18,6 +21,7 @@ pub mod publish_operation;
 pub mod recovery_coordinator;
 pub mod scratch_state;
 pub mod source_graph_rewrite;
+pub mod themes;
 pub mod workbench;
 pub mod write_authority;
 

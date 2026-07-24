@@ -357,25 +357,52 @@ pub fn execute_preview_html_attributes(
     // never manufacture a CanvasPatch. Likewise, a source-only attribute
     // (download, target, action, ...) is committed canonically but is omitted
     // from the Editare sigură fast path as one indivisible attribute operation.
-    let canvas_patch = if html_attribute_canvas_patch_allowed(
+    let native_block_canvas_operation = input
+        .attribute_intent
+        .native_block_option
+        .as_ref()
+        .and_then(|intent| {
+            patch.attributes.iter().next().map(|(attribute, value)| {
+                CanvasPatchOperation::SetBlockOption {
+                    target: CanvasPatchAnchor::source(
+                        &patch.resolved_target_id,
+                        input.attribute_intent.target_selector.as_deref(),
+                        input.attribute_intent.target_tag.as_deref(),
+                    ),
+                    provider_id: intent.provider_id.clone(),
+                    option_id: intent.option_id.clone(),
+                    attribute: attribute.clone(),
+                    value: value.clone(),
+                }
+            })
+        });
+    let generic_canvas_allowed = html_attribute_canvas_patch_allowed(
         commit.workspace_mutation.changed,
         &patch.attributes,
         patch.zola_image_contract,
-    ) {
-        Some(issue_canvas_patch(
-            session,
-            &commit.workspace_mutation,
-            &patch.before_revision,
-            &patch.after_revision,
-            CanvasPatchOperation::SetAttributes {
-                target: CanvasPatchAnchor::source(
-                    &patch.resolved_target_id,
-                    input.attribute_intent.target_selector.as_deref(),
-                    input.attribute_intent.target_tag.as_deref(),
-                ),
-                attributes: patch.attributes.clone(),
-            },
-        )?)
+    );
+    let canvas_operation = native_block_canvas_operation.or_else(|| {
+        generic_canvas_allowed.then(|| CanvasPatchOperation::SetAttributes {
+            target: CanvasPatchAnchor::source(
+                &patch.resolved_target_id,
+                input.attribute_intent.target_selector.as_deref(),
+                input.attribute_intent.target_tag.as_deref(),
+            ),
+            attributes: patch.attributes.clone(),
+        })
+    });
+    let canvas_patch = if commit.workspace_mutation.changed {
+        canvas_operation
+            .map(|operation| {
+                issue_canvas_patch(
+                    session,
+                    &commit.workspace_mutation,
+                    &patch.before_revision,
+                    &patch.after_revision,
+                    operation,
+                )
+            })
+            .transpose()?
     } else {
         None
     };
@@ -797,7 +824,9 @@ fn html_target_alias_updates(
 ) -> HashMap<String, String> {
     let mut updates = html_identity_aliases(before_model, after_model);
     if let Some(after_id) = html_node_id_at_location(after_model, target_location, after_tag) {
-        updates.insert(resolved_target_id.to_string(), after_id);
+        if after_id != resolved_target_id {
+            updates.insert(resolved_target_id.to_string(), after_id);
+        }
     }
     updates
 }
@@ -888,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_attribute_commands_resolve_identity_changed_by_first_commit() {
+    fn consecutive_attribute_commands_keep_stable_identity_without_alias_churn() {
         let root = unique_test_dir();
         fs::create_dir_all(root.join("templates")).unwrap();
         fs::create_dir_all(root.join("content")).unwrap();
@@ -928,6 +957,7 @@ mod tests {
                 target_selector: Some("main > h1".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::remove("data-anim")],
                 zola_image: None,
+                native_block_option: None,
             },
             &HashMap::new(),
         );
@@ -943,11 +973,12 @@ mod tests {
             &first_patch.target_location,
             &first_patch.tag,
         );
-        let projected_id = aliases
-            .get(&original_id)
-            .expect("attribute commit must publish old -> new identity")
-            .clone();
-        assert_ne!(projected_id, original_id);
+        let projected_id = html_ids(&after_first, "<h1 .hero-title>")
+            .into_iter()
+            .next()
+            .expect("missing projected h1");
+        assert_eq!(projected_id, original_id);
+        assert!(!aliases.contains_key(&original_id));
 
         let second_plan = plan_html_attributes(
             &after_first,
@@ -958,6 +989,7 @@ mod tests {
                 target_selector: Some("main > h1".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::set("data-anim", "ps-new")],
                 zola_image: None,
+                native_block_option: None,
             },
             &aliases,
         );
@@ -973,6 +1005,7 @@ mod tests {
                 target_selector: Some("main > h1".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::set("data-anim", "ps-new")],
                 zola_image: None,
+                native_block_option: None,
             },
             &cyclic_aliases,
         );
@@ -1000,6 +1033,7 @@ mod tests {
                     "Selecție persistentă",
                 )],
                 zola_image: None,
+                native_block_option: None,
             },
             &chained_aliases,
         );

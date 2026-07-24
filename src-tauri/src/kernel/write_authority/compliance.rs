@@ -94,6 +94,10 @@ const READ_ONLY_FILE_TYPE_MEMBERS: &[&str] = &["from_raw_mode", "RegularFile"];
 const SCOPED_AUTHORITY_ISSUERS: &[(&str, &[&str])] = &[
     ("ProjectBootstrapLease::capture", &["project/init.rs"]),
     ("CodexConfigLease::capture", &["mcp/codex.rs"]),
+    (
+        "ComponentValidationSandboxLease::capture",
+        &["kernel/component_mutation.rs"],
+    ),
 ];
 
 const MAINTENANCE_CAPABILITY_ADAPTERS: &[(&str, &[&str])] = &[
@@ -121,6 +125,10 @@ const MAINTENANCE_CAPABILITY_ADAPTERS: &[(&str, &[&str])] = &[
         &["project/init.rs"],
     ),
     ("ZolaArtifactPublicationLease", &["deploy/zola.rs"]),
+    (
+        "ComponentValidationSandboxLease",
+        &["kernel/component_mutation.rs"],
+    ),
 ];
 
 const DECLARED_WRITE_RUNTIME_FILES: &[&str] = &[

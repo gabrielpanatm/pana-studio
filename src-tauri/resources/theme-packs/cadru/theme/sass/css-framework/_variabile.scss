@@ -1,0 +1,141 @@
+// ============================================================
+// _VARIABILE.SCSS — Design Tokens
+// Modifică direct după nevoi înainte de build.
+// ============================================================
+
+
+// ─── Breakpoints ───
+$bp-mobil:   768px;
+$bp-tableta: 1024px;
+$bp-desktop: 1280px;
+
+
+// ─── Fonturi ───
+$font-primary: 'Primary', system-ui, sans-serif;
+$font-display: 'Display', system-ui, sans-serif;
+$font-mono:    'SF Mono', SFMono-Regular, Consolas, monospace;
+
+
+// ─── Brand ───
+$color-primary:       #4169ff;
+$color-primary-light: #9db2ff;
+$color-primary-dark:  #2741b8;
+$color-primary-50:    #edf1ff;
+$color-primary-100:   #d9e1ff;
+$color-accent:        #ff5c24;
+$color-accent-light:  #ffb094;
+$color-accent-dark:   #b72f00;
+
+
+// ─── Neutre ───
+$color-white:    #ffffff;
+$color-black:    #080807;
+$color-black-60: rgba(0, 0, 0, 0.72);
+
+$color-gray-50:  #f7f3eb;
+$color-gray-100: #e9e3d9;
+$color-gray-200: #d1c8ba;
+$color-gray-300: #aaa194;
+$color-gray-400: #817a70;
+$color-gray-500: #69635b;
+$color-gray-600: #4c4943;
+$color-gray-700: #34332f;
+$color-gray-800: #201f1c;
+$color-gray-900: #11110f;
+
+
+// ─── Stări UI ───
+$color-success: #72d572;
+$color-error:   #ef4444;
+$color-warning: #f59e0b;
+$color-info:    #4169ff;
+
+
+// ─── Semantic tokens ───
+$bg-body:       $color-gray-900;
+$bg-surface:    $color-gray-800;
+$bg-muted:      $color-gray-700;
+$text-body:     $color-gray-200;
+$text-heading:  $color-gray-50;
+$text-light:    $color-gray-400;
+$text-inverse:  $color-gray-900;
+$border-color:  $color-gray-700;
+$border-strong: $color-gray-600;
+
+
+// ─── Tipografie fluid ───
+$text-xs:   clamp(0.75rem,  0.7rem  + 0.25vw, 0.875rem);
+$text-sm:   clamp(0.875rem, 0.8rem  + 0.35vw, 1rem);
+$text-base: clamp(1rem,     0.93rem + 0.35vw, 1.125rem);
+$text-lg:   clamp(1.125rem, 1rem    + 0.5vw,  1.375rem);
+$text-xl:   clamp(1.25rem,  1.05rem + 0.9vw,  1.75rem);
+$text-2xl:  clamp(1.5rem,   1.15rem + 1.5vw,  2.25rem);
+$text-3xl:  clamp(1.875rem, 1.35rem + 2.2vw,  3rem);
+$text-4xl:  clamp(2.25rem,  1.5rem  + 3vw,    3.75rem);
+$text-5xl:  clamp(3rem,     2rem    + 4vw,     4.5rem);
+
+$font-normal: 400;
+$font-medium: 500;
+$font-bold:   700;
+
+$leading-none:    1;
+$leading-tight:   1.25;
+$leading-snug:    1.375;
+$leading-normal:  1.5;
+$leading-relaxed: 1.625;
+
+$tracking-tight:  -0.025em;
+$tracking-normal: 0em;
+$tracking-wide:   0.025em;
+$tracking-wider:  0.05em;
+
+
+// ─── Spațiere fluid ───
+$space-3xs: clamp(0.25rem, 0.2rem  + 0.15vw, 0.375rem);
+$space-2xs: clamp(0.5rem,  0.45rem + 0.25vw, 0.625rem);
+$space-xs:  clamp(0.75rem, 0.65rem + 0.4vw,  1rem);
+$space-s:   clamp(1rem,    0.85rem + 0.6vw,  1.375rem);
+$space-m:   clamp(1.5rem,  1.25rem + 1vw,    2rem);
+$space-l:   clamp(2rem,    1.6rem  + 1.6vw,  3rem);
+$space-xl:  clamp(3rem,    2.4rem  + 2.5vw,  4.5rem);
+$space-2xl: clamp(4rem,    3rem    + 3.5vw,  6rem);
+$space-3xl: clamp(5rem,    3.5rem  + 5vw,    8rem);
+
+
+// ─── Layout ───
+$container-max:     1360px;
+$container-padding: clamp(1rem, 5vw, 2rem);
+
+
+// ─── Border radius ───
+$radius-xs:   0;
+$radius-s:    0.125rem;
+$radius-m:    0.25rem;
+$radius-l:    0.375rem;
+$radius-xl:   0.5rem;
+$radius-full: 999rem;
+
+
+// ─── Umbre ───
+$shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.18);
+$shadow-s:  0 2px 8px rgba(0, 0, 0, 0.22);
+$shadow-m:  0 8px 24px rgba(0, 0, 0, 0.28);
+$shadow-l:  0 18px 42px rgba(0, 0, 0, 0.32);
+$shadow-xl: 0 28px 70px rgba(0, 0, 0, 0.38);
+
+
+// ─── Tranziții ───
+$transition-fast: 150ms ease;
+$transition-base: 250ms ease;
+$transition-slow: 400ms ease;
+
+
+// ─── Z-index ───
+$z-below:    -1;
+$z-base:     0;
+$z-raised:   10;
+$z-dropdown: 100;
+$z-sticky:   200;
+$z-overlay:  300;
+$z-modal:    400;
+$z-toast:    500;

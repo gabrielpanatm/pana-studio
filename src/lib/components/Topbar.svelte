@@ -15,7 +15,6 @@
   export let rightPaneCollapsed = false;
   export let terminalPaneOpen = false;
   export let sidebarsAvailable = true;
-  export let historyPanelOpen = false;
   export let noProject = false;
   export let canOpenInBrowser = false;
 
@@ -28,7 +27,6 @@
   export let toggleLeftPane: () => void;
   export let toggleTerminalPane: () => void;
   export let toggleRightPane: () => void | Promise<void>;
-  export let toggleHistoryPanel: () => void;
   export let openCommandCenter: () => void = () => {};
 
   $: currentProjectName = currentProjectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? currentProjectPath;
@@ -78,16 +76,14 @@
       </div>
     {/if}
 
-    <div class="toolbar-group history-actions" aria-label="Salvare si istoric">
+    <div class="toolbar-group history-actions" aria-label="Salvare, anulare și refacere">
       <HistoryActionButtons
         {canUndo}
         {canRedo}
         {inspectorHasPending}
-        {historyPanelOpen}
         {saveActiveFile}
         {undoAction}
         {redoAction}
-        {toggleHistoryPanel}
       />
     </div>
 
@@ -121,8 +117,7 @@
     min-height: 48px;
     padding: 0 10px;
     border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--app-bg) 92%, transparent);
-    backdrop-filter: blur(10px);
+    background: var(--surface-panel);
   }
 
   .topbar-left {
@@ -151,7 +146,7 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 650;
   }
 
   .project-path {
@@ -161,7 +156,7 @@
     color: var(--text-muted);
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 12px;
+    font-size: var(--font-meta);
   }
 
   .workspace-toolbar,
@@ -192,8 +187,7 @@
     top: 50%;
     width: 1px;
     height: 22px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--border-4) 58%, transparent);
+    background: var(--border-subtle);
     transform: translateY(-50%);
   }
 
@@ -201,8 +195,8 @@
     gap: 0;
     padding: 2px;
     border: 1px solid var(--border-3);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+    border-radius: var(--radius-control);
+    background: var(--surface-base);
   }
 
   .command-center-trigger {
@@ -213,16 +207,16 @@
     height: 32px;
     padding: 0 7px 0 10px;
     border: 1px solid var(--wb-border-subtle, var(--border-3));
-    border-radius: 8px;
+    border-radius: var(--radius-control);
     color: var(--wb-text-muted, var(--text-muted));
     text-align: left;
-    background: color-mix(in srgb, var(--wb-surface-document, var(--surface)) 86%, transparent);
+    background: var(--surface-raised);
   }
 
   .command-center-trigger:hover {
-    border-color: color-mix(in srgb, var(--wb-accent, var(--brand)) 55%, var(--wb-border-subtle));
+    border-color: var(--border-strong);
     color: var(--wb-text-primary, var(--text));
-    background: var(--wb-control-hover, var(--brand-soft));
+    background: var(--control-hover);
   }
 
   .command-center-trigger:focus-visible {
@@ -236,18 +230,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
+    font-size: var(--font-body);
   }
 
   .command-center-trigger kbd {
     flex: 0 0 auto;
     padding: 3px 6px;
     border: 1px solid var(--wb-border-subtle, var(--border));
-    border-radius: 5px;
+    border-radius: 3px;
     color: var(--wb-text-muted, var(--text-muted));
     font-family: inherit;
-    font-size: 12px;
-    background: var(--wb-surface-chrome, var(--surface-2));
+    font-size: var(--font-meta);
+    background: var(--surface-base);
   }
 
   @media (max-width: 1080px) {

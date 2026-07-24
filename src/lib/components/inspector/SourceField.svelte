@@ -64,8 +64,8 @@
     margin: 0;
     color: var(--text-muted);
     font-size: 12px;
-    font-weight: 900;
-    letter-spacing: 0.06em;
+    font-weight: 650;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
   }
 
@@ -74,7 +74,7 @@
     min-height: 30px;
     padding: 0 8px;
     border: 1px solid var(--border-4);
-    border-radius: 7px;
+    border-radius: var(--radius-control);
     color: var(--text);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     font-size: 12px;

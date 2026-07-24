@@ -30,6 +30,7 @@
     IconColumnInsertLeft,
     IconColumnInsertRight,
     IconColumnRemove,
+    IconCornerDownLeft,
     IconIndentDecrease,
     IconIndentIncrease,
     IconItalic,
@@ -209,7 +210,7 @@
       <button type="button" class:active={active.codeBlock} onmousedown={(event) => event.preventDefault()} onclick={(event) => menuButton(event, "formatBlock", "pre")}><IconCode size={17} /> Code block</button>
       <span class="menu-divider" aria-hidden="true"></span>
       <button type="button" onmousedown={(event) => event.preventDefault()} onclick={(event) => menuButton(event, "insertHr")}><IconSeparatorHorizontal size={17} /> Separator</button>
-      <button type="button" onmousedown={(event) => event.preventDefault()} onclick={(event) => menuButton(event, "insertHardbreak")}><span class="menu-code">↵</span> Line break</button>
+      <button type="button" onmousedown={(event) => event.preventDefault()} onclick={(event) => menuButton(event, "insertHardbreak")}><IconCornerDownLeft size={17} /> Line break</button>
     </div>
   </details>
   <details class="toolbar-menu icon-menu" ontoggle={closeSiblingMenus}>

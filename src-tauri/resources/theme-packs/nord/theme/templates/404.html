@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Pagina nu există | {{ config.title }}{% endblock %}
+{% block description %}Pagina căutată nu există sau a fost mutată.{% endblock %}
+
+{% block content %}
+<section class="pagina pagina--404">
+  <div class="container">
+    <p class="supratitlu">Eroare 404</p>
+    <h1>Am ieșit de pe hartă.</h1>
+    <p class="pagina__descriere">Pagina pe care o cauți nu există sau și-a schimbat adresa.</p>
+    <a class="btn btn-primary" href="/">Înapoi la pagina principală</a>
+  </div>
+</section>
+{% endblock %}

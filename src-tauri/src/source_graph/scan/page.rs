@@ -2,18 +2,23 @@ use std::{collections::HashMap, path::Path};
 
 use crate::source_graph::{
     model::{
-        SourceCapabilities, SourceGraphPage, SourceNodeKind, SourceOrigin, SourceRelationKind,
+        SourceCapabilities, SourceDataFormat, SourceGraphPage, SourceNodeKind, SourceOrigin,
+        SourceRelationKind,
     },
     scan::{
         builder::SourceGraphBuilder,
+        data_file::project_data_nodes_into_source_graph,
         files::{normalize_template_name, read_source, relative_project_path},
         style::conventional_style_files_for_template,
         summary::TemplateSummary,
     },
+    structured_data::{parse_lossless_toml, parse_zola_data_adapter, rebase_data_node_ranges},
     zola::{
         parse_zola_content_frontmatter, resolve_zola_page_template,
         resolve_zola_section_page_template, zola_content_page_kind, zola_content_url,
+        zola_frontmatter_range,
     },
+    zola_shortcode::{parse_zola_shortcodes, ZolaShortcodeInvocation},
 };
 use crate::zola_theme::ZolaThemeResolver;
 
@@ -49,6 +54,30 @@ pub(super) fn scan_content_page(
         None,
         SourceCapabilities::code_only("Pagină Markdown Zola."),
     );
+    let (frontmatter_format, frontmatter_parse_error, mut frontmatter_nodes) =
+        project_frontmatter(&source, &file, builder);
+    project_data_nodes_into_source_graph(
+        &file,
+        &node_id,
+        &SourceOrigin::Local,
+        None,
+        &mut frontmatter_nodes,
+        builder,
+    );
+    let shortcode_document = parse_zola_shortcodes(&source);
+    debug_assert!(shortcode_document.is_lossless());
+    debug_assert_eq!(shortcode_document.reconstruct(), source);
+    let shortcode_parse_error = shortcode_document.parse_error.clone();
+    if let Some(error) = shortcode_parse_error.as_ref() {
+        builder.add_diagnostic(
+            crate::source_graph::model::SourceDiagnosticSeverity::Error,
+            format!("Conținutul Markdown are sintaxă shortcode Zola invalidă: {error}"),
+            Some(file.clone()),
+            None,
+        );
+    }
+    let mut shortcodes = shortcode_document.invocations;
+    project_shortcode_nodes(&source, &file, &node_id, &mut shortcodes, builder);
     let template_node_id = resolved_template.as_ref().and_then(|template| {
         template_node_by_name
             .get(&normalize_template_name(template))
@@ -129,6 +158,81 @@ pub(super) fn scan_content_page(
         content_node_id: node_id,
         template_node_id,
         page_template_node_id,
+        frontmatter_format,
+        frontmatter_parse_error,
+        frontmatter_nodes,
+        shortcode_parse_error,
+        shortcodes,
+    }
+}
+
+fn project_shortcode_nodes(
+    source: &str,
+    file: &str,
+    parent_node_id: &str,
+    invocations: &mut [ZolaShortcodeInvocation],
+    builder: &mut SourceGraphBuilder,
+) {
+    for invocation in invocations {
+        let node_id = builder.add_node(
+            SourceNodeKind::Shortcode,
+            file.to_string(),
+            SourceOrigin::Local,
+            None,
+            invocation.name.clone(),
+            Some(crate::source_graph::scan::ranges::source_range(
+                source,
+                invocation.range.start,
+                invocation.range.end,
+            )),
+            Some(parent_node_id.to_string()),
+            SourceCapabilities::code_only("Invocare shortcode Zola în conținut Markdown."),
+        );
+        invocation.source_node_id = Some(node_id.clone());
+        project_shortcode_nodes(source, file, &node_id, &mut invocation.inner, builder);
+    }
+}
+
+fn project_frontmatter(
+    source: &str,
+    file: &str,
+    builder: &mut SourceGraphBuilder,
+) -> (
+    Option<SourceDataFormat>,
+    Option<String>,
+    Vec<crate::source_graph::model::SourceDataNode>,
+) {
+    let Some((start, end)) = zola_frontmatter_range(source) else {
+        return (None, None, Vec::new());
+    };
+    let body = &source[start..end];
+    let without_bom = source.trim_start_matches('\u{feff}');
+    let format = if without_bom.starts_with("+++") {
+        SourceDataFormat::Toml
+    } else {
+        SourceDataFormat::Yaml
+    };
+    let parsed = match format {
+        SourceDataFormat::Toml => parse_lossless_toml(body, file).map(|document| document.nodes),
+        SourceDataFormat::Yaml => parse_zola_data_adapter(body, file, &format),
+        _ => unreachable!(),
+    };
+    match parsed {
+        Ok(mut nodes) => {
+            rebase_data_node_ranges(&mut nodes, source, start);
+            (Some(format), None, nodes)
+        }
+        Err(error) => {
+            builder.add_diagnostic(
+                crate::source_graph::model::SourceDiagnosticSeverity::Error,
+                format!("Frontmatter {:?} invalid: {error}", format),
+                Some(file.to_string()),
+                Some(crate::source_graph::scan::ranges::source_range(
+                    source, start, end,
+                )),
+            );
+            (Some(format), Some(error), Vec::new())
+        }
     }
 }
 

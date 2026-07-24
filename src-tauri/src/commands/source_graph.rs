@@ -24,7 +24,7 @@ use crate::{
         SiteSingleStructureInput, SiteTemplateWriteOrigin,
     },
     project_model::model::ProjectModel,
-    source_graph::SourceGraph,
+    source_graph::{build_template_catalog, SourceGraph, TemplateCatalogSnapshot},
     state::AppState,
 };
 
@@ -137,7 +137,16 @@ pub fn read_source_graph(
     read_source_graph_from_accepted_project(&identity, &state)
 }
 
-fn read_source_graph_from_accepted_project(
+#[tauri::command(async)]
+pub fn read_template_catalog(
+    identity: PreviewStructuralCommandIdentity,
+    state: State<AppState>,
+) -> Result<TemplateCatalogSnapshot, String> {
+    read_source_graph_from_accepted_project(&identity, &state)
+        .map(|graph| build_template_catalog(&graph))
+}
+
+pub(crate) fn read_source_graph_from_accepted_project(
     identity: &PreviewStructuralCommandIdentity,
     state: &State<AppState>,
 ) -> Result<SourceGraph, String> {

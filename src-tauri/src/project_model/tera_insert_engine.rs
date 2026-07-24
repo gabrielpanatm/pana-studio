@@ -465,13 +465,21 @@ fn build_tera_insert_snippet(
             )?;
             format!("{{% set {expression} %}}")
         }
-        "with" => {
+        "setGlobal" => {
             let expression = sanitize_tera_expression(
-                item.expression.as_deref().unwrap_or("value = value"),
-                "value = value",
+                item.expression.as_deref().unwrap_or("name = value"),
+                "name = value",
             )?;
-            format!("{{% with {expression} %}}\n{{% endwith %}}")
+            format!("{{% set_global {expression} %}}")
         }
+        "filter" => {
+            let expression =
+                sanitize_tera_expression(item.expression.as_deref().unwrap_or("safe"), "safe")?;
+            format!("{{% filter {expression} %}}\n{{% endfilter %}}")
+        }
+        "break" => "{% break %}".to_string(),
+        "continue" => "{% continue %}".to_string(),
+        "super" => "{{ super() }}".to_string(),
         "teraVariable" => {
             let expression =
                 sanitize_tera_expression(item.expression.as_deref().unwrap_or("value"), "value")?;
@@ -525,7 +533,7 @@ fn can_receive_tera_inside(anchor: &SourceNode, intent: &ProjectTeraInsertIntent
             | SourceNodeKind::Macro
             | SourceNodeKind::For
             | SourceNodeKind::If
-            | SourceNodeKind::With
+            | SourceNodeKind::Filter
             | SourceNodeKind::Raw
             | SourceNodeKind::Tera
     )
@@ -670,7 +678,11 @@ fn is_tera_insert_anchor_kind(kind: &SourceNodeKind) -> bool {
             | SourceNodeKind::For
             | SourceNodeKind::If
             | SourceNodeKind::Set
-            | SourceNodeKind::With
+            | SourceNodeKind::SetGlobal
+            | SourceNodeKind::Filter
+            | SourceNodeKind::Break
+            | SourceNodeKind::Continue
+            | SourceNodeKind::Super
             | SourceNodeKind::TeraVariable
             | SourceNodeKind::TeraComment
             | SourceNodeKind::Raw
@@ -697,8 +709,14 @@ fn source_kind_label(kind: &SourceNodeKind) -> &'static str {
         SourceNodeKind::Macro => "macro",
         SourceNodeKind::For => "for",
         SourceNodeKind::If => "if",
+        SourceNodeKind::Elif => "elif",
+        SourceNodeKind::Else => "else",
         SourceNodeKind::Set => "set",
-        SourceNodeKind::With => "with",
+        SourceNodeKind::SetGlobal => "setGlobal",
+        SourceNodeKind::Filter => "filter",
+        SourceNodeKind::Break => "break",
+        SourceNodeKind::Continue => "continue",
+        SourceNodeKind::Super => "super",
         SourceNodeKind::TeraVariable => "teraVariable",
         SourceNodeKind::TeraComment => "teraComment",
         SourceNodeKind::Raw => "raw",
@@ -717,7 +735,11 @@ fn tera_item_kind(value: &str) -> &str {
         "for" => "for",
         "if" => "if",
         "set" => "set",
-        "with" => "with",
+        "setGlobal" => "setGlobal",
+        "filter" => "filter",
+        "break" => "break",
+        "continue" => "continue",
+        "super" => "super",
         "teraVariable" => "teraVariable",
         "teraComment" => "teraComment",
         "raw" => "raw",
@@ -736,7 +758,11 @@ fn is_known_tera_item_kind(kind: &str) -> bool {
             | "for"
             | "if"
             | "set"
-            | "with"
+            | "setGlobal"
+            | "filter"
+            | "break"
+            | "continue"
+            | "super"
             | "teraVariable"
             | "teraComment"
             | "raw"
@@ -1197,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_insert_blocks_unspecialized_tera_anchor() {
+    fn plan_tera_insert_uses_filter_as_a_specialized_anchor() {
         let root = unique_test_dir();
         write_project(
             &root,
@@ -1212,7 +1238,7 @@ mod tests {
             .source_graph
             .nodes
             .iter()
-            .find(|node| node.kind == SourceNodeKind::Tera && node.label.contains("filter"))
+            .find(|node| node.kind == SourceNodeKind::Filter)
             .unwrap();
 
         let plan = plan_tera_insert(
@@ -1220,7 +1246,7 @@ mod tests {
             &ProjectTeraInsertIntent {
                 target_source_id: Some(filter.id.clone()),
                 target_location: None,
-                target_kind: Some("tera".to_string()),
+                target_kind: Some("filter".to_string()),
                 target_tag: None,
                 target_selector: Some(filter.label.clone()),
                 position: ProjectMovePosition::Before,
@@ -1235,8 +1261,12 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!plan.allowed);
-        assert!(plan.diagnostic.unwrap().contains("ancoră sigură"));
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        assert!(plan
+            .patch
+            .expect("filter insert patch")
+            .contents
+            .contains("{% include \"partials/card.html\" %}"));
     }
 
     fn write_project(root: &PathBuf, template: &str) {

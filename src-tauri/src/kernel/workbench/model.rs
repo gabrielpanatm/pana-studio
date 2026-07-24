@@ -20,11 +20,15 @@ fn default_split_ratio_basis_points() -> u16 {
 pub enum WorkbenchActivity {
     #[default]
     Editor,
-    Site,
+    Themes,
+    #[serde(alias = "site")]
+    Templates,
     Components,
+    Blocks,
     DesignSystem,
     Assets,
     Content,
+    Data,
     Versioning,
     Audit,
     Publish,
@@ -227,4 +231,21 @@ pub struct WorkbenchCommandReceipt {
     pub revision_before: u64,
     pub revision_after: u64,
     pub snapshot: WorkbenchSnapshot,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkbenchActivity;
+
+    #[test]
+    fn legacy_site_activity_migrates_to_templates() {
+        let activity: WorkbenchActivity =
+            serde_json::from_str(r#""site""#).expect("legacy site activity");
+
+        assert_eq!(activity, WorkbenchActivity::Templates);
+        assert_eq!(
+            serde_json::to_string(&activity).expect("templates activity"),
+            r#""templates""#,
+        );
+    }
 }

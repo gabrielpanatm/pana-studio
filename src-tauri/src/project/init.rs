@@ -6,12 +6,17 @@ use crate::kernel::write_authority::{
     ProjectBootstrapLease, WriteAuthority, WriteCategory, WriteIntent, WriteOperationKind,
     WriteOwner, WritePolicy,
 };
+use crate::{deploy::run_zola_check, kernel::themes::ThemeRegistry};
 
-use super::{starter::apply_starter, zola_config::normalize_zola_config_after_init};
+use super::{
+    starter::{apply_starter, apply_theme_pack},
+    zola_config::{activate_theme_after_init, normalize_zola_config_after_init},
+};
 
 pub fn init_project_with_starter<R: Runtime>(
     app: &AppHandle<R>,
     root: &Path,
+    theme_id: &str,
 ) -> Result<String, String> {
     let root = root
         .canonicalize()
@@ -23,8 +28,13 @@ pub fn init_project_with_starter<R: Runtime>(
     // The selected directory is already the canonical Zola root. Every file
     // is published through the descriptor-bound bootstrap authority; no
     // transient CLI scaffold is created and then deleted.
+    let registry = ThemeRegistry::load(app).map_err(|error| error.to_string())?;
+    let pack = registry.require(theme_id)?;
     let publication = apply_starter(app, &bootstrap, &root, "pana-basic")
-        .and_then(|()| normalize_zola_config_after_init(app, &bootstrap, &root));
+        .and_then(|()| apply_theme_pack(app, &bootstrap, &root, pack))
+        .and_then(|()| normalize_zola_config_after_init(app, &bootstrap, &root))
+        .and_then(|()| activate_theme_after_init(app, &bootstrap, &root, theme_id))
+        .and_then(|()| run_zola_check(&root, &root).map(|_| ()));
     if let Err(error) = publication {
         let rollback = rollback_project_initialization(app, &bootstrap, &root);
         return Err(match rollback {
@@ -38,8 +48,9 @@ pub fn init_project_with_starter<R: Runtime>(
     }
     bootstrap.verify_path_binding()?;
 
-    Ok("OK Proiect Zola inițializat direct cu starterul Pană Studio, exclusiv prin WriteAuthority."
-        .to_string())
+    Ok(format!(
+        "OK Proiect Zola inițializat cu tema `{theme_id}`, rețeta ei și validare Zola embedded, exclusiv prin WriteAuthority."
+    ))
 }
 
 fn rollback_project_initialization<R: Runtime>(
@@ -151,14 +162,58 @@ mod tests {
         let app_handle = app.handle().clone();
         ensure_app_home(&app_handle).unwrap();
 
-        let log = init_project_with_starter(&app_handle, &project).unwrap();
+        let log = init_project_with_starter(&app_handle, &project, "pana-studio").unwrap();
 
         assert!(log.contains("WriteAuthority"));
         assert!(project.join("zola.toml").is_file());
         assert!(project.join("content/_index.md").is_file());
         assert!(project.join("templates/index.html").is_file());
+        assert!(project.join("themes/pana-studio/theme.toml").is_file());
+        assert_eq!(
+            crate::zola_theme::read_active_theme(&project).as_deref(),
+            Some("pana-studio")
+        );
         assert!(!project.join("sursa").exists());
         assert!(!project.join("export").exists());
+        cleanup(root);
+    }
+
+    #[test]
+    fn project_initialization_supports_every_visual_theme_recipe() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = temp_dir("visual-theme-recipes");
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let app_handle = app.handle().clone();
+        ensure_app_home(&app_handle).unwrap();
+
+        for (theme_id, collection) in [
+            ("nord", "content/servicii/_index.md"),
+            ("cadru", "content/proiecte/_index.md"),
+            ("radacini", "content/camere/_index.md"),
+        ] {
+            let project = root.join(theme_id);
+            fs::create_dir_all(&project).unwrap();
+
+            let log = init_project_with_starter(&app_handle, &project, theme_id).unwrap();
+
+            assert!(log.contains("WriteAuthority"));
+            assert!(project.join("zola.toml").is_file());
+            assert!(project.join("content/_index.md").is_file());
+            assert!(project.join(collection).is_file());
+            assert!(project.join("data/meniu.toml").is_file());
+            assert!(project.join("data/site.toml").is_file());
+            assert!(project
+                .join(format!("themes/{theme_id}/templates/index.html"))
+                .is_file());
+            assert_eq!(
+                crate::zola_theme::read_active_theme(&project).as_deref(),
+                Some(theme_id)
+            );
+        }
+
         cleanup(root);
     }
 

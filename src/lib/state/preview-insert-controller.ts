@@ -56,9 +56,9 @@ function paletteElementValue(value: unknown): HtmlPaletteElement | null {
   if (!/^[a-z][a-z0-9-]*$/.test(tag)) return null;
   return {
     id,
-    kind: data.kind === "component" ? "component" : "html",
-    componentId: stringValue(data.componentId) || undefined,
-    componentKind: data.componentKind === "js" ? "js" : data.componentKind === "css" ? "css" : undefined,
+    kind: data.kind === "block" ? "block" : "html",
+    blockId: stringValue(data.blockId) || undefined,
+    blockKind: data.blockKind === "js" ? "js" : data.blockKind === "css" ? "css" : undefined,
     tag,
     label,
     description: stringValue(data.description),

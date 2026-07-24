@@ -12,6 +12,7 @@ use crate::kernel::write_authority::{
 };
 
 use super::init::starter_resource_candidates;
+use crate::kernel::themes::ThemePack;
 
 pub fn apply_starter<R: Runtime>(
     app: &AppHandle<R>,
@@ -27,6 +28,38 @@ pub fn apply_starter<R: Runtime>(
         bootstrap,
         project_root,
         &format!("starter/{starter_name}"),
+    )
+}
+
+pub fn apply_theme_pack<R: Runtime>(
+    app: &AppHandle<R>,
+    bootstrap: &ProjectBootstrapLease,
+    project_root: &Path,
+    pack: &ThemePack,
+) -> Result<(), String> {
+    create_project_initializer_directory(
+        app,
+        bootstrap,
+        project_root,
+        &project_root.join("themes"),
+        &format!("theme-pack/{}/theme", pack.manifest.id),
+    )?;
+    let theme_destination = project_root.join("themes").join(&pack.manifest.id);
+    copy_dir_recursive(
+        app,
+        &pack.root.join("theme"),
+        &theme_destination,
+        bootstrap,
+        project_root,
+        &format!("theme-pack/{}/theme", pack.manifest.id),
+    )?;
+    copy_dir_recursive(
+        app,
+        &pack.root.join("recipe"),
+        project_root,
+        bootstrap,
+        project_root,
+        &format!("theme-pack/{}/recipe", pack.manifest.id),
     )
 }
 
@@ -202,15 +235,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_starter_is_a_direct_zola_root_with_native_output_default() {
+    fn bundled_starter_is_a_neutral_zola_root_with_native_output_default() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/starters/pana-basic");
         assert!(root.join("zola.toml").is_file());
-        assert!(root.join("content").is_dir());
-        assert!(root.join("templates").is_dir());
+        assert!(!root.join("content").exists());
+        assert!(!root.join("templates").exists());
+        assert!(!root.join("themes").exists());
         assert!(!root.join("sursa").exists());
         assert!(!root.join("export").exists());
 
         let config = fs::read_to_string(root.join("zola.toml")).unwrap();
+        assert!(!config
+            .lines()
+            .any(|line| line.trim_start().starts_with("theme")));
         assert!(!config
             .lines()
             .any(|line| line.trim_start().starts_with("output_dir")));

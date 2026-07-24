@@ -386,6 +386,15 @@ impl WritePolicy {
         }
     }
 
+    pub fn project_creation_write() -> Self {
+        Self {
+            atomicity: WriteAtomicity::AtomicRename,
+            conflict: ConflictPolicy::SingleOwnerInternal,
+            recovery: RecoveryPolicy::LoggedAtomicFile,
+            log_required: true,
+        }
+    }
+
     pub fn external_config_update() -> Self {
         Self {
             atomicity: WriteAtomicity::ExternalToolWrite,

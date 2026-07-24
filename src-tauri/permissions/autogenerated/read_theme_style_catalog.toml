@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-theme-style-catalog"
+description = "Enables the read_theme_style_catalog command without any pre-configured scope."
+commands.allow = ["read_theme_style_catalog"]
+
+[[permission]]
+identifier = "deny-read-theme-style-catalog"
+description = "Denies the read_theme_style_catalog command without any pre-configured scope."
+commands.deny = ["read_theme_style_catalog"]

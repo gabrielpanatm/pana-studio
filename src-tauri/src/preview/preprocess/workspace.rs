@@ -695,7 +695,10 @@ fn apply_persistent_projection_delta<R: Runtime>(
             "ProjectWorkspace persistent Preview text delta",
         )?;
         if is_template_relative_path(&relative.to_string_lossy())
-            && target.extension().and_then(|extension| extension.to_str()) == Some("html")
+            && matches!(
+                target.extension().and_then(|extension| extension.to_str()),
+                Some("html" | "md")
+            )
         {
             changed_templates.insert(target.clone());
         }
@@ -756,7 +759,10 @@ fn restore_projection_path_from_disk<R: Runtime>(
             create_parent_directories(app, projection_root, &target)?;
             copy_file(app, projection_root, &source, &target)?;
             if is_template_relative_path(&relative.to_string_lossy())
-                && target.extension().and_then(|extension| extension.to_str()) == Some("html")
+                && matches!(
+                    target.extension().and_then(|extension| extension.to_str()),
+                    Some("html" | "md")
+                )
             {
                 changed_templates.insert(target.clone());
             }
@@ -1144,7 +1150,10 @@ fn collect_template_paths(
                 .to_string_lossy()
                 .replace('\\', "/");
             if is_template_relative_path(&relative)
-                && path.extension().and_then(|extension| extension.to_str()) == Some("html")
+                && matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("html" | "md")
+                )
             {
                 output.push(path);
             }

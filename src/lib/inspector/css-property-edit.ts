@@ -1,5 +1,3 @@
-import type { ScssVariable } from "$lib/types";
-
 export type CssPendingValueBaseline = Readonly<{
   hadPendingValue: boolean;
   value: string;
@@ -45,10 +43,4 @@ export type CssPropertyEditController = Readonly<{
   commit: (property: string, value?: string) => void;
   cancel: (property: string) => void;
   continuous: (property: string) => CssContinuousEditHandlers;
-}>;
-
-export type ScssVariableEditController = Readonly<{
-  draft: (variable: ScssVariable, value: string) => void;
-  commit: (variable: ScssVariable, value?: string) => void;
-  cancel: (variable: ScssVariable) => void;
 }>;

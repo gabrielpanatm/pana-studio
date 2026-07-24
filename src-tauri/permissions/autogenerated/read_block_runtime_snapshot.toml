@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-block-runtime-snapshot"
+description = "Enables the read_block_runtime_snapshot command without any pre-configured scope."
+commands.allow = ["read_block_runtime_snapshot"]
+
+[[permission]]
+identifier = "deny-read-block-runtime-snapshot"
+description = "Denies the read_block_runtime_snapshot command without any pre-configured scope."
+commands.deny = ["read_block_runtime_snapshot"]

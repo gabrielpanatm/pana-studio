@@ -74,7 +74,8 @@
     kernelCanRedo: Boolean(topbarKernelUndoRedo?.history.canRedo),
   }));
   const editorSidebarsAvailable = $derived(
-    (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor",
+    app.applicationSurface === "workbench"
+      && (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor",
   );
 
   async function refreshTopbarKernelUndoRedoState() {
@@ -346,8 +347,6 @@
       || app.externalDiskState.reconciling
       || app.externalDiskState.workspaceProjectionRecoveryRequired
     ) return;
-    app.historyPanelOpen = false;
-    app.settingsPanelOpen = false;
     commandCenterOpen = true;
   }
 
@@ -373,6 +372,7 @@
     if (!file) {
       throw new Error("Resursa nu mai există în scanarea proiectului: " + relativePath);
     }
+    app.openProjectWorkbench();
     await app.loadScannedProjectFile(file);
     await app.setCenterView(
       surface === "code" ? "code" : surface === "markdown" ? "markdown" : "preview",
@@ -383,7 +383,7 @@
   async function executeCommandCenterAction(action: CommandCenterAction) {
     closeCommandCenter();
     if (action.kind === "set_activity") {
-      await app.setWorkbenchActivity(action.activity);
+      await selectWorkbenchActivity(action.activity);
       return;
     }
     if (action.kind === "open_document") {
@@ -462,12 +462,7 @@
         app.toggleUiTheme();
         break;
       case "open_settings":
-        app.settingsPanelOpen = true;
-        app.historyPanelOpen = false;
-        break;
-      case "open_history":
-        app.historyPanelOpen = true;
-        app.settingsPanelOpen = false;
+        app.openApplicationSettings();
         break;
       case "show_visual":
         await app.setCenterView("preview");
@@ -484,8 +479,7 @@
   async function selectWorkbenchActivity(activity: import("$lib/types").WorkbenchActivity) {
     try {
       await app.setWorkbenchActivity(activity);
-      app.historyPanelOpen = false;
-      app.settingsPanelOpen = false;
+      app.openProjectWorkbench();
       app.clearNotification("workbench.activity");
     } catch (error) {
       app.notify({
@@ -524,9 +518,9 @@
     }
     const intent = deleteShortcutIntent(event, {
       activeWorkbenchActivity: app.workbenchSnapshot?.activeActivity ?? "editor",
+      applicationSurface: app.applicationSurface,
       centerView: app.centerView,
       selectedElement: app.selectedElement,
-      settingsPanelOpen: app.settingsPanelOpen,
     });
     if (intent !== "deleteSelectedHtml") return;
     event.preventDefault();
@@ -657,17 +651,11 @@
     <ActivityRail
       activeActivity={app.workbenchSnapshot?.activeActivity ?? "editor"}
       disabled={!app.scannedProject}
-      terminalOpen={app.terminalPaneOpen}
-      settingsOpen={app.settingsPanelOpen}
+      terminalOpen={app.applicationSurface === "workbench" && app.terminalPaneOpen}
+      settingsActive={app.applicationSurface === "settings"}
       selectActivity={selectWorkbenchActivity}
       toggleTerminal={() => { void app.toggleTerminalPane(); }}
-      toggleSettings={() => {
-        const next = !app.settingsPanelOpen;
-        app.settingsPanelOpen = next;
-        if (next) {
-          app.historyPanelOpen = false;
-        }
-      }}
+      selectSettings={() => app.openApplicationSettings()}
     />
   <section
     class:left-pane-collapsed={app.leftPaneCollapsed}

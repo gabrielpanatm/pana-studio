@@ -1,5 +1,40 @@
 use serde::{Deserialize, Serialize};
 
+pub const APPLICATION_SETTINGS_SCHEMA_VERSION: u32 = 2;
+pub const DEFAULT_BLOCK_PROPERTIES_HEIGHT: u16 = 220;
+pub const MIN_BLOCK_PROPERTIES_HEIGHT: u16 = 140;
+pub const MAX_BLOCK_PROPERTIES_HEIGHT: u16 = 520;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationTheme {
+    Light,
+    #[default]
+    Dark,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationSettingsSnapshot {
+    pub schema_version: u32,
+    pub revision: u64,
+    pub initialized: bool,
+    pub theme: ApplicationTheme,
+    pub block_properties_height: u16,
+    pub block_properties_collapsed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationSettingsInput {
+    pub expected_revision: u64,
+    pub theme: ApplicationTheme,
+    #[serde(default = "default_block_properties_height")]
+    pub block_properties_height: u16,
+    #[serde(default)]
+    pub block_properties_collapsed: bool,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectAppConfig {
@@ -54,11 +89,62 @@ pub struct ZolaProjectSettings {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct GlobalAppConfig {
+    #[serde(default = "default_global_app_config_version")]
     pub(super) version: u8,
+    #[serde(default)]
+    pub(super) revision: u64,
+    #[serde(default)]
+    pub(super) theme: Option<ApplicationTheme>,
+    #[serde(default)]
+    pub(super) block_properties_height: Option<u16>,
+    #[serde(default)]
+    pub(super) block_properties_collapsed: Option<bool>,
 }
 
 impl Default for GlobalAppConfig {
     fn default() -> Self {
-        Self { version: 1 }
+        Self {
+            version: default_global_app_config_version(),
+            revision: 0,
+            theme: None,
+            block_properties_height: None,
+            block_properties_collapsed: None,
+        }
+    }
+}
+
+fn default_global_app_config_version() -> u8 {
+    2
+}
+
+fn default_block_properties_height() -> u16 {
+    DEFAULT_BLOCK_PROPERTIES_HEIGHT
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApplicationTheme, GlobalAppConfig};
+
+    #[test]
+    fn legacy_global_config_defaults_new_application_settings_fields() {
+        let config: GlobalAppConfig =
+            serde_json::from_str(r#"{"version":1}"#).expect("legacy config");
+
+        assert_eq!(config.revision, 0);
+        assert_eq!(config.theme, None);
+        assert_eq!(config.block_properties_height, None);
+        assert_eq!(config.block_properties_collapsed, None);
+    }
+
+    #[test]
+    fn application_theme_uses_stable_snake_case_values() {
+        assert_eq!(
+            serde_json::to_string(&ApplicationTheme::Light).expect("light theme"),
+            r#""light""#,
+        );
+        assert_eq!(
+            serde_json::to_string(&ApplicationTheme::Dark).expect("dark theme"),
+            r#""dark""#,
+        );
     }
 }

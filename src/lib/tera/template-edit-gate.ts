@@ -8,7 +8,6 @@ const templateEditGateKinds = new Set<SourceNodeKind>([
   "macro",
   "for",
   "if",
-  "with",
 ]);
 
 export function canRequestTemplateEditGateKind(kind: SourceNodeKind | null | undefined) {

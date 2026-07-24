@@ -8,7 +8,6 @@ const deletableTeraKinds = new Set([
   "for",
   "if",
   "set",
-  "with",
   "teraVariable",
   "teraComment",
 ]);

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ page.description }}{% endblock %}
+
+{% block content %}
+<article class="detaliu-serviciu">
+  <header class="pagina__antet">
+    <div class="container detaliu-serviciu__antet">
+      <div>
+        <p class="supratitlu">Serviciu Nord</p>
+        <h1>{{ page.title }}</h1>
+      </div>
+      <p class="pagina__descriere">{{ page.description }}</p>
+    </div>
+  </header>
+  <div class="container section-lg detaliu-serviciu__grila">
+    <div class="content">{{ page.content | safe }}</div>
+    <aside class="detaliu-serviciu__aside">
+      <p class="supratitlu">Rezultatul colaborării</p>
+      <ul>
+        {% for rezultat in page.extra.rezultate %}
+        <li>{{ rezultat }}</li>
+        {% endfor %}
+      </ul>
+      <a class="btn btn-primary btn-full" href="{{ site.cta_url }}">Discută cu noi</a>
+    </aside>
+  </div>
+</article>
+{% endblock %}

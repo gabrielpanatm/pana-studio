@@ -4,12 +4,16 @@
   import EditorShell from "$lib/components/EditorShell.svelte";
   import AuditWorkspace from "$lib/components/audit/AuditWorkspace.svelte";
   import ContentWorkspace from "$lib/components/content/ContentWorkspace.svelte";
+  import DataWorkspace from "$lib/components/data/DataWorkspace.svelte";
   import AssetsWorkspace from "$lib/components/creation/AssetsWorkspace.svelte";
+  import BlocksWorkspace from "$lib/components/creation/BlocksWorkspace.svelte";
   import ComponentsWorkspace from "$lib/components/creation/ComponentsWorkspace.svelte";
   import DesignSystemWorkspace from "$lib/components/creation/DesignSystemWorkspace.svelte";
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
   import PublishWorkspace from "$lib/components/publish/PublishWorkspace.svelte";
-  import SiteOverviewWorkspace from "$lib/components/site/SiteOverviewWorkspace.svelte";
+  import SettingsWorkspace from "$lib/components/settings/SettingsWorkspace.svelte";
+  import TemplatesWorkspace from "$lib/components/templates/TemplatesWorkspace.svelte";
+  import ThemesWorkspace from "$lib/components/themes/ThemesWorkspace.svelte";
   import VersionControlWorkspace from "$lib/components/versioning/VersionControlWorkspace.svelte";
   import StartupState from "$lib/components/workspace/StartupState.svelte";
   import WorkbenchBottomPanel from "$lib/components/workbench/WorkbenchBottomPanel.svelte";
@@ -35,7 +39,8 @@
   } = $props();
 
   const bottomPanelOpen = $derived(
-    Boolean(app.workbenchSnapshot?.bottomPanel.open),
+    app.applicationSurface === "workbench"
+      && Boolean(app.workbenchSnapshot?.bottomPanel.open),
   );
   const dirtyWorkbenchPaths = $derived(
     app.projectWorkspaceSnapshot?.documents.files
@@ -142,22 +147,33 @@
     inert={app.aiEditLeaseFrontendLockActive ? true : undefined}
     aria-busy={app.aiEditLeaseFrontendLockActive}
   >
-    {#if !app.scannedProject || app.scannedProject.isEmpty || !app.scannedProject.isZola}
+    {#if app.applicationSurface === "settings"}
+      <SettingsWorkspace {app} />
+    {:else if !app.scannedProject || app.scannedProject.isEmpty || !app.scannedProject.isZola}
       <StartupState
         scannedProject={!!app.scannedProject}
         isEmpty={app.scannedProject?.isEmpty ?? false}
         isZola={app.scannedProject?.isZola ?? false}
         openProjectFolder={() => app.openProjectFolder()}
-        initZolaProject={() => app.initZolaProject()}
+        workspaceSnapshot={app.projectWorkspaceSnapshot}
+        initZolaProject={(themeId) => app.initZolaProject(themeId)}
       />
+    {:else if activeWorkbenchActivity === "themes"}
+      <ThemesWorkspace {app} />
+    {:else if activeWorkbenchActivity === "templates"}
+      <TemplatesWorkspace {app} {openWorkspaceSource} />
     {:else if activeWorkbenchActivity === "components"}
       <ComponentsWorkspace {app} {openWorkspaceSource} />
+    {:else if activeWorkbenchActivity === "blocks"}
+      <BlocksWorkspace {app} />
     {:else if activeWorkbenchActivity === "design_system"}
       <DesignSystemWorkspace {app} {openWorkspaceSource} />
     {:else if activeWorkbenchActivity === "assets"}
       <AssetsWorkspace {app} />
     {:else if activeWorkbenchActivity === "content"}
       <ContentWorkspace {app} {openWorkspaceSource} />
+    {:else if activeWorkbenchActivity === "data"}
+      <DataWorkspace {app} {openWorkspaceSource} />
     {:else if activeWorkbenchActivity === "versioning"}
       <VersionControlWorkspace {app} />
     {:else if activeWorkbenchActivity === "publish"}
@@ -175,8 +191,6 @@
         projectStatus={app.projectStatus}
         onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
       />
-    {:else if app.centerView === "site"}
-      <SiteOverviewWorkspace {app} {openWorkspaceSource} />
     {:else}
       <EditorShell
         bind:previewFrame={app.previewFrame}
@@ -192,10 +206,6 @@
         previewSrc={app.previewSrc}
         interactivePreviewEnabled={app.interactivePreviewEnabled && !app.aiEditLeaseFrontendLockActive}
         interactivePreviewUrl={app.interactivePreviewUrl}
-        interactiveDomNodeCount={app.interactivePreviewDomNodes.length}
-        templateWorkbenchActive={app.templateWorkbenchActive}
-        templateWorkbenchTarget={app.templateWorkbenchTarget}
-        templateWorkbenchPlan={app.templateWorkbenchPlan}
         refreshToken={app.refreshToken}
         editorReadOnly={app.projectTransitionFrontendLeaseActive || app.kernelUndoRedoFrontendLeaseActive || app.aiEditLeaseFrontendLockActive}
         workbenchSnapshot={app.workbenchSnapshot}
@@ -206,8 +216,10 @@
         setWorkbenchSplit={async (split) => { await app.setSynchronizedWorkbenchSplit(split); }}
         setWorkbenchSplitRatio={async (ratioBasisPoints) => { await app.setWorkbenchSplitRatio(ratioBasisPoints); }}
         setCanvasViewport={async (viewport) => { await app.setWorkbenchCanvasViewport(viewport); }}
+        setPreviewZoom={(value) => app.setPreviewZoom(value)}
+        commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
+        resetPreviewZoom={() => app.resetPreviewZoom()}
         attachPreviewInspector={() => app.attachPreviewInspector()}
-        exitTemplateWorkbench={() => app.exitTemplateWorkbench()}
         setInteractivePreviewEnabled={(enabled) => app.setInteractivePreviewEnabled(enabled)}
         onInteractiveLifecycleError={(message) => app.setGlobalStatus(
           `Previzualizare interactivă: ${message}`,

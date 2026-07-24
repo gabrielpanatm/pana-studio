@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ section.description | default(value=config.description) }}{% endblock %}
+
+{% block content %}
+<section class="pagina-radacini">
+  <header class="pagina-radacini__antet">
+    <div class="container">
+      <p class="eticheta-organica">Colecție</p>
+      <h1>{{ section.title }}</h1>
+      {% if section.description %}<p class="pagina-radacini__descriere">{{ section.description }}</p>{% endif %}
+    </div>
+  </header>
+  <div class="container section-lg camere-radacini__grila">
+    {% for camera in section.pages %}
+    <article class="camera-card">
+      <a class="camera-card__vizual" href="{{ camera.permalink }}">
+        <span class="camera-card__tip">{{ camera.extra.tip | default(value="Cameră") }}</span>
+        <span class="camera-card__simbol" aria-hidden="true">{{ camera.extra.simbol | default(value="R") }}</span>
+      </a>
+      <div class="camera-card__continut">
+        <div>
+          <h2><a href="{{ camera.permalink }}">{{ camera.title }}</a></h2>
+          <p>{{ camera.description }}</p>
+        </div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

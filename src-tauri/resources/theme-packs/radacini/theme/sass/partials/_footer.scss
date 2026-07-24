@@ -1,0 +1,82 @@
+.subsol-radacini {
+  border-top: 1px solid $border-color;
+  background-color: $color-primary-dark;
+}
+
+.subsol-radacini p,
+.subsol-radacini a {
+  color: $color-primary-100;
+}
+
+.subsol-radacini__grila {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
+  align-items: start;
+  gap: $space-xl;
+  padding-block: $space-xl;
+}
+
+.subsol-radacini__grila > div {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-2xs;
+}
+
+.subsol-radacini__marca {
+  flex-direction: row;
+  gap: $space-s;
+}
+
+.subsol-radacini__marca .marca-radacini__simbol {
+  flex: 0 0 auto;
+  border-color: $color-accent-light;
+  color: $color-accent-light;
+}
+
+.subsol-radacini__marca strong {
+  color: $color-white;
+  font-family: $font-display;
+  font-size: $text-lg;
+}
+
+.subsol-radacini__marca p {
+  max-width: 36ch;
+  margin-top: $space-2xs;
+}
+
+.subsol-radacini__eticheta {
+  margin-bottom: $space-2xs;
+  color: $color-accent-light;
+  font-size: $text-xs;
+  font-weight: $font-bold;
+  letter-spacing: $tracking-wider;
+  text-transform: uppercase;
+}
+
+.subsol-radacini__legal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-s;
+  padding-block: $space-s;
+  border-top: 1px solid color-mix(in srgb, $color-white 14%, transparent);
+  font-size: $text-sm;
+}
+
+@media (max-width: $bp-tableta) {
+  .subsol-radacini__grila {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .subsol-radacini__grila {
+    grid-template-columns: 1fr;
+  }
+
+  .subsol-radacini__legal {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

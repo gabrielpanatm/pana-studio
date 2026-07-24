@@ -1,0 +1,425 @@
+@import './css-framework/variabile';
+
+.supratitlu {
+  color: $color-primary;
+  font-size: $text-xs;
+  font-weight: $font-bold;
+  letter-spacing: $tracking-wider;
+  text-transform: uppercase;
+}
+
+.supratitlu--deschis {
+  color: $color-accent;
+}
+
+.nord-hero {
+  overflow: hidden;
+  background-color: $bg-body;
+}
+
+.nord-hero__grila {
+  display: grid;
+  min-height: calc(100dvh - 5rem);
+  grid-template-columns: minmax(0, 0.84fr) minmax(0, 1.16fr);
+  align-items: stretch;
+}
+
+.nord-hero__continut {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  flex-direction: column;
+  gap: $space-m;
+  padding-block: $space-2xl;
+  padding-right: $space-xl;
+}
+
+.nord-hero h1 {
+  max-width: 12ch;
+  font-size: clamp(3.25rem, 6.5vw, 6.75rem);
+  line-height: 0.95;
+}
+
+.nord-hero__descriere {
+  max-width: 45ch;
+  color: $color-gray-600;
+  font-size: $text-lg;
+}
+
+.nord-hero__vizual {
+  position: relative;
+  min-height: 38rem;
+  margin-right: calc($container-padding * -1);
+}
+
+.nord-hero__vizual img {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
+}
+
+.nord-hero__vizual figcaption {
+  position: absolute;
+  right: $space-s;
+  bottom: $space-s;
+  padding: $space-2xs $space-xs;
+  border-radius: $radius-m;
+  background-color: color-mix(in srgb, $color-primary-dark 88%, transparent);
+  color: $text-inverse;
+  font-size: $text-xs;
+}
+
+.legatura-directionala {
+  display: inline-flex;
+  align-items: center;
+  gap: $space-2xs;
+  color: $color-primary;
+  font-weight: $font-bold;
+}
+
+.legatura-directionala span {
+  transition: transform $transition-fast;
+}
+
+.legatura-directionala:hover span {
+  transform: translate(0.2rem, -0.2rem);
+}
+
+.indicatori {
+  border-block: 1px solid $border-color;
+  background-color: $bg-surface;
+}
+
+.indicatori__grila {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.indicatori__element {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-3xs;
+  padding: $space-m;
+  border-right: 1px solid $border-color;
+}
+
+.indicatori__element:first-child {
+  border-left: 1px solid $border-color;
+}
+
+.indicatori__element strong {
+  color: $color-primary;
+  font-family: $font-display;
+  font-size: $text-2xl;
+}
+
+.indicatori__element span {
+  color: $text-light;
+  font-size: $text-sm;
+}
+
+.cap-sectiune {
+  margin-bottom: $space-xl;
+}
+
+.cap-sectiune--doua-coloane {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
+  align-items: end;
+  gap: $space-xl;
+}
+
+.cap-sectiune h2 {
+  margin-top: $space-2xs;
+  font-size: $text-4xl;
+}
+
+.servicii {
+  background-color: $bg-body;
+}
+
+.servicii__lista {
+  border-top: 1px solid $border-strong;
+}
+
+.serviciu-card {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: $space-m;
+  padding-block: $space-m;
+  border-bottom: 1px solid $border-color;
+}
+
+.serviciu-card__numar {
+  color: $text-light;
+  font-family: $font-mono;
+  font-size: $text-sm;
+}
+
+.serviciu-card h3,
+.serviciu-card h2 {
+  margin-bottom: $space-3xs;
+  font-size: $text-xl;
+}
+
+.serviciu-card__link {
+  display: grid;
+  width: 3rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid $border-strong;
+  border-radius: $radius-full;
+  color: $color-primary;
+  transition: background-color $transition-fast, color $transition-fast, transform $transition-fast;
+}
+
+.serviciu-card:hover .serviciu-card__link {
+  transform: rotate(45deg);
+  background-color: $color-accent;
+  color: $color-primary-dark;
+}
+
+.metoda {
+  background-color: $color-primary-dark;
+}
+
+.metoda__grila {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: $space-2xl;
+}
+
+.metoda__intro {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: $space-xs;
+}
+
+.metoda__intro h2,
+.metoda__intro p {
+  color: $text-inverse;
+}
+
+.metoda__pasi {
+  display: grid;
+  gap: 0;
+}
+
+.metoda__pasi li {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr);
+  gap: $space-s;
+  padding-block: $space-m;
+  border-top: 1px solid color-mix(in srgb, $color-white 18%, transparent);
+}
+
+.metoda__pasi li:last-child {
+  border-bottom: 1px solid color-mix(in srgb, $color-white 18%, transparent);
+}
+
+.metoda__pasi span {
+  color: $color-accent;
+  font-family: $font-mono;
+}
+
+.metoda__pasi h3 {
+  margin-bottom: $space-2xs;
+  color: $text-inverse;
+}
+
+.metoda__pasi p {
+  color: $color-primary-100;
+}
+
+.marturie {
+  background-color: $color-accent;
+}
+
+.marturie__interior {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: $space-xl;
+}
+
+.marturie__citat {
+  max-width: 32ch;
+  color: $color-primary-dark;
+  font-family: $font-display;
+  font-size: $text-3xl;
+  font-weight: $font-bold;
+  line-height: $leading-tight;
+}
+
+.marturie__interior > div {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+}
+
+.marturie__interior span {
+  color: $color-primary-dark;
+  font-size: $text-sm;
+}
+
+.nord-cta {
+  background-color: $bg-surface;
+}
+
+.nord-cta__interior {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $space-xl;
+}
+
+.nord-cta h2 {
+  margin-top: $space-2xs;
+}
+
+.pagina__antet {
+  padding-block: $space-2xl;
+  border-bottom: 1px solid $border-color;
+  background-color: $bg-surface;
+}
+
+.pagina__antet h1 {
+  max-width: 16ch;
+  margin-top: $space-2xs;
+  font-size: $text-5xl;
+}
+
+.pagina__descriere {
+  max-width: 54ch;
+  margin-top: $space-s;
+  font-size: $text-lg;
+}
+
+.pagina__continut {
+  max-width: 52rem;
+  padding-block: $space-xl;
+}
+
+.pagina__continut > * + * {
+  margin-top: $space-s;
+}
+
+.pagina--404 {
+  display: grid;
+  min-height: 70dvh;
+  align-items: center;
+  background-color: $bg-surface;
+}
+
+.detaliu-serviciu__antet {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.8fr);
+  align-items: end;
+  gap: $space-xl;
+}
+
+.detaliu-serviciu__grila {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: $space-2xl;
+}
+
+.detaliu-serviciu__grila .content > * + * {
+  margin-top: $space-s;
+}
+
+.detaliu-serviciu__aside {
+  display: flex;
+  align-items: stretch;
+  flex-direction: column;
+  gap: $space-s;
+  padding: $space-m;
+  border: 1px solid $border-color;
+  border-radius: $radius-xl;
+  background-color: $bg-surface;
+}
+
+.detaliu-serviciu__aside ul {
+  display: grid;
+  gap: $space-xs;
+}
+
+.detaliu-serviciu__aside li {
+  padding-bottom: $space-xs;
+  border-bottom: 1px solid $border-color;
+}
+
+@media (max-width: $bp-tableta) {
+  .nord-hero__grila {
+    min-height: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .nord-hero__continut {
+    padding-right: 0;
+  }
+
+  .nord-hero__vizual {
+    min-height: 30rem;
+    margin-inline: calc($container-padding * -1);
+  }
+
+  .metoda__grila,
+  .detaliu-serviciu__grila {
+    grid-template-columns: 1fr;
+  }
+
+  .detaliu-serviciu__aside {
+    max-width: 32rem;
+  }
+}
+
+@media (max-width: $bp-mobil) {
+  .nord-hero h1 {
+    font-size: $text-4xl;
+  }
+
+  .nord-hero__vizual {
+    min-height: 23rem;
+  }
+
+  .indicatori__grila {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .indicatori__element:nth-child(3) {
+    border-left: 1px solid $border-color;
+  }
+
+  .cap-sectiune--doua-coloane,
+  .detaliu-serviciu__antet {
+    grid-template-columns: 1fr;
+    gap: $space-m;
+  }
+
+  .serviciu-card {
+    grid-template-columns: 2rem minmax(0, 1fr) auto;
+    gap: $space-xs;
+  }
+
+  .metoda__pasi li {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+
+  .marturie__interior {
+    grid-template-columns: 1fr;
+  }
+
+  .marturie__interior > div {
+    align-items: flex-start;
+  }
+
+  .nord-cta__interior {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

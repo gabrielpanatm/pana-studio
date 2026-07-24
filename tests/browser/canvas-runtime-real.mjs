@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
@@ -24,16 +25,27 @@ const bridgeParts = [
   "13_boot.js",
 ];
 
-const bridge = (
-  await Promise.all(
-    bridgeParts.map((part) => readFile(
-      resolve(repoRoot, "src-tauri/src/preview/bridge", part),
-      "utf8",
-    )),
-  )
-).join("");
+const bridgeSources = await Promise.all(
+  bridgeParts.map((part) => readFile(
+    resolve(repoRoot, "src-tauri/src/preview/bridge", part),
+    "utf8",
+  )),
+);
+const htmlEditorSchema = await readFile(
+  resolve(repoRoot, "src/lib/html/editor-schema.json"),
+  "utf8",
+);
+const bridge = [
+  bridgeSources[0],
+  `var HTML_EDITOR_SCHEMA = ${htmlEditorSchema};\n`,
+  ...bridgeSources.slice(1),
+].join("");
 const interactiveRuntime = await readFile(
   resolve(repoRoot, "src-tauri/src/preview/interactive_runtime.js"),
+  "utf8",
+);
+const blockRuntime = await readFile(
+  resolve(repoRoot, "src-tauri/src/blocks/runtime.js"),
   "utf8",
 );
 
@@ -89,14 +101,19 @@ const canonicalDocument = `<!doctype html>
 const interactiveDocument = `<!doctype html>
 <html data-pana-preview-revision="interactive-browser-real">
   <body>
-    <section data-pana-component="accordion" data-pana-source-id="source-accordion">
+    <section data-pana-block="accordion" data-pana-source-id="source-accordion">
       <div data-pana-accordion-item>
         <button data-pana-accordion-trigger aria-expanded="false">Toggle</button>
         <div data-pana-accordion-panel hidden>Panel</div>
       </div>
+      <div data-pana-accordion-item>
+        <button data-pana-accordion-trigger aria-expanded="false">Toggle 2</button>
+        <div data-pana-accordion-panel hidden>Panel 2</div>
+      </div>
     </section>
+    <script>${escapeInlineScript(blockRuntime)}</script>
     <script>${escapeInlineScript(interactiveRuntime)}</script>
-    <script>window.PanaInteractiveRuntime.installPageConfig({components:[{id:"accordion"}],motion:{items:[{id:"motion-1"}]}});</script>
+    <script>window.PanaBlockRuntime.installPageConfig({blocks:[{id:"accordion"}],motion:{items:[{id:"motion-1"}]}});</script>
   </body>
 </html>`;
 
@@ -238,8 +255,10 @@ const harness = `<!doctype html>
 
     let patchAck = null;
     for (let index = 0; index < 105; index += 1) {
+      if (index % 10 === 0) result.textContent = "canvas-patch-" + index;
       patchAck = await applyMeasuredPatch(index + 1, index + 1, index >= 5);
     }
+    result.textContent = "canvas-patch-complete";
     if (frame.contentDocument.getElementById("probe")?.textContent !== "After") {
       throw new Error("CanvasPatch series did not update the real DOM");
     }
@@ -284,6 +303,7 @@ const harness = `<!doctype html>
       type: "apply-live-attribute-draft",
       previewRevision: 851,
       editSessionId: "unsafe_href_browser_real",
+      draftEpoch: 1,
       target: {
         selector: "#nav-probe",
         sourceId: "source-nav",
@@ -329,6 +349,7 @@ const harness = `<!doctype html>
       type: "apply-live-attribute-draft",
       previewRevision: 901,
       editSessionId: "attr_browser_real_1",
+      draftEpoch: 1,
       target: {
         selector: "#probe",
         sourceId: "source-title",
@@ -390,7 +411,8 @@ const harness = `<!doctype html>
       source: "pana-studio-app",
       type: "clear-live-attribute-draft",
       previewRevision: 10015,
-      editSessionId: "attr_browser_real_1"
+      editSessionId: "attr_browser_real_1",
+      draftEpoch: 1
     }, "*");
     const clearAttributeDraftAck = await waitForMessage((data) =>
       data?.type === "preview-operation-complete"
@@ -448,6 +470,7 @@ const harness = `<!doctype html>
       throw new Error("privileged bridge was replaced or duplicated");
     }
 
+    result.textContent = "interactive-runtime";
     interactiveFrame.srcdoc = interactiveDocument;
     const interactiveReady = await waitForInteractiveMessage((data) => data?.type === "ready");
     const configReceipt = await waitForInteractiveMessage((data) => data?.type === "page-config-installed");
@@ -455,7 +478,7 @@ const harness = `<!doctype html>
     if (interactiveReady.previewRevision !== "interactive-browser-real") {
       throw new Error("interactive ready revision mismatch");
     }
-    if (configReceipt.componentCount !== 1 || configReceipt.motionItemCount !== 1) {
+    if (configReceipt.blockCount !== 1 || configReceipt.motionItemCount !== 1) {
       throw new Error("PageJsConfig lifecycle receipt mismatch");
     }
     if (!domSnapshot.nodes?.some((node) => node.sourceId === "source-accordion")) {
@@ -463,23 +486,39 @@ const harness = `<!doctype html>
     }
     const interactiveWindow = interactiveFrame.contentWindow;
     const interactiveDoc = interactiveFrame.contentDocument;
-    const trigger = interactiveDoc.querySelector("[data-pana-accordion-trigger]");
-    const panel = interactiveDoc.querySelector("[data-pana-accordion-panel]");
-    trigger.click();
-    if (trigger.getAttribute("aria-expanded") !== "true" || panel.hidden) {
+    const accordion = interactiveDoc.querySelector("[data-pana-block='accordion']");
+    const triggers = [...interactiveDoc.querySelectorAll("[data-pana-accordion-trigger]")];
+    const panels = [...interactiveDoc.querySelectorAll("[data-pana-accordion-panel]")];
+    triggers[0].click();
+    if (triggers[0].getAttribute("aria-expanded") !== "true" || panels[0].hidden) {
       throw new Error("interactive lifecycle mount did not handle the component");
     }
-    interactiveWindow.PanaInteractiveRuntime.reconcile(interactiveDoc);
-    interactiveWindow.PanaInteractiveRuntime.reconcile(interactiveDoc);
-    trigger.click();
-    if (trigger.getAttribute("aria-expanded") !== "false" || !panel.hidden) {
+    triggers[1].click();
+    if (triggers[0].getAttribute("aria-expanded") !== "false" || !panels[0].hidden
+        || triggers[1].getAttribute("aria-expanded") !== "true" || panels[1].hidden) {
+      throw new Error("accordion default contract did not enforce a single open item");
+    }
+    triggers[1].click();
+    interactiveWindow.PanaBlockRuntime.reconcile(interactiveDoc);
+    interactiveWindow.PanaBlockRuntime.reconcile(interactiveDoc);
+    triggers[0].click();
+    triggers[0].click();
+    if (triggers[0].getAttribute("aria-expanded") !== "false" || !panels[0].hidden) {
       throw new Error("interactive lifecycle reconcile duplicated listeners");
     }
-    interactiveDoc.dispatchEvent(new interactiveWindow.CustomEvent("pana:components:dispose", {
+    accordion.setAttribute("data-multiple", "true");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    triggers[0].click();
+    triggers[1].click();
+    if (triggers.some((trigger) => trigger.getAttribute("aria-expanded") !== "true")
+        || panels.some((panel) => panel.hidden)) {
+      throw new Error("runtime option update did not remount the accordion contract");
+    }
+    interactiveDoc.dispatchEvent(new interactiveWindow.CustomEvent("pana:blocks:dispose", {
       detail: { root: interactiveDoc }
     }));
-    trigger.click();
-    if (trigger.getAttribute("aria-expanded") !== "false") {
+    triggers[0].click();
+    if (triggers[0].getAttribute("aria-expanded") !== "true") {
       throw new Error("interactive lifecycle dispose leaked a listener");
     }
     if (interactiveWindow.__panaMotionGraphConfig?.items?.length !== 1) {
@@ -504,7 +543,7 @@ const harness = `<!doctype html>
   }
 
   run().catch((error) => finish(false, {
-    error: String(error?.stack || error),
+    error: String(error?.message || error) + "\\n" + String(error?.stack || ""),
     childDiagnostics,
     previewMessageTypes: messages.map((message) => message.type)
   }));
@@ -531,7 +570,10 @@ const address = server.address();
 assert(address && typeof address === "object");
 
 const driverPort = 45000 + (process.pid % 1000);
-const driver = spawn("geckodriver", ["--port", String(driverPort)], {
+const snapGeckodriver = "/snap/firefox/current/usr/lib/firefox/geckodriver";
+const geckodriverBinary = process.env.GECKODRIVER_BIN
+  || (existsSync(snapGeckodriver) ? snapGeckodriver : "geckodriver");
+const driver = spawn(geckodriverBinary, ["--port", String(driverPort)], {
   stdio: ["ignore", "pipe", "pipe"],
 });
 let driverDiagnostics = "";
@@ -588,7 +630,7 @@ try {
   });
 
   let title = "";
-  for (let attempt = 0; attempt < 160; attempt += 1) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     title = await webdriver(`/session/${sessionId}/execute/sync`, {
       method: "POST",
       body: JSON.stringify({ script: "return document.title", args: [] }),

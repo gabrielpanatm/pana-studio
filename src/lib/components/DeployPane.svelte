@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { open } from "@tauri-apps/plugin-dialog";
   import {
-    IconBuildingFactory2,
     IconHammer,
     IconRocket,
     IconEye,
@@ -15,7 +13,6 @@
     saveProjectAppConfig,
     saveProjectEnv,
     saveZolaProjectSettings,
-    zolaInit,
     zolaBuild,
     deployToBunny,
     cancelPublishOperation,
@@ -58,9 +55,6 @@
     onCachebustAssetsChange?: (value: boolean) => void;
   } = $props();
 
-  // Init is only safe and useful for empty folders
-  const canInit = $derived(scannedProject && isEmpty && !isZola);
-
   let zolaSettings = $state<ZolaProjectSettings>(createDefaultZolaSettings());
   let envVars = $state<Record<string, string>>({});
   let cachebustAssetsDraft = $state(false);
@@ -72,7 +66,6 @@
   let configDirty = $state(false);
   let showSecrets = $state<Record<string, boolean>>({});
 
-  let initRunning = $state(false);
   let buildRunning = $state(false);
   let deployRunning = $state(false);
   let cancelRunning = $state(false);
@@ -171,22 +164,6 @@
     showSecrets = { ...showSecrets, [key]: !showSecrets[key] };
   }
 
-  async function runInit() {
-    const selected = await open({ directory: true, multiple: false, title: "Alege folderul pentru proiectul nou" });
-    if (!selected || Array.isArray(selected)) return;
-    initRunning = true;
-    actionLog = "";
-    actionOk = null;
-    try {
-      actionLog = await zolaInit(selected);
-      actionOk = true;
-    } catch (e) {
-      actionLog = errorMessage(e);
-      actionOk = false;
-    }
-    initRunning = false;
-  }
-
   async function runBuild() {
     buildRunning = true;
     actionLog = "";
@@ -246,14 +223,7 @@
 
 <div class:workspace-mode={workspaceMode} class:actions-only={actionsOnly} class="deploy-pane">
 
-  {#if canInit}
-    <section class="actions-section">
-      <button type="button" class="action-btn init-btn" onclick={runInit} disabled={initRunning}>
-        <IconBuildingFactory2 size={14} stroke={1.8} />
-        {initRunning ? "Se inițializează..." : "Init proiect nou"}
-      </button>
-    </section>
-  {:else if !scannedProject}
+  {#if !scannedProject}
     <p class="hint">Deschide un dosar pentru configurarea proiectului.</p>
   {:else if !isZola && !isEmpty}
     <p class="hint">Setările și publicarea Zola sunt disponibile doar pentru proiecte Zola.</p>
@@ -909,12 +879,6 @@
 
   .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .action-btn:not(:disabled):hover { opacity: 0.88; }
-
-  .init-btn {
-    border: 1px solid var(--border-3);
-    background: var(--surface-4);
-    color: var(--text);
-  }
 
   .build-btn {
     border: 1px solid color-mix(in srgb, #f59e0b 50%, transparent);

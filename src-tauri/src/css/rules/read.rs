@@ -1,6 +1,8 @@
 use crate::css::rules::{
-    declarations::parse_declarations, media::locate_media_block, model::CssProperty,
-    selector::locate_rule_block,
+    declarations::parse_declarations,
+    media::locate_media_block,
+    model::CssProperty,
+    selector::{locate_exact_rule_block, locate_rule_block},
 };
 
 pub fn find_class_in_sources(
@@ -32,6 +34,19 @@ pub fn get_class_rules(source: &str, selector: &str) -> Vec<CssProperty> {
             value: declaration.value,
         })
         .collect()
+}
+
+pub fn get_exact_rule_properties(source: &str, selector: &str) -> Option<Vec<CssProperty>> {
+    let (_, _, content_start, content_end, _) = locate_exact_rule_block(source, selector)?;
+    Some(
+        parse_declarations(&source[content_start..content_end])
+            .into_iter()
+            .map(|declaration| CssProperty {
+                property: declaration.property,
+                value: declaration.value,
+            })
+            .collect(),
+    )
 }
 
 pub fn get_class_rules_in_media(

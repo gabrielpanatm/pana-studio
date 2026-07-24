@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} | {{ config.title }}{% endblock %}
+{% block description %}{{ page.description | default(value=config.description) }}{% endblock %}
+
+{% block content %}
+<article class="pagina continut-lung">
+  <header class="pagina__antet">
+    <div class="container">
+      <p class="supratitlu">Nord / Informații</p>
+      <h1>{{ page.title }}</h1>
+      {% if page.description %}<p class="pagina__descriere">{{ page.description }}</p>{% endif %}
+    </div>
+  </header>
+  <div class="container pagina__continut content">
+    {{ page.content | safe }}
+  </div>
+</article>
+{% endblock %}

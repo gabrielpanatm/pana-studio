@@ -1,5 +1,11 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::preview::preprocess::annotate::index::SourceIdIndex;
 use crate::project_model::zola_image_engine::encode_preview_presentation;
+use crate::source_graph::{
+    mixed_cst::{parse_mixed_cst, MixedCstKind},
+    tera_cst::{TeraCstKind, TeraTagKind},
+};
 
 const SKIP_TAGS: &[&str] = &[
     "html", "head", "body", "script", "style", "meta", "link", "base", "title", "br", "hr",
@@ -21,30 +27,249 @@ pub fn preprocess_template_with_revision(
     source_ids: Option<&SourceIdIndex>,
     preview_revision: Option<&str>,
 ) -> String {
-    let mut result = String::with_capacity(source.len() + source.lines().count() * 50);
-    let has_trailing_newline = source.ends_with('\n');
-    let mut tera_marker_state = TeraScopeMarkerState::default();
+    let document = parse_mixed_cst(source, relative_path);
+    debug_assert!(document.is_lossless());
+    let mut insertions = BTreeMap::<usize, String>::new();
+    project_tera_provenance_insertions(
+        source,
+        relative_path,
+        source_ids,
+        &document,
+        &mut insertions,
+    );
+    project_html_provenance_insertions(
+        source,
+        relative_path,
+        source_ids,
+        preview_revision,
+        &document,
+        &mut insertions,
+    );
 
-    for (idx, line) in source.lines().enumerate() {
-        let line_num = idx + 1;
-        result.push_str(&inject_tpl_src_on_line_with_state(
-            line,
-            relative_path,
-            line_num,
-            source_ids,
-            preview_revision,
-            Some(&mut tera_marker_state),
-        ));
-        result.push('\n');
+    let mut result =
+        String::with_capacity(source.len() + insertions.values().map(String::len).sum::<usize>());
+    result.push_str(source);
+    for (position, insertion) in insertions.into_iter().rev() {
+        if position <= result.len() && result.is_char_boundary(position) {
+            result.insert_str(position, &insertion);
+        }
     }
-
-    if !has_trailing_newline && result.ends_with('\n') {
-        result.pop();
-    }
-
     inject_empty_tera_slot_placeholders(&result, preview_revision)
 }
 
+fn project_tera_provenance_insertions(
+    source: &str,
+    relative_path: &str,
+    source_ids: Option<&SourceIdIndex>,
+    document: &crate::source_graph::mixed_cst::MixedCstDocument,
+    insertions: &mut BTreeMap<usize, String>,
+) {
+    let root_tera_nodes = document
+        .nodes
+        .iter()
+        .filter_map(|node| match node.kind {
+            MixedCstKind::Tera { tera_node } => Some(tera_node),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut scope_stack = Vec::<Option<String>>::new();
+
+    for (index, node) in document.tera.nodes.iter().enumerate() {
+        let (line, column) =
+            crate::preview::preprocess::annotate::range::line_column(source, node.start);
+        let source_location = format!("{relative_path}:{line}:{column}");
+
+        if let Some(template_source_id) =
+            source_ids.and_then(|index| index.scope_start_marker_for(&source_location))
+        {
+            append_insertion(
+                insertions,
+                node.end,
+                &format!("<!-- pana-template-source-start:{} -->", template_source_id),
+            );
+        }
+
+        match &node.kind {
+            TeraCstKind::Variable if root_tera_nodes.contains(&index) => {
+                if let Some(template_source_id) =
+                    source_ids.and_then(|index| index.template_source_id_for(&source_location))
+                {
+                    append_insertion(
+                        insertions,
+                        node.start,
+                        &format!(
+                            "<!-- pana-template-expression-start:{} -->",
+                            template_source_id
+                        ),
+                    );
+                    append_insertion(
+                        insertions,
+                        node.end,
+                        &format!(
+                            "<!-- pana-template-expression-end:{} -->",
+                            template_source_id
+                        ),
+                    );
+                }
+            }
+            TeraCstKind::Tag(tag) => {
+                let content = node.content(source).trim();
+                match tag {
+                    TeraTagKind::Include => {
+                        if let Some(template_source_id) = source_ids
+                            .and_then(|index| index.template_source_id_for(&source_location))
+                        {
+                            append_insertion(
+                                insertions,
+                                node.start,
+                                &format!(
+                                    "<!-- pana-template-source-start:{} -->",
+                                    template_source_id
+                                ),
+                            );
+                            append_insertion(
+                                insertions,
+                                node.end,
+                                &format!(
+                                    "<!-- pana-template-source-end:{} -->",
+                                    template_source_id
+                                ),
+                            );
+                        }
+                    }
+                    TeraTagKind::Block
+                    | TeraTagKind::For
+                    | TeraTagKind::If
+                    | TeraTagKind::Macro
+                    | TeraTagKind::Filter => {
+                        let keyword = tera_keyword(content);
+                        let marker_id = should_mark_tera_scope(content, keyword, relative_path)
+                            .then(|| {
+                                source_ids
+                                    .and_then(|index| {
+                                        index.template_source_id_for(&source_location)
+                                    })
+                                    .map(str::to_string)
+                            })
+                            .flatten();
+                        if let Some(template_source_id) = marker_id.as_deref() {
+                            let external_start = source_ids.is_some_and(|index| {
+                                index.has_external_scope_start(&source_location)
+                            });
+                            if !external_start {
+                                append_insertion(
+                                    insertions,
+                                    node.end,
+                                    &format!(
+                                        "<!-- pana-template-source-start:{} -->",
+                                        template_source_id
+                                    ),
+                                );
+                            }
+                        }
+                        scope_stack.push(marker_id);
+                    }
+                    TeraTagKind::EndBlock
+                    | TeraTagKind::EndFor
+                    | TeraTagKind::EndIf
+                    | TeraTagKind::EndMacro
+                    | TeraTagKind::EndFilter => {
+                        if let Some(Some(template_source_id)) = scope_stack.pop() {
+                            append_insertion(
+                                insertions,
+                                node.start,
+                                &format!(
+                                    "<!-- pana-template-source-end:{} -->",
+                                    template_source_id
+                                ),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn project_html_provenance_insertions(
+    source: &str,
+    relative_path: &str,
+    source_ids: Option<&SourceIdIndex>,
+    preview_revision: Option<&str>,
+    document: &crate::source_graph::mixed_cst::MixedCstDocument,
+    insertions: &mut BTreeMap<usize, String>,
+) {
+    for element in &document.elements {
+        let Some(opening) = document.nodes.get(element.opening_node) else {
+            continue;
+        };
+        let MixedCstKind::StartTag(tag) = &opening.kind else {
+            continue;
+        };
+        if SKIP_TAGS.contains(&tag.name.as_str())
+            || tag
+                .attributes
+                .iter()
+                .any(|attribute| attribute.name.eq_ignore_ascii_case("data-pana-source-id"))
+        {
+            continue;
+        }
+        let (line, column) =
+            crate::preview::preprocess::annotate::range::line_column(source, opening.start);
+        let source_location = format!("{relative_path}:{line}:{column}");
+        let mut attributes = String::new();
+        let mut has_source_marker = false;
+        if let Some(source_id) = source_ids.and_then(|index| index.source_id_for(&source_location))
+        {
+            attributes.push_str(&format!(" data-pana-source-id=\"{}\"", source_id));
+            has_source_marker = true;
+        }
+        if let Some(template_source_id) =
+            source_ids.and_then(|index| index.template_source_id_for_html(&source_location))
+        {
+            attributes.push_str(&format!(
+                " data-pana-template-source-id=\"{}\"",
+                template_source_id
+            ));
+            has_source_marker = true;
+        }
+        if let Some(presentation) =
+            source_ids.and_then(|index| index.zola_image_for(&source_location))
+        {
+            if let Ok(payload) = encode_preview_presentation(presentation) {
+                attributes.push_str(&format!(" data-pana-zola-image=\"{}\"", payload));
+            }
+        }
+        if has_source_marker {
+            if let Some(revision) = preview_revision {
+                attributes.push_str(&format!(" data-pana-preview-revision=\"{}\"", revision));
+            }
+        }
+        if attributes.is_empty() {
+            continue;
+        }
+        let mut insert_at = opening.end.saturating_sub(1);
+        let before_close = source
+            .get(opening.start..insert_at)
+            .unwrap_or_default()
+            .trim_end();
+        if tag.self_closing && before_close.ends_with('/') {
+            insert_at = opening.start
+                + source[opening.start..insert_at]
+                    .rfind('/')
+                    .unwrap_or(insert_at.saturating_sub(opening.start));
+        }
+        append_insertion(insertions, insert_at, &attributes);
+    }
+}
+
+fn append_insertion(insertions: &mut BTreeMap<usize, String>, position: usize, value: &str) {
+    insertions.entry(position).or_default().push_str(value);
+}
+
+#[cfg(test)]
 #[derive(Default)]
 struct TeraScopeMarkerState {
     stack: Vec<Option<String>>,
@@ -54,8 +279,9 @@ fn tera_keyword(content: &str) -> &str {
     content.split_whitespace().next().unwrap_or("")
 }
 
+#[cfg(test)]
 fn opens_tera_scope(keyword: &str) -> bool {
-    matches!(keyword, "block" | "for" | "if" | "macro" | "with")
+    matches!(keyword, "block" | "for" | "if" | "macro" | "filter")
 }
 
 fn tera_block_name(content: &str) -> Option<&str> {
@@ -102,7 +328,9 @@ fn is_partial_template_relative_path(relative_path: &str) -> bool {
             .unwrap_or(normalized.as_str())
     };
 
-    logical.starts_with("partials/") || logical.starts_with("macros/")
+    logical.starts_with("partials/")
+        || logical.starts_with("macros/")
+        || logical.starts_with("shortcodes/")
 }
 
 fn should_mark_tera_scope(content: &str, keyword: &str, relative_path: &str) -> bool {
@@ -111,15 +339,16 @@ fn should_mark_tera_scope(content: &str, keyword: &str, relative_path: &str) -> 
             !is_partial_template_relative_path(relative_path)
                 && tera_block_name(content).is_some_and(|name| !is_non_visual_block_name(name))
         }
-        "for" | "if" | "with" => true,
+        "for" | "if" | "filter" => true,
         _ => false,
     }
 }
 
+#[cfg(test)]
 fn closes_tera_scope(keyword: &str) -> bool {
     matches!(
         keyword,
-        "endblock" | "endfor" | "endif" | "endmacro" | "endset" | "endwith"
+        "endblock" | "endfor" | "endif" | "endmacro" | "endfilter"
     )
 }
 
@@ -133,6 +362,7 @@ pub(super) fn inject_tpl_src_on_line(
     inject_tpl_src_on_line_with_state(line, relative_path, line_num, source_ids, None, None)
 }
 
+#[cfg(test)]
 fn inject_tpl_src_on_line_with_state(
     line: &str,
     relative_path: &str,

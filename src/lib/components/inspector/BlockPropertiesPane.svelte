@@ -6,13 +6,14 @@
     IconGripHorizontal,
   } from "@tabler/icons-svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readUiBlockGraph } from "$lib/project/io";
   import type {
+    BlockSelectionContext,
     BlockOptionDefinition,
     BlockOptionValue,
     FileBufferRequestIdentity,
     NativeBlockOptionState,
-    SelectionInfo,
     UiBlockGraphSnapshot,
     UiBlockSourceInstance,
   } from "$lib/types";
@@ -30,7 +31,8 @@
   };
 
   let {
-    selectedElement = null,
+    selectionContext = null,
+    selectedTag = null,
     projectRoot = "",
     runtimeSessionId = "",
     workspaceRevision = 0,
@@ -40,7 +42,8 @@
     onLayoutCommit,
     onApply,
   }: {
-    selectedElement?: SelectionInfo | null;
+    selectionContext?: BlockSelectionContext | null;
+    selectedTag?: string | null;
     projectRoot?: string;
     runtimeSessionId?: string;
     workspaceRevision?: number;
@@ -62,7 +65,7 @@
   let draftValues = $state<Record<string, BlockOptionValue>>({});
   let requestKey = "";
 
-  const blockContext = $derived(selectedElement?.blockContext ?? null);
+  const blockContext = $derived(selectionContext);
   const sourceInstance = $derived.by(() => {
     if (!graph || !blockContext) return null;
     if (blockContext.rootSourceId) {
@@ -161,7 +164,7 @@
     const source = stateFor(optionId);
     if (!source) return;
     setDraft(optionId, cloneValue(source.value));
-    status = "Modificarea locală a fost anulată.";
+    status = t("inspector-block-local-change-cancelled");
   }
 
   function valueEquals(left: BlockOptionValue, right: BlockOptionValue) {
@@ -175,11 +178,11 @@
     const value = valueFor(option);
     if (!context || !instance || !source || !instance.editable || pendingOption) return;
     if (valueEquals(value, source.value)) {
-      status = "Valoarea nu are modificări de confirmat.";
+      status = t("inspector-block-no-changes");
       return;
     }
     pendingOption = option.id;
-    status = "Se validează în nucleul Rust…";
+    status = t("inspector-block-validating-rust");
     const outcome = await onApply({
       providerId: instance.providerId,
       optionId: option.id,
@@ -192,13 +195,76 @@
     });
     pendingOption = "";
     if (outcome.status === "committed") {
-      status = "Proprietatea este în sesiunea proiectului. Ctrl+S persistă pe disc.";
+      status = t("inspector-block-committed");
     } else if (outcome.status === "noop") {
-      status = outcome.reason ?? "Valoarea era deja confirmată.";
+      status = outcome.reason ?? t("inspector-block-already-committed");
     } else {
-      status = outcome.reason ?? "Proprietatea nu a putut fi aplicată.";
+      status = outcome.reason ?? t("inspector-block-apply-failed");
       resetDraft(option.id);
     }
+  }
+
+  function localizedDefinitionName(providerId: string, fallback: string) {
+    switch (providerId) {
+      case "counter": return t("inspector-block-counter");
+      case "accordion": return t("inspector-block-accordion");
+      case "tabs": return t("inspector-block-tabs");
+      case "dialog": return t("inspector-block-dialog");
+      case "offcanvas": return t("inspector-block-offcanvas");
+      case "nav-menu": return t("inspector-block-nav-menu");
+      default: return fallback;
+    }
+  }
+
+  function localizedOptionLabel(providerId: string, option: BlockOptionDefinition) {
+    switch (`${providerId}:${option.id}`) {
+      case "counter:target": return t("inspector-block-option-counter-target");
+      case "counter:duration": return t("inspector-block-option-counter-duration");
+      case "counter:suffix": return t("inspector-block-option-counter-suffix");
+      case "accordion:allowMultiple": return t("inspector-block-option-accordion-multiple");
+      case "tabs:initialTab": return t("inspector-block-option-tabs-initial");
+      case "dialog:closeOnBackdrop":
+      case "offcanvas:closeOnBackdrop":
+        return t("inspector-block-option-close-backdrop");
+      case "dialog:closeOnEscape":
+      case "offcanvas:closeOnEscape":
+        return t("inspector-block-option-close-escape");
+      case "offcanvas:side": return t("inspector-block-option-offcanvas-side");
+      case "nav-menu:accessibleLabel": return t("inspector-block-option-nav-label");
+      case "nav-menu:closeOnSelect": return t("inspector-block-option-nav-close");
+      default: return option.label;
+    }
+  }
+
+  function localizedOptionDescription(providerId: string, option: BlockOptionDefinition) {
+    switch (`${providerId}:${option.id}`) {
+      case "counter:target": return t("inspector-block-option-counter-target-description");
+      case "counter:duration": return t("inspector-block-option-counter-duration-description");
+      case "counter:suffix": return t("inspector-block-option-counter-suffix-description");
+      case "accordion:allowMultiple":
+        return t("inspector-block-option-accordion-multiple-description");
+      case "tabs:initialTab": return t("inspector-block-option-tabs-initial-description");
+      case "dialog:closeOnBackdrop":
+        return t("inspector-block-option-dialog-backdrop-description");
+      case "offcanvas:closeOnBackdrop":
+        return t("inspector-block-option-offcanvas-backdrop-description");
+      case "dialog:closeOnEscape":
+        return t("inspector-block-option-dialog-escape-description");
+      case "offcanvas:closeOnEscape":
+        return t("inspector-block-option-offcanvas-escape-description");
+      case "offcanvas:side": return t("inspector-block-option-offcanvas-side-description");
+      case "nav-menu:accessibleLabel":
+        return t("inspector-block-option-nav-label-description");
+      case "nav-menu:closeOnSelect":
+        return t("inspector-block-option-nav-close-description");
+      default: return option.description;
+    }
+  }
+
+  function localizedChoiceLabel(option: BlockOptionDefinition, value: string, fallback: string) {
+    if (option.id === "side" && value === "start") return t("inspector-block-choice-start");
+    if (option.id === "side" && value === "end") return t("inspector-block-choice-end");
+    return fallback;
   }
 
   function handleTextKeydown(event: KeyboardEvent, option: BlockOptionDefinition) {
@@ -264,30 +330,37 @@
     class="block-properties"
     class:collapsed={panelCollapsed}
     style={`--block-properties-height: ${panelHeight}px`}
-    aria-label="Proprietăți bloc"
+    aria-label={t("inspector-block-properties")}
   >
     {#if !panelCollapsed}
       <button
         class="resize-handle"
         type="button"
-        aria-label="Redimensionează proprietățile blocului"
-        title={`Înălțime ${panelHeight}px. Săgeți sus/jos pentru reglare.`}
+        aria-label={t("inspector-block-resize")}
+        title={t("inspector-block-height-help", {
+          height: l10n.formatNumber(panelHeight),
+        })}
         onpointerdown={startResize}
         onkeydown={resizeFromKeyboard}
       ><IconGripHorizontal size={16} stroke={1.8} /></button>
     {/if}
     <header>
       <div>
-        <span>Proprietăți bloc</span>
-        <strong>{definition?.displayName ?? blockContext.providerId}</strong>
+        <span>{t("inspector-block-properties")}</span>
+        <strong>{localizedDefinitionName(
+          blockContext.providerId,
+          definition?.displayName ?? blockContext.providerId,
+        )}</strong>
       </div>
       <div class="panel-actions">
-        <button type="button" aria-label="Extinde panoul" title="Extinde" onclick={maximize}>
+        <button type="button" aria-label={t("inspector-block-maximize")} title={t("inspector-block-maximize")} onclick={maximize}>
           <IconArrowsMaximize size={14} stroke={1.8} />
         </button>
         <button
           type="button"
-          aria-label={panelCollapsed ? "Deschide proprietățile blocului" : "Pliază proprietățile blocului"}
+          aria-label={panelCollapsed
+            ? t("inspector-block-open")
+            : t("inspector-block-collapse")}
           aria-expanded={!panelCollapsed}
           onclick={() => setCollapsed(!panelCollapsed)}
         >
@@ -301,32 +374,30 @@
         <div class="block-breadcrumb">
           <code>{blockContext.providerId}</code>
           <span>›</span>
-          <span>&lt;{selectedElement?.tag}&gt;</span>
+          <span>&lt;{selectedTag ?? blockContext.rootTag}&gt;</span>
         </div>
         {#if loadError}
           <p class="diagnostic" role="alert">{loadError}</p>
         {:else if !graph}
-          <p class="empty">Se citește contractul din Rust…</p>
+          <p class="empty">{t("inspector-block-reading-contract")}</p>
         {:else if !sourceInstance}
-          <p class="diagnostic">
-            Blocul este vizibil în Canvas, dar rădăcina sa nu a putut fi corelată cu sursa autoritativă.
-          </p>
+          <p class="diagnostic">{t("inspector-block-source-not-found")}</p>
         {:else if sourceInstance.diagnostic}
           <p class:diagnostic={!sourceInstance.editable} class="source-note">
-            {sourceInstance.diagnostic}
+            {errorMessage(sourceInstance.diagnostic)}
           </p>
         {/if}
 
         {#if definition && sourceInstance}
           {#if definition.options.length === 0}
-            <p class="empty">Acest provider nu expune proprietăți configurabile.</p>
+            <p class="empty">{t("inspector-block-no-options")}</p>
           {:else}
             <div class="option-list">
               {#each definition.options as option (option.id)}
                 <label class="option-row">
                   <span>
-                    <strong>{option.label}</strong>
-                    <small>{option.description}</small>
+                    <strong>{localizedOptionLabel(sourceInstance.providerId, option)}</strong>
+                    <small>{localizedOptionDescription(sourceInstance.providerId, option)}</small>
                   </span>
                   {#if option.control === "toggle"}
                     <input
@@ -367,7 +438,9 @@
                       }}
                     >
                       {#each option.choices as choice (choice.value)}
-                        <option value={choice.value}>{choice.label}</option>
+                        <option value={choice.value}>
+                          {localizedChoiceLabel(option, choice.value, choice.label)}
+                        </option>
                       {/each}
                     </select>
                   {:else}

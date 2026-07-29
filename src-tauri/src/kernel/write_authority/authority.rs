@@ -1593,9 +1593,10 @@ mod tests {
     use crate::{
         app_home::{ensure_app_home, TEST_APP_ENV_LOCK},
         kernel::write_authority::{
-            test_support::install_test_project_authority, CodexConfigLease, ProjectBootstrapLease,
-            WriteAuthority, WriteAuthorityError, WriteAuthorityRuntime, WriteCategory, WriteIntent,
-            WriteOperationKind, WriteOwner, WritePolicy, WriteReceipt, WriteTarget,
+            test_support::install_test_project_authority, CodexConfigLease,
+            ProjectCreationAuthority, WriteAuthority, WriteAuthorityError, WriteAuthorityRuntime,
+            WriteCategory, WriteIntent, WriteOperationKind, WriteOwner, WritePolicy, WriteReceipt,
+            WriteTarget,
         },
     };
 
@@ -3031,7 +3032,7 @@ mod tests {
             &session_dir,
         )
         .unwrap();
-        let bootstrap = ProjectBootstrapLease::capture(&project).unwrap();
+        let bootstrap = ProjectCreationAuthority::capture(&project).unwrap();
 
         let initializer_intent = WriteIntent::new(
             WriteCategory::ProjectSourceWrite,

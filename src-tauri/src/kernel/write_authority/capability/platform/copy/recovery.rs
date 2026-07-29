@@ -686,11 +686,7 @@ fn copy_owner_contract_matches(record: &WalRecord, evidence: &WalCopyEvidence) -
         WalCopyDestinationPolicy::CreateNew => {
             record.body.owner == "project_initializer"
                 && record.body.category == "project_source_write"
-                && record
-                    .body
-                    .authority
-                    .scope
-                    .starts_with("project_bootstrap:")
+                && record.body.authority.scope.starts_with("project_creation:")
                 && !evidence.file.replace
         }
         WalCopyDestinationPolicy::Replace => {

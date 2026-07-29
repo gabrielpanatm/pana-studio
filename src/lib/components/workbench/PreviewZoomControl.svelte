@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
+
   let {
     previewZoom = 100,
     disabled = false,
@@ -16,14 +18,14 @@
   const zoomProgress = $derived(Math.max(0, Math.min(100, ((previewZoom - 25) / 175) * 100)));
 </script>
 
-<div class="preview-zoom-control" aria-label="Zoom previzualizare">
+<div class="preview-zoom-control" aria-label={t("workbench-zoom-label")}>
   <button
     type="button"
     class="ui-button compact quiet zoom-reset"
     {disabled}
     onclick={resetPreviewZoom}
   >
-    Restabilește
+    {t("workbench-zoom-reset")}
   </button>
   <input
     class="zoom-slider"
@@ -34,10 +36,10 @@
     value={previewZoom}
     {disabled}
     style={`--zoom-progress: ${zoomProgress}%`}
-    aria-label="Nivel zoom previzualizare"
+    aria-label={t("workbench-zoom-level")}
     title={disabled
-      ? "Zoom-ul este disponibil pentru un viewport cu lățime fixă"
-      : `Zoom previzualizare ${previewZoom}%`}
+      ? t("workbench-zoom-fixed-only")
+      : t("workbench-zoom-value", { zoom: previewZoom })}
     oninput={(event) => setPreviewZoom(Number(event.currentTarget.value))}
     onchange={(event) => { void commitPreviewZoom(Number(event.currentTarget.value)); }}
   />

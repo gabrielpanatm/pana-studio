@@ -45,7 +45,7 @@ test("an identical attribute intent settles as noop before canonical projection"
     canonicalProjection > noopGuard,
     "no-op-ul trebuie interceptat înaintea proiecției canonice",
   );
-  assert.match(htmlActions, /return noopAction\("Atributele coincid deja cu sesiunea proiectului\."\)/);
+  assert.match(htmlActions, /return noopAction\(t\("html-actions-attributes-already-match"\)\)/);
 });
 
 test("Rust does not issue CanvasPatch for no-op or source-only attributes", () => {

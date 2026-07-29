@@ -422,7 +422,7 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
                 WriteOperationKind::RemoveDirectoryTree,
             ],
             path_authority:
-                "new empty Zola project root during Project Initializer bootstrap",
+                "new empty Zola project root during Rust-first project creation",
             atomicity: WriteAtomicity::FileLifecycle,
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::LoggedAtomicFile,
@@ -432,14 +432,14 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
         WriteDeclaration {
             category: WriteCategory::ProjectSourceWrite,
             owner: WriteOwner::ProjectInitializer,
-            operations: vec![WriteOperationKind::WriteText],
+            operations: vec![WriteOperationKind::WriteText, WriteOperationKind::WriteBytes],
             path_authority:
-                "new empty Zola project root during Project Initializer bootstrap",
+                "new empty Zola project root during Rust-first project creation",
             atomicity: WriteAtomicity::AtomicRename,
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::LoggedAtomicFile,
             validation:
-                "Project initializer may patch only its freshly copied Zola configuration through the descriptor-bound bootstrap authority before the project is published.",
+                "Project initializer may publish only newly planned project files through the descriptor-bound creation authority before the project is opened.",
         },
         WriteDeclaration {
             category: WriteCategory::PreviewWorkspaceWrite,

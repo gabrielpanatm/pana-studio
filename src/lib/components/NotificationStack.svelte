@@ -1,6 +1,7 @@
 <script lang="ts">
   import { IconX } from "@tabler/icons-svelte";
   import type { AppNotification } from "$lib/notifications/center";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
     notifications = [],
@@ -26,13 +27,17 @@
 </script>
 
 {#if orderedNotifications.length > 0}
-  <section class="notification-region" aria-label="Notificări aplicație" aria-live="polite">
+  <section class="notification-region" aria-label={t("common-app-notifications")} aria-live="polite">
     <div class="notification-stack">
       {#each orderedNotifications as notification (notification.id)}
         <article class="notification-card" class:warning={notification.level === "warning"} class:error={notification.level === "error"}>
           <div class="notification-body">
             <div class="notification-header">
-              <span class="notification-level">{notification.level === "error" ? "Eroare" : notification.level === "warning" ? "Atenție" : "Info"}</span>
+              <span class="notification-level">{notification.level === "error"
+                ? t("common-error")
+                : notification.level === "warning"
+                  ? t("common-warning")
+                  : t("common-info")}</span>
               <h2>{notification.title}</h2>
             </div>
             <p>{notification.message}</p>
@@ -58,8 +63,8 @@
           <button
             type="button"
             class="notification-close"
-            aria-label={`Închide notificarea ${notification.title}`}
-            title="Închide"
+            aria-label={t("common-close-notification", { title: notification.title })}
+            title={t("common-close")}
             onclick={() => dismiss(notification.id)}
           >
             <IconX size={14} stroke={1.9} />
@@ -108,11 +113,11 @@
   }
 
   .notification-card.warning {
-    border-left-color: #d49b24;
+    border-left-color: var(--warning);
   }
 
   .notification-card.error {
-    border-left-color: #d44a4a;
+    border-left-color: var(--danger);
   }
 
   .notification-body {

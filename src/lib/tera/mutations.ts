@@ -1,5 +1,6 @@
 import type { SourceGraphNode, SourceRange } from "$lib/types";
 import type { TeraDropResolution } from "$lib/tera/model";
+import { t } from "$lib/i18n/runtime.svelte";
 
 type AllowedTeraDropResolution = Extract<TeraDropResolution, { allowed: true }>;
 const templateLevelTeraKinds = new Set(["extends", "block", "import", "macro"]);
@@ -22,55 +23,55 @@ export function deleteTeraNodeCapability(node: SourceGraphNode | null): TeraMuta
   if (!node) {
     return {
       canRun: false,
-      label: "Șterge nod Tera",
-      reason: "Selectează un nod Tera pentru a activa mutația.",
+      label: t("tera-mutation-delete-node"),
+      reason: t("tera-mutation-select-node"),
     };
   }
 
   if (templateLevelTeraKinds.has(node.kind)) {
     return {
       canRun: false,
-      label: "Șterge Tera",
-      reason: "Directivele Tera de nivel template se editează din cod sau printr-o acțiune dedicată, nu prin delete vizual.",
+      label: t("tera-mutation-delete"),
+      reason: t("tera-mutation-template-level-code-only"),
     };
   }
 
   if (node.kind === "tera") {
     return {
       canRun: false,
-      label: "Șterge Tera",
-      reason: "Sintaxa Tera nespecializată se editează din cod sau printr-o acțiune dedicată, nu prin delete vizual.",
+      label: t("tera-mutation-delete"),
+      reason: t("tera-mutation-generic-code-only"),
     };
   }
 
   if (node.kind === "raw") {
     return {
       canRun: false,
-      label: "Șterge Tera",
-      reason: "Blocurile raw Tera sunt scope-uri code-only și se editează din cod sau printr-o acțiune dedicată, nu prin delete vizual.",
+      label: t("tera-mutation-delete"),
+      reason: t("tera-mutation-raw-code-only"),
     };
   }
 
   if (!deletableTeraKinds.has(node.kind)) {
     return {
       canRun: false,
-      label: "Șterge nod Tera",
-      reason: "Nodul selectat nu este o construcție Tera editabilă.",
+      label: t("tera-mutation-delete-node"),
+      reason: t("tera-mutation-not-editable"),
     };
   }
 
   if (!node.range) {
     return {
       canRun: false,
-      label: "Șterge Tera",
-      reason: "Nodul Tera nu are încă o ancoră de sursă suficientă pentru editare sigură.",
+      label: t("tera-mutation-delete"),
+      reason: t("tera-mutation-anchor-missing"),
     };
   }
 
   return {
     canRun: true,
-    label: node.kind === "include" ? "Șterge include" : "Șterge Tera",
-    reason: "Elimină construcția Tera din template-ul care o deține.",
+    label: node.kind === "include" ? t("tera-mutation-delete-include") : t("tera-mutation-delete"),
+    reason: t("tera-mutation-delete-description"),
   };
 }
 
@@ -85,30 +86,30 @@ export function deleteTeraNodeFromSource(source: string, node: SourceGraphNode):
 
 export function insertTeraDropIntoSource(source: string, resolution: AllowedTeraDropResolution): string {
   if (!resolution.anchor.range) {
-    throw new Error("Nu pot insera Tera fără o ancoră de sursă stabilă.");
+    throw new Error(t("tera-actions-insert-anchor-missing"));
   }
   return insertTeraSnippetAtRange(source, resolution.anchor.range, resolution.position, resolution.snippet);
 }
 
 export function replaceTeraNodeSource(source: string, node: SourceGraphNode, nextSnippet: string): string {
   if (!node.range || !deletableTeraKinds.has(node.kind)) {
-    throw new Error("Nodul Tera nu poate fi editat source-preserving.");
+    throw new Error(t("tera-mutation-source-edit-unsupported"));
   }
   const start = sourceIndexFromLocation(source, node.range.line, node.range.column);
   const end = sourceIndexFromLocation(source, node.range.endLine, node.range.endColumn);
   if (start === null || end === null || end <= start) {
-    throw new Error("Nu pot localiza exact nodul Tera în sursă.");
+    throw new Error(t("tera-mutation-source-node-not-found"));
   }
   return source.slice(0, start) + nextSnippet + source.slice(end);
 }
 
 export function teraNodeSourceText(source: string, node: SourceGraphNode): string {
   if (!node.range || !deletableTeraKinds.has(node.kind)) {
-    throw new Error("Nodul Tera nu poate fi extras source-preserving.");
+    throw new Error(t("tera-mutation-source-extract-unsupported"));
   }
   const block = sourceBlockForRange(source, node.range);
   if (!block) {
-    throw new Error("Nu pot localiza exact nodul Tera în sursă.");
+    throw new Error(t("tera-mutation-source-node-not-found"));
   }
   return block.text.trimEnd();
 }
@@ -128,7 +129,7 @@ export function insertTeraSourceAtAnchor(
   snippet: string,
 ): string {
   if (!anchor.range) {
-    throw new Error("Ancora Tera nu are range de sursă stabil.");
+    throw new Error(t("tera-mutation-anchor-range-missing"));
   }
   return insertTeraSnippetAtRange(source, anchor.range, position, snippet);
 }
@@ -143,7 +144,7 @@ function insertTeraSnippetAtRange(
   const end = sourceIndexFromLocation(source, range.endLine, range.endColumn);
 
   if (start === null || end === null || end < start) {
-    throw new Error("Nu pot localiza exact ancora Tera în sursă.");
+    throw new Error(t("tera-mutation-source-anchor-not-found"));
   }
 
   const anchorStartLineStart = lineStartIndex(source, start);
@@ -203,7 +204,7 @@ function insertSourceBlock(source: string, index: number, block: string) {
 function removeSourceRangePreservingLines(source: string, range: SourceRange) {
   const block = sourceBlockForRange(source, range);
   if (!block) {
-    throw new Error("Nu pot localiza exact nodul Tera în sursă.");
+    throw new Error(t("tera-mutation-source-node-not-found"));
   }
   return source.slice(0, block.start) + source.slice(block.end);
 }

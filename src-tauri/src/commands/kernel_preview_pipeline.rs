@@ -2,8 +2,7 @@ use tauri::{AppHandle, Runtime, State};
 
 use super::{
     kernel_preview_context::{
-        prepare_preview_read_command, prepare_preview_write_command, with_preview_read_store,
-        with_preview_write_workspace, PreviewReadCommandContext, PreviewWriteCommandContext,
+        prepare_preview_write_command, with_preview_write_workspace, PreviewWriteCommandContext,
     },
     kernel_preview_outcome::{
         finalize_preview_structural_outcome, PreviewStructuralCommandOutcome,
@@ -12,7 +11,6 @@ use super::{
 
 use crate::{
     kernel::{
-        file_buffer_store::FileBufferStore,
         preview_projection::PreviewStructuralCommandIdentity,
         project_workspace::{
             commit_project_workspace_session_mutation_with_projection, ProjectWorkspace,
@@ -21,15 +19,6 @@ use crate::{
     },
     state::AppState,
 };
-
-pub(super) fn run_preview_read_command<R>(
-    state: &State<AppState>,
-    identity: &PreviewStructuralCommandIdentity,
-    execute: impl FnOnce(&PreviewReadCommandContext, &FileBufferStore) -> Result<R, String>,
-) -> Result<R, String> {
-    let context = prepare_preview_read_command(state, identity)?;
-    with_preview_read_store(state, &context, |store| execute(&context, store))
-}
 
 /// Runs an HTML/Tera structural mutation against exactly one workspace
 /// revision. Planning, staging, ProjectModel publication and source-alias
@@ -68,34 +57,48 @@ where
     O: PreviewStructuralCommandOutcome,
 {
     let context = prepare_preview_write_command(state, identity)?;
-    let outcome = with_preview_write_workspace(state, &context, |workspace| {
-        commit_project_workspace_session_mutation_with_projection(
-            app,
-            workspace,
-            preview_projection,
-            |candidate| {
-                let mut outcome = execute(&context, candidate)?;
-                if outcome.command_succeeded() {
-                    let after_model = outcome.after_model_mut().take().ok_or_else(|| {
-                        format!(
-                            "{operation_label} a produs o mutație fără ProjectModel pentru revizia rezultată."
-                        )
-                    })?;
-                    let alias_updates = outcome.take_alias_updates();
-                    let lease = candidate.capture_projection_lease()?;
-                    candidate.publish_project_model(&lease, after_model)?;
-                    candidate.source_identity_aliases.extend(alias_updates);
-                } else if outcome.after_model_mut().is_some()
-                    || !outcome.take_alias_updates().is_empty()
-                {
-                    return Err(format!(
-                        "{operation_label} blocat a încercat să publice stare derivată mutabilă."
-                    ));
-                }
-                Ok(outcome)
-            },
+    let commit = || {
+        with_preview_write_workspace(state, &context, |workspace| {
+            commit_project_workspace_session_mutation_with_projection(
+                app,
+                workspace,
+                preview_projection,
+                |candidate| {
+                    let mut outcome = execute(&context, candidate)?;
+                    if outcome.command_succeeded() {
+                        let after_model = outcome.after_model_mut().take().ok_or_else(|| {
+                            format!(
+                                "{operation_label} a produs o mutație fără ProjectModel pentru revizia rezultată."
+                            )
+                        })?;
+                        let alias_updates = outcome.take_alias_updates();
+                        let lease = candidate.capture_projection_lease()?;
+                        candidate.publish_project_model(&lease, after_model)?;
+                        candidate.source_identity_aliases.extend(alias_updates);
+                    } else if outcome.after_model_mut().is_some()
+                        || !outcome.take_alias_updates().is_empty()
+                    {
+                        return Err(format!(
+                            "{operation_label} blocat a încercat să publice stare derivată mutabilă."
+                        ));
+                    }
+                    Ok(outcome)
+                },
+            )
+        })
+    };
+    let outcome = if let Some(expected) = identity.expected_selection.as_ref() {
+        state.selection_coordinator.with_mutation_target(
+            &context.session.runtime_instance_id(),
+            expected.selection_revision,
+            expected.editor_node_id.as_deref(),
+            expected.source_node_id.as_deref(),
+            expected.render_instance_id.as_deref(),
+            commit,
         )
-    });
+    } else {
+        commit()
+    };
 
     finalize_preview_structural_outcome(outcome)
 }

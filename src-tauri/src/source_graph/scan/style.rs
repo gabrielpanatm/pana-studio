@@ -1,7 +1,9 @@
 use std::path::Path;
 
 use crate::source_graph::{
-    model::{SourceCapabilities, SourceNodeKind, SourceOrigin, SourceStyleScope},
+    model::{
+        SourceCapabilities, SourceCapabilityReason, SourceNodeKind, SourceOrigin, SourceStyleScope,
+    },
     scan::{
         builder::SourceGraphBuilder,
         files::relative_project_path,
@@ -26,7 +28,7 @@ pub(super) fn scan_style(
         file.clone(),
         None,
         None,
-        SourceCapabilities::code_only("Fișier de stil."),
+        SourceCapabilities::code_only(SourceCapabilityReason::StyleFile),
     );
     StyleSummary {
         file,

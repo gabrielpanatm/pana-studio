@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-taxonomy-catalog"
+description = "Enables the read_taxonomy_catalog command without any pre-configured scope."
+commands.allow = ["read_taxonomy_catalog"]
+
+[[permission]]
+identifier = "deny-read-taxonomy-catalog"
+description = "Denies the read_taxonomy_catalog command without any pre-configured scope."
+commands.deny = ["read_taxonomy_catalog"]

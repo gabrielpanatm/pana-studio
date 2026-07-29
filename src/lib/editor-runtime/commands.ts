@@ -1,5 +1,12 @@
-import type { PageSection, SelectionInfo, SourceGraphNode } from "$lib/types";
+import type {
+  CanvasElementObservation,
+  CoordinatedElementSelection,
+  PageSection,
+  SourceEditLocation,
+  SourceGraphNode,
+} from "$lib/types";
 import type { EditorActionStatus } from "$lib/editor-runtime/action-outcome";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type EditorSurface = "preview" | "layers" | "inspector" | "code" | "shortcut" | "runtime";
 
@@ -9,15 +16,19 @@ export type EditorHtmlTarget = {
   tag: string;
   label?: string;
   text?: string;
+  selectionRevision?: number | null;
+  renderInstanceId?: string | null;
+  sourceLocation?: SourceEditLocation | null;
   sourceId?: string | null;
   templateSourceId?: string | null;
   sessionId?: string | null;
-  selection?: SelectionInfo | null;
+  observation?: CanvasElementObservation | null;
   section?: PageSection | null;
 };
 
 export type EditorTeraTarget = {
   kind: "tera";
+  editorNodeId?: string | null;
   sourceId: string;
   selector: string | null;
   label?: string;
@@ -25,7 +36,7 @@ export type EditorTeraTarget = {
   file?: string | null;
   origin?: "current" | "local" | "theme" | "unknown" | null;
   themeName?: string | null;
-  canSelectHtml?: boolean;
+  canEnterBoundary?: boolean;
   section?: PageSection | null;
   sourceNode?: SourceGraphNode | null;
 };
@@ -38,7 +49,7 @@ export type EditorCommand =
   | { type: "duplicate-html"; surface?: EditorSurface; target: EditorHtmlTarget }
   | { type: "delete-html"; surface?: EditorSurface; target: EditorHtmlTarget }
   | { type: "select-tera"; surface?: EditorSurface; target: EditorTeraTarget }
-  | { type: "edit-tera-html"; surface?: EditorSurface; target: EditorTeraTarget }
+  | { type: "enter-tera-boundary"; surface?: EditorSurface; target: EditorTeraTarget }
   | { type: "open-tera-code"; surface?: EditorSurface; target: EditorTeraTarget }
   | { type: "delete-tera"; surface?: EditorSurface; target: EditorTeraTarget };
 
@@ -96,23 +107,22 @@ function capturePageSection(section: PageSection | null | undefined): PageSectio
   });
 }
 
-function captureSelectionInfo(selection: SelectionInfo | null | undefined): SelectionInfo | null {
-  if (!selection) return null;
+export function captureCanvasElementObservation(
+  observation: CanvasElementObservation | null | undefined,
+): CanvasElementObservation | null {
+  if (!observation) return null;
   return Object.freeze({
-    ...selection,
-    classes: Object.freeze([...selection.classes]) as unknown as string[],
-    rect: Object.freeze({ ...selection.rect }),
-    styles: Object.freeze(selection.styles.map((row) => Object.freeze({ ...row }))) as unknown as SelectionInfo["styles"],
-    variables: Object.freeze(selection.variables.map((row) => Object.freeze({ ...row }))) as unknown as SelectionInfo["variables"],
-    matchedRules: Object.freeze(selection.matchedRules.map((rule) => Object.freeze({ ...rule }))) as unknown as SelectionInfo["matchedRules"],
-    attributes: Object.freeze({ ...selection.attributes }),
-    parentNode: selection.parentNode ? Object.freeze({ ...selection.parentNode }) : null,
-    childNodes: Object.freeze(selection.childNodes.map((node) => Object.freeze({ ...node }))) as unknown as SelectionInfo["childNodes"],
-    sourceLocation: selection.sourceLocation
-      ? Object.freeze({ ...selection.sourceLocation })
-      : null,
-    blockContext: selection.blockContext
-      ? Object.freeze({ ...selection.blockContext })
+    ...observation,
+    classes: Object.freeze([...observation.classes]) as unknown as string[],
+    rect: Object.freeze({ ...observation.rect }),
+    styles: Object.freeze(observation.styles.map((row) => Object.freeze({ ...row }))) as unknown as CanvasElementObservation["styles"],
+    variables: Object.freeze(observation.variables.map((row) => Object.freeze({ ...row }))) as unknown as CanvasElementObservation["variables"],
+    matchedRules: Object.freeze(observation.matchedRules.map((rule) => Object.freeze({ ...rule }))) as unknown as CanvasElementObservation["matchedRules"],
+    attributes: Object.freeze({ ...observation.attributes }),
+    parentNode: observation.parentNode ? Object.freeze({ ...observation.parentNode }) : null,
+    childNodes: Object.freeze(observation.childNodes.map((node) => Object.freeze({ ...node }))) as unknown as CanvasElementObservation["childNodes"],
+    blockContext: observation.blockContext
+      ? Object.freeze({ ...observation.blockContext })
       : null,
   });
 }
@@ -136,7 +146,10 @@ function captureSourceGraphNode(node: SourceGraphNode | null | undefined): Sourc
 export function captureEditorHtmlTarget(target: EditorHtmlTarget): EditorHtmlTarget {
   return Object.freeze({
     ...target,
-    selection: captureSelectionInfo(target.selection),
+    sourceLocation: target.sourceLocation
+      ? Object.freeze({ ...target.sourceLocation })
+      : null,
+    observation: captureCanvasElementObservation(target.observation),
     section: capturePageSection(target.section),
   });
 }
@@ -158,17 +171,23 @@ export function captureEditorCommand(command: EditorCommand): EditorCommand {
   }) as EditorCommand;
 }
 
-export function htmlTargetFromSelection(selection: SelectionInfo): EditorHtmlTarget {
+export function htmlTargetFromCoordinatedSelection(
+  selection: CoordinatedElementSelection,
+): EditorHtmlTarget {
+  const observation = selection.observation;
   return captureEditorHtmlTarget({
     kind: "html",
-    selector: selection.domPath || selection.cssSelector || "",
-    tag: selection.tag,
-    label: selection.selector || `<${selection.tag}>`,
-    text: selection.text,
-    sourceId: selection.sourceId,
-    templateSourceId: selection.templateSourceId,
-    sessionId: selection.sessionId,
-    selection,
+    selector: observation.domPath || observation.cssSelector || "",
+    tag: observation.tag,
+    label: observation.selector || `<${observation.tag}>`,
+    text: observation.text,
+    selectionRevision: selection.snapshot.selectionRevision,
+    renderInstanceId: selection.renderInstanceId,
+    sourceLocation: selection.sourceLocation,
+    sourceId: selection.sourceNodeId,
+    templateSourceId: null,
+    sessionId: selection.snapshot.runtimeSessionId,
+    observation,
   });
 }
 
@@ -185,12 +204,13 @@ export function htmlTargetFromPageSection(section: PageSection, label?: string):
   });
 }
 
-export function teraTargetFromGate(target: {
+export function teraTargetFromBoundary(target: {
   selector: string | null;
   sourceId: string;
   origin?: "current" | "local" | "theme" | "unknown" | null;
   themeName?: string | null;
-  canSelectHtml?: boolean;
+  editorNodeId?: string | null;
+  canEnterBoundary?: boolean;
 }, options: Partial<EditorTeraTarget> = {}): EditorTeraTarget {
   return captureEditorTeraTarget({
     kind: "tera",
@@ -198,17 +218,18 @@ export function teraTargetFromGate(target: {
     sourceId: target.sourceId,
     origin: target.origin ?? null,
     themeName: target.themeName ?? null,
-    canSelectHtml: target.canSelectHtml,
+    editorNodeId: target.editorNodeId ?? null,
+    canEnterBoundary: target.canEnterBoundary,
     ...options,
   });
 }
 
 export function canMutateHtmlTarget(target: EditorHtmlTarget) {
   if (!target.selector) {
-    return { allowed: false, reason: "Elementul nu are selector stabil." };
+    return { allowed: false, reason: t("editor-runtime-html-selector-missing") };
   }
   if (target.tag === "body" || target.tag === "html") {
-    return { allowed: false, reason: "Elementul rădăcină nu poate fi modificat structural." };
+    return { allowed: false, reason: t("editor-runtime-root-structural-blocked") };
   }
   return { allowed: true, reason: "" };
 }

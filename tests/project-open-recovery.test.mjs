@@ -35,7 +35,7 @@ test("cererea UI este creată numai pentru recovery care cere decizie", () => {
       assessment({ status: "restorable" }),
       null,
     ),
-    /nu cere o decizie explicită/,
+    /does not require a valid explicit decision/,
   );
   assert.throws(
     () => createProjectOpenRecoveryDecisionRequest(
@@ -43,7 +43,7 @@ test("cererea UI este creată numai pentru recovery care cere decizie", () => {
       assessment({ assessmentToken: null }),
       null,
     ),
-    /nu cere o decizie explicită/,
+    /does not require a valid explicit decision/,
   );
 });
 
@@ -62,9 +62,9 @@ test("abandonarea poartă exact tokenul preflight și decizia de tranziție cure
 });
 
 test("motivul înlocuirii rădăcinii este prezentat separat de driftul de conținut", () => {
-  assert.equal(projectOpenRecoveryReasonLabel(assessment()), "dosar fizic înlocuit");
+  assert.equal(projectOpenRecoveryReasonLabel(assessment()), "physical folder replaced");
   assert.equal(
     projectOpenRecoveryReasonLabel(assessment({ conflictReason: "disk_baseline_changed" })),
-    "conținut schimbat pe disc",
+    "disk content changed",
   );
 });

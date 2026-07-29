@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ApplicationSettingsPatch,
   ApplicationSettingsSnapshot,
-  ApplicationTheme,
   AppHomeSnapshot,
 } from "$lib/types";
 
@@ -11,16 +11,12 @@ export function readApplicationSettings(): Promise<ApplicationSettingsSnapshot> 
 
 export function saveApplicationSettings(
   expectedRevision: number,
-  theme: ApplicationTheme,
-  blockPropertiesHeight: number,
-  blockPropertiesCollapsed: boolean,
+  patch: ApplicationSettingsPatch,
 ): Promise<ApplicationSettingsSnapshot> {
   return invoke<ApplicationSettingsSnapshot>("save_application_settings", {
     settings: {
       expectedRevision,
-      theme,
-      blockPropertiesHeight,
-      blockPropertiesCollapsed,
+      patch,
     },
   });
 }

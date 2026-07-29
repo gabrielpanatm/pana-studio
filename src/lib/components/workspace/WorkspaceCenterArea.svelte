@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Component } from "svelte";
+  import { onDestroy, type Component } from "svelte";
   import type { TerminalPaneProps } from "$lib/components/TerminalPane.svelte";
   import EditorShell from "$lib/components/EditorShell.svelte";
   import AuditWorkspace from "$lib/components/audit/AuditWorkspace.svelte";
@@ -12,11 +12,12 @@
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
   import PublishWorkspace from "$lib/components/publish/PublishWorkspace.svelte";
   import SettingsWorkspace from "$lib/components/settings/SettingsWorkspace.svelte";
+  import TaxonomiesWorkspace from "$lib/components/taxonomies/TaxonomiesWorkspace.svelte";
   import TemplatesWorkspace from "$lib/components/templates/TemplatesWorkspace.svelte";
   import ThemesWorkspace from "$lib/components/themes/ThemesWorkspace.svelte";
   import VersionControlWorkspace from "$lib/components/versioning/VersionControlWorkspace.svelte";
-  import StartupState from "$lib/components/workspace/StartupState.svelte";
   import WorkbenchBottomPanel from "$lib/components/workbench/WorkbenchBottomPanel.svelte";
+  import MotionTimelinePanel from "$lib/components/workspace/MotionTimelinePanel.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type {
@@ -24,7 +25,10 @@
     WorkbenchDocumentSnapshot,
     WorkbenchGroupId,
     WorkbenchSurface,
+    WorkspaceSourceOpenOptions,
   } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
+  import { errorMessage } from "$lib/util";
 
   let {
     app,
@@ -35,31 +39,50 @@
     app: AppState;
     TerminalPaneComponent?: Component<TerminalPaneProps> | null;
     breakpointValue: (name: string, fallback: string) => string;
-    openWorkspaceSource: (path: string) => void | Promise<void>;
+    openWorkspaceSource: (
+      path: string,
+      options?: WorkspaceSourceOpenOptions,
+    ) => void | Promise<void>;
   } = $props();
 
   const bottomPanelOpen = $derived(
     app.applicationSurface === "workbench"
-      && Boolean(app.workbenchSnapshot?.bottomPanel.open),
+      && Boolean(app.workbenchSnapshot?.bottomPanel.open)
+      && app.workbenchSnapshot?.bottomPanel.activeView === "terminal",
   );
+  const activeWorkbenchActivity = $derived(
+    app.workbenchSnapshot?.activeActivity ?? "editor",
+  );
+  const motionTimelineAvailable = $derived(
+    app.applicationSurface === "workbench"
+      && activeWorkbenchActivity === "editor"
+      && app.centerView === "preview"
+      && Boolean(app.activeRenderedTemplatePath)
+      && Boolean(app.scannedProject),
+  );
+  const motionTimelineOpen = $derived(
+    motionTimelineAvailable && app.motionWorkspace.timelineOpen,
+  );
+  const motionTimelineHeight = $derived(
+    app.motionWorkspace.timelineCollapsed ? 36 : app.motionWorkspace.timelineHeight,
+  );
+  let motionTimelineResizing = $state(false);
+  let cancelMotionTimelineResize: (() => void) | null = null;
   const dirtyWorkbenchPaths = $derived(
     app.projectWorkspaceSnapshot?.documents.files
       .filter((file) => file.dirty)
       .map((file) => file.relativePath)
       ?? [],
   );
-  const activeWorkbenchActivity = $derived(
-    app.workbenchSnapshot?.activeActivity ?? "editor",
-  );
   const responsiveBreakpoints = $derived([
     {
       id: "mobile",
-      label: "Mobil",
+      label: t("workbench-responsive-mobile"),
       widthPx: Number.parseFloat(breakpointValue("bp-mobil", "768px")) || 768,
     },
     {
       id: "tablet",
-      label: "Tabletă",
+      label: t("workbench-responsive-tablet"),
       widthPx: Number.parseFloat(breakpointValue("bp-tableta", "1024px")) || 1_024,
     },
   ]);
@@ -75,7 +98,7 @@
     );
     if (!file) {
       app.setGlobalStatus(
-        `Documentul spațiului de lucru nu mai există în proiect: ${document.relativePath}`,
+        t("workbench-document-missing", { path: document.relativePath }),
         "error",
       );
       return;
@@ -97,7 +120,7 @@
       await showWorkbenchDocument(document);
     } catch (error) {
       app.setGlobalStatus(
-        `Documentul nu a putut fi activat: ${error instanceof Error ? error.message : String(error)}`,
+        t("workbench-document-activate-failed", { detail: errorMessage(error) }),
         "error",
       );
     }
@@ -124,7 +147,7 @@
       if (nextDocument) await showWorkbenchDocument(nextDocument);
     } catch (error) {
       app.setGlobalStatus(
-        `Documentul nu a putut fi închis: ${error instanceof Error ? error.message : String(error)}`,
+        t("workbench-document-close-failed", { detail: errorMessage(error) }),
         "error",
       );
     }
@@ -134,13 +157,120 @@
     await app.setCenterView(centerViewForSurface(surface));
   }
 
+  $effect(() => {
+    app.motionWorkspace.bind(
+      app.activeRenderedTemplatePath,
+      app.sessionProjectRoot,
+      app.kernelProjectSessionId,
+      app.jsRefreshToken,
+    );
+  });
+
+  $effect(() => {
+    app.setInspectorPending(
+      "js",
+      app.motionWorkspace.pendingCount > 0,
+      "motion-timeline",
+    );
+  });
+
+  $effect(() => {
+    const mode = app.motionWorkspace.previewMode;
+    const shouldExecute = mode !== "design";
+    if (app.interactivePreviewEnabled !== shouldExecute) {
+      app.setPreviewExecutionMode(mode);
+    }
+  });
+
+  function resizeMotionTimeline(event: MouseEvent) {
+    if (event.button !== 0) return;
+    cancelMotionTimelineResize?.();
+    event.preventDefault();
+
+    const startY = event.clientY;
+    const startHeight = app.motionWorkspace.timelineHeight;
+    let latestY = startY;
+    let animationFrame: number | null = null;
+    let safetyTimer: number | null = null;
+    let stopped = false;
+
+    motionTimelineResizing = true;
+    document.body.classList.add("is-resizing", "is-row-resizing");
+
+    const heightAt = (clientY: number) => Math.max(
+      190,
+      Math.min(560, startHeight - (clientY - startY)),
+    );
+
+    const flushResize = () => {
+      animationFrame = null;
+      app.motionWorkspace.timelineHeight = heightAt(latestY);
+    };
+
+    const move = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      latestY = moveEvent.clientY;
+      if (animationFrame !== null) return;
+      animationFrame = window.requestAnimationFrame(flushResize);
+    };
+
+    const cleanup = () => {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      if (safetyTimer !== null) {
+        window.clearTimeout(safetyTimer);
+        safetyTimer = null;
+      }
+      document.body.classList.remove("is-resizing", "is-row-resizing");
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", commit);
+      window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", handleKeydown);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      cancelMotionTimelineResize = null;
+      motionTimelineResizing = false;
+    };
+
+    const stop = (shouldCommit: boolean) => {
+      if (stopped) return;
+      stopped = true;
+      if (shouldCommit) {
+        app.motionWorkspace.timelineHeight = heightAt(latestY);
+      } else {
+        app.motionWorkspace.timelineHeight = startHeight;
+      }
+      cleanup();
+    };
+
+    const commit = () => stop(true);
+    const cancel = () => stop(false);
+    const handleKeydown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key === "Escape") cancel();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") cancel();
+    };
+
+    cancelMotionTimelineResize = cancel;
+    safetyTimer = window.setTimeout(cancel, 8_000);
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", commit, { once: true });
+    window.addEventListener("blur", cancel, { once: true });
+    window.addEventListener("keydown", handleKeydown);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+  }
+
+  onDestroy(() => cancelMotionTimelineResize?.());
 </script>
 
 <section
   class:bottom-panel-open={bottomPanelOpen}
+  class:motion-timeline-open={motionTimelineOpen}
   class="center-stack"
-  style={`--terminal-pane-height: ${app.terminalPaneHeight}px;`}
-  aria-label="Zona centrala"
+  style={`--terminal-pane-height: ${app.terminalPaneHeight}px; --motion-timeline-height: ${motionTimelineHeight}px;`}
+  aria-label={t("workbench-center-area")}
 >
   <div
     class="editor-shell-shell"
@@ -149,15 +279,6 @@
   >
     {#if app.applicationSurface === "settings"}
       <SettingsWorkspace {app} />
-    {:else if !app.scannedProject || app.scannedProject.isEmpty || !app.scannedProject.isZola}
-      <StartupState
-        scannedProject={!!app.scannedProject}
-        isEmpty={app.scannedProject?.isEmpty ?? false}
-        isZola={app.scannedProject?.isZola ?? false}
-        openProjectFolder={() => app.openProjectFolder()}
-        workspaceSnapshot={app.projectWorkspaceSnapshot}
-        initZolaProject={(themeId) => app.initZolaProject(themeId)}
-      />
     {:else if activeWorkbenchActivity === "themes"}
       <ThemesWorkspace {app} />
     {:else if activeWorkbenchActivity === "templates"}
@@ -172,6 +293,8 @@
       <AssetsWorkspace {app} />
     {:else if activeWorkbenchActivity === "content"}
       <ContentWorkspace {app} {openWorkspaceSource} />
+    {:else if activeWorkbenchActivity === "taxonomies"}
+      <TaxonomiesWorkspace {app} {openWorkspaceSource} />
     {:else if activeWorkbenchActivity === "data"}
       <DataWorkspace {app} {openWorkspaceSource} />
     {:else if activeWorkbenchActivity === "versioning"}
@@ -179,7 +302,13 @@
     {:else if activeWorkbenchActivity === "publish"}
       <PublishWorkspace {app} />
     {:else if activeWorkbenchActivity === "audit"}
-      <AuditWorkspace {app} {openWorkspaceSource} />
+      <AuditWorkspace
+        {app}
+        {openWorkspaceSource}
+        requestedView={app.auditWorkspaceView}
+        observabilityFocusSerial={app.auditObservabilityFocusSerial}
+        onViewChange={(view) => { app.auditWorkspaceView = view; }}
+      />
     {:else if app.centerView === "kernel"}
       <KernelWorkspace
         currentProjectPath={app.currentProjectPath}
@@ -206,6 +335,8 @@
         previewSrc={app.previewSrc}
         interactivePreviewEnabled={app.interactivePreviewEnabled && !app.aiEditLeaseFrontendLockActive}
         interactivePreviewUrl={app.interactivePreviewUrl}
+        motionPreviewMode={app.motionWorkspace.previewMode}
+        motionPreviewRequest={app.motionWorkspace.previewRequest}
         refreshToken={app.refreshToken}
         editorReadOnly={app.projectTransitionFrontendLeaseActive || app.kernelUndoRedoFrontendLeaseActive || app.aiEditLeaseFrontendLockActive}
         workbenchSnapshot={app.workbenchSnapshot}
@@ -220,9 +351,12 @@
         commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
         resetPreviewZoom={() => app.resetPreviewZoom()}
         attachPreviewInspector={() => app.attachPreviewInspector()}
-        setInteractivePreviewEnabled={(enabled) => app.setInteractivePreviewEnabled(enabled)}
+        mountPreviewSurface={(frame) => app.mountCanvasProjectionSurface(frame)}
+        unmountPreviewSurface={(frame) => app.unmountCanvasProjectionSurface(frame)}
+        previewSurfaceLoaded={(frame) => app.onCanvasProjectionSurfaceLoaded(frame)}
+        setPreviewExecutionMode={(mode) => app.setPreviewExecutionMode(mode)}
         onInteractiveLifecycleError={(message) => app.setGlobalStatus(
-          `Previzualizare interactivă: ${message}`,
+          t("workbench-interactive-error", { detail: message }),
           "error",
         )}
         onInteractiveDomSnapshot={(nodes) => app.acceptInteractivePreviewDomSnapshot(nodes)}
@@ -241,6 +375,7 @@
             diagnostic,
           );
         }}
+        onMotionPreviewStatus={(status) => app.motionWorkspace.acceptPreviewStatus(status)}
         currentSourcePath={app.currentSourcePath}
         source={app.source}
         sourceLanguage={app.sourceLanguage}
@@ -250,11 +385,29 @@
     {/if}
   </div>
 
+  {#if motionTimelineOpen}
+    {#if !app.motionWorkspace.timelineCollapsed}
+      <WorkspaceResizeHandle
+        kind="timeline"
+        active={motionTimelineResizing}
+        withBottomPanel={bottomPanelOpen}
+        ariaLabel={t("workbench-resize-motion-timeline")}
+        onDrag={resizeMotionTimeline}
+        onReset={() => { app.motionWorkspace.timelineHeight = 300; }}
+      />
+    {/if}
+    <MotionTimelinePanel
+      workspace={app.motionWorkspace}
+      selectionSummary={app.inspectorSelectionSummary}
+      dataAnim={app.coordinatedElementSelection?.observation.attributes["data-anim"] ?? null}
+    />
+  {/if}
+
   {#if bottomPanelOpen}
     <WorkspaceResizeHandle
       kind="terminal"
       active={app.activeResizeKind === "terminal"}
-      ariaLabel="Redimensionează panoul inferior"
+      ariaLabel={t("workbench-resize-bottom-panel")}
       onDrag={(event) => app.startResizeDrag("terminal", event)}
       onReset={() => app.resetResize("terminal")}
     />
@@ -262,7 +415,6 @@
     <WorkbenchBottomPanel
       {app}
       {TerminalPaneComponent}
-      {openWorkspaceSource}
     />
   {/if}
 </section>

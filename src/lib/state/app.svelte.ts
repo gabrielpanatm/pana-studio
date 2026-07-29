@@ -2,10 +2,6 @@ import type { CodeEditorContextMenuRequest, CodeEditorController } from "$lib/ed
 import { tick } from "svelte";
 import { contextMenu } from "$lib/context-menu/store.svelte";
 import {
-  htmlElementContextMenuItems,
-  teraContextMenuItems,
-} from "$lib/editor-runtime/context-menu";
-import {
   createEditorRuntime,
   type EditorRuntime,
   type EditorRuntimeHost,
@@ -17,10 +13,10 @@ import {
   type PreviewRuntimeHost,
 } from "$lib/editor-runtime/preview-runtime";
 import {
+  captureCanvasElementObservation,
   htmlTargetFromPageSection,
-  htmlTargetFromSelection,
-  teraTargetFromGate,
-  type EditorLayerContextMenuRequest,
+  htmlTargetFromCoordinatedSelection,
+  type EditorHtmlTarget,
   type EditorTeraTarget,
 } from "$lib/editor-runtime/commands";
 import {
@@ -39,7 +35,14 @@ import type {
   CanvasProjectionIdentity,
   CanvasProjectionPlan,
 } from "$lib/project/io";
-import { stopVersionPreview } from "$lib/project/io";
+import {
+  acceptSelectionObservation,
+  applySelectionIntent as applySelectionIntentInRust,
+  readEditorNavigationSnapshot,
+  readSelectionSnapshot,
+  readStartupFlow,
+  stopVersionPreview,
+} from "$lib/project/io";
 import {
   buildInteractivePreviewUrl,
   type InteractivePreviewDomNode,
@@ -53,8 +56,13 @@ import {
   createLatestWinsAsyncQueue,
   type LatestWinsAsyncQueue,
 } from "$lib/session/latest-wins-async-queue";
+import { pageJsRelativePath } from "$lib/js/page-path";
 import { dispatchExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
-import { flushWorkspaceMutationInputs } from "$lib/session/workspace-mutation-coordinator";
+import {
+  flushWorkspaceMutationInputs,
+  settleProjectWorkspaceMutation,
+  type WorkspaceDerivedProjectionStatus,
+} from "$lib/session/workspace-mutation-coordinator";
 import {
   drainPreviewStructuralLanes,
   requireCurrentPreviewStructuralSession,
@@ -72,14 +80,22 @@ import {
   saveSourceFile as saveSourceFileFromController,
   type SaveControllerHost,
 } from "$lib/state/save-controller";
-import type { StatusControllerHost } from "$lib/state/status-controller";
+import {
+  currentGlobalStatus as currentGlobalStatusFromController,
+  type StatusControllerHost,
+} from "$lib/state/status-controller";
+import type {
+  GlobalStatusEvent,
+  GlobalStatusEscalationRequest,
+  GlobalStatusKind,
+  GlobalStatusPublishOptions,
+} from "$lib/status/global-status";
 import type { InsertPosition } from "$lib/html/mutations";
 import {
   isLatestHtmlAttributeDraftSettlement,
   liveProjectableHtmlAttributeDraft,
 } from "$lib/html/live-attribute-draft";
-import type { TeraDropRequest, TeraMoveRequest, TeraPaletteItem } from "$lib/tera/model";
-import { canRequestTemplateEditGateKind, templateEditGateSelectionStatus } from "$lib/tera/template-edit-gate";
+import type { TeraDropRequest, TeraPaletteItem } from "$lib/tera/model";
 import {
   applyAttributesToHtml as applyAttributesToHtmlFromController,
   applyAttributesToCapturedHtmlTarget,
@@ -99,7 +115,6 @@ import {
   type ApplyNativeBlockOptionRequest,
 } from "$lib/state/html-actions-controller";
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
-import type { LayerMoveRequest } from "$lib/project/layers-drag";
 import type { ResizeKind } from "$lib/ui/resize";
 import {
   DEFAULT_PREVIEW_ZOOM,
@@ -123,17 +138,31 @@ import type {
   InspectorTab,
   AiCoordinationSnapshot,
   AiContextStatus,
+  ApplicationSettingsPatch,
   ApplicationSettingsSnapshot,
   ApplicationSurface,
   ApplicationTheme,
+  ApplicationThemePreference,
   CenterView,
   DesignClassInventorySnapshot,
+  EditScopeGrant,
+  EditorMovePlan,
+  EditorNavigationNode,
+  EditorNavigationSnapshot,
   ExternalDiskState,
+  FileExplorerCommitReceipt,
+  FileExplorerOperationPlan,
+  FileExplorerOperationRequest,
+  FileExplorerSnapshot,
   PageSection,
   ProjectDiskManifest,
   ProjectAuditSnapshot,
   ProjectFile,
+  ProjectMovePosition,
   ProjectScan,
+  StartupCreationCatalog,
+  StartupCreationPlan,
+  StartupFlowSnapshot,
   ProjectZolaImageIntent,
   ProjectWorkspaceSnapshot,
   WorkbenchActivity,
@@ -146,15 +175,28 @@ import type {
   WorkbenchSplit,
   WorkbenchSurface,
   VersionPreviewReceipt,
-  PreviewSelectionState,
-  SaveState,
   ScssVariable,
-	  SelectionInfo,
-	  SourceEditLocation,
-	  SourceGraph,
+  HoverSnapshot,
+  AcceptedCanvasElementObservation,
+  CoordinatedElementSelection,
+  InspectorHtmlPhysicalFacts,
+  InspectorSelectionSummarySnapshot,
+  BlockSelectionContext,
+  CanvasElementObservation,
+  SelectionIntent,
+  SelectionObservationInput,
+  SelectionSnapshot,
+  SourceEditLocation,
+  SourceGraph,
   TemplateWorkbenchPlan,
   SourceGraphNode,
 } from "$lib/types";
+import {
+  commitFileExplorerOperation as commitFileExplorerOperationInRust,
+  planFileExplorerOperation as planFileExplorerOperationInRust,
+  readFileExplorerSnapshot,
+  selectFileExplorerEntry as selectFileExplorerEntryInRust,
+} from "$lib/project/file-explorer";
 import {
   WorkbenchProjectionController,
   type WorkbenchProjectionHost,
@@ -163,6 +205,10 @@ import {
   createInspectorPendingSourceRegistry,
   type InspectorPendingSource,
 } from "$lib/state/inspector-pending";
+import {
+  MotionWorkspaceState,
+  type MotionPreviewMode,
+} from "$lib/state/motion-workspace.svelte";
 import { TerminalController } from "$lib/terminal/controller";
 import {
   defaultTerminalPaneHeight,
@@ -187,8 +233,10 @@ import {
   cancelPreviewSync as cancelPreviewSyncFromController,
   fetchDomTreeFromPreview as fetchDomTreeFromPreviewFromController,
   getPreviewDocument as getPreviewDocumentFromController,
+  hasMountedCanvasProjectionSurface as hasMountedCanvasProjectionSurfaceFromController,
   invalidatePreviewDomTreeProjection,
   invalidatePreviewRefreshLease,
+  mountCanvasProjectionSurface as mountCanvasProjectionSurfaceFromController,
   postPreviewMessage as postPreviewMessageFromController,
   prepareCanvasProjectionNavigation as prepareCanvasProjectionNavigationFromController,
   previewReloadUrl as previewReloadUrlFromController,
@@ -196,17 +244,16 @@ import {
   refreshRenderedPreviewDocument as refreshRenderedPreviewDocumentFromController,
   reloadPreview as reloadPreviewFromController,
   sendPreviewOperation as sendPreviewOperationFromController,
+  unmountCanvasProjectionSurface as unmountCanvasProjectionSurfaceFromController,
   type CanvasProjectionConfirmation,
   type PreviewControllerHost,
   type PreviewRefreshLease,
 } from "$lib/state/preview-controller";
+import type { SelectionControllerHost } from "$lib/state/selection-controller";
 import {
-  reconcileSelectionWithSourceDocument as reconcileSelectionWithSourceDocumentFromController,
-  selectDomNode as selectDomNodeFromController,
-  selectPreviewElement as selectPreviewElementFromController,
-  setActiveCssSelector as setActiveCssSelectorFromController,
-  type SelectionControllerHost,
-} from "$lib/state/selection-controller";
+  projectSelectionSnapshotOnCanvas,
+  selectCanvasPreviewElement,
+} from "$lib/state/canvas-interaction-controller";
 import {
   createSourceEditor as createSourceEditorFromController,
   handleCodeCursorSelection as handleCodeCursorSelectionFromController,
@@ -260,16 +307,19 @@ import {
   continueProjectOpenWithRecoveryAbandonment as continueProjectOpenWithRecoveryAbandonmentFromController,
   createContentPageFromInput as createContentPageFromInputFromController,
   continueProjectTransitionWithOperatorDecision as continueProjectTransitionWithOperatorDecisionFromController,
+  applyStartupProject as applyStartupProjectFromController,
+  cancelStartupCreationPlan as cancelStartupCreationPlanFromController,
   discardSessionAndReloadFromDisk as discardSessionAndReloadFromDiskFromController,
-  initZolaProject as initZolaProjectFromController,
   loadScannedProjectFile as loadScannedProjectFileFromController,
   openCurrentProjectInBrowser as openCurrentProjectInBrowserFromController,
   openProjectFolder as openProjectFolderFromController,
+  planStartupProject as planStartupProjectFromController,
   reattachCurrentProjectSession as reattachCurrentProjectSessionFromController,
+  reconcileWorkspaceDerivedState as reconcileWorkspaceDerivedStateFromController,
   rescanCurrentProject as rescanCurrentProjectFromController,
   rescanCurrentProjectWithinKernelUndoRedoLease as rescanCurrentProjectWithinKernelUndoRedoLeaseFromController,
-  rescanCurrentProjectWithinStructuralLane as rescanCurrentProjectWithinStructuralLaneFromController,
   resetProjectScopedState as resetProjectScopedStateFromController,
+  selectStartupCreationOption as selectStartupCreationOptionFromController,
   exitTemplateWorkbench as exitTemplateWorkbenchFromController,
   updateTemplateWorkbenchContext as updateTemplateWorkbenchContextFromController,
   type ProjectControllerHost,
@@ -285,23 +335,16 @@ import {
   type HtmlMutationControllerHost,
 } from "$lib/state/html-mutation-controller";
 import {
-  moveLayerElement as moveLayerElementFromController,
-  type LayersDragControllerHost,
-} from "$lib/state/layers-drag-controller";
-import {
-  moveProjectFile as moveProjectFileFromController,
-  type FilesDragControllerHost,
-} from "$lib/state/files-drag-controller";
-import {
-  deleteProjectFile as deleteProjectFileFromController,
-  renameProjectFile as renameProjectFileFromController,
-  type FilesControllerHost,
-  type ProjectEntryDeleteRequest,
-  type ProjectEntryRenameRequest,
-} from "$lib/state/files-controller";
-import {
-  type PreviewDragControllerHost,
-} from "$lib/state/preview-drag-controller";
+  editorNavigationNodeSelector,
+  editorNavigationDropTargetStatus as editorNavigationDropTargetStatusFromController,
+  enterEditorNavigationScope as enterEditorNavigationScopeFromController,
+  exitEditorNavigationScope as exitEditorNavigationScopeFromController,
+  hoverEditorNavigationNode as hoverEditorNavigationNodeFromController,
+  moveEditorNavigationNode as moveEditorNavigationNodeFromController,
+  previewEditorNavigationMove as previewEditorNavigationMoveFromController,
+  selectEditorNavigationNode as selectEditorNavigationNodeFromController,
+  type EditorNavigationControllerHost,
+} from "$lib/state/editor-navigation-controller";
 import {
   type PreviewInsertControllerHost,
   type PreviewInsertDropRequest,
@@ -320,7 +363,6 @@ import {
 import {
   deleteSelectedTeraNode as deleteSelectedTeraNodeFromController,
   insertTeraPaletteItemAtTarget as insertTeraPaletteItemAtTargetFromController,
-  moveTeraNodeAtTarget as moveTeraNodeAtTargetFromController,
   type TeraActionsControllerHost,
 } from "$lib/state/tera-actions-controller";
 import {
@@ -365,54 +407,35 @@ import {
   setScssVariable,
   type PreviewRuntimeEventKind,
 } from "$lib/project/io";
-import type { FileMoveRequest } from "$lib/project/files-drag";
 import { scannedCacheKey, zolaRelativePath } from "$lib/project/files";
 import {
   cssRuleContextFromSource,
   type CssViewport,
 } from "$lib/css/source-sync";
 import { errorMessage } from "$lib/util";
+import { l10n, t } from "$lib/i18n/runtime.svelte";
+import {
+  applyApplicationBootProjection,
+  storeApplicationBootProjection,
+} from "$lib/system-preferences/boot-projection";
 import {
   createEmptyHtmlPending,
   createEmptyInspectorPending,
+  contrastingTextColor,
   initialUiTheme,
-  type PreviewTemplateGate,
+  type PreviewTeraSelectionTarget,
 } from "$lib/state/app-helpers";
 import { registerAppEffects } from "$lib/state/app-effects.svelte";
 import {
-  allowTemplateHtmlEditFromBridge as allowTemplateHtmlEditFromBridgeFromController,
   applySelectionState as applySelectionStateFromAppSelectionController,
-  clearPreviewHtmlSelectionMarker as clearPreviewHtmlSelectionMarkerFromController,
   clearPreviewSelection as clearPreviewSelectionFromController,
-  clearPreviewTeraSelection as clearPreviewTeraSelectionFromController,
-  clearTemplateGateInPreview as clearTemplateGateInPreviewFromController,
-  editSelectedTeraLayer as editSelectedTeraLayerFromController,
-  hoverLayerSection as hoverLayerSectionFromController,
-  hoverPreviewSelection as hoverPreviewSelectionFromController,
   openSelectedTeraSource as openSelectedTeraSourceFromController,
-  previewDropGateStatus as previewDropGateStatusFromController,
-  rememberSelectedElement as rememberSelectedElementFromController,
-  renderPreviewSelectionToBridge as renderPreviewSelectionToBridgeFromController,
-  requestTemplateHtmlEditPermission as requestTemplateHtmlEditPermissionFromController,
-  selectLayerSection as selectLayerSectionFromController,
-  selectPreviewTemplateElement as selectPreviewTemplateElementFromController,
-  selectTemplateGateFromBridge as selectTemplateGateFromBridgeFromController,
   selectTeraLayerSource as selectTeraLayerSourceFromController,
   setPreviewTeraSelection as setPreviewTeraSelectionFromController,
-  syncPreviewTeraGateState as syncPreviewTeraGateStateFromController,
-  syncTemplateHtmlEditLock as syncTemplateHtmlEditLockFromController,
-  templateGateContext as templateGateContextFromController,
-  templateGateForPageSection as templateGateForPageSectionFromController,
-  templateGateForPreviewClick as templateGateForPreviewClickFromController,
-  templateGateForSelection as templateGateForSelectionFromController,
-  templateGateForTeraSource as templateGateForTeraSourceFromController,
-  templateGateSourceIdForSelection as templateGateSourceIdForSelectionFromController,
-  hoverTeraLayerSource as hoverTeraLayerSourceFromController,
 } from "$lib/state/app-selection-controller";
 import {
   applyStagedOverrideStylesToPreview as applyStagedOverrideStylesToPreviewFromController,
   attachPreviewInspector as attachPreviewInspectorFromController,
-  derivePreviewSelectionState as derivePreviewSelectionStateFromController,
   handlePreviewMessage as handlePreviewMessageFromController,
   previewUrlForScannedFile as previewUrlForScannedFileFromController,
   refreshSourceGraph as refreshSourceGraphFromController,
@@ -421,14 +444,13 @@ import {
   syncHtmlCodeToPreview as syncHtmlCodeToPreviewFromController,
 } from "$lib/state/app-preview-runtime-controller";
 import {
-  afterSave as afterSaveFromController,
   clearHtmlPending as clearHtmlPendingFromController,
   clearNotification as clearNotificationFromController,
-  createProjectFile as createProjectFileFromController,
   dismissNotification as dismissNotificationFromController,
   handleNotificationAction as handleNotificationActionFromController,
-  notify as notifyFromController,
+  escalateGlobalStatus as escalateGlobalStatusFromController,
   refreshCurrentSession as refreshCurrentSessionFromController,
+  refreshGlobalStatusFromKernel as refreshGlobalStatusFromKernelFromController,
   setGlobalStatus as setGlobalStatusFromAppSessionController,
   setHtmlPending as setHtmlPendingFromController,
   setInspectorPending as setInspectorPendingFromController,
@@ -452,11 +474,13 @@ import {
   deriveIsActiveRenderedPreviewPage,
   deriveIsActivePreviewHtmlSource,
   deriveScannedFilesByRole,
-  deriveSelectedSessionSourceLocation,
+  deriveSelectedEditorNavigationNode,
+  deriveSelectedSemanticSourceLocation,
   deriveSelectedSourceEditTarget,
   deriveSelectedTemplateSourceNode,
   deriveSessionHasPending,
   deriveSourceLanguage,
+  deriveWorkbenchSourceStatus,
 } from "$lib/state/app-derived";
 import {
   destroyApp as destroyAppFromController,
@@ -468,7 +492,6 @@ import {
 } from "$lib/state/native-window-close-controller";
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SELECTED_CLASS = "pana-studio-selected-element";
 const DEFAULT_LEFT_PANE_WIDTH = 260;
 const DEFAULT_RIGHT_PANE_WIDTH = 320;
 const HTML_TEXT_RECOVERY_INTERVAL_MS = 200;
@@ -517,12 +540,43 @@ type ActiveHtmlAttributeEditSession = {
   finishPromise: Promise<EditorActionOutcome | null> | null;
 };
 
+function canvasIdentityEquals(
+  left: CanvasProjectionIdentity | null | undefined,
+  right: CanvasProjectionIdentity | null | undefined,
+) {
+  return Boolean(
+    left
+    && right
+    && left.projectRoot === right.projectRoot
+    && left.runtimeSessionId === right.runtimeSessionId
+    && left.workspaceRevision === right.workspaceRevision
+    && left.transactionId === right.transactionId
+    && left.previewRevision === right.previewRevision,
+  );
+}
+
+function editorNavigationRoute(previewUrl: string, fallbackRoute: string) {
+  if (previewUrl && previewUrl !== "about:blank") {
+    try {
+      return new URL(previewUrl, "http://pana.local/").pathname || "/";
+    } catch {
+      // The route falls back to the project browser route below.
+    }
+  }
+  const fallback = fallbackRoute.trim() || "/";
+  return fallback.startsWith("/") ? fallback : `/${fallback}`;
+}
+
 export class AppState {
   // Expose constants for template access
-  readonly selectedClass = SELECTED_CLASS;
+  readonly motionWorkspace = new MotionWorkspaceState();
 
   // ── DOM refs (set by component via $effect) ──
   previewFrame = $state<HTMLIFrameElement | undefined>(undefined);
+  canvasSurfaceElement: HTMLIFrameElement | null = null;
+  canvasSurfaceGeneration = 0;
+  canvasSurfaceResumeRequired = false;
+  private canvasSurfaceResumePromise: Promise<void> | null = null;
   codeEditorHost = $state<HTMLDivElement | undefined>(undefined);
   terminalHost = $state<HTMLDivElement | undefined>(undefined);
 
@@ -533,33 +587,26 @@ export class AppState {
   editorMutationEpoch = $state(0);
   /** Durable Rust authority notifications; drives read-only workspace mirrors. */
   projectWorkspaceMutationEpoch = $state(0);
-  selectionEpoch = $state(0);
-  selectedPreviewElement: Element | null = null;
-  selectedElement = $state<SelectionInfo | null>(null);
-  lastMeaningfulSelectedElement = $state<SelectionInfo | null>(null);
-  lastSelectedImageElement = $state<SelectionInfo | null>(null);
-  selectedTemplateSourceId = $state<string | null>(null);
-  selectedTemplatePreviewSelector = $state<string | null>(null);
-  templateHtmlEditSourceId = $state<string | null>(null);
+  acceptedSelectionObservation = $state<AcceptedCanvasElementObservation | null>(null);
 
   // ── Element editor values ──
   attributeValues = $state<EditableAttributes>({});
-  attributeStatus = $state("Atributele HTML pot fi editate direct in pagina activa.");
+  attributeStatus = $state("");
   textContentValue = $state("");
   activeHtmlTextEditKey = $state<string | null>(null);
   activeHtmlTextEditValue = $state<string | null>(null);
   textEditOriginalKey = $state<string | null>(null);
   textEditOriginalText = $state<string | null>(null);
-  textStatus = $state("Textul poate fi editat pentru elemente simple, fara copii HTML.");
+  textStatus = $state("");
   classEditorValue = $state("");
-  classStatus = $state("Clasele elementului pot fi editate direct in HTML.");
+  classStatus = $state("");
   imageSourceValue = $state("");
-  imageStatus = $state("Sursa imaginii poate fi editata direct in HTML.");
+  imageStatus = $state("");
   pendingTag = $state<string | null>(null);
   pendingTagOriginal = $state<string | null>(null);
 	  pendingTagSourceLocation = $state<SourceEditLocation | null>(null);
   tagStatus = $state("");
-  structureStatus = $state("Operatiile structurale se aplica pe pagina HTML activa.");
+  structureStatus = $state("");
   htmlPending = $state<Record<HtmlPendingArea, boolean>>(createEmptyHtmlPending());
   inspectorPending = $state<Record<InspectorPendingArea, boolean>>(createEmptyInspectorPending());
   inspectorPendingSources = createInspectorPendingSourceRegistry();
@@ -584,7 +631,9 @@ export class AppState {
           },
         );
         if (result.status !== "committed" && result.status !== "noop") {
-          throw new Error(result.reason ?? `Confirmarea draftului de text a fost ${result.status}.`);
+          throw new Error(result.reason ?? t("workbench-text-draft-status", {
+            status: result.status,
+          }));
         }
       },
       onError: (error, task) => {
@@ -594,7 +643,9 @@ export class AppState {
           || task.projectSessionEpoch !== this.projectSessionEpoch
         ) return;
         this.setGlobalStatus(
-          `Draft-ul de text nu a putut fi confirmat de kernel: ${error instanceof Error ? error.message : String(error)}`,
+          t("workbench-text-draft-kernel-failed", {
+            message: error instanceof Error ? error.message : String(error),
+          }),
           "error",
         );
       },
@@ -614,7 +665,6 @@ export class AppState {
   overrideRules = $state<Record<string, EditableStyles>>({});
   variableOverrides = $state<Record<string, string>>({});
   targetCssFile = $state<string>("styles.css");
-  activeCssSelector = $state("");
   liveCssById = $state<Record<string, string>>({});
   inspectorLiveCssEpoch = $state(0);
   inspectorLiveCssIdentity = $state<InspectorLiveCssIdentity | null>(null);
@@ -630,13 +680,18 @@ export class AppState {
   kernelUndoRedoFrontendLeaseActive = $state(false);
   htmlMutationRevision = 0;
 
-  // ── Save / project state ──
-  saveState = $state<SaveState>("idle");
-  saveStatus = $state("Nicio modificare salvata in aceasta sesiune.");
+  // ── Global application status / project state ──
+  globalStatusEvents = $state<GlobalStatusEvent[]>([]);
+  globalStatusRevision = 0;
+  globalStatusSequence = 0;
+  globalStatusExpiryTimer: number | null = null;
+  globalStatusKernelTail: Promise<void> = Promise.resolve();
   projectWorkspaceSnapshot = $state<ProjectWorkspaceSnapshot | null>(null);
   projectAuditSnapshot = $state<ProjectAuditSnapshot | null>(null);
   projectAuditLoading = $state(false);
   projectAuditError = $state("");
+  auditWorkspaceView = $state<"overview" | "runtime">("overview");
+  auditObservabilityFocusSerial = $state(0);
   private projectAuditRequestSerial = 0;
   private projectAuditRequestKey = "";
   private projectAuditRequest: Promise<ProjectAuditSnapshot | null> | null = null;
@@ -647,12 +702,30 @@ export class AppState {
   private designClassInventoryRequestKey = "";
   private designClassInventoryRequest: Promise<DesignClassInventorySnapshot | null> | null = null;
   workbenchSnapshot = $state<WorkbenchSnapshot | null>(null);
+  fileExplorerSnapshot = $state<FileExplorerSnapshot | null>(null);
+  fileExplorerLoading = $state(false);
+  fileExplorerError = $state("");
+  private fileExplorerRequestSerial = 0;
   jsRefreshToken = $state(0);
   scannedProject = $state<ProjectScan | null>(null);
+  startupFlow = $state<StartupFlowSnapshot>({
+    schemaVersion: 1,
+    revision: 1,
+    stage: "idle",
+    candidate: null,
+    diagnostics: [],
+  });
+  startupCreationCatalog = $state<StartupCreationCatalog | null>(null);
+  startupCreationPlan = $state<StartupCreationPlan | null>(null);
+  startupSelectedOptionId = $state<string | null>(null);
+  startupPending = $state(false);
+  startupError = $state("");
   projectOpenRecoveryDecisionRequest = $state<ProjectOpenRecoveryDecisionRequest | null>(null);
   projectTransitionDecisionRequest = $state<ProjectTransitionDecisionRequest | null>(null);
   sourceGraph = $state<SourceGraph | null>(null);
   sourceGraphLoadSerial = 0;
+  sourceGraphProjectionStatus = $state<WorkspaceDerivedProjectionStatus>("deferred");
+  sourceGraphWorkspaceRevision = $state<number | null>(null);
   scssVariables = $state<ScssVariable[]>([]);
   projectStatus = $state("");
   cachebustAssets = $state(false);
@@ -665,6 +738,17 @@ export class AppState {
   previewWorkspaceRevision = $state<string | null>(null);
   pendingCanvasProjection = $state<CanvasProjectionPlan | null>(null);
   activeCanvasIdentity = $state<CanvasProjectionIdentity | null>(null);
+  editorNavigationSnapshot = $state<EditorNavigationSnapshot | null>(null);
+  editorNavigationLoading = $state(false);
+  editorNavigationError = $state("");
+  editorEditScopeGrant = $state<EditScopeGrant | null>(null);
+  editorEditScopeId = $state<string | null>(null);
+  selectionSnapshot = $state<SelectionSnapshot | null>(null);
+  inspectorSelectionSummary = $state<InspectorSelectionSummarySnapshot | null>(null);
+  hoverSnapshot = $state<HoverSnapshot | null>(null);
+  private editorNavigationRequestSerial = 0;
+  private selectionCoordinatorRequestSerial = 0;
+  private hoverCoordinatorRequestSerial = 0;
   activeCanvasUrl = $state("about:blank");
   interactivePreviewEnabled = $state(false);
   interactivePreviewDomNodes = $state<InteractivePreviewDomNode[]>([]);
@@ -674,13 +758,13 @@ export class AppState {
   browserPreviewRoute = $state("/");
   previewDocumentMarkup = $state<string | null>(null);
   pageSections = $state<PageSection[]>([]);
-  pendingSelectionSelector = $state<string | null>(null);
   latestPreviewMessageRevision = $state(0);
   controlledPreview = $state<ControlledPreviewState>(createControlledPreviewState());
   zolaValidationTimer: number | null = null;
   zolaValidationSerial = 0;
   templateWorkbenchPlan = $state<TemplateWorkbenchPlan | null>(null);
   templateWorkbenchPreferredPagePath = $state<string | null>(null);
+  templateWorkbenchPreferredRoute = $state<string | null>(null);
   templateWorkbenchActive = $state(false);
   templateWorkbenchTarget = $state<string | null>(null);
   templateWorkbenchReturnPreviewPath = $state<string | null>(null);
@@ -689,8 +773,6 @@ export class AppState {
   // ── UI state ──
   centerView = $state<CenterView>("preview");
   codeRevealTarget = $state<CodeRevealTarget>({ kind: "html" });
-  codeSelectedCssTarget = $state<{ selector: string; file: string; revision: number } | null>(null);
-  codeSelectedCssTargetRevision = 0;
   cssSourceRevision = $state(0);
   codeSelectionRevealRequestId = $state(0);
   codeSelectionRevealConsumedId = 0;
@@ -701,6 +783,9 @@ export class AppState {
   previewWidthPx = $state(1_440);
   previewRulers = $state(true);
   uiTheme = $state<"dark" | "light">(initialUiTheme());
+  uiLocale = $state("en-US");
+  uiDirection = $state<"ltr" | "rtl">("ltr");
+  uiAccent = $state("#1d7f6a");
   leftPaneWidth = $state(DEFAULT_LEFT_PANE_WIDTH);
   rightPaneWidth = $state(DEFAULT_RIGHT_PANE_WIDTH);
   terminalPaneHeight = $state(defaultTerminalPaneHeight);
@@ -715,6 +800,8 @@ export class AppState {
   private workbenchController: WorkbenchProjectionController;
   private workbenchHydratedRuntimeSessionId = "";
   private applicationSettingsSaveTail: Promise<void> = Promise.resolve();
+  private applicationSettingsRefreshTail: Promise<void> = Promise.resolve();
+  systemPreferencesUnlisten: (() => void) | null = null;
 
   // ── Terminal state ──
   terminalPaneOpen = $state(false);
@@ -754,7 +841,6 @@ export class AppState {
   domTreeFetchTimer: number | null = null;
   activeResizeCleanup: (() => void) | null = null;
   appliedTerminalSessionRuntimeVersion = $state(0);
-  statusDismissTimer: number | null = null;
   nativeWindowClosePending = false;
   nativeWindowCloseInProgress = false;
 
@@ -797,8 +883,101 @@ export class AppState {
   isActivePreviewHtmlSource = $derived(deriveIsActivePreviewHtmlSource(this));
   selectedSourceEditTarget = $derived(deriveSelectedSourceEditTarget(this));
   selectedTemplateSourceNode = $derived(deriveSelectedTemplateSourceNode(this));
-  previewSelection = $derived<PreviewSelectionState>(this.derivePreviewSelectionState());
-  selectedSessionSourceLocation = $derived(deriveSelectedSessionSourceLocation(this));
+  selectedEditorNavigationNode = $derived(deriveSelectedEditorNavigationNode(this));
+  coordinatedElementSelection = $derived.by<CoordinatedElementSelection | null>(() => {
+    const accepted = this.acceptedSelectionObservation;
+    const semantic = this.selectionSnapshot;
+    if (
+      !accepted
+      || !semantic
+      || semantic.resolution !== "resolved"
+      || (
+        semantic.subject?.kind !== "htmlElement"
+        && semantic.subject?.kind !== "runtimeElement"
+      )
+      || accepted.selectionRevision !== semantic.selectionRevision
+      || !canvasIdentityEquals(accepted.canvasIdentity, semantic.canvasIdentity)
+      || !canvasIdentityEquals(this.activeCanvasIdentity, semantic.canvasIdentity)
+      || accepted.renderInstanceId !== semantic.anchor?.renderInstanceId
+    ) return null;
+    const sourceReference =
+      semantic.provenance?.definition
+      ?? semantic.provenance?.composition
+      ?? null;
+    return {
+      snapshot: semantic,
+      documentEpoch: accepted.documentEpoch,
+      renderInstanceId: accepted.renderInstanceId,
+      sourceNodeId: semantic.anchor?.sourceNodeId ?? null,
+      sourceLocation: sourceReference?.range
+        ? {
+            file: sourceReference.file,
+            line: sourceReference.range.line,
+            column: sourceReference.range.column,
+          }
+        : semantic.anchor?.file && semantic.anchor.range
+          ? {
+              file: semantic.anchor.file,
+              line: semantic.anchor.range.line,
+              column: semantic.anchor.range.column,
+            }
+        : null,
+      observation: accepted.observation,
+    };
+  });
+  inspectorHtmlPhysicalFacts = $derived.by<InspectorHtmlPhysicalFacts | null>(() => {
+    const coordinated = this.coordinatedElementSelection;
+    const summary = this.inspectorSelectionSummary;
+    if (
+      !coordinated
+      || summary?.state !== "resolved"
+      || summary.selectionRevision !== coordinated.snapshot.selectionRevision
+      || summary.renderInstanceId !== coordinated.renderInstanceId
+    ) return null;
+    const observation = coordinated.observation;
+    return {
+      selectionRevision: summary.selectionRevision,
+      renderInstanceId: coordinated.renderInstanceId,
+      rect: { ...observation.rect },
+      hasChildElements: observation.hasChildElements,
+      childElementCount: observation.childNodes.length,
+      zolaImage: observation.zolaImage ? { ...observation.zolaImage } : null,
+    };
+  });
+  inspectorBlockSelectionContext = $derived.by<BlockSelectionContext | null>(() => {
+    const coordinated = this.coordinatedElementSelection;
+    const summary = this.inspectorSelectionSummary;
+    if (
+      !coordinated
+      || summary?.state !== "resolved"
+      || summary.selectionRevision !== coordinated.snapshot.selectionRevision
+      || summary.renderInstanceId !== coordinated.renderInstanceId
+    ) return null;
+    const physical = coordinated.observation.blockContext;
+    const bounded = summary?.blockContext ?? null;
+    if (
+      !physical
+      || !bounded
+      || bounded.providerId !== physical.providerId
+      || bounded.markerKind !== physical.markerKind
+      || bounded.rootTag !== physical.rootTag
+    ) return null;
+    return {
+      ...physical,
+      rootSourceId: null,
+      rootTemplateSourceId: null,
+      rootSessionId: coordinated.snapshot.runtimeSessionId,
+    };
+  });
+  selectionEpoch = $derived(this.selectionSnapshot?.selectionRevision ?? 0);
+  activeCssSelector = $derived(
+    this.selectionSnapshot?.focus.kind === "cssRule"
+      || this.selectionSnapshot?.focus.kind === "cssProperty"
+      ? this.selectionSnapshot.focus.selector
+      : "",
+  );
+  selectedSemanticSourceLocation = $derived(deriveSelectedSemanticSourceLocation(this));
+  workbenchSourceStatus = $derived(deriveWorkbenchSourceStatus(this));
   canEditHtmlStructure = $derived(deriveCanEditHtml(this));
   canEditHtml = $derived(deriveCanEditHtml(this));
   saveRequest = $state(0);
@@ -809,9 +988,9 @@ export class AppState {
   saveHasPending = $derived(this.globalDirtyState.canSave);
   immediateDiskOperationBlockedReason = $derived(
     this.aiEditLeaseFrontendLockActive
-      ? "Operațiile pe surse sunt blocate cât timp AI deține sau reconciliază autoritatea de editare."
+      ? t("workbench-source-operations-ai-blocked")
       : this.externalDiskState.workspaceProjectionRecoveryRequired
-      ? "Operațiile pe disc sunt blocate până la reîncărcarea explicită a proiecției externe."
+      ? t("workbench-disk-operations-projection-blocked")
       : this.globalDirtyState.immediateDiskOperationBlockedReason,
   );
   canAddChildToSelectedElement = $derived(deriveCanAddChildToSelectedElement(this));
@@ -834,6 +1013,9 @@ export class AppState {
         await this.finishActiveHtmlTextEditSession();
       },
     );
+    registerEditFlushHandler("motion-v2-project-workspace", async () => {
+      await this.motionWorkspace.flush();
+    });
     registerAppEffects(this);
   }
 
@@ -853,10 +1035,179 @@ export class AppState {
     return this.workbenchController.refresh();
   }
 
+  async refreshFileExplorerSnapshot() {
+    const workspace = this.projectWorkspaceSnapshot;
+    if (
+      !workspace
+      || workspace.projectRoot !== this.sessionProjectRoot
+      || workspace.runtimeSessionId !== this.kernelProjectSessionId
+    ) {
+      this.fileExplorerRequestSerial += 1;
+      this.fileExplorerSnapshot = null;
+      this.fileExplorerLoading = false;
+      this.fileExplorerError = "";
+      return null;
+    }
+    const serial = ++this.fileExplorerRequestSerial;
+    const identity = {
+      expectedProjectRoot: workspace.projectRoot,
+      expectedSessionId: workspace.runtimeSessionId,
+      expectedRevision: workspace.revision,
+    };
+    this.fileExplorerLoading = true;
+    try {
+      const snapshot = await readFileExplorerSnapshot(identity);
+      if (
+        serial !== this.fileExplorerRequestSerial
+        || this.sessionProjectRoot !== identity.expectedProjectRoot
+        || this.kernelProjectSessionId !== identity.expectedSessionId
+        || this.projectWorkspaceSnapshot?.revision !== identity.expectedRevision
+      ) return this.fileExplorerSnapshot;
+      this.fileExplorerSnapshot = snapshot;
+      this.fileExplorerError = "";
+      if (this.workbenchSnapshot?.revision !== snapshot.workbenchRevision) {
+        await this.refreshWorkbenchState();
+        if (
+          serial !== this.fileExplorerRequestSerial
+          || this.sessionProjectRoot !== identity.expectedProjectRoot
+          || this.kernelProjectSessionId !== identity.expectedSessionId
+        ) return this.fileExplorerSnapshot;
+      }
+      return snapshot;
+    } catch (error) {
+      if (serial !== this.fileExplorerRequestSerial) return this.fileExplorerSnapshot;
+      this.fileExplorerError = errorMessage(error);
+      return null;
+    } finally {
+      if (serial === this.fileExplorerRequestSerial) this.fileExplorerLoading = false;
+    }
+  }
+
+  async selectFileExplorerEntry(entryId: string) {
+    const explorer = this.fileExplorerSnapshot;
+    const workspace = this.projectWorkspaceSnapshot;
+    if (
+      !explorer
+      || !workspace
+      || explorer.projectRoot !== workspace.projectRoot
+      || explorer.runtimeSessionId !== workspace.runtimeSessionId
+      || explorer.workspaceRevision !== workspace.revision
+    ) {
+      await this.refreshFileExplorerSnapshot();
+      return;
+    }
+    try {
+      const receipt = await selectFileExplorerEntryInRust({
+        identity: {
+          expectedProjectRoot: explorer.projectRoot,
+          expectedSessionId: explorer.runtimeSessionId,
+          expectedRevision: explorer.workspaceRevision,
+        },
+        expectedWorkbenchRevision: explorer.workbenchRevision,
+        entryId,
+      });
+      if (
+        this.sessionProjectRoot !== receipt.projectRoot
+        || this.kernelProjectSessionId !== receipt.runtimeSessionId
+        || this.projectWorkspaceSnapshot?.revision !== receipt.workspaceRevision
+      ) return;
+      this.fileExplorerSnapshot = receipt.snapshot;
+      this.workbenchSnapshot = receipt.workbench.snapshot;
+      this.fileExplorerError = "";
+      const selection = receipt.snapshot.selectedEntry;
+      if (!selection || selection.kind !== "text") return;
+      const file = this.scannedProject?.files.find(
+        (candidate) => candidate.relativePath === selection.relativePath,
+      );
+      if (file) {
+        await this.loadScannedProjectFile(file, { syncWorkbench: false });
+      }
+    } catch (error) {
+      this.fileExplorerError = errorMessage(error);
+      this.setGlobalStatus(this.fileExplorerError, "error");
+    }
+  }
+
+  async planFileExplorerOperation(
+    operation: FileExplorerOperationRequest,
+  ): Promise<FileExplorerOperationPlan> {
+    const explorer = this.fileExplorerSnapshot;
+    const workspace = this.projectWorkspaceSnapshot;
+    if (
+      !explorer
+      || !workspace
+      || explorer.projectRoot !== workspace.projectRoot
+      || explorer.runtimeSessionId !== workspace.runtimeSessionId
+      || explorer.workspaceRevision !== workspace.revision
+    ) {
+      throw new Error(t("project-files-projection-unavailable"));
+    }
+    return planFileExplorerOperationInRust({
+      identity: {
+        expectedProjectRoot: explorer.projectRoot,
+        expectedSessionId: explorer.runtimeSessionId,
+        expectedRevision: explorer.workspaceRevision,
+      },
+      expectedWorkbenchRevision: explorer.workbenchRevision,
+      operation,
+    });
+  }
+
+  async commitFileExplorerOperation(
+    plan: FileExplorerOperationPlan,
+  ): Promise<FileExplorerCommitReceipt> {
+    if (!plan.allowed || !plan.commitToken) {
+      throw new Error(plan.diagnostic ?? t("project-files-plan-blocked"));
+    }
+    const workspace = this.projectWorkspaceSnapshot;
+    if (
+      !workspace
+      || workspace.projectRoot !== plan.projectRoot
+      || workspace.runtimeSessionId !== plan.runtimeSessionId
+      || workspace.revision !== plan.workspaceRevision
+      || workspace.diskGeneration !== plan.acceptedDiskGeneration
+    ) {
+      throw new Error(t("project-files-plan-stale"));
+    }
+    const receipt = await commitFileExplorerOperationInRust({
+      identity: {
+        expectedProjectRoot: plan.projectRoot,
+        expectedSessionId: plan.runtimeSessionId,
+        expectedRevision: plan.workspaceRevision,
+      },
+      expectedAcceptedDiskGeneration: plan.acceptedDiskGeneration,
+      commitToken: plan.commitToken,
+    });
+    if (
+      this.sessionProjectRoot !== receipt.projectRoot
+      || this.kernelProjectSessionId !== receipt.runtimeSessionId
+    ) {
+      return receipt;
+    }
+    const selected = receipt.snapshot.selectedEntry;
+    await settleProjectWorkspaceMutation(this, receipt.mutation, {
+      preferredRelativePath: selected?.kind === "text"
+        ? selected.relativePath
+        : this.activeScannedPath,
+      warningLabel: t("project-files-operation"),
+    });
+    if (
+      this.sessionProjectRoot === receipt.projectRoot
+      && this.kernelProjectSessionId === receipt.runtimeSessionId
+      && this.projectWorkspaceSnapshot?.revision === receipt.mutation.workspace.revision
+    ) {
+      this.workbenchSnapshot = receipt.workbench.snapshot;
+      this.fileExplorerSnapshot = receipt.snapshot;
+      this.fileExplorerError = "";
+    }
+    this.setGlobalStatus(t("project-files-mutation-staged"), "unsaved");
+    return receipt;
+  }
+
   async restoreWorkbenchState() {
     const projectRoot = this.sessionProjectRoot;
     const runtimeSessionId = this.kernelProjectSessionId;
-    const snapshot = await this.workbenchController.refresh();
+    let snapshot = await this.workbenchController.refresh();
     if (
       !snapshot
       || !projectRoot
@@ -865,6 +1216,19 @@ export class AppState {
       || snapshot.runtimeSessionId !== runtimeSessionId
       || this.scannedProject?.root !== projectRoot
     ) return snapshot;
+
+    if (snapshot.bottomPanel.activeView !== "terminal") {
+      const receipt = await this.workbenchController.apply({
+        kind: "set_bottom_panel",
+        open: false,
+        activeView: "terminal",
+      });
+      if (
+        this.sessionProjectRoot !== projectRoot
+        || this.kernelProjectSessionId !== runtimeSessionId
+      ) return this.workbenchSnapshot;
+      snapshot = receipt.snapshot;
+    }
 
     this.projectWorkbenchCanvas(snapshot.canvasViewport);
 
@@ -881,16 +1245,19 @@ export class AppState {
       : null;
 
     if (document && !file) {
-      this.notify({
+      this.escalateGlobalStatus({
         id: "workbench.restore.missing-document",
         level: "warning",
-        title: "Documentul restaurat nu mai există",
+        title: t("workbench-restored-document-missing"),
         message: document.relativePath,
       });
     } else if (file) {
       await this.loadScannedProjectFile(file, {
         strict: true,
         skipDraftFlush: true,
+        activateTemplateWorkbench: snapshot.activeActivity === "editor"
+          && !this.canvasSurfaceResumeRequired
+          && this.hasMountedCanvasProjectionSurface(),
         syncWorkbench: false,
       });
       if (
@@ -978,10 +1345,10 @@ export class AppState {
       this.clearNotification("workbench.canvas-viewport");
       return receipt;
     } catch (error) {
-      this.notify({
+      this.escalateGlobalStatus({
         id: "workbench.canvas-viewport",
         level: "warning",
-        title: "Canvas-ul responsive nu a putut fi actualizat",
+        title: t("workbench-canvas-viewport-failed"),
         message: errorMessage(error),
       });
       return null;
@@ -1006,7 +1373,7 @@ export class AppState {
       }
 
       if (!this.activeScannedPath) {
-        throw new Error("Deschide un document înainte de a activa split view.");
+        throw new Error(t("workbench-split-document-required"));
       }
       const secondarySurface: WorkbenchSurface = this.sourceLanguage === "markdown"
         ? "markdown"
@@ -1020,10 +1387,10 @@ export class AppState {
       this.clearNotification("workbench.split");
       return receipt;
     } catch (error) {
-      this.notify({
+      this.escalateGlobalStatus({
         id: "workbench.split",
         level: "warning",
-        title: "Split view nu a putut fi actualizat",
+        title: t("workbench-split-update-failed"),
         message: errorMessage(error),
       });
       return null;
@@ -1039,10 +1406,10 @@ export class AppState {
       this.clearNotification("workbench.split-ratio");
       return receipt;
     } catch (error) {
-      this.notify({
+      this.escalateGlobalStatus({
         id: "workbench.split-ratio",
         level: "warning",
-        title: "Dividerul split nu a putut fi salvat",
+        title: t("workbench-split-ratio-save-failed"),
         message: errorMessage(error),
       });
       return null;
@@ -1064,10 +1431,10 @@ export class AppState {
       this.clearNotification("workbench.bottom-panel");
       return true;
     } catch (error) {
-      this.notify({
+      this.escalateGlobalStatus({
         id: "workbench.bottom-panel",
         level: "warning",
-        title: "Panoul inferior nu a putut fi actualizat",
+        title: t("workbench-bottom-panel-update-failed"),
         message: errorMessage(error),
       });
       return false;
@@ -1102,6 +1469,18 @@ export class AppState {
     }
     this.projectWorkbenchActivity(activity, document?.surface ?? "visual");
     return receipt;
+  }
+
+  async openAuditWorkspace(
+    view: "overview" | "runtime",
+    focusObservability = false,
+  ) {
+    this.auditWorkspaceView = view;
+    if (focusObservability) this.auditObservabilityFocusSerial += 1;
+    if (this.terminalPaneOpen) {
+      await this.setWorkbenchBottomPanel(false, "terminal");
+    }
+    return this.setWorkbenchActivity("audit");
   }
 
   private projectWorkbenchActivity(
@@ -1149,10 +1528,6 @@ export class AppState {
     this.projectWorkspaceMutationEpoch += 1;
   }
 
-  markSelectionMutation() {
-    this.selectionEpoch += 1;
-  }
-
   quiesceExternalReconcileInteractions() {
     dispatchExternalReconcileInteractionBarrier();
   }
@@ -1183,7 +1558,7 @@ export class AppState {
    */
   async beginPreviewStructuralWriteBoundary() {
     if (this.previewStructuralWriteBoundaryActive) {
-      throw new Error("O altă mutație structurală deține deja bariera monitorului de disc.");
+      throw new Error(t("workbench-structural-boundary-busy"));
     }
     const resumesMonitoring = !this.externalDiskSuspended;
     try {
@@ -1198,7 +1573,7 @@ export class AppState {
         || this.externalDiskState.workspaceProjectionRecoveryRequired
       ) {
         throw new Error(
-          "Monitorul discului nu a ajuns la o graniță curată înaintea mutației structurale.",
+          t("workbench-structural-boundary-disk-dirty"),
         );
       }
       this.previewStructuralWriteBoundaryResumesMonitoring = resumesMonitoring;
@@ -1246,12 +1621,20 @@ export class AppState {
     markWorkspaceProjectionRecoveryRequiredFromController(this.externalDiskControllerHost(), message);
   }
 
-  setGlobalStatus(text: string, kind: SaveState) {
-    setGlobalStatusFromAppSessionController(this, text, kind);
+  setGlobalStatus(
+    text: string,
+    kind: GlobalStatusKind,
+    options: GlobalStatusPublishOptions = {},
+  ) {
+    setGlobalStatusFromAppSessionController(this, text, kind, options);
   }
 
-  notify(notification: Omit<AppNotification, "createdAt">) {
-    notifyFromController(this, notification);
+  refreshGlobalStatusFromKernel() {
+    return refreshGlobalStatusFromKernelFromController(this);
+  }
+
+  escalateGlobalStatus(notification: GlobalStatusEscalationRequest) {
+    escalateGlobalStatusFromController(this, notification);
   }
 
   clearNotification(id: string) {
@@ -1270,7 +1653,10 @@ export class AppState {
       // rejected command here so recovery failures remain visible instead of
       // becoming an unhandled promise that looks like a dead button.
       this.setGlobalStatus(
-        `Acțiunea „${notification.actionLabel ?? actionId}” a eșuat: ${errorMessage(error)}`,
+        t("workbench-notification-action-failed", {
+          action: notification.actionLabel ?? actionId,
+          message: errorMessage(error),
+        }),
         "error",
       );
     }
@@ -1336,7 +1722,7 @@ export class AppState {
           || snapshot.runtimeSessionId !== runtimeSessionId
           || snapshot.workspaceRevision !== workspaceRevision
         ) {
-          throw new Error("Auditul Rust a răspuns pentru altă identitate a sesiunii proiectului.");
+          throw new Error(t("workbench-audit-session-mismatch"));
         }
         this.projectAuditSnapshot = snapshot;
         return snapshot;
@@ -1398,7 +1784,7 @@ export class AppState {
           snapshot.projectRoot !== projectRoot
           || snapshot.runtimeSessionId !== runtimeSessionId
           || snapshot.workspaceRevision !== workspaceRevision
-        ) throw new Error("Inventarul de clase aparține altei revizii a sesiunii proiectului.");
+        ) throw new Error(t("workbench-class-inventory-revision-mismatch"));
         this.designClassInventory = snapshot;
         return snapshot;
       } catch (error) {
@@ -1419,6 +1805,10 @@ export class AppState {
 
   statusControllerHost(): StatusControllerHost {
     return this;
+  }
+
+  get currentGlobalStatus() {
+    return currentGlobalStatusFromController(this.statusControllerHost());
   }
 
   setPreviewZoom(value: number) {
@@ -1486,6 +1876,27 @@ export class AppState {
     await openProjectFolderFromController(this.projectControllerHost());
   }
 
+  async refreshStartupFlow() {
+    this.startupFlow = await readStartupFlow();
+    return this.startupFlow;
+  }
+
+  selectStartupCreationOption(optionId: string) {
+    selectStartupCreationOptionFromController(this.projectControllerHost(), optionId);
+  }
+
+  async planStartupProject() {
+    await planStartupProjectFromController(this.projectControllerHost());
+  }
+
+  cancelStartupCreationPlan() {
+    cancelStartupCreationPlanFromController(this.projectControllerHost());
+  }
+
+  async applyStartupProject() {
+    await applyStartupProjectFromController(this.projectControllerHost());
+  }
+
   cancelProjectOpenRecoveryDecision(requestId: string) {
     cancelProjectOpenRecoveryDecisionFromController(this.projectControllerHost(), requestId);
   }
@@ -1502,7 +1913,7 @@ export class AppState {
     this.projectTransitionDecisionRequest = null;
     cancelPendingNativeWindowClose(this);
     this.clearNotification(PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID);
-    this.setGlobalStatus("Tranziția proiectului a fost anulată de operator.", "idle");
+    this.setGlobalStatus(t("workbench-transition-cancelled"), "idle");
   }
 
   async confirmProjectTransitionOperatorDecision(requestId: string, diagnostic: string) {
@@ -1524,6 +1935,7 @@ export class AppState {
     );
     if (closed && !this.scannedProject) {
       this.clearClosedProjectRuntimeState();
+      await this.refreshStartupFlow();
       await closeNativeWindowIfProjectClosed(this);
     }
     return closed;
@@ -1538,15 +1950,19 @@ export class AppState {
   }
 
   clearClosedProjectRuntimeState() {
+    this.applicationSurface = "workbench";
     this.terminalController.destroyAll();
     this.terminalTabs = initialTerminalTabs();
     this.activeTerminalTabId = "terminal-shell-1";
     this.terminalTabSerial = 1;
     this.terminalPaneOpen = false;
-  }
-
-  async initZolaProject(themeId: string) {
-    await initZolaProjectFromController(this.projectControllerHost(), themeId);
+    this.auditWorkspaceView = "overview";
+    this.auditObservabilityFocusSerial = 0;
+    this.startupCreationCatalog = null;
+    this.startupCreationPlan = null;
+    this.startupSelectedOptionId = null;
+    this.startupPending = false;
+    this.startupError = "";
   }
 
   resetProjectScopedState() {
@@ -1557,7 +1973,7 @@ export class AppState {
 
   async rescanCurrentProject(
     preferredRelativePath: string | null = this.activeScannedPath,
-    options: { strict?: boolean } = {},
+    options: { strict?: boolean; deferPreviewRefresh?: boolean } = {},
   ) {
     await rescanCurrentProjectFromController(
       this.projectControllerHost(),
@@ -1566,15 +1982,11 @@ export class AppState {
     );
   }
 
-  async rescanCurrentProjectWithinStructuralLane(
-    lease: import("$lib/kernel/preview-structural-lane").PreviewStructuralSessionLease,
-    preferredRelativePath: string | null = this.activeScannedPath,
-    options: { strict?: boolean; deferPreviewRefresh?: boolean } = {},
+  async reconcileWorkspaceDerivedState(
+    options: import("$lib/state/project-controller").ReconcileWorkspaceDerivedStateOptions,
   ) {
-    await rescanCurrentProjectWithinStructuralLaneFromController(
+    return await reconcileWorkspaceDerivedStateFromController(
       this.projectControllerHost(),
-      lease,
-      preferredRelativePath,
       options,
     );
   }
@@ -1620,6 +2032,8 @@ export class AppState {
       skipDraftFlush?: boolean;
       deferPreviewRefresh?: boolean;
       activateTemplateWorkbench?: boolean;
+      preferredTemplatePagePath?: string | null;
+      preferredTemplateRoute?: string | null;
       syncWorkbench?: boolean;
     } = {},
   ) {
@@ -1637,11 +2051,14 @@ export class AppState {
       try {
         await this.workbenchController.openDocument(file, this.centerView);
         this.clearNotification("workbench.document-sync");
+        if (this.activeCanvasIdentity) {
+          await this.refreshEditorNavigationSnapshot();
+        }
       } catch (error) {
-        this.notify({
+        this.escalateGlobalStatus({
           id: "workbench.document-sync",
           level: "warning",
-          title: "Workbench nesincronizat",
+          title: t("workbench-document-sync-failed"),
           message: errorMessage(error),
         });
       }
@@ -1655,6 +2072,7 @@ export class AppState {
     options: {
       deferPreviewRefresh?: boolean;
       minimumWorkspaceRevision?: number;
+      preferredRoute?: string | null;
       strict?: boolean;
     } = {},
   ) {
@@ -1678,14 +2096,18 @@ export class AppState {
       : null;
     if (!project || !templateFile || this.activeScannedPath !== target) {
       throw new Error(
-        "Context de template activ nu mai are un template selectat în ProjectSession.",
+        t("workbench-template-context-missing"),
       );
     }
     await this.updateTemplateWorkbenchContext(
       project,
       templateFile,
       this.templateWorkbenchPreferredPagePath,
-      { minimumWorkspaceRevision, strict: true },
+      {
+        minimumWorkspaceRevision,
+        preferredRoute: this.templateWorkbenchPreferredRoute,
+        strict: true,
+      },
     );
     return this.templateWorkbenchActive
       && this.activeCanvasIdentity?.projectRoot === this.sessionProjectRoot
@@ -1742,7 +2164,7 @@ export class AppState {
         "canvas_patch_rolled_back",
         identity,
         Math.max(0, performance.now() - startedAt),
-        `CanvasPatch ${patch.patchId} a fost retras după eșecul proiecției canonice.`,
+        t("workbench-canvas-patch-withdrawn", { patch: patch.patchId }),
       );
     }
     return receipt;
@@ -1754,6 +2176,98 @@ export class AppState {
 
   prepareCanvasProjectionNavigation(plan: CanvasProjectionPlan) {
     return prepareCanvasProjectionNavigationFromController(this.previewControllerHost(), plan);
+  }
+
+  hasMountedCanvasProjectionSurface() {
+    return hasMountedCanvasProjectionSurfaceFromController(this.previewControllerHost());
+  }
+
+  mountCanvasProjectionSurface(frame: HTMLIFrameElement) {
+    const replacedSurface = Boolean(
+      this.canvasSurfaceElement && this.canvasSurfaceElement !== frame,
+    );
+    mountCanvasProjectionSurfaceFromController(this.previewControllerHost(), frame);
+    if (replacedSurface) this.deferWorkspacePreviewProjection();
+  }
+
+  unmountCanvasProjectionSurface(frame: HTMLIFrameElement) {
+    if (!unmountCanvasProjectionSurfaceFromController(this.previewControllerHost(), frame)) return;
+    this.deferWorkspacePreviewProjection();
+  }
+
+  deferWorkspacePreviewProjection() {
+    if (this.scannedProject) this.canvasSurfaceResumeRequired = true;
+  }
+
+  markCanvasProjectionSurfaceCurrent() {
+    this.canvasSurfaceResumeRequired = false;
+  }
+
+  onCanvasProjectionSurfaceLoaded(frame: HTMLIFrameElement) {
+    if (
+      this.canvasSurfaceElement !== frame
+      || !this.canvasSurfaceResumeRequired
+      || this.canvasProjectionConfirmation
+      || this.pendingCanvasProjection
+      || !this.canProjectWorkspacePreview()
+      || this.activeVersionPreview
+    ) return;
+    if (this.canvasSurfaceResumePromise) return;
+
+    const surfaceGeneration = this.canvasSurfaceGeneration;
+    const projectRoot = this.sessionProjectRoot;
+    const runtimeSessionId = this.kernelProjectSessionId;
+    const resume = (async () => {
+      const outcome = await projectLatestProjectWorkspacePreview(this, {
+        reason: "session-refresh",
+      });
+      if (
+        this.canvasSurfaceGeneration !== surfaceGeneration
+        || this.canvasSurfaceElement !== frame
+        || this.sessionProjectRoot !== projectRoot
+        || this.kernelProjectSessionId !== runtimeSessionId
+      ) return;
+      if (outcome.status !== "published" && outcome.status !== "already_current") return;
+      this.markCanvasProjectionSurfaceCurrent();
+      const activeFile = this.scannedProject?.files.find(
+        (file) => file.relativePath === this.activeScannedPath,
+      );
+      if (activeFile?.role === "template" && !this.templateWorkbenchActive) {
+        await this.loadScannedProjectFile(activeFile, {
+          strict: true,
+          skipDraftFlush: true,
+          activateTemplateWorkbench: true,
+          syncWorkbench: false,
+        });
+      }
+    })()
+      .catch((error) => {
+        if (
+          this.canvasSurfaceGeneration === surfaceGeneration
+          && this.canvasSurfaceElement === frame
+          && this.sessionProjectRoot === projectRoot
+          && this.kernelProjectSessionId === runtimeSessionId
+        ) {
+          this.setGlobalStatus(
+            t("workbench-preview-resume-failed", { message: errorMessage(error) }),
+            "error",
+          );
+        }
+      })
+      .finally(() => {
+        if (this.canvasSurfaceResumePromise === resume) {
+          this.canvasSurfaceResumePromise = null;
+          const currentSurface = this.canvasSurfaceElement;
+          if (
+            currentSurface
+            && this.canvasSurfaceResumeRequired
+            && this.canvasSurfaceGeneration !== surfaceGeneration
+          ) {
+            queueMicrotask(() => this.onCanvasProjectionSurfaceLoaded(currentSurface));
+          }
+        }
+      });
+    this.canvasSurfaceResumePromise = resume;
   }
 
   async reconcileTemplateWorkbenchPreviewDocument(
@@ -1797,13 +2311,13 @@ export class AppState {
       return true;
     }
     throw new Error(
-      this.projectStatus || "Previzualizarea nu a confirmat generația curentă a sesiunii proiectului.",
+      this.projectStatus || t("workbench-preview-generation-unconfirmed"),
     );
   }
 
   canProjectWorkspacePreview() {
     return Boolean(
-      this.previewFrame?.contentWindow
+      this.hasMountedCanvasProjectionSurface()
       && this.scannedProject?.previewBaseUrl
       && this.previewSrc
       && this.previewSrc !== "about:blank"
@@ -1823,10 +2337,22 @@ export class AppState {
     this.previewRuntime.reset();
     this.canvasPatchPerformance = this.previewRuntime.canvasPatchPerformance();
     cancelCanvasProjectionConfirmation(this.previewControllerHost());
+    this.canvasSurfaceResumeRequired = false;
+    this.canvasSurfaceResumePromise = null;
     this.pendingCanvasProjection = null;
     this.activeCanvasIdentity = null;
+    this.acceptedSelectionObservation = null;
+    this.inspectorSelectionSummary = null;
+    this.hoverSnapshot = null;
+    this.editorNavigationRequestSerial += 1;
+    this.editorNavigationSnapshot = null;
+    this.editorNavigationLoading = false;
+    this.editorNavigationError = "";
+    this.editorEditScopeGrant = null;
+    this.editorEditScopeId = null;
     this.activeCanvasUrl = "about:blank";
     this.interactivePreviewEnabled = false;
+    this.motionWorkspace.previewMode = "design";
     this.interactivePreviewDomNodes = [];
     invalidatePreviewRefreshLease(this.previewControllerHost());
     invalidatePreviewDomTreeProjection(this.previewControllerHost());
@@ -1855,6 +2381,16 @@ export class AppState {
       && this.previewSrc !== "about:blank",
     );
     if (!this.interactivePreviewEnabled) this.interactivePreviewDomNodes = [];
+  }
+
+  setPreviewExecutionMode(mode: MotionPreviewMode) {
+    this.motionWorkspace.previewMode = mode;
+    if (mode !== "motion") this.motionWorkspace.previewStatus = null;
+    this.setInteractivePreviewEnabled(mode !== "design");
+    if (mode !== "design" && !this.interactivePreviewEnabled) {
+      this.motionWorkspace.previewMode = "design";
+      this.motionWorkspace.previewStatus = null;
+    }
   }
 
   acceptInteractivePreviewDomSnapshot(nodes: InteractivePreviewDomNode[]) {
@@ -1906,12 +2442,12 @@ export class AppState {
         || receipt.identity.previewRevision !== identity.previewRevision
         || receipt.kind !== kind
       ) {
-        throw new Error("Kernelul a confirmat alt eveniment Canvas Runtime.");
+        throw new Error(t("workbench-canvas-event-mismatch"));
       }
     } catch (error) {
       if (this.activeCanvasIdentity?.transactionId !== identity.transactionId) return;
       this.setGlobalStatus(
-        `Observability Canvas Runtime a eșuat: ${errorMessage(error)}`,
+        t("workbench-canvas-observability-failed", { message: errorMessage(error) }),
         "error",
       );
     }
@@ -1949,6 +2485,227 @@ export class AppState {
     return this;
   }
 
+  async refreshEditorNavigationSnapshot(
+    identity = this.activeCanvasIdentity ?? undefined,
+    previewUrl = this.activeCanvasUrl || this.previewSrc,
+  ) {
+    if (!identity) {
+      this.editorNavigationRequestSerial += 1;
+      this.editorNavigationSnapshot = null;
+      this.editorNavigationLoading = false;
+      this.editorNavigationError = "";
+      this.editorEditScopeGrant = null;
+      this.editorEditScopeId = null;
+      this.hoverSnapshot = null;
+      return;
+    }
+    const serial = ++this.editorNavigationRequestSerial;
+    const route = editorNavigationRoute(previewUrl, this.browserPreviewRoute);
+    this.editorNavigationLoading = true;
+    this.editorNavigationError = "";
+    try {
+      const activeDocumentPath = this.activeScannedPath;
+      const previewContextRenderInstanceId =
+        this.coordinatedElementSelection?.renderInstanceId ?? null;
+      const snapshot = await readEditorNavigationSnapshot(
+        identity,
+        route,
+        activeDocumentPath,
+        previewContextRenderInstanceId,
+      );
+      if (
+        serial !== this.editorNavigationRequestSerial
+        || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
+      ) return;
+      this.editorNavigationSnapshot = snapshot;
+      if (
+        this.editorEditScopeGrant
+        && (
+          this.editorEditScopeGrant.projectRoot !== identity.projectRoot
+          || this.editorEditScopeGrant.runtimeSessionId !== identity.runtimeSessionId
+          || this.editorEditScopeGrant.workspaceRevision !== identity.workspaceRevision
+          || this.editorEditScopeGrant.previewRevision !== identity.previewRevision
+          || this.editorEditScopeGrant.canvasTransactionId !== identity.transactionId
+          || this.editorEditScopeGrant.activeDocumentPath
+            !== snapshot.focusedView?.activeDocumentPath
+        )
+      ) {
+        this.editorEditScopeGrant = null;
+        this.editorEditScopeId = null;
+      }
+      await this.rebaseSelectionSnapshot(identity, route);
+    } catch (error) {
+      if (
+        serial !== this.editorNavigationRequestSerial
+        || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
+      ) return;
+      this.editorNavigationSnapshot = null;
+      this.editorNavigationError = errorMessage(error);
+      this.editorEditScopeGrant = null;
+      this.editorEditScopeId = null;
+    } finally {
+      if (serial === this.editorNavigationRequestSerial) {
+        this.editorNavigationLoading = false;
+      }
+    }
+  }
+
+  async applySelectionIntent(intent: SelectionIntent): Promise<SelectionSnapshot | null> {
+    const identity = this.activeCanvasIdentity;
+    if (!identity) return null;
+    const route = editorNavigationRoute(
+      this.activeCanvasUrl || this.previewSrc,
+      this.browserPreviewRoute,
+    );
+    const serial = ++this.selectionCoordinatorRequestSerial;
+    const receipt = await applySelectionIntentInRust(
+      identity,
+      route,
+      this.activeScannedPath,
+      this.selectionSnapshot?.anchor?.renderInstanceId
+        ?? this.coordinatedElementSelection?.renderInstanceId
+        ?? null,
+      intent,
+    );
+    if (
+      serial !== this.selectionCoordinatorRequestSerial
+      || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
+    ) return null;
+    this.projectSelectionCoordinatorSnapshot(
+      receipt.selection,
+      receipt.hover,
+      receipt.inspectorSummary,
+    );
+    if (intent.kind === "setFocus") {
+      projectSelectionSnapshotOnCanvas(this, receipt.selection);
+    }
+    return receipt.selection;
+  }
+
+  async applyHoverIntent(intent: Extract<SelectionIntent, {
+    kind: "setHover" | "clearHover";
+  }>): Promise<HoverSnapshot | null> {
+    const identity = this.activeCanvasIdentity;
+    if (!identity) return null;
+    const route = editorNavigationRoute(
+      this.activeCanvasUrl || this.previewSrc,
+      this.browserPreviewRoute,
+    );
+    const serial = ++this.hoverCoordinatorRequestSerial;
+    const receipt = await applySelectionIntentInRust(
+      identity,
+      route,
+      this.activeScannedPath,
+      this.selectionSnapshot?.anchor?.renderInstanceId
+        ?? this.coordinatedElementSelection?.renderInstanceId
+        ?? null,
+      intent,
+    );
+    if (
+      serial !== this.hoverCoordinatorRequestSerial
+      || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
+    ) return null;
+    this.hoverSnapshot = receipt.hover;
+    this.inspectorSelectionSummary = receipt.inspectorSummary;
+    return receipt.hover;
+  }
+
+  async rebaseSelectionSnapshot(
+    identity = this.activeCanvasIdentity ?? undefined,
+    route = editorNavigationRoute(
+      this.activeCanvasUrl || this.previewSrc,
+      this.browserPreviewRoute,
+    ),
+  ): Promise<SelectionSnapshot | null> {
+    if (!identity) return null;
+    const serial = ++this.selectionCoordinatorRequestSerial;
+    const receipt = await readSelectionSnapshot(
+      identity,
+      route,
+      this.activeScannedPath,
+      this.selectionSnapshot?.anchor?.renderInstanceId
+        ?? this.coordinatedElementSelection?.renderInstanceId
+        ?? null,
+    );
+    if (
+      serial !== this.selectionCoordinatorRequestSerial
+      || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
+    ) return null;
+    this.projectSelectionCoordinatorSnapshot(
+      receipt.selection,
+      receipt.hover,
+      receipt.inspectorSummary,
+    );
+    projectSelectionSnapshotOnCanvas(this, receipt.selection);
+    return receipt.selection;
+  }
+
+  async acceptSelectionObservation(
+    input: SelectionObservationInput,
+    observation: CanvasElementObservation,
+  ): Promise<AcceptedCanvasElementObservation | null> {
+    const selection = this.selectionSnapshot;
+    if (
+      !selection
+      || selection.selectionRevision !== input.selectionRevision
+      || !canvasIdentityEquals(selection.canvasIdentity, input.canvasIdentity)
+    ) return null;
+    const receipt = await acceptSelectionObservation(input);
+    if (this.selectionSnapshot?.selectionRevision !== input.selectionRevision) return null;
+    const accepted = {
+      selectionRevision: receipt.selectionRevision,
+      canvasIdentity: receipt.canvasIdentity,
+      documentEpoch: receipt.documentEpoch,
+      renderInstanceId: receipt.renderInstanceId,
+      observation: captureCanvasElementObservation(observation) ?? observation,
+    };
+    this.acceptedSelectionObservation = accepted;
+    this.inspectorSelectionSummary = receipt.inspectorSummary;
+    return accepted;
+  }
+
+  private projectSelectionCoordinatorSnapshot(
+    selection: SelectionSnapshot,
+    hover: HoverSnapshot | null,
+    inspectorSummary: InspectorSelectionSummarySnapshot,
+  ) {
+    const previousRenderInstanceId = this.selectionSnapshot?.anchor?.renderInstanceId ?? null;
+    this.selectionSnapshot = selection;
+    this.inspectorSelectionSummary = inspectorSummary;
+    this.hoverSnapshot = hover;
+
+    if (selection.resolution === "cleared" || !selection.subject) {
+      this.acceptedSelectionObservation = null;
+      return;
+    }
+
+    if (selection.subject.kind === "teraBoundary") {
+      this.acceptedSelectionObservation = null;
+    } else {
+      const accepted = this.acceptedSelectionObservation;
+      const renderInstanceId = selection.anchor?.renderInstanceId ?? null;
+      if (
+        !accepted
+        || previousRenderInstanceId !== renderInstanceId
+        || accepted.renderInstanceId !== renderInstanceId
+        || inspectorSummary.state !== "resolved"
+        || inspectorSummary.renderInstanceId !== renderInstanceId
+      ) {
+        this.acceptedSelectionObservation = null;
+      } else if (accepted.selectionRevision !== selection.selectionRevision) {
+        this.acceptedSelectionObservation = {
+          ...accepted,
+          selectionRevision: selection.selectionRevision,
+          canvasIdentity: selection.canvasIdentity,
+        };
+      }
+    }
+
+    if (selection.focus.kind === "cssRule" || selection.focus.kind === "cssProperty") {
+      this.targetCssFile = selection.focus.file;
+    }
+  }
+
   async refreshSourceGraph(options: { strict?: boolean } = {}) {
     await refreshSourceGraphFromController(this, options);
   }
@@ -1959,10 +2716,6 @@ export class AppState {
 
   resolveSourceEditLocationForSourceId(sourceId: string | null | undefined) {
     return resolveSourceEditLocationForSourceIdFromController(this, sourceId);
-  }
-
-  derivePreviewSelectionState(): PreviewSelectionState {
-    return derivePreviewSelectionStateFromController(this);
   }
 
   syncHtmlCodeToPreview(sourceText: string, cursorPosition: number) {
@@ -2028,7 +2781,7 @@ export class AppState {
       authority.projectRoot !== projectRoot
       || authority.sessionId !== sessionId
     ) {
-      throw new Error("Proiecția CSS live a primit un receipt din altă ProjectSession.");
+      throw new Error(t("workbench-css-live-session-mismatch"));
     }
     if (
       authority.schemaVersion !== 2
@@ -2036,38 +2789,57 @@ export class AppState {
         !== authority.touchedFiles.join("\u0000")
       || (authority.status === "noop" && authority.documents.length !== 0)
     ) {
-      throw new Error("Proiecția CSS a primit documente care nu aparțin receipt-ului canonic.");
+      throw new Error(t("workbench-css-documents-mismatch"));
     }
 
-    await flushFileBufferDraftSync({ throwOnFailure: true });
-    for (const projection of authority.documents) {
-      rebaseFileBufferDraftSyncProjection(projection.relativePath, projection.snapshot);
-      const cacheKey = scannedCacheKey({ relativePath: projection.relativePath });
-      if (projection.snapshot) {
-        this.sourceCache = {
-          ...this.sourceCache,
-          [cacheKey]: projection.snapshot.text,
-        };
-        if (this.activeScannedPath === projection.relativePath) {
-          this.source = projection.snapshot.text;
-        }
-      } else {
-        const nextCache = { ...this.sourceCache };
-        delete nextCache[cacheKey];
-        this.sourceCache = nextCache;
-        if (this.activeScannedPath === projection.relativePath) {
-          this.source = "";
+    const mutation = authority.workspaceMutation;
+    const transactionId = mutation?.transactionId?.trim() ?? "";
+    if (
+      authority.status === "staged"
+      && (
+        !mutation?.changed
+        || mutation.revisionBefore !== authority.revisionBefore
+        || mutation.revisionAfter !== authority.revisionAfter
+        || !transactionId
+      )
+    ) {
+      throw new Error(t("workbench-css-transaction-missing"));
+    }
+
+    let localProjectionWarning = "";
+    try {
+      await flushFileBufferDraftSync({ throwOnFailure: true });
+      for (const projection of authority.documents) {
+        rebaseFileBufferDraftSyncProjection(projection.relativePath, projection.snapshot);
+        const cacheKey = scannedCacheKey({ relativePath: projection.relativePath });
+        if (projection.snapshot) {
+          this.sourceCache = {
+            ...this.sourceCache,
+            [cacheKey]: projection.snapshot.text,
+          };
+          if (this.activeScannedPath === projection.relativePath) {
+            this.source = projection.snapshot.text;
+          }
+        } else {
+          const nextCache = { ...this.sourceCache };
+          delete nextCache[cacheKey];
+          this.sourceCache = nextCache;
+          if (this.activeScannedPath === projection.relativePath) {
+            this.source = "";
+          }
         }
       }
-    }
-    if (
-      authority.status === "noop"
-      || authority.documents.some((projection) => /\.(?:css|scss)$/i.test(projection.relativePath))
-    ) {
-      // Un no-op poate proveni dintr-un control rămas în urma snapshot-ului
-      // canonic (de exemplu după Undo). Recitirea sursei deschise repară
-      // starea toggle-ului chiar dacă Rust nu are documente schimbate de emis.
-      this.notifyCssSourceChanged();
+      if (
+        authority.status === "noop"
+        || authority.documents.some((projection) => /\.(?:css|scss)$/i.test(projection.relativePath))
+      ) {
+        // Un no-op poate proveni dintr-un control rămas în urma snapshot-ului
+        // canonic (de exemplu după Undo). Recitirea sursei deschise repară
+        // starea toggle-ului chiar dacă Rust nu are documente schimbate de emis.
+        this.notifyCssSourceChanged();
+      }
+    } catch (error) {
+      localProjectionWarning = errorMessage(error);
     }
 
     const draftIdentity = liveEpoch === null
@@ -2083,43 +2855,68 @@ export class AppState {
       }
       return;
     }
-
-    const mutation = authority.workspaceMutation;
-    const transactionId = mutation?.transactionId?.trim() ?? "";
-    if (
-      authority.status !== "staged"
-      || !mutation?.changed
-      || mutation.revisionBefore !== authority.revisionBefore
-      || mutation.revisionAfter !== authority.revisionAfter
-      || !transactionId
-    ) {
-      throw new Error("Proiecția CSS live nu are o tranzacție exactă a sesiunii proiectului.");
+    if (!mutation) {
+      throw new Error(t("workbench-css-staged-mutation-missing"));
     }
 
     let boundIdentity: InspectorLiveCssIdentity | null = null;
-    await projectLatestProjectWorkspacePreview(this, {
-      reason: "workspace-mutation",
-      minimumWorkspaceRevision: authority.revisionAfter,
-      requestedPaths: authority.touchedFiles,
-      expectedWorkspaceRevision: authority.revisionAfter,
-      expectedWorkspaceTransactionId: transactionId,
-      onCanvasPlanPrepared: (plan) => {
-        if (plan.workspaceTransactionId !== transactionId) {
-          throw new Error("Planul Canvas CSS nu aparține tranzacției confirmate a sesiunii proiectului.");
-        }
-        if (!draftIdentity) return;
-        boundIdentity = bindInspectorLiveCssTransaction(
-          this.previewLiveControllerHost(),
-          draftIdentity,
-          {
-            workspaceRevision: plan.identity.workspaceRevision,
-            workspaceTransactionId: transactionId,
-            canvasTransactionId: plan.identity.transactionId,
-            previewRevision: plan.identity.previewRevision,
-          },
+    try {
+      const workspace = await readProjectWorkspaceState();
+      if (
+        !workspace
+        || workspace.projectRoot !== projectRoot
+        || workspace.runtimeSessionId !== sessionId
+        || workspace.revision !== authority.revisionAfter
+      ) {
+        throw new Error(
+          t("workbench-css-revision-unconfirmed"),
         );
-      },
-    });
+      }
+      await settleProjectWorkspaceMutation(this, {
+        projectRoot,
+        runtimeSessionId: sessionId,
+        mutation,
+        workspace,
+      }, {
+        warningLabel: "Modificarea CSS",
+        onCanvasPlanPrepared: (plan) => {
+          if (plan.workspaceTransactionId !== transactionId) {
+            throw new Error(t("workbench-css-canvas-plan-mismatch"));
+          }
+          if (!draftIdentity) return;
+          boundIdentity = bindInspectorLiveCssTransaction(
+            this.previewLiveControllerHost(),
+            draftIdentity,
+            {
+              workspaceRevision: plan.identity.workspaceRevision,
+              workspaceTransactionId: transactionId,
+              canvasTransactionId: plan.identity.transactionId,
+              previewRevision: plan.identity.previewRevision,
+            },
+          );
+        },
+      });
+    } catch (error) {
+      if (
+        this.sessionProjectRoot === projectRoot
+        && this.kernelProjectSessionId === sessionId
+      ) {
+        this.setGlobalStatus(
+          t("workbench-css-resync", { message: errorMessage(error) }),
+          "unsaved",
+        );
+      }
+    }
+    if (
+      localProjectionWarning
+      && this.sessionProjectRoot === projectRoot
+      && this.kernelProjectSessionId === sessionId
+    ) {
+      this.setGlobalStatus(
+        t("workbench-css-editor-resync", { message: localProjectionWarning }),
+        "unsaved",
+      );
+    }
     if (
       this.sessionProjectRoot !== projectRoot
       || this.kernelProjectSessionId !== sessionId
@@ -2158,14 +2955,17 @@ export class AppState {
       this.sessionProjectRoot !== projectRoot
       || this.kernelProjectSessionId !== runtimeSessionId
     ) return false;
-    this.scssVariables = await getScssVariables(identity).catch(() => (
+    this.scssVariables = await getScssVariables(
+      identity,
+      this.projectWorkspaceSnapshot?.revision,
+    ).catch(() => (
       this.scssVariables.map((entry) => (
         entry.file === variable.file && entry.name === variable.name
           ? { ...entry, value: nextValue }
           : entry
       ))
     ));
-    this.setGlobalStatus(`Tokenul $${variable.name} a fost actualizat în ProjectWorkspace.`, "unsaved");
+    this.setGlobalStatus(t("workbench-token-updated", { name: variable.name }), "unsaved");
     return true;
   }
 
@@ -2187,8 +2987,20 @@ export class AppState {
       this.sessionProjectRoot !== projectRoot
       || this.kernelProjectSessionId !== runtimeSessionId
     ) return false;
-    this.scssVariables = await getScssVariables(identity);
-    this.setGlobalStatus(`Tokenul $${name.replace(/^\$/, "")} a fost creat în ProjectWorkspace.`, "unsaved");
+    let scssProjectionCurrent = true;
+    this.scssVariables = await getScssVariables(
+      identity,
+      this.projectWorkspaceSnapshot?.revision,
+    ).catch(() => {
+      scssProjectionCurrent = false;
+      return this.scssVariables;
+    });
+    this.setGlobalStatus(
+      scssProjectionCurrent
+        ? t("workbench-token-created", { name: name.replace(/^\$/, "") })
+        : t("workbench-token-created-resync", { name: name.replace(/^\$/, "") }),
+      "unsaved",
+    );
     return true;
   }
 
@@ -2199,17 +3011,29 @@ export class AppState {
         expectedSessionId: lease.sessionId,
       });
       requireCurrentPreviewStructuralSession(this, lease);
-      this.projectWorkspaceSnapshot = receipt.workspace;
-      await this.rescanCurrentProjectWithinStructuralLane(
-        lease,
-        relativePath,
-        { strict: true },
-      );
+      const settlement = await settleProjectWorkspaceMutation(this, receipt, {
+        preferredRelativePath: relativePath,
+        warningLabel: t("workbench-class-create-operation"),
+      });
       requireCurrentPreviewStructuralSession(this, lease);
-      await this.refreshDesignClassInventory(true);
+      try {
+        await this.refreshDesignClassInventory(true);
+      } catch (error) {
+        settlement.warnings.push(
+          t("workbench-class-inventory-resync", { message: errorMessage(error) }),
+        );
+      }
       requireCurrentPreviewStructuralSession(this, lease);
       this.setGlobalStatus(
-        `Clasa .${name.replace(/^\./, "")} a fost creată în ${relativePath}.`,
+        settlement.warnings.length > 0
+          ? t("workbench-class-created-resync", {
+              name: name.replace(/^\./, ""),
+              path: relativePath,
+            })
+          : t("workbench-class-created", {
+              name: name.replace(/^\./, ""),
+              path: relativePath,
+            }),
         "unsaved",
       );
       return true;
@@ -2224,23 +3048,31 @@ export class AppState {
         expectedSessionId: lease.sessionId,
       });
       requireCurrentPreviewStructuralSession(this, lease);
-      if (
-        receipt.workspace.projectRoot !== lease.projectRoot
-        || receipt.workspace.runtimeSessionId !== lease.sessionId
-        || receipt.workspace.workspace.revision !== receipt.workspace.mutation.revisionAfter
-      ) throw new Error("Redenumirea clasei a primit o confirmare inconsistentă a sesiunii proiectului.");
-
-      this.projectWorkspaceSnapshot = receipt.workspace.workspace;
-      await this.rescanCurrentProjectWithinStructuralLane(
-        lease,
-        this.activeScannedPath,
-        { strict: true },
-      );
+      const settlement = await settleProjectWorkspaceMutation(this, receipt.workspace, {
+        preferredRelativePath: this.activeScannedPath,
+        warningLabel: t("workbench-class-rename-operation"),
+      });
       requireCurrentPreviewStructuralSession(this, lease);
-      await this.refreshDesignClassInventory(true);
+      try {
+        await this.refreshDesignClassInventory(true);
+      } catch (error) {
+        settlement.warnings.push(
+          t("workbench-class-inventory-resync", { message: errorMessage(error) }),
+        );
+      }
       requireCurrentPreviewStructuralSession(this, lease);
       this.setGlobalStatus(
-        `Clasa .${receipt.oldName} a devenit .${receipt.newName} în ${receipt.changedFiles.length} fișiere (${receipt.replacementCount} referințe).`,
+        settlement.warnings.length > 0
+          ? t("workbench-class-renamed-resync", {
+              oldName: receipt.oldName,
+              newName: receipt.newName,
+            })
+          : t("workbench-class-renamed", {
+              oldName: receipt.oldName,
+              newName: receipt.newName,
+              files: receipt.changedFiles.length,
+              references: receipt.replacementCount,
+            }),
         "unsaved",
       );
       return true;
@@ -2254,144 +3086,6 @@ export class AppState {
 
   closeContextMenu() {
     contextMenu.close();
-  }
-
-  openPreviewContextMenu(data: Record<string, unknown>) {
-    const selection = (data.selection ?? null) as SelectionInfo | null;
-    if (!selection) return;
-
-    const frameRect = this.previewFrame?.getBoundingClientRect();
-    const clientX = typeof data.clientX === "number" ? data.clientX : 0;
-    const clientY = typeof data.clientY === "number" ? data.clientY : 0;
-    let x = clientX;
-    let y = clientY;
-    if (frameRect) {
-      const viewportWidth = typeof data.viewportWidth === "number" && data.viewportWidth > 0
-        ? data.viewportWidth
-        : frameRect.width || 1;
-      const viewportHeight = typeof data.viewportHeight === "number" && data.viewportHeight > 0
-        ? data.viewportHeight
-        : frameRect.height || 1;
-      x = frameRect.left + clientX * (frameRect.width / viewportWidth);
-      y = frameRect.top + clientY * (frameRect.height / viewportHeight);
-    }
-
-    const templateGate = this.templateGateForSelection(selection);
-    if (templateGate && templateGate.sourceId !== this.templateHtmlEditSourceId) {
-      this.setPreviewTeraSelection(templateGate, {
-        status: templateEditGateSelectionStatus(templateGate.canSelectHtml, "element"),
-      });
-      const sourceNode = this.sourceGraph?.nodes.find((node) => node.id === templateGate.sourceId) ?? null;
-      const title = sourceNode
-        ? `${sourceNode.kind}: ${sourceNode.label}`
-        : "Gate Tera";
-      contextMenu.open({
-        source: "preview",
-        x,
-        y,
-        title,
-        subtitle: sourceNode?.file ?? templateGate.selector,
-        items: teraContextMenuItems(
-          this.editorRuntime,
-          teraTargetFromGate(templateGate, {
-            label: sourceNode?.label ?? "Gate Tera",
-            kindLabel: sourceNode?.kind ?? "Tera",
-            file: sourceNode?.file ?? null,
-            sourceNode,
-          }),
-          "preview",
-        ),
-      });
-      return;
-    }
-
-    this.applySelectionState(selection);
-    this.syncTemplateHtmlEditLock(selection);
-
-    const target = htmlTargetFromSelection(selection);
-    contextMenu.open({
-      source: "preview",
-      x,
-      y,
-      title: selection.selector || `<${selection.tag}>`,
-      subtitle: selection.text,
-      items: htmlElementContextMenuItems(this.editorRuntime, target, "preview"),
-    });
-  }
-
-  openLayerContextMenu(request: EditorLayerContextMenuRequest) {
-    if (request.kind === "html") {
-      const gate = this.templateGateForPageSection(request.section);
-      if (gate && gate.sourceId !== this.templateHtmlEditSourceId) {
-        this.setPreviewTeraSelection(gate, {
-          status: templateEditGateSelectionStatus(gate.canSelectHtml, "zone"),
-        });
-        const sourceNode = this.sourceGraph?.nodes.find((node) => node.id === gate.sourceId) ?? null;
-        contextMenu.open({
-          source: "layers",
-          x: request.x,
-          y: request.y,
-          title: sourceNode ? `${sourceNode.kind}: ${sourceNode.label}` : "Gate Tera",
-          subtitle: sourceNode?.file ?? gate.selector,
-          items: teraContextMenuItems(
-            this.editorRuntime,
-            teraTargetFromGate(gate, {
-              label: sourceNode?.label ?? "Gate Tera",
-              kindLabel: sourceNode?.kind ?? "Tera",
-              file: sourceNode?.file ?? null,
-              sourceNode,
-            }),
-            "layers",
-          ),
-        });
-        return;
-      }
-
-      this.selectDomNode(request.section.selector);
-      const target = htmlTargetFromPageSection(request.section, request.label);
-      contextMenu.open({
-        source: "layers",
-        x: request.x,
-        y: request.y,
-        title: `<${request.section.tag}> ${request.label ?? request.section.label}`,
-        subtitle: request.section.selector,
-        items: htmlElementContextMenuItems(this.editorRuntime, target, "layers", {
-          selectLabel: "Selecteaza stratul",
-        }),
-      });
-      return;
-    }
-
-    this.selectTeraLayerSource(request.section, request.sourceId);
-    const sourceNode = this.sourceGraph?.nodes.find((node) => node.id === request.sourceId) ?? null;
-    contextMenu.open({
-      source: "layers",
-      x: request.x,
-      y: request.y,
-      title: `${request.kindLabel ?? "Tera"}: ${request.label ?? "Sursă Tera"}`,
-      subtitle: request.file ?? request.sourceId,
-      items: teraContextMenuItems(
-        this.editorRuntime,
-        {
-          kind: "tera",
-          sourceId: request.sourceId,
-          selector: request.selector,
-          label: request.label,
-          kindLabel: request.kindLabel,
-          file: request.file ?? null,
-          origin: request.origin ?? null,
-          themeName: request.themeName ?? null,
-          canSelectHtml: sourceNode ? canRequestTemplateEditGateKind(sourceNode.kind) : undefined,
-          section: request.section,
-          sourceNode,
-        },
-        "layers",
-      ),
-    });
-  }
-
-  previewDragControllerHost(): PreviewDragControllerHost {
-    return this;
   }
 
   previewInsertControllerHost(): PreviewInsertControllerHost {
@@ -2421,7 +3115,9 @@ export class AppState {
       try {
         await this.flushInteractiveEditorDrafts("template-switch");
       } catch (error) {
-        this.setGlobalStatus(`Schimbarea workspace-ului a fost blocată: ${errorMessage(error)}`, "error");
+        this.setGlobalStatus(t("workbench-activity-switch-blocked", {
+          message: errorMessage(error),
+        }), "error");
         return false;
       }
     }
@@ -2446,10 +3142,10 @@ export class AppState {
         });
         this.clearNotification("workbench.activity-sync");
       } catch (error) {
-        this.notify({
+        this.escalateGlobalStatus({
           id: "workbench.activity-sync",
           level: "warning",
-          title: "Activitatea nu a putut fi schimbată",
+          title: t("workbench-activity-switch-failed"),
           message: errorMessage(error),
         });
         return false;
@@ -2465,15 +3161,15 @@ export class AppState {
         await this.workbenchController.setActiveDocumentSurface(this.activeScannedPath, view);
         this.clearNotification("workbench.surface-sync");
       } catch (error) {
-        this.notify({
+        this.escalateGlobalStatus({
           id: "workbench.surface-sync",
           level: "warning",
-          title: "Modul documentului nu a fost persistat",
+          title: t("workbench-document-surface-save-failed"),
           message: errorMessage(error),
         });
       }
     }
-    if (enteringPreview && this.scannedProject?.isZola) {
+    if (enteringPreview && this.scannedProject) {
       const projectRoot = this.sessionProjectRoot;
       const sessionId = this.kernelProjectSessionId;
       const sessionEpoch = this.projectSessionEpoch;
@@ -2494,7 +3190,7 @@ export class AppState {
             && this.projectSessionEpoch === sessionEpoch
           ) {
             this.setGlobalStatus(
-              `Ultima revizie ProjectWorkspace nu a putut fi proiectată în Preview: ${errorMessage(error)}`,
+              t("workbench-preview-project-failed", { message: errorMessage(error) }),
               "error",
             );
           }
@@ -2509,12 +3205,12 @@ export class AppState {
       receipt.projectRoot !== this.sessionProjectRoot
       || receipt.sessionId !== this.kernelProjectSessionId
     ) {
-      throw new Error("Previzualizarea versiunii aparține unei sesiuni de proiect depășite.");
+      throw new Error(t("workbench-version-preview-session-stale"));
     }
     await this.flushInteractiveEditorDrafts("template-switch");
     invalidatePreviewRefreshLease(this);
-    this.clearPreviewSelection({ clearTemplateGate: true, clearHtmlMarker: true });
     this.interactivePreviewEnabled = false;
+    this.motionWorkspace.previewMode = "design";
     this.templateWorkbenchActive = false;
     this.activeVersionPreview = receipt;
     this.centerView = "preview";
@@ -2538,7 +3234,6 @@ export class AppState {
 
   setCssCodeRevealTarget(target: { selector: string; file: string }) {
     if (!target.selector || !target.file) return;
-    this.activeCssSelector = target.selector;
     this.targetCssFile = target.file;
     if (
       this.codeRevealTarget.kind === "css" &&
@@ -2550,15 +3245,115 @@ export class AppState {
     this.codeRevealTarget = { kind: "css", selector: target.selector, file: target.file };
   }
 
-  selectCssSelectorFromCode(target: { selector: string; file: string }) {
-    if (!target.selector || !target.file) return;
-    this.setCssCodeRevealTarget(target);
-    this.codeSelectedCssTargetRevision += 1;
-    this.codeSelectedCssTarget = {
-      selector: target.selector,
-      file: target.file,
-      revision: this.codeSelectedCssTargetRevision,
-    };
+  async selectCssFocusFromInspector(target: {
+    selector: string;
+    file: string;
+    property?: string | null;
+    expectedSelectionRevision?: number | null;
+  }): Promise<boolean> {
+    if (!target.selector || !target.file) return false;
+    if (
+      target.expectedSelectionRevision
+      && this.selectionSnapshot?.selectionRevision !== target.expectedSelectionRevision
+    ) {
+      this.setGlobalStatus(t("inspector-css-focus-blocked"), "error");
+      return false;
+    }
+    const property = target.property?.trim() || null;
+    const focus = this.selectionSnapshot?.focus;
+    if (
+      (
+        focus?.kind === "cssRule"
+        || focus?.kind === "cssProperty"
+      )
+      && focus.file === target.file
+      && focus.selector === target.selector
+      && (
+        (!property && focus.kind === "cssRule")
+        || (
+          property
+          && focus.kind === "cssProperty"
+          && focus.property === property
+        )
+      )
+    ) return true;
+    try {
+      const selection = await this.applySelectionIntent({
+        kind: "setFocus",
+        focus: property
+          ? {
+              kind: "cssProperty",
+              selector: target.selector,
+              file: target.file,
+              property,
+              viewport: this.previewDevice,
+            }
+          : {
+              kind: "cssRule",
+              selector: target.selector,
+              file: target.file,
+              viewport: this.previewDevice,
+            },
+        expectedSelectionRevision: target.expectedSelectionRevision ?? null,
+      });
+      if (
+        !selection
+        || (
+          selection.focus.kind !== "cssRule"
+          && selection.focus.kind !== "cssProperty"
+        )
+        || selection.focus.file !== target.file
+        || selection.focus.selector !== target.selector
+      ) return false;
+      return property
+        ? selection.focus.kind === "cssProperty" && selection.focus.property === property
+        : selection.focus.kind === "cssRule";
+    } catch (error) {
+      this.setGlobalStatus(
+        `${t("inspector-css-focus-blocked")} ${errorMessage(error)}`,
+        "error",
+      );
+      return false;
+    }
+  }
+
+  selectJsBehaviorFromCode(target: { file: string; behaviorId?: string | null }) {
+    if (!target.file) return;
+    const focus = this.selectionSnapshot?.focus;
+    if (
+      focus?.kind === "jsBehavior"
+      && focus.file === target.file
+      && focus.behaviorId === (target.behaviorId ?? null)
+    ) return;
+    void this.applySelectionIntent({
+      kind: "setFocus",
+      focus: {
+        kind: "jsBehavior",
+        file: target.file,
+        behaviorId: target.behaviorId ?? null,
+      },
+    });
+  }
+
+  selectInspectorTab(tab: InspectorTab) {
+    this.activeInspectorTab = tab;
+    if (tab === "html") {
+      if (this.selectionSnapshot?.focus.kind !== "element") {
+        void this.applySelectionIntent({
+          kind: "setFocus",
+          focus: { kind: "element" },
+        });
+      }
+      return;
+    }
+    if (tab !== "js") return;
+    const templatePath =
+      this.selectionSnapshot?.provenance?.definition?.file
+      ?? this.selectionSnapshot?.provenance?.composition?.file
+      ?? this.activeRenderedTemplatePath;
+    if (templatePath) {
+      this.selectJsBehaviorFromCode({ file: pageJsRelativePath(templatePath) });
+    }
   }
 
   setHtmlCodeRevealTarget() {
@@ -2591,21 +3386,15 @@ export class AppState {
   }
 
   async prepareHtmlCodeRevealTargetForCodeEntry() {
-    if (!this.scannedProject || !this.selectedElement?.sourceLocation?.file) return;
-    const sourceFile = this.selectedElement.sourceLocation.file;
+    const sourceFile = this.selectionSnapshot?.projections.code.file;
+    if (!this.scannedProject || !sourceFile) return;
     const targetPath = zolaRelativePath(sourceFile);
     const file = this.scannedProject.files.find(
       (item) => item.relativePath === sourceFile || zolaRelativePath(item.relativePath) === targetPath,
     );
     if (!file || this.activeScannedPath === file.relativePath) return;
 
-    const selectedElement = this.selectedElement;
-    const lastMeaningfulSelectedElement = this.lastMeaningfulSelectedElement;
-    const lastSelectedImageElement = this.lastSelectedImageElement;
     await this.loadScannedProjectFile(file);
-    this.selectedElement = selectedElement;
-    this.lastMeaningfulSelectedElement = lastMeaningfulSelectedElement;
-    this.lastSelectedImageElement = lastSelectedImageElement;
   }
 
   async createCodeEditor() {
@@ -2614,6 +3403,18 @@ export class AppState {
 
   handleCodeCursorSelection(position: number, sourceText: string) {
     handleCodeCursorSelectionFromController(this.sourceEditorControllerHost(), position, sourceText);
+  }
+
+  async selectSourcePositionFromCode(file: string, offset: number) {
+    const selection = await this.applySelectionIntent({
+      kind: "selectSourcePosition",
+      file,
+      offset,
+      viewport: this.previewDevice,
+    });
+    if (selection) {
+      projectSelectionSnapshotOnCanvas(this, selection, { revealCode: false });
+    }
   }
 
   updateMarkdownSource(nextSource: string, relativePath = this.currentSourceRelativePath) {
@@ -2648,12 +3449,15 @@ export class AppState {
       source: "code",
       x: request.event.clientX,
       y: request.event.clientY,
-      title: this.currentSourcePath || "Cod sursa",
-      subtitle: `Linia ${request.line}, coloana ${request.column}`,
+      title: this.currentSourcePath || t("workbench-source-code"),
+      subtitle: t("workbench-code-position", {
+        line: request.line,
+        column: request.column,
+      }),
       items: [
         {
           id: "save-source",
-          label: "Salveaza",
+          label: t("workbench-save"),
           shortcut: "Ctrl+S",
           disabled: !this.saveHasPending,
           action: async () => {
@@ -2662,26 +3466,26 @@ export class AppState {
         },
         {
           id: "select-html-at-cursor",
-          label: "Selecteaza nodul HTML de la cursor",
+          label: t("workbench-select-html-at-cursor"),
           disabled: this.sourceLanguage !== "html",
           separatorBefore: true,
           action: () => this.handleCodeCursorSelection(request.position, request.docText),
         },
         {
           id: "reveal-current-selection",
-          label: "Arata selectia curenta in cod",
-          disabled: !this.selectedElement,
+          label: t("workbench-reveal-selection-code"),
+          disabled: !this.selectionSnapshot?.subject,
           action: () => this.syncCodeSelectionHighlight(true),
         },
         {
           id: "copy-code-selection",
-          label: "Copiaza selectia",
+          label: t("workbench-copy-code-selection"),
           disabled: !request.hasSelection,
           separatorBefore: true,
           action: async () => {
             if (!request.selectedText) return;
             await navigator.clipboard?.writeText(request.selectedText);
-            this.setGlobalStatus("Selectia din cod a fost copiata.", "idle");
+            this.setGlobalStatus(t("workbench-code-selection-copied"), "idle");
           },
         },
       ],
@@ -2694,150 +3498,81 @@ export class AppState {
 
   // ── Selection ─────────────────────────────────────────────────────────────
 
-  clearPreviewHtmlSelectionMarker() {
-    clearPreviewHtmlSelectionMarkerFromController(this);
-  }
-
-  renderPreviewSelectionToBridge(selection: PreviewSelectionState = this.previewSelection) {
-    renderPreviewSelectionToBridgeFromController(this, selection);
-  }
-
-  syncPreviewTeraGateState() {
-    syncPreviewTeraGateStateFromController(this);
-  }
-
-  clearPreviewTeraSelection() {
-    clearPreviewTeraSelectionFromController(this);
-  }
-
-  clearPreviewSelection(options: { clearTemplateGate?: boolean; clearHtmlMarker?: boolean } = {}) {
+  clearPreviewSelection(options: { clearCanvasOverlay?: boolean } = {}) {
     clearPreviewSelectionFromController(this, options);
   }
 
   setPreviewTeraSelection(
-    gate: PreviewTemplateGate,
-    options: { status?: string; showGate?: boolean; clearHtmlMarker?: boolean } = {},
+    target: PreviewTeraSelectionTarget,
+    options: { status?: string } = {},
   ) {
-    setPreviewTeraSelectionFromController(this, gate, options);
+    setPreviewTeraSelectionFromController(this, target, options);
   }
 
   applySelectionState(
-    selection: SelectionInfo,
+    selection: CanvasElementObservation,
     resolvedStyles?: EditableStyles,
-    markUserMutation = true,
   ) {
-    if (markUserMutation) this.markSelectionMutation();
     applySelectionStateFromAppSelectionController(this, selection, resolvedStyles);
   }
 
-  rememberSelectedElement(selection = this.selectedElement) {
-    rememberSelectedElementFromController(this, selection);
-  }
-
-  templateGateContext() {
-    return templateGateContextFromController(this);
-  }
-
-  templateGateForSelection(selection: SelectionInfo): PreviewTemplateGate | null {
-    return templateGateForSelectionFromController(this, selection);
-  }
-
-  templateGateForPageSection(section: PageSection): PreviewTemplateGate | null {
-    return templateGateForPageSectionFromController(this, section);
-  }
-
-  templateGateForPreviewClick(element: Element): (PreviewTemplateGate & { element: Element }) | null {
-    return templateGateForPreviewClickFromController(this, element);
-  }
-
-  templateGateForTeraSource(sourceId: string | null | undefined, selector: string | null | undefined): PreviewTemplateGate | null {
-    return templateGateForTeraSourceFromController(this, sourceId, selector);
-  }
-
-  templateGateSourceIdForSelection(selection: SelectionInfo) {
-    return templateGateSourceIdForSelectionFromController(this, selection);
-  }
-
-  syncTemplateHtmlEditLock(selection: SelectionInfo | null) {
-    syncTemplateHtmlEditLockFromController(this, selection);
-  }
-
-  previewDropGateStatus(target: { targetSourceId?: string | null; targetTemplateSourceId?: string | null }) {
-    return previewDropGateStatusFromController(this, target);
-  }
-
-  selectTemplateGateFromBridge(data: Record<string, unknown>) {
-    selectTemplateGateFromBridgeFromController(this, data);
-  }
-
-  async allowTemplateHtmlEditFromBridge(data: Record<string, unknown>) {
-    await allowTemplateHtmlEditFromBridgeFromController(this, data);
-  }
-
-  async allowTemplateHtmlEdit(sourceId: string | null, selector: string | null) {
-    await requestTemplateHtmlEditPermissionFromController(this, sourceId, selector);
-  }
-
-  async editSelectedTeraLayer() {
-    await editSelectedTeraLayerFromController(this);
+  previewDropTargetStatus(target: {
+    targetRenderInstanceId?: string | null;
+    targetBoundarySourceId?: string | null;
+  }) {
+    return editorNavigationDropTargetStatusFromController(this, target);
   }
 
   async openSelectedTeraSource() {
     await openSelectedTeraSourceFromController(this);
   }
 
-  selectLayerSection(section: PageSection) {
-    selectLayerSectionFromController(this, section);
-  }
-
   selectTeraLayerSource(section: PageSection, sourceId: string) {
     selectTeraLayerSourceFromController(this, section, sourceId);
   }
 
-  hoverLayerSection(section: PageSection | null) {
-    hoverLayerSectionFromController(this, section);
-  }
-
-  hoverTeraLayerSource(section: PageSection, sourceId: string) {
-    hoverTeraLayerSourceFromController(this, section, sourceId);
-  }
-
-  hoverPreviewSelection(selection: SelectionInfo | null) {
-    hoverPreviewSelectionFromController(this, selection);
-  }
-
-  clearTemplateGateInPreview() {
-    clearTemplateGateInPreviewFromController(this);
-  }
-
-  selectPreviewTemplateElement(
-    element: Element,
-    gate: PreviewTemplateGate,
-  ) {
-    selectPreviewTemplateElementFromController(this, element, gate);
-  }
-
-  setActiveCssSelector(selector: string) {
-    setActiveCssSelectorFromController(this.selectionControllerHost(), selector);
-  }
-
   selectPreviewElement(element: Element, options: { revealCode?: boolean } = {}) {
     this.setHtmlCodeRevealTarget();
-    selectPreviewElementFromController(this.selectionControllerHost(), element, options);
-    this.syncTemplateHtmlEditLock(this.selectedElement);
-    this.rememberSelectedElement();
+    if (!selectCanvasPreviewElement(this, element, options)) {
+      this.setGlobalStatus("Ținta nu există în EditorNavigationSnapshot-ul Rust curent.", "error");
+    }
   }
 
-  selectDomNode(selector: string, options: { revealCode?: boolean } = {}) {
+  selectHtmlTarget(target: EditorHtmlTarget, options: { revealCode?: boolean } = {}) {
     this.setHtmlCodeRevealTarget();
-    selectDomNodeFromController(this.selectionControllerHost(), selector, options);
-    this.syncTemplateHtmlEditLock(this.selectedElement);
-    this.rememberSelectedElement();
-  }
-
-  reconcileSelectionWithSourceDocument(document: Document, preferredSelector: string | null = null) {
-    reconcileSelectionWithSourceDocumentFromController(this.selectionControllerHost(), document, preferredSelector);
-    this.rememberSelectedElement();
+    const renderInstanceId = target.renderInstanceId
+      ?? target.selector.match(/data-pana-render-instance-id=["']([^"']+)["']/)?.[1]
+      ?? null;
+    const sourceNodeId = target.sourceId
+      ?? target.section?.sourceId
+      ?? null;
+    const candidates = this.editorNavigationSnapshot?.nodes.filter((node) =>
+      node.kind === "htmlElement"
+      && (
+        renderInstanceId
+          ? node.renderInstanceId === renderInstanceId
+          : sourceNodeId
+            ? node.sourceNodeId === sourceNodeId
+            : false
+      )
+    ) ?? [];
+    if (candidates.length !== 1) {
+      this.setGlobalStatus(
+        candidates.length > 1
+          ? "Ținta HTML este ambiguă în EditorNavigationSnapshot-ul Rust curent."
+          : "Ținta HTML nu există în EditorNavigationSnapshot-ul Rust curent.",
+        "error",
+      );
+      return;
+    }
+    void this.applySelectionIntent({
+      kind: "selectEditorNode",
+      editorNodeId: candidates[0].id,
+    }).then((selection) => {
+      if (!selection) return;
+      projectSelectionSnapshotOnCanvas(this, selection, options);
+      if (options.revealCode) this.requestCodeSelectionReveal();
+    });
   }
 
   selectionControllerHost(): SelectionControllerHost {
@@ -2896,7 +3631,7 @@ export class AppState {
   }
 
   private captureActiveHtmlAttributeEditSession(): ActiveHtmlAttributeEditSession | null {
-    const selection = this.selectedElement;
+    const selection = this.coordinatedElementSelection;
     const target = captureHtmlActionTarget(selection);
     const projectRoot = this.sessionProjectRoot;
     const runtimeSessionId = this.kernelProjectSessionId;
@@ -2950,14 +3685,14 @@ export class AppState {
       attributes: projection.attributes,
       baselineNames: projection.baselineNames,
     }).then((ack) => {
-      if (!ack.ok) throw new Error(ack.error || "Previzualizarea a refuzat ciorna live de atribute.");
+      if (!ack.ok) throw new Error(ack.error || t("workbench-attribute-live-rejected"));
       if (!isLatestHtmlAttributeDraftSettlement(
         this.activeHtmlAttributeEditSession?.id ?? null,
         this.activeHtmlAttributeEditSession?.latestLiveEpoch ?? -1,
         session.id,
         draftEpoch,
       )) return;
-      this.attributeStatus = "Ciorna atributelor este confirmată de Canvas; starea canonică rămâne în sesiunea proiectului.";
+      this.attributeStatus = t("workbench-attribute-draft-confirmed");
     }).catch((error) => {
       if (isLatestHtmlAttributeDraftSettlement(
         this.activeHtmlAttributeEditSession?.id ?? null,
@@ -2965,7 +3700,9 @@ export class AppState {
         session.id,
         draftEpoch,
       )) {
-        this.attributeStatus = `Proiecția live a atributelor a eșuat: ${error instanceof Error ? error.message : String(error)}`;
+        this.attributeStatus = t("workbench-attribute-live-failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
       throw error;
     });
@@ -2991,13 +3728,13 @@ export class AppState {
     if (!session) return;
     const sessionContextKey = this.htmlAssetEditContextKey(session.target);
     if (expectedContextKey && sessionContextKey !== expectedContextKey) return;
-    const currentTarget = captureHtmlActionTarget(this.selectedElement);
+    const currentTarget = captureHtmlActionTarget(this.coordinatedElementSelection);
     if (currentTarget && this.htmlAssetEditContextKey(currentTarget) === sessionContextKey) {
       this.attributeValues = { ...session.baselineAttributes };
     }
     this.cancelActiveHtmlAttributeEditSession();
     this.setHtmlPending("attributes", false);
-    this.attributeStatus = "Editarea atributelor a fost anulată; sursa canonică nu a fost modificată.";
+    this.attributeStatus = t("workbench-attribute-edit-cancelled");
   }
 
   private async finishActiveHtmlAttributeEditSession(
@@ -3063,9 +3800,11 @@ export class AppState {
           editSessionId: session.id,
           draftEpoch: submittedLiveEpoch,
         });
-        if (!ack.ok) throw new Error(ack.error || "Canvas nu a confirmat închiderea draftului.");
+        if (!ack.ok) throw new Error(ack.error || t("workbench-canvas-draft-close-unconfirmed"));
       } catch (error) {
-        this.attributeStatus = `Sursa a fost confirmată, dar Canvas nu a confirmat închiderea draftului: ${error instanceof Error ? error.message : String(error)}`;
+        this.attributeStatus = t("workbench-attribute-source-confirmed-canvas-failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
       if (this.activeHtmlAttributeEditSession?.id !== session.id) return result;
       if (session.latestLiveEpoch !== submittedLiveEpoch) continue;
@@ -3073,21 +3812,21 @@ export class AppState {
       this.activeHtmlAttributeEditSession = null;
       this.setHtmlPending("attributes", false);
       this.attributeStatus = result.status === "noop"
-        ? "Atributele nu au modificări de aplicat."
-        : "Atribute confirmate în sesiunea proiectului și proiectate canonic.";
+        ? t("workbench-attributes-no-changes")
+        : t("workbench-attributes-confirmed");
       return result;
     }
     return null;
   }
 
   private captureActiveHtmlTextEditSession(value: string): ActiveHtmlTextEditSession | null {
-    const selection = this.selectedElement;
+    const selection = this.coordinatedElementSelection;
     const target = captureHtmlActionTarget(selection);
     const projectRoot = this.sessionProjectRoot;
     const runtimeSessionId = this.kernelProjectSessionId;
     if (
       !selection
-      || selection.hasChildElements
+      || selection.observation.hasChildElements
       || !target
       || !projectRoot
       || !runtimeSessionId
@@ -3146,7 +3885,7 @@ export class AppState {
       void this.projectActiveHtmlTextEditSession(editSessionId).catch((error) => {
         if (this.activeHtmlTextEditSession?.id !== editSessionId) return;
         this.setGlobalStatus(
-          `Textul este recuperabil în sesiune, dar proiecția canonică a eșuat: ${errorMessage(error)}`,
+          t("workbench-text-projection-failed", { message: errorMessage(error) }),
           "error",
         );
       });
@@ -3159,7 +3898,9 @@ export class AppState {
       this.htmlTextHistoryTimer = null;
       void this.finishActiveHtmlTextEditSession(editSessionId).catch((error) => {
         if (this.activeHtmlTextEditSession?.id !== editSessionId) return;
-        this.setGlobalStatus(`Închiderea editării textului a eșuat: ${errorMessage(error)}`, "error");
+        this.setGlobalStatus(t("workbench-text-edit-close-failed", {
+          message: errorMessage(error),
+        }), "error");
       });
     }, HTML_TEXT_HISTORY_IDLE_MS);
   }
@@ -3178,16 +3919,36 @@ export class AppState {
           || session.runtimeSessionId !== this.kernelProjectSessionId
           || session.projectSessionEpoch !== this.projectSessionEpoch
         ) return;
-        await this.refreshSourceGraph({ strict: true });
+        const workspaceRevision = this.projectWorkspaceSnapshot?.revision;
+        if (workspaceRevision === undefined) {
+          throw new Error(t("workbench-text-workspace-revision-missing"));
+        }
+        const derived = await this.reconcileWorkspaceDerivedState({
+          expectedProjectRoot: session.projectRoot,
+          expectedSessionId: session.runtimeSessionId,
+          expectedWorkspaceRevision: workspaceRevision,
+          topologyChanged: false,
+          preferredRelativePath: session.target.sourceLocation?.file ?? null,
+          refreshSourceGraph: true,
+          refreshScss: false,
+        });
         if (this.activeHtmlTextEditSession?.id !== editSessionId) return;
-        await projectLatestProjectWorkspacePreview(this, {
+        const preview = await projectLatestProjectWorkspacePreview(this, {
           reason: "workspace-mutation",
+          minimumWorkspaceRevision: workspaceRevision,
+          expectedWorkspaceRevision: workspaceRevision,
           requestedPaths: session.target.sourceLocation?.file
             ? [session.target.sourceLocation.file]
             : undefined,
         });
         if (this.activeHtmlTextEditSession?.id === editSessionId) {
           session.projectedText = projectedText;
+          if (derived.warnings.length > 0 || preview.status === "deferred") {
+            this.setGlobalStatus(
+              t("workbench-text-resync"),
+              "unsaved",
+            );
+          }
         }
       });
     this.htmlTextProjectionTail = task.catch(() => undefined);
@@ -3229,7 +3990,7 @@ export class AppState {
     this.textEditOriginalKey = null;
     this.textEditOriginalText = null;
     this.setHtmlPending("text", false);
-    this.textStatus = "Text confirmat în sesiunea proiectului și proiectat canonic.";
+    this.textStatus = t("workbench-text-confirmed");
     return true;
   }
 
@@ -3271,20 +4032,99 @@ export class AppState {
     return await insertTeraPaletteItemAtTargetFromController(this.teraActionsControllerHost(), request);
   }
 
-  async moveTeraNodeAtTarget(request: TeraMoveRequest) {
-    return await moveTeraNodeAtTargetFromController(this.teraActionsControllerHost(), request);
+  selectEditorNavigationNode(node: EditorNavigationNode) {
+    selectEditorNavigationNodeFromController(this.editorNavigationControllerHost(), node);
   }
 
-  async moveLayerElement(request: LayerMoveRequest) {
-    return await moveLayerElementFromController(this.layersDragControllerHost(), request);
+  hoverEditorNavigationNode(node: EditorNavigationNode | null) {
+    hoverEditorNavigationNodeFromController(this.editorNavigationControllerHost(), node);
+  }
+
+  async enterEditorNavigationScope(scopeId: string) {
+    return await enterEditorNavigationScopeFromController(
+      this.editorNavigationControllerHost(),
+      scopeId,
+    );
+  }
+
+  exitEditorNavigationScope() {
+    exitEditorNavigationScopeFromController(this.editorNavigationControllerHost());
+  }
+
+  async previewEditorNavigationMove(
+    sourceNodeId: string,
+    targetNodeId: string,
+    position: ProjectMovePosition,
+  ): Promise<EditorMovePlan> {
+    return await previewEditorNavigationMoveFromController(
+      this.editorNavigationControllerHost(),
+      sourceNodeId,
+      targetNodeId,
+      position,
+    );
+  }
+
+  async moveEditorNavigationNode(
+    sourceNodeId: string,
+    targetNodeId: string,
+    position: ProjectMovePosition,
+  ) {
+    return await moveEditorNavigationNodeFromController(
+      this.editorNavigationControllerHost(),
+      sourceNodeId,
+      targetNodeId,
+      position,
+    );
+  }
+
+  async deleteEditorNavigationNode(node: EditorNavigationNode) {
+    const selector = editorNavigationNodeSelector(node) ?? "";
+    if (node.kind === "htmlElement") {
+      return await this.editorRuntime.dispatch({
+        type: "delete-html",
+        surface: "layers",
+        target: {
+          kind: "html",
+          selector,
+          tag: node.tag ?? "",
+          label: node.label,
+          sourceId: node.sourceNodeId,
+        },
+      });
+    }
+    if (node.kind !== "teraBoundary") return;
+    const sourceNode = node.sourceNodeId
+      ? this.sourceGraph?.nodes.find((candidate) =>
+          candidate.id === node.sourceNodeId
+        ) ?? null
+      : null;
+    return await this.editorRuntime.dispatch({
+      type: "delete-tera",
+      surface: "layers",
+      target: {
+        kind: "tera",
+        sourceId: node.sourceNodeId ?? "",
+        selector: selector || null,
+        label: node.label,
+        kindLabel: node.sourceKind ?? undefined,
+        file: node.file,
+        origin: node.origin === "project"
+          ? "local"
+          : node.origin === "theme"
+            ? "theme"
+            : "unknown",
+        themeName: node.themeName,
+        sourceNode,
+      },
+    });
   }
 
   async deleteHtmlElement(selector?: string | null) {
     const section = selector ? this.pageSections.find((item) => item.selector === selector) : null;
     const target = section
       ? htmlTargetFromPageSection(section)
-      : this.selectedElement
-        ? htmlTargetFromSelection(this.selectedElement)
+      : this.coordinatedElementSelection
+        ? htmlTargetFromCoordinatedSelection(this.coordinatedElementSelection)
         : null;
     if (!target) {
       return await this.editorRuntime.dispatch({
@@ -3304,8 +4144,8 @@ export class AppState {
     const section = selector ? this.pageSections.find((item) => item.selector === selector) : null;
     const target = section
       ? htmlTargetFromPageSection(section)
-      : this.selectedElement
-        ? htmlTargetFromSelection(this.selectedElement)
+      : this.coordinatedElementSelection
+        ? htmlTargetFromCoordinatedSelection(this.coordinatedElementSelection)
         : null;
     if (!target) {
       return await this.editorRuntime.dispatch({
@@ -3331,22 +4171,7 @@ export class AppState {
     );
   }
 
-  async moveProjectFile(request: FileMoveRequest) {
-    await moveProjectFileFromController(this.filesDragControllerHost(), request);
-  }
-
-  async deleteProjectFile(request: ProjectEntryDeleteRequest) {
-    await deleteProjectFileFromController(this.filesControllerHost(), request);
-  }
-
-  async renameProjectFile(request: ProjectEntryRenameRequest) {
-    return renameProjectFileFromController(this.filesControllerHost(), request);
-  }
-
   async applyImageSourceToHtml(src?: string) {
-    if ((!this.selectedElement || this.selectedElement.tag !== "img") && this.lastSelectedImageElement) {
-      this.selectedElement = this.lastSelectedImageElement;
-    }
     return await applyImageSourceToHtmlFromController(this.htmlActionsControllerHost(), src);
   }
 
@@ -3400,7 +4225,7 @@ export class AppState {
     const activeResult = await this.finishActiveHtmlAttributeEditSession(attributes);
     if (activeResult) return activeResult;
     if (!this.htmlPending.attributes) {
-      return noopAction("Atributele sunt deja confirmate de sesiunea proiectului.");
+      return noopAction(t("workbench-attributes-already-confirmed"));
     }
     return await applyAttributesToHtmlFromController(this.htmlActionsControllerHost(), attributes);
   }
@@ -3408,7 +4233,7 @@ export class AppState {
   async applyTextContentToHtml() {
     const committed = await this.finishActiveHtmlTextEditSession();
     if (!committed) {
-      return noopAction("Textul este deja confirmat de sesiunea proiectului.");
+      return noopAction(t("workbench-text-already-confirmed"));
     }
     return committedAction();
   }
@@ -3417,15 +4242,7 @@ export class AppState {
     return this;
   }
 
-  layersDragControllerHost(): LayersDragControllerHost {
-    return this;
-  }
-
-  filesDragControllerHost(): FilesDragControllerHost {
-    return this;
-  }
-
-  filesControllerHost(): FilesControllerHost {
+  editorNavigationControllerHost(): EditorNavigationControllerHost {
     return this;
   }
 
@@ -3443,7 +4260,7 @@ export class AppState {
     if (
       this.sessionProjectRoot !== projectRoot
       || this.kernelProjectSessionId !== runtimeSessionId
-    ) throw new Error("Documentul metadata aparține unei sesiuni care nu mai este activă.");
+    ) throw new Error(t("workbench-metadata-session-stale"));
     this.sourceCache = { ...this.sourceCache, [cacheKey]: source };
     return source;
   }
@@ -3465,7 +4282,9 @@ export class AppState {
     this.htmlPending = createEmptyHtmlPending();
     this.resetInspectorPendingSources();
     this.inspectorPending = createEmptyInspectorPending();
-    this.clearPreviewSelection({ clearTemplateGate: true, clearHtmlMarker: true });
+    this.acceptedSelectionObservation = null;
+    this.inspectorSelectionSummary = null;
+    this.postPreviewMessage({ type: "clear-canvas-interaction-overlays" });
   }
 
   htmlEditControllerHost(): HtmlEditControllerHost {
@@ -3488,17 +4307,17 @@ export class AppState {
   async savePendingHtmlChanges() {
     if (this.blockSaveForAiLease()) {
       return blockedAction(
-        "Salvarea HTML este blocată cât timp AI deține sau reconciliază autoritatea de editare.",
+        t("workbench-html-save-ai-blocked"),
       );
     }
     if (this.blockSaveForExternalProjectionConflict()) {
       return blockedAction(
-        "Salvarea HTML este blocată până când conflictul proiecției externe este reconciliat.",
+        t("workbench-html-save-external-blocked"),
       );
     }
     if (this.blockSaveForKernelUndoRedoLease()) {
       return blockedAction(
-        "Salvarea HTML este blocată cât timp anularea sau refacerea rezervă sesiunea curentă.",
+        t("workbench-html-save-history-blocked"),
       );
     }
     return await savePendingHtmlChangesFromController(this.saveControllerHost());
@@ -3510,7 +4329,7 @@ export class AppState {
     if (this.blockSaveForKernelUndoRedoLease()) return false;
     if (this.projectTransitionFrontendLeaseActive) {
       this.setGlobalStatus(
-        "Salvarea este temporar blocată: tranziția proiectului a rezervat sesiunea curentă.",
+        t("workbench-save-transition-blocked"),
         "error",
       );
       return false;
@@ -3529,7 +4348,7 @@ export class AppState {
           || this.externalDiskState.blockedByDirtySession
         ) {
           this.setGlobalStatus(
-            "Salvarea este blocată: monitorul extern a detectat o stare pe disc care trebuie reconciliată înainte de scriere.",
+            t("workbench-save-external-state-blocked"),
             "error",
           );
           return false;
@@ -3537,7 +4356,7 @@ export class AppState {
         return await saveActiveDocument(this.saveControllerHost());
       } catch (error) {
         this.setGlobalStatus(
-          `Save nu a putut obține bariera monitorului disk: ${errorMessage(error)}`,
+          t("workbench-save-disk-boundary-failed", { message: errorMessage(error) }),
           "error",
         );
         return false;
@@ -3563,15 +4382,15 @@ export class AppState {
    */
   async beginKernelUndoRedoFrontendLease() {
     if (this.aiEditLeaseFrontendLockActive) {
-      throw new Error("Undo/Redo este blocat cât timp AI deține autoritatea de editare.");
+      throw new Error(t("workbench-history-ai-blocked"));
     }
     if (this.projectTransitionFrontendLeaseActive) {
       throw new Error(
-        "Anularea sau refacerea nu poate porni cât timp tranziția proiectului rezervă sesiunea.",
+        t("workbench-history-transition-blocked"),
       );
     }
     if (this.kernelUndoRedoFrontendLeaseActive) {
-      throw new Error("O altă operație Undo/Redo rezervă deja sesiunea.");
+      throw new Error(t("workbench-history-busy"));
     }
 
     this.kernelUndoRedoFrontendLeaseActive = true;
@@ -3593,7 +4412,7 @@ export class AppState {
         || this.externalDiskState.workspaceProjectionRecoveryRequired
       ) {
         throw new Error(
-          "Monitorul discului nu a ajuns la o graniță curată înainte de anulare sau refacere.",
+          t("workbench-history-disk-not-clean"),
         );
       }
     } catch (error) {
@@ -3616,12 +4435,12 @@ export class AppState {
       && !this.aiReconciliationRecoveryReloadAuthorized
     ) {
       throw new Error(
-        "Tranziția proiectului este blocată cât timp AI deține sau reconciliază autoritatea de editare.",
+        t("workbench-transition-ai-blocked"),
       );
     }
     if (this.kernelUndoRedoFrontendLeaseActive) {
       throw new Error(
-        "Tranziția proiectului este blocată cât timp anularea sau refacerea finalizează proiecția curentă.",
+        t("workbench-transition-history-blocked"),
       );
     }
     this.projectTransitionFrontendLeaseActive = true;
@@ -3660,7 +4479,7 @@ export class AppState {
   private blockSaveForExternalProjectionConflict() {
     if (!this.externalDiskState.workspaceProjectionRecoveryRequired) return false;
     this.setGlobalStatus(
-      "Salvarea este blocată: proiecția UI s-a schimbat în timpul reconcilierii externe. Folosește «Reîncarcă de pe disc» înainte de orice scriere.",
+      t("workbench-save-projection-recovery-blocked"),
       "error",
     );
     return true;
@@ -3669,7 +4488,7 @@ export class AppState {
   private blockSaveForAiLease() {
     if (!this.aiEditLeaseFrontendLockActive) return false;
     this.setGlobalStatus(
-      "Salvarea este blocată: AI deține sau reconciliază autoritatea de editare a surselor.",
+      t("workbench-save-ai-blocked"),
       "error",
     );
     return true;
@@ -3678,7 +4497,7 @@ export class AppState {
   private blockSaveForKernelUndoRedoLease() {
     if (!this.kernelUndoRedoFrontendLeaseActive) return false;
     this.setGlobalStatus(
-      "Salvarea este temporar blocată: anularea sau refacerea rezervă sesiunea curentă.",
+      t("workbench-save-history-blocked"),
       "error",
     );
     return true;
@@ -3688,13 +4507,21 @@ export class AppState {
 
   toggleUiTheme() {
     toggleUiThemeFromController(this.uiControllerHost());
-    void this.persistApplicationTheme(this.uiTheme);
+    void this.persistApplicationTheme({
+      mode: "fixed",
+      value: this.uiTheme,
+    });
   }
 
   setApplicationTheme(theme: ApplicationTheme) {
-    if (theme === this.uiTheme) return;
-    setUiThemeFromController(this.uiControllerHost(), theme);
-    void this.persistApplicationTheme(theme);
+    this.setApplicationThemePreference({ mode: "fixed", value: theme });
+  }
+
+  setApplicationThemePreference(preference: ApplicationThemePreference) {
+    if (preference.mode === "fixed") {
+      setUiThemeFromController(this.uiControllerHost(), preference.value);
+    }
+    void this.persistApplicationTheme(preference);
   }
 
   openApplicationSettings() {
@@ -3709,49 +4536,108 @@ export class AppState {
     this.applicationSettingsLoading = true;
     try {
       const snapshot = await readApplicationSettings();
-      this.applicationSettings = snapshot;
-      if (snapshot.initialized) {
-        setUiThemeFromController(this.uiControllerHost(), snapshot.theme);
-      } else {
-        await this.persistApplicationTheme(this.uiTheme);
-      }
+      this.applyApplicationSettingsSnapshot(snapshot);
     } catch (error) {
-      this.notify({
+      this.escalateGlobalStatus({
         id: "application.settings.load",
         level: "warning",
-        title: "Setările aplicației nu au fost încărcate",
-        message: error instanceof Error ? error.message : String(error),
+        title: t("diagnostic-application-settings-load-failed"),
+        message: errorMessage(error),
       });
     } finally {
       this.applicationSettingsLoading = false;
     }
   }
 
-  private persistApplicationTheme(theme: ApplicationTheme) {
+  private persistApplicationTheme(theme: ApplicationThemePreference) {
+    return this.persistApplicationSettingsPatch(
+      { theme },
+      t("diagnostic-application-settings-save-failed"),
+    );
+  }
+
+  persistApplicationSettingsPatch(
+    patch: ApplicationSettingsPatch,
+    failureTitle = t("diagnostic-application-settings-save-failed"),
+  ) {
     const operation = this.applicationSettingsSaveTail.then(async () => {
       const current = this.applicationSettings ?? await readApplicationSettings();
-      const snapshot = await saveApplicationSettings(
-        current.revision,
-        theme,
-        current.blockPropertiesHeight,
-        current.blockPropertiesCollapsed,
-      );
-      this.applicationSettings = snapshot;
+      const snapshot = await saveApplicationSettings(current.revision, patch);
+      this.applyApplicationSettingsSnapshot(snapshot);
       this.clearNotification("application.settings.load");
       this.clearNotification("application.settings.save");
     });
     this.applicationSettingsSaveTail = operation.then(
       () => undefined,
       (error) => {
-        this.notify({
+        this.escalateGlobalStatus({
           id: "application.settings.save",
           level: "warning",
-          title: "Tema nu a fost salvată în configurația aplicației",
-          message: error instanceof Error ? error.message : String(error),
+          title: failureTitle,
+          message: errorMessage(error),
         });
       },
     );
     return this.applicationSettingsSaveTail;
+  }
+
+  refreshApplicationSettingsForSystemGeneration(generation: number) {
+    if ((this.applicationSettings?.system.generation ?? 0) >= generation) return;
+    const operation = this.applicationSettingsRefreshTail.then(async () => {
+      if ((this.applicationSettings?.system.generation ?? 0) >= generation) return;
+      const snapshot = await readApplicationSettings();
+      this.applyApplicationSettingsSnapshot(snapshot);
+    });
+    this.applicationSettingsRefreshTail = operation.catch((error) => {
+      this.escalateGlobalStatus({
+        id: "application.settings.system-refresh",
+        level: "warning",
+        title: t("diagnostic-application-settings-system-refresh-failed"),
+        message: errorMessage(error),
+      });
+    });
+  }
+
+  private applyApplicationSettingsSnapshot(snapshot: ApplicationSettingsSnapshot) {
+    this.applicationSettings = snapshot;
+    this.uiLocale = snapshot.effective.locale;
+    this.uiDirection = snapshot.effective.direction;
+    this.uiAccent = snapshot.effective.accent;
+    l10n.setLocale(this.uiLocale);
+    setUiThemeFromController(this.uiControllerHost(), snapshot.effective.theme);
+    if (typeof document === "undefined") return;
+    document.documentElement.lang = this.uiLocale;
+    document.documentElement.dir = this.uiDirection;
+    document.documentElement.dataset.panaLocale = this.uiLocale;
+    document.documentElement.dataset.panaContrast =
+      snapshot.system.contrast ?? "normal";
+    document.documentElement.dataset.panaReducedMotion =
+      snapshot.system.reducedMotion === true ? "true" : "false";
+    document.documentElement.style.setProperty("--brand", this.uiAccent);
+    document.documentElement.style.setProperty(
+      "--brand-strong",
+      `color-mix(in srgb, ${this.uiAccent} 70%, ${this.uiTheme === "dark" ? "white" : "black"})`,
+    );
+    document.documentElement.style.setProperty(
+      "--brand-soft",
+      `color-mix(in srgb, ${this.uiAccent} ${this.uiTheme === "dark" ? "19%" : "11%"}, transparent)`,
+    );
+    document.documentElement.style.setProperty(
+      "--focus-ring",
+      `color-mix(in srgb, ${this.uiAccent} 72%, ${this.uiTheme === "dark" ? "white" : "black"})`,
+    );
+    document.documentElement.style.setProperty(
+      "--text-on-accent",
+      contrastingTextColor(this.uiAccent),
+    );
+    applyApplicationBootProjection(document, snapshot.boot);
+    if (typeof window !== "undefined") {
+      try {
+        storeApplicationBootProjection(window.localStorage, snapshot.boot);
+      } catch {
+        // The cache is optional and never participates in application state.
+      }
+    }
   }
 
   persistBlockPropertiesLayout(height: number, collapsed: boolean) {
@@ -3762,23 +4648,21 @@ export class AppState {
         current.blockPropertiesHeight === normalizedHeight
         && current.blockPropertiesCollapsed === collapsed
       ) return;
-      const snapshot = await saveApplicationSettings(
-        current.revision,
-        current.theme,
-        normalizedHeight,
-        collapsed,
-      );
-      this.applicationSettings = snapshot;
+      const snapshot = await saveApplicationSettings(current.revision, {
+        blockPropertiesHeight: normalizedHeight,
+        blockPropertiesCollapsed: collapsed,
+      });
+      this.applyApplicationSettingsSnapshot(snapshot);
       this.clearNotification("application.settings.save");
     });
     this.applicationSettingsSaveTail = operation.then(
       () => undefined,
       (error) => {
-        this.notify({
+        this.escalateGlobalStatus({
           id: "application.settings.save",
           level: "warning",
-          title: "Layout-ul Inspectorului nu a fost salvat",
-          message: error instanceof Error ? error.message : String(error),
+          title: t("diagnostic-application-settings-layout-save-failed"),
+          message: errorMessage(error),
         });
       },
     );
@@ -3834,12 +4718,6 @@ export class AppState {
     return this;
   }
 
-  // ── File creation ─────────────────────────────────────────────────────────
-
-  async createProjectFile(relativePath: string, content: string) {
-    await createProjectFileFromController(this, relativePath, content);
-  }
-
   injectRawCss(id: string, css: string) {
     injectRawCssFromController(this.previewLiveControllerHost(), id, css);
   }
@@ -3852,9 +4730,4 @@ export class AppState {
     return this;
   }
 
-  // ── After-save callback ───────────────────────────────────────────────────
-
-  async afterSave() {
-    await afterSaveFromController(this);
-  }
 }

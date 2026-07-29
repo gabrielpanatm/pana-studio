@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 import { FEEDBACK_CHANNELS } from "$lib/feedback/policy";
-import { UI_TERMS } from "$lib/i18n/ui-terms";
+import { UI_TERM_IDS } from "$lib/i18n/ui-terms";
 
 function filesBelow(directory, extensionPattern) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -16,31 +16,45 @@ function source(relativePath) {
   return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
-test("feedbackul are canale exclusive și autoritatea AI rămâne în bara de stare", () => {
-  assert.deepEqual(FEEDBACK_CHANNELS.statusBar.owns, ["save", "validation", "preview", "ai-authority", "current-source"]);
+test("bara separă statusul global din stânga de sursa selecției din dreapta", () => {
+  assert.deepEqual(FEEDBACK_CHANNELS.statusBar.owns, ["save", "validation", "preview", "ai-authority"]);
   assert.deepEqual(FEEDBACK_CHANNELS.notification.owns, ["conflict", "recovery", "operator-decision"]);
 
   const route = source("../src/routes/+page.svelte");
   const status = source("../src/lib/components/StatusBar.svelte");
-  const ai = source("../src/lib/components/ai/AiEditAuthorityIndicator.svelte");
   const editor = source("../src/lib/components/EditorShell.svelte");
   const session = source("../src/lib/state/app-session-controller.ts");
 
-  assert.doesNotMatch(route, /<AiEditAuthorityIndicator/);
-  assert.match(status, /<AiEditAuthorityIndicator/);
-  assert.doesNotMatch(ai, /position:\s*fixed/);
+  assert.doesNotMatch(route + status, /AiEditAuthorityIndicator/);
+  assert.doesNotMatch(
+    status,
+    /status-right|preview-chip|canvasPatchPerformance|controlledPreview/,
+  );
+  assert.match(status, /globalStatus\?:\s*GlobalStatusEvent/);
+  assert.match(status, /sourceStatus\?:\s*WorkbenchSourceStatus/);
+  assert.match(status, /class="selection-source"/);
+  assert.match(status, /role="status"[\s\S]*aria-live="polite"/);
+  assert.match(status, /\.status-bar\s*\{[\s\S]*height:\s*26px;/);
+  assert.match(status, /\.selection-source\s*\{[\s\S]*height:\s*20px;/);
   assert.equal((editor.match(/class="editor-context-bar"/g) ?? []).length, 0);
   assert.doesNotMatch(editor, /workbench-banner|design-safe-banner/);
 
-  const setter = session.slice(session.indexOf("export function setGlobalStatus"), session.indexOf("export function notify"));
-  assert.doesNotMatch(setter, /notify\(/, "o eroare pasivă nu devine automat notificare persistentă");
+  const setter = session.slice(
+    session.indexOf("export function setGlobalStatus"),
+    session.indexOf("export function escalateGlobalStatus"),
+  );
+  assert.doesNotMatch(
+    setter,
+    /escalateGlobalStatus\(/,
+    "o eroare pasivă nu devine automat notificare persistentă",
+  );
 });
 
 test("glosarul românesc elimină etichetele legacy din suprafețele vizibile", () => {
-  assert.equal(UI_TERMS.settings, "Setări");
-  assert.equal(UI_TERMS.designSystem, "Sistem de design");
-  assert.equal(UI_TERMS.problemsAudit, "Probleme și audit");
-  assert.equal(UI_TERMS.safeEditing, "Editare sigură");
+  assert.equal(UI_TERM_IDS.settings, "workbench-settings");
+  assert.equal(UI_TERM_IDS.designSystem, "workbench-design-system");
+  assert.equal(UI_TERM_IDS.problemsAudit, "workbench-audit");
+  assert.equal(UI_TERM_IDS.safeEditing, "workbench-safe-editing");
 
   const svelteFiles = filesBelow(new URL("../src/lib/components/", import.meta.url), /\.svelte$/);
   const visibleSources = svelteFiles.map((url) => readFileSync(url, "utf8")
@@ -85,22 +99,70 @@ test("glosarul românesc elimină etichetele legacy din suprafețele vizibile", 
   assert.doesNotMatch(teraPalette, /label: "(?:Extends|Block content|Include partial|Import macros|If|With|Set|Variable|Comment|Raw)"/);
 });
 
+test("panoul inferior este exclusiv Terminal, cu un singur toolbar compact", () => {
+  const bottomPanel = source("../src/lib/components/workbench/WorkbenchBottomPanel.svelte");
+  const terminal = source("../src/lib/components/TerminalPane.svelte");
+  const route = source("../src/routes/+page.svelte");
+  const appState = source("../src/lib/state/app.svelte.ts");
+  const audit = source("../src/lib/components/audit/AuditWorkspace.svelte");
+  const kernel = source("../src/lib/components/kernel/KernelWorkspace.svelte");
+  const observability = source("../src/lib/components/kernel/ObservabilityLogControl.svelte");
+  const controller = source("../src/lib/terminal/controller.ts");
+  const smoothWheel = source("../src/lib/ui/smooth-wheel.ts");
+  const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
+
+  assert.match(bottomPanel, /<TerminalPaneComponent/);
+  assert.doesNotMatch(bottomPanel, /Probleme|Jurnal|WorkbenchBottomPanelView|readKernelObservabilityLog/);
+  assert.doesNotMatch(terminal, /terminal-task-button[\s\S]*<span>\{task\.label\}<\/span>/);
+  assert.match(terminal, /grid-template-rows:\s*38px minmax\(0, 1fr\)/);
+  assert.match(terminal, /\.terminal-body \{[^}]*padding:\s*0;/);
+  assert.match(terminal, /\.terminal-host \{[^}]*width:\s*100%;[^}]*height:\s*100%;[^}]*border:\s*0;[^}]*border-radius:\s*0;/);
+  assert.match(terminal, /:global\(\.terminal-host > \.xterm\) \{[^}]*width:\s*100%;[^}]*height:\s*100%;/);
+  assert.match(terminal, /:global\(\.terminal-host \.xterm-viewport\) \{[^}]*background-color:\s*var\(--terminal-shell-bg/);
+  assert.match(terminal, /\.terminal-scroll-proxy\) \{[^}]*top:\s*0;[^}]*bottom:\s*0;/);
+  assert.doesNotMatch(terminal, /--terminal-shell-background/);
+
+  assert.match(route, /case "show_problems":[\s\S]*openAuditWorkspace\("overview"\)/);
+  assert.match(route, /case "show_output":[\s\S]*openAuditWorkspace\("runtime", true\)/);
+  assert.doesNotMatch(route, /setWorkbenchBottomPanel\(true, "(?:problems|output)"\)/);
+  assert.match(appState, /snapshot\.bottomPanel\.activeView !== "terminal"/);
+  assert.match(appState, /open:\s*false,\s*activeView:\s*"terminal"/);
+  assert.match(audit, /observabilityFocusSerial/);
+  assert.match(kernel, /focusToken=\{observabilityFocusSerial\}/);
+  assert.match(observability, /scrollIntoView\(\{ block: "start", behavior: "smooth" \}\)/);
+  assert.match(controller, /new ResizeObserver\(\(\) => \{[\s\S]*fitAddon\.fit\(\)/);
+  assert.match(controller, /terminal\.onScroll\(\(\) => this\.scheduleScrollProxySync\(\)\)/);
+  assert.match(controller, /terminal\.scrollToLine\(targetLine\)/);
+  assert.match(controller, /smoothScrollDuration:/);
+  assert.match(smoothWheel, /prefers-reduced-motion: reduce/);
+  assert.match(smoothWheel, /requestAnimationFrame/);
+  assert.match(smoothWheel, /event\.ctrlKey[\s\S]*event\.metaKey/);
+  assert.doesNotMatch(documentBar, /handleDocumentTabsWheel|wheelAnimationFrame|onwheel=/);
+  assert.match(documentBar, /overflow-x:\s*auto;[\s\S]*overflow-y:\s*hidden;/);
+});
+
 test("design-system.css este singura sursă de tokeni și expune primitivele comune", () => {
   const appHtml = source("../src/app.html");
   const shell = source("../src/routes/workspace-shell.css");
   const design = source("../src/routes/design-system.css");
   const projectPane = source("../src/lib/components/ProjectPane.svelte");
   const components = source("../src/lib/components/creation/ComponentsWorkspace.svelte");
+  const dataWorkspace = source("../src/lib/components/data/DataWorkspace.svelte");
 
   assert.equal(existsSync(new URL("../static/app-shell.css", import.meta.url)), false);
   assert.doesNotMatch(appHtml, /app-shell\.css/);
   assert.match(shell, /@import "\.\/design-system\.css"/);
   assert.doesNotMatch(shell, /--(?:surface-base|brand|text|border-subtle)\s*:/);
 
-  for (const primitive of ["ui-button", "ui-icon-button", "ui-tabs", "ui-tab", "ui-field", "ui-panel", "ui-card", "ui-badge", "ui-message"]) {
+  for (const primitive of ["ui-button", "ui-icon-button", "ui-close-button", "ui-tabs", "ui-tab", "ui-field", "ui-panel", "ui-card", "ui-badge", "ui-message"]) {
     assert.match(design, new RegExp(`\\.${primitive}(?:[\\s,{.:])`), `lipsește primitiva ${primitive}`);
   }
+  assert.match(
+    design,
+    /button\.ui-icon-button\.ui-close-button\s*\{[^}]*width:\s*var\(--control-height-compact\);[^}]*height:\s*var\(--control-height-compact\);[^}]*min-height:\s*var\(--control-height-compact\);[^}]*border-radius:\s*var\(--radius-control\);/,
+  );
   assert.match(projectPane, /ui-button/);
+  assert.match(dataWorkspace, /class="ui-icon-button ui-close-button icon-button"/);
   for (const usage of ["ui-tabs", "ui-tab", "ui-field", "ui-message"]) assert.match(components, new RegExp(usage));
 
   const uniqueDarkSurfaces = [...design.matchAll(/--surface-(?:base|panel|raised):\s*([^;]+);/g)].map((match) => match[1]);
@@ -153,6 +215,11 @@ test("densitatea și navigarea au praguri verificabile", () => {
   const projectPane = source("../src/lib/components/ProjectPane.svelte");
   assert.match(design, /--control-height:\s*32px/);
   assert.match(design, /min-height:\s*var\(--control-height\)/);
+  assert.doesNotMatch(
+    design,
+    /:where\(\s*button,\s*input:not/,
+    "elementele HTML brute nu trebuie forțate global la înălțimea controalelor principale",
+  );
   assert.match(design, /small\s*\{[\s\S]*font-size:\s*var\(--font-meta\)/);
   assert.match(design, /:focus-visible[\s\S]*outline:\s*2px solid var\(--focus-ring\)/);
   assert.match(projectPane, /role="tablist"/);
@@ -160,11 +227,116 @@ test("densitatea și navigarea au praguri verificabile", () => {
   assert.match(projectPane, /event\.key === "ArrowRight"/);
   assert.match(projectPane, /event\.key === "Escape"/);
 
-  const layers = source("../src/lib/components/project/ProjectLayersTab.svelte");
-  assert.match(layers, /class="layers-tree" role="tree"/);
-  assert.match(layers, /role="treeitem"/);
-  assert.match(layers, /event\.key === "ArrowRight"/);
-  assert.doesNotMatch(layers, /<span[\s\S]{0,120}role="button"/);
+  const navigation = source("../src/lib/components/project/EditorNavigationTree.svelte");
+  assert.match(navigation, /class="tree-viewport"/);
+  assert.match(navigation, /role="tree"/);
+  assert.match(navigation, /role="treeitem"/);
+  assert.match(navigation, /event\.key === "ArrowRight"/);
+  assert.doesNotMatch(navigation, /<span[\s\S]{0,120}role="button"/);
+});
+
+test("navigatorul păstrează comenzile fixe și derulează conținutul tabului", () => {
+  const projectPane = source("../src/lib/components/ProjectPane.svelte");
+
+  assert.match(
+    projectPane,
+    /\.project-pane\s*\{[\s\S]*--project-pane-padding:\s*10px;[\s\S]*padding:\s*var\(--project-pane-padding\);[\s\S]*overflow:\s*hidden;/,
+  );
+  assert.match(
+    projectPane,
+    /\.pane-tab-panel\s*\{[\s\S]*flex:\s*1 1 auto;[\s\S]*min-height:\s*0;[\s\S]*margin-right:\s*calc\(-1 \* var\(--project-pane-padding\)\);[\s\S]*padding-right:\s*var\(--project-pane-padding\);[\s\S]*overflow:\s*auto;[\s\S]*overscroll-behavior:\s*contain;/,
+  );
+});
+
+test("toate familiile de taburi folosesc segmented controlul tactil aprobat", () => {
+  const designSystem = source("../src/routes/design-system.css");
+  const projectPane = source("../src/lib/components/ProjectPane.svelte");
+  const inspector = source("../src/lib/components/InspectorPane.svelte");
+  const designWorkspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
+  const terminal = source("../src/lib/components/TerminalPane.svelte");
+  const audit = source("../src/lib/components/audit/AuditWorkspace.svelte");
+  const publish = source("../src/lib/components/publish/PublishWorkspace.svelte");
+  const settings = source("../src/lib/components/settings/SettingsWorkspace.svelte");
+
+  assert.match(
+    designSystem,
+    /\.ui-tabs\s*\{[\s\S]*gap:\s*3px;[\s\S]*padding:\s*3px;[\s\S]*border-radius:\s*calc\(var\(--radius-control\) \+ 2px\);[\s\S]*background:\s*var\(--material-inset\);[\s\S]*var\(--shadow-inset\)/,
+  );
+  assert.match(
+    designSystem,
+    /\.ui-tab:is\(\.active, \[aria-selected="true"\]\)\s*\{[\s\S]*border-color:\s*color-mix\([\s\S]*background:\s*linear-gradient\([\s\S]*var\(--shadow-control\)/,
+  );
+  assert.match(projectPane, /class="ui-tabs pane-tabs"/);
+  assert.match(projectPane, /IconStack2 size=\{15\}[\s\S]*project-pane-layers/);
+  assert.match(inspector, /class="ui-tabs inspector-tabs" role="tablist"/);
+  assert.match(inspector, /class="ui-tab"[\s\S]*role="tab"[\s\S]*aria-selected/);
+  assert.match(inspector, /handleInspectorTabKeydown/);
+  assert.match(inspector, /IconHierarchy3 size=\{15\}/);
+  assert.match(inspector, /IconPalette size=\{15\}/);
+  assert.match(inspector, /IconPointerBolt size=\{15\}/);
+  assert.match(inspector, /\.inspector-tabs\s*\{[^}]*margin:\s*10px 10px 0;/);
+  assert.match(designWorkspace, /class="ui-tabs font-source-switch" role="tablist"/);
+  assert.match(documentBar, /class="ui-document-tabs document-tabs"/);
+  assert.match(documentBar, /class="ui-document-tab document-tab"/);
+  assert.match(documentBar, /class="ui-tabs compact surface-switcher"/);
+  assert.match(
+    designSystem,
+    /\.ui-document-tab\.active\s*\{[^}]*border-color:[^}]*background:\s*var\(--surface-raised\);[^}]*box-shadow:/,
+  );
+  assert.doesNotMatch(
+    designSystem,
+    /\.ui-document-tab\.active\s*\{[^}]*background:\s*linear-gradient\(/,
+  );
+  assert.match(terminal, /class="ui-tabs compact terminal-tab-strip"/);
+  assert.match(terminal, /class="ui-tab terminal-tab"/);
+  assert.match(audit, /class="workspace-toolbar"[\s\S]*class="ui-tabs view-tabs"/);
+  assert.match(publish, /class="workspace-toolbar"[\s\S]*class="ui-tabs view-tabs"/);
+  assert.match(settings, /class="ui-tabs settings-navigation"[\s\S]*role="tablist"/);
+  assert.match(settings, /handleSettingsTabKeydown/);
+  assert.doesNotMatch(
+    designSystem,
+    /\.ui-tab:is\(\.active, \[aria-selected="true"\]\) svg\s*\{[^}]*background:/,
+  );
+  assert.doesNotMatch(designSystem, /\.ui-tab:is\(\.active, \[aria-selected="true"\]\)\s*\{[^}]*border-bottom-color/);
+  assert.doesNotMatch(inspector, /\.inspector-tabs \.active\s*\{/);
+  assert.doesNotMatch(documentBar, /\.document-tab\.active::after/);
+  assert.doesNotMatch(terminal, /\.terminal-tab\.active\s*\{/);
+});
+
+test("inspectorul HTML CSS și JS folosește o singură suprafață vizuală", () => {
+  const inspector = source("../src/lib/components/InspectorPane.svelte");
+  const sections = source("../src/lib/components/inspector/InspectorSection.svelte");
+  const html = source("../src/lib/components/inspector/HtmlPane.svelte");
+  const css = source("../src/lib/components/inspector/panes/CssPane.svelte");
+  const js = source("../src/lib/components/inspector/JsPane.svelte");
+  const motion = source("../src/lib/components/inspector/js/MotionStudioPanel.svelte");
+  const layout = source("../src/lib/components/inspector/sections/LayoutSection.svelte");
+
+  assert.match(inspector, /class="inspector-scroll inspector-editor-scroll"/);
+  assert.match(inspector, /\.inspector-editor-scroll\s*\{[^}]*padding:\s*0;/);
+  assert.match(sections, /\.section\s*\{[^}]*border-bottom:\s*1px solid var\(--border-subtle\);/);
+  assert.match(sections, /IconChevronDown/);
+
+  assert.doesNotMatch(html, /hf-delete-element|inspector-delete-element|inspector-delete-selected/);
+  assert.doesNotMatch(html, /IconTrash/);
+  assert.match(layout, /IconAlignBoxCenterMiddle/);
+  assert.doesNotMatch(layout, /IconAlignBoxCenterMiddleFilled/);
+  assert.doesNotMatch(html, />\+\s*\{t\("inspector-/);
+  assert.doesNotMatch(motion, />\+\s*\{t\("motion-/);
+  assert.doesNotMatch(motion, /<span>→<\/span>/);
+  assert.match(motion, /IconArrowRight class="value-arrow"/);
+
+  assert.match(css, /<section class="css-pane">/);
+  assert.doesNotMatch(css, /inspector-group/);
+  assert.match(css, /\.css-context\s*\{[^}]*border-bottom:\s*1px solid var\(--border-subtle\);/);
+  assert.doesNotMatch(css, /\.css-pane\s*\{[^}]*border(?:-radius)?:/);
+
+  assert.match(js, /\.jp-target\s*\{[^}]*background:\s*transparent;/);
+  assert.match(
+    motion,
+    /\.create-card, \.interaction-card, \.secondary-section\s*\{[^}]*border:\s*0;[^}]*border-bottom:\s*1px solid var\(--border-subtle\);[^}]*background:\s*transparent;/,
+  );
 });
 
 test("rail-ul de activități începe direct cu navigarea, fără monogramă decorativă", () => {
@@ -188,7 +360,7 @@ test("capul preview-ului nu dublează documentul și nu păstrează contextul le
   assert.doesNotMatch(toolbar, /documentPath/);
   assert.doesNotMatch(editor, /Context de template/);
   assert.doesNotMatch(editor, />Înapoi la site</);
-  assert.match(toolbar, /Pornește modul interactiv/);
+  assert.match(toolbar, /t\("workbench-preview-interactive-title"\)/);
   assert.ok(toolbarIndex > previewStageIndex, "bara de control trebuie să fie sub canvas");
   assert.match(toolbar, /border-top:/);
   assert.match(toolbar, /class="ui-button compact"/);
@@ -207,16 +379,29 @@ test("capul preview-ului nu dublează documentul și nu păstrează contextul le
 
 test("taburile documentelor derulează exclusiv orizontal", () => {
   const documentBar = source("../src/lib/components/workbench/DocumentBar.svelte");
+  const designSystem = source("../src/routes/design-system.css");
+  const smoothWheel = source("../src/lib/ui/smooth-wheel.ts");
+  const route = source("../src/routes/+page.svelte");
 
   assert.match(documentBar, /\.document-tabs\s*\{[\s\S]*overflow-x:\s*auto;/);
   assert.match(documentBar, /\.document-tabs\s*\{[\s\S]*overflow-y:\s*hidden;/);
-  assert.match(documentBar, /onwheel=\{handleDocumentTabsWheel\}/);
-  assert.match(documentBar, /tabs\.scrollWidth - tabs\.clientWidth/);
-  assert.match(documentBar, /wheelScrollTarget = nextTarget/);
-  assert.match(documentBar, /requestAnimationFrame\(animateWheelScroll\)/);
-  assert.match(documentBar, /Math\.exp\(-elapsed \/ 72\)/);
-  assert.match(documentBar, /prefers-reduced-motion: reduce/);
-  assert.match(documentBar, /event\.ctrlKey \|\| event\.metaKey/);
+  assert.match(documentBar, /new ResizeObserver\(updateDocumentScrollCues\)/);
+  assert.match(documentBar, /onscroll=\{updateDocumentScrollCues\}/);
+  assert.match(documentBar, /class:can-scroll-left=\{canScrollDocumentsLeft\}/);
+  assert.match(documentBar, /class:can-scroll-right=\{canScrollDocumentsRight\}/);
+  assert.match(documentBar, /\.document-tabs-shell\.can-scroll-left::before,[\s\S]*\.document-tabs-shell\.can-scroll-right::after/);
+  assert.match(documentBar, /class="ui-icon-button ui-close-button document-close"/);
+  assert.match(designSystem, /button\.ui-icon-button\.ui-close-button:hover:not\(:disabled\)\s*\{[^}]*var\(--danger\)/);
+  assert.doesNotMatch(
+    documentBar,
+    /\.document-select,\s*\.document-close|\.document-close:hover:not\(:disabled\)/,
+  );
+  assert.doesNotMatch(documentBar, /onwheel=|handleDocumentTabsWheel|wheelScrollTarget|animateWheelScroll/);
+  assert.match(smoothWheel, /const fallbackAxis = preferredAxis === "x" \? "y" : "x"/);
+  assert.match(smoothWheel, /Math\.exp\(-elapsed \/ EASING_TIME_CONSTANT_MS\)/);
+  assert.match(smoothWheel, /prefers-reduced-motion: reduce/);
+  assert.match(route, /installSmoothWheelScrolling\(window\)/);
   assert.match(documentBar, /revealActiveDocumentTab/);
+  assert.match(documentBar, /behavior:\s*window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)\.matches/);
   assert.doesNotMatch(documentBar, /scrollIntoView/);
 });

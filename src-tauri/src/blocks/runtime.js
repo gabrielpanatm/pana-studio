@@ -202,12 +202,19 @@
       var id = String(entry && entry.id || "").trim();
       if (id && definitions[id]) activeIds[id] = true;
     });
-    window.__panaMotionGraphConfig = config && config.motion ? config.motion : null;
+    window.__panaMotionV2Config = config && config.motion ? config.motion : null;
+    var motion = window.__panaMotionV2Config;
     reconcile(document);
     lastPageConfigReceipt = {
       blockCount: Object.keys(activeIds).length,
-      motionItemCount: window.__panaMotionGraphConfig && Array.isArray(window.__panaMotionGraphConfig.items)
-        ? window.__panaMotionGraphConfig.items.length
+      motionInteractionCount: motion && Array.isArray(motion.interactions)
+        ? motion.interactions.length
+        : 0,
+      motionBehaviorCount: motion && Array.isArray(motion.behaviors)
+        ? motion.behaviors.length
+        : 0,
+      motionCustomCodeCount: motion && Array.isArray(motion.customCode)
+        ? motion.customCode.length
         : 0
     };
     report("page-config-installed", lastPageConfigReceipt);

@@ -6,6 +6,7 @@ mod deploy;
 mod fonts;
 mod js;
 pub mod kernel;
+mod localization;
 mod mcp;
 mod page_assets;
 mod preview;
@@ -13,6 +14,7 @@ mod project;
 mod project_model;
 mod source_graph;
 mod state;
+mod system_preferences;
 mod versioning;
 mod zola_engine;
 #[macro_use]
@@ -50,9 +52,8 @@ use commands::{
         save_project_env, save_zola_base_url, save_zola_project_settings,
     },
     css::{
-        cleanup_page_css_contract, create_scss_variable, find_class_in_scss, get_class_rules,
-        get_class_rules_at_viewport, get_css_rule_context, get_scss_variables,
-        resolve_page_css_target, set_css_rule, set_css_rule_at_viewport,
+        cleanup_page_css_contract, create_scss_variable, get_scss_variables,
+        resolve_css_inspector_context, set_css_rule, set_css_rule_at_viewport,
         set_page_css_rule_at_viewport, set_scss_variable,
     },
     data::{apply_data_mutation, read_data_node_editor},
@@ -61,28 +62,42 @@ use commands::{
     },
     design_system::{
         apply_theme_style_draft, create_design_class, preview_theme_style_draft,
-        read_design_class_inventory, read_theme_style_catalog, rename_design_class,
+        read_design_class_inventory, read_design_token_catalog, read_theme_style_catalog,
+        rename_design_class,
+    },
+    editor_navigation::{
+        accept_selection_observation, apply_selection_intent, bind_canvas_interaction_agent,
+        commit_editor_move, plan_editor_move, read_editor_navigation_snapshot,
+        read_selection_snapshot, request_editor_edit_scope, resolve_canvas_interaction_intent,
     },
     external_disk::reconcile_clean_external_project_files,
-    fonts::{download_google_font_family, get_font_inventory, search_google_fonts},
+    file_explorer::{
+        commit_file_explorer_operation, plan_file_explorer_operation, read_file_explorer_snapshot,
+        select_file_explorer_entry,
+    },
+    fonts::{
+        apply_local_font_import, assign_font_role, download_google_font_family, get_font_inventory,
+        get_font_manager, get_font_preview_asset, plan_font_family_removal, plan_local_font_import,
+        remove_font_family, search_google_fonts, set_font_display, set_font_preload,
+    },
     js::{
-        apply_motion_timeline_step_timing, clear_page_js_draft, get_page_data_anims, get_page_js,
+        apply_motion_mutation, clear_page_js_draft, get_page_data_anims, get_page_js,
         get_page_js_workspace_state, read_page_js_drafts, stage_page_js_draft,
     },
     kernel::{
         execute_preview_html_attributes_intent, execute_preview_html_delete_intent,
         execute_preview_html_duplicate_intent, execute_preview_html_insert_drop_intent,
         execute_preview_html_tag_intent, execute_preview_html_text_intent,
-        execute_preview_layer_drop_intent, execute_preview_template_edit_intent,
         execute_preview_tera_delete_intent, execute_preview_tera_insert_drop_intent,
-        execute_preview_tera_move_drop_intent, normalize_preview_projection_intent,
+        normalize_preview_projection_intent, publish_global_status, read_global_status,
         read_kernel_disk_conflicts, read_kernel_observability_log,
         read_kernel_project_transition_blocked_audit,
         read_kernel_project_transition_decision_journal,
         read_kernel_project_transition_decision_recovery_ack_journal,
         read_kernel_project_transition_decision_retention_hot_journals,
         read_kernel_project_transition_policy, read_kernel_project_transition_policy_matrix,
-        read_write_authority_recovery_scan, resolve_write_authority_recovery,
+        read_write_authority_recovery_scan, resolve_global_status,
+        resolve_write_authority_recovery,
     },
     mcp::{
         configure_codex_mcp, read_ai_context_status, read_codex_mcp_status,
@@ -104,20 +119,26 @@ use commands::{
         record_project_transition_operator_decision,
         recover_project_transition_decision_retention_hot_journal, recover_project_workspace_save,
         redo_project_workspace, save_project_workspace, scan_project, set_file_buffer_draft,
-        undo_project_workspace, zola_init,
+        undo_project_workspace,
     },
     project_model::{
-        plan_project_html_move, read_project_model, read_project_model_with_drafts,
-        resolve_template_workbench_plan,
+        read_project_model, read_project_model_with_drafts, resolve_template_workbench_plan,
     },
     source_graph::{
         create_site_archive_structure, create_site_page_structure, create_site_partial_structure,
         create_site_single_structure, include_site_partial, read_source_graph,
-        read_template_catalog,
+        read_taxonomy_catalog, read_template_catalog,
     },
+    startup::{
+        apply_startup_creation, inspect_startup_folder, plan_startup_creation,
+        read_startup_creation_catalog, read_startup_flow,
+    },
+    taxonomies::{apply_taxonomy_mutation, plan_taxonomy_mutation},
     templates::{
-        workspace_create_template, workspace_delete_template, workspace_duplicate_template,
-        workspace_override_theme_template, workspace_rename_template,
+        workspace_create_semantic_template, workspace_create_template,
+        workspace_create_template_collection, workspace_delete_template,
+        workspace_duplicate_template, workspace_override_theme_template, workspace_rename_template,
+        workspace_set_template_assignment, workspace_set_template_parent,
     },
     themes::{apply_theme_change, plan_theme_change, read_theme_catalog},
     versioning::{
@@ -134,11 +155,7 @@ use commands::{
     },
     window::reset_main_webview_zoom,
     workbench::{apply_workbench_intent, read_workbench_state},
-    workspace_entries::{
-        workspace_create_content_page, workspace_create_project_text_file,
-        workspace_delete_project_entry, workspace_move_project_entry,
-        workspace_rename_project_entry,
-    },
+    workspace_entries::{workspace_create_content_page, workspace_create_project_text_file},
 };
 use kernel::ai_coordination::EditAuthority;
 use kernel::observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel};
@@ -165,6 +182,44 @@ fn apply_main_window_icon(app: &tauri::App) {
     };
     if let Err(error) = window.set_icon(icon) {
         eprintln!("[Pană Studio] Nu am putut seta icon-ul ferestrei: {error}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn repair_wayland_native_window_controls(app: &tauri::App) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let window_handle = window.clone();
+    if let Err(error) = window.run_on_main_thread(move || {
+        use gtk::prelude::*;
+
+        let Ok(gtk_window) = window_handle.gtk_window() else {
+            return;
+        };
+        let Some(titlebar) = gtk_window.titlebar() else {
+            return;
+        };
+        let Some(event_box) = titlebar.downcast_ref::<gtk::EventBox>() else {
+            return;
+        };
+        let Some(header) = event_box.child() else {
+            return;
+        };
+
+        // tao <= 0.35 wraps its Wayland GtkHeaderBar in an above-child
+        // GtkEventBox. That input window swallows hover/click events for the
+        // native minimize, maximize and close buttons until a maximize cycle
+        // happens to restack it. Lower only that exact tao wrapper; X11 has no
+        // matching titlebar and the workaround becomes a no-op there.
+        if header.is::<gtk::HeaderBar>() && event_box.is_above_child() {
+            event_box.set_above_child(false);
+            println!("[Pană Studio] Controalele native GTK Wayland au fost activate.");
+        }
+    }) {
+        eprintln!(
+            "[Pană Studio] Nu am putut programa remedierea controalelor GTK Wayland: {error}"
+        );
     }
 }
 
@@ -423,7 +478,10 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(AppState::default())
         .manage(kernel::write_authority::WriteAuthorityRuntime::default())
+        .manage(system_preferences::SystemPreferencesRuntime::new())
         .setup(|app| {
+            localization::validate_embedded_catalogs()
+                .map_err(|error| format!("Catalogul de localizare este invalid: {error}"))?;
             let app_home = app_home::ensure_app_home(&app.handle())?;
             println!(
                 "[Pană Studio] Application Home: config={}, data={}, cache={}, logs={}",
@@ -431,8 +489,38 @@ pub fn run() {
             );
             kernel::boot(&app.handle())?;
             apply_main_window_icon(app);
+            #[cfg(target_os = "linux")]
+            repair_wayland_native_window_controls(app);
             lock_main_webview_zoom(app);
+            if let Some(theme) = app
+                .get_webview_window(MAIN_WINDOW_LABEL)
+                .and_then(|window| window.theme().ok())
+            {
+                system_preferences::update_tauri_window_theme(&app.handle(), theme);
+            }
+            system_preferences::start_linux_system_preferences_monitor(app.handle().clone());
             start_mcp_context_server(app);
+            let boot_window_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                if let Some(window) = boot_window_handle.get_webview_window(MAIN_WINDOW_LABEL) {
+                    // Fail-safe only: project the same Rust-owned appearance and
+                    // Fluent copy before a slow frontend is made visible.
+                    if let Ok(settings) =
+                        commands::config::read_application_settings(boot_window_handle.clone())
+                    {
+                        if let Ok(payload) = serde_json::to_string(&settings.boot) {
+                            let script = format!(
+                                "if (typeof window.__PANA_APPLY_BOOT_PROJECTION__ === 'function') {{ window.__PANA_APPLY_BOOT_PROJECTION__({payload}); }}"
+                            );
+                            if window.eval(script).is_ok() {
+                                tokio::time::sleep(std::time::Duration::from_millis(34)).await;
+                            }
+                        }
+                    }
+                    let _ = window.show();
+                }
+            });
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -443,6 +531,13 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| match event {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::ThemeChanged(theme),
+            ..
+        } if label == MAIN_WINDOW_LABEL => {
+            system_preferences::update_tauri_window_theme(app_handle, theme);
+        }
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { api, .. },
@@ -461,6 +556,9 @@ pub fn run() {
             stop_source_browser(app_handle, state.inner());
             stop_project_preview(app_handle, state.inner());
             stop_mcp_context_server(app_handle, state.inner());
+        }
+        RunEvent::Resumed => {
+            system_preferences::refresh_system_locale(app_handle);
         }
         RunEvent::Exit => {
             let state = app_handle.state::<AppState>();

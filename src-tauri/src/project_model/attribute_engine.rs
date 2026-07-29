@@ -164,8 +164,8 @@ fn plan_html_attributes_from_source_node(
     if !target_node.capabilities.can_edit_visual {
         return Err(target_node
             .capabilities
-            .reason
-            .clone()
+            .technical_reason()
+            .map(str::to_string)
             .unwrap_or_else(|| "Ținta nu este editabilă vizual.".to_string()));
     }
 

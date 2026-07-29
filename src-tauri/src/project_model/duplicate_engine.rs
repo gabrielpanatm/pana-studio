@@ -151,8 +151,8 @@ fn plan_html_duplicate_from_source_node(
     if !source_node.capabilities.can_edit_visual {
         return Err(source_node
             .capabilities
-            .reason
-            .clone()
+            .technical_reason()
+            .map(str::to_string)
             .unwrap_or_else(|| "Elementul sursă nu este duplicabil vizual.".to_string()));
     }
 

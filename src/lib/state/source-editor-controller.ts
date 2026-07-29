@@ -1,22 +1,19 @@
 import type { CodeEditorContextMenuRequest, CodeEditorController } from "$lib/editor/controller";
 import {
-  codeSelectionRangeForCssSelector,
   codeSelectionRangeForSourceRange,
-  cssSelectorAtPosition,
 } from "$lib/editor/source-ranges";
-import { htmlVoidTags } from "$lib/html/mutations";
-import { projectRelativeZolaPath, scannedCacheKey, zolaRelativePath } from "$lib/project/files";
+import { projectRelativeZolaPath, scannedCacheKey } from "$lib/project/files";
 import {
   queueFileBufferDraftChangeSetForPath,
   queueFileBufferDraftTextTransitionForPath,
 } from "$lib/session/file-buffer-draft-sync";
 import {
-  codeSelectionRangeForSelection,
   findPreviewElementForMarkdownTarget,
-  resolveCodeCursorSelectionAction,
-  resolveHtmlSourceSelectionContext,
+  markdownTargetAtPosition,
 } from "$lib/preview/selection";
-import type { SaveState, SelectionInfo, SourceGraphNode, SourceLanguage, SourceNodeRange } from "$lib/types";
+import type { SelectionSnapshot, SourceLanguage } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type SourceEditorControllerHost = {
   codeEditorHost: HTMLDivElement | undefined;
@@ -33,18 +30,12 @@ export type SourceEditorControllerHost = {
   currentSourceCacheKey: string;
   currentSourceRelativePath: string;
   currentSourcePath: string;
-  selectedElement: SelectionInfo | null;
-  selectedTemplateSourceNode: SourceGraphNode | null;
-  activeCssSelector: string;
-  targetCssFile: string;
+  selectionSnapshot: SelectionSnapshot | null;
   activeScannedPath: string | null;
-  htmlSourceNodes: SourceNodeRange[];
   isActivePreviewHtmlSource: boolean;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  reconcileSelectionWithSourceDocument: (document: Document, preferredSelector?: string | null) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   syncHtmlCodeToPreview: (sourceText: string, cursorPosition: number) => void;
-  selectDomNode: (selector: string, options?: { revealCode?: boolean }) => void;
-  selectCssSelectorFromCode: (target: { selector: string; file: string }) => void;
+  selectSourcePositionFromCode: (file: string, offset: number) => void | Promise<void>;
   notifyCssSourceChanged: () => void;
   getPreviewDocument: () => Document | undefined;
   postPreviewMessage: (payload: Record<string, unknown>) => void;
@@ -77,16 +68,9 @@ export async function createSourceEditor(host: SourceEditorControllerHost) {
           changeSet.changes,
         );
       }
-      host.setGlobalStatus(`Modificări nesalvate în ${host.currentSourcePath}`, "unsaved");
-      if (host.sourceLanguage === "html") {
-        const context = resolveHtmlSourceSelectionContext({
-          sourceText: nextSource,
-          cursorPosition,
-          selectedElement: host.selectedElement,
-          htmlVoidTags,
-        });
-        host.reconcileSelectionWithSourceDocument(context.parsedDocument, context.activeSelector);
-      }
+      host.setGlobalStatus(t("source-editor-unsaved", {
+        path: host.currentSourcePath,
+      }), "unsaved");
       if (host.isActivePreviewHtmlSource) host.syncHtmlCodeToPreview(nextSource, cursorPosition);
       if (host.sourceLanguage === "html") handleCodeCursorSelection(host, cursorPosition, nextSource);
       if (host.sourceLanguage === "css" || host.sourceLanguage === "scss") {
@@ -106,33 +90,31 @@ export function handleCodeCursorSelection(
   sourceText: string,
 ) {
   if (host.sourceLanguage === "css" || host.sourceLanguage === "scss") {
-    const cssTarget = cssSelectorAtPosition(sourceText, position);
-    if (cssTarget && host.currentSourceRelativePath) {
-      host.selectCssSelectorFromCode({
-        selector: cssTarget.selector,
-        file: host.currentSourceRelativePath,
-      });
-    }
+    if (!host.currentSourceRelativePath) return;
+    const byteOffset = new TextEncoder().encode(sourceText.slice(0, position)).byteLength;
+    void host.selectSourcePositionFromCode(host.currentSourceRelativePath, byteOffset);
     return;
   }
 
-  const action = resolveCodeCursorSelectionAction({
-    sourceLanguage: host.sourceLanguage,
-    sourceText,
-    position,
-    selectedElement: host.selectedElement,
-    activeScannedPath: host.activeScannedPath,
-    htmlVoidTags,
-  });
-  if (action.type === "select-html-node") {
-    withSyncingCode(host, () => host.selectDomNode(action.selector, { revealCode: false }));
+  if (host.sourceLanguage === "html" && host.currentSourceRelativePath) {
+    const byteOffset = new TextEncoder().encode(sourceText.slice(0, position)).byteLength;
+    void host.selectSourcePositionFromCode(host.currentSourceRelativePath, byteOffset);
     return;
   }
-  if (action.type !== "select-markdown-target") return;
+
+  if (host.sourceLanguage === "js" && host.currentSourceRelativePath) {
+    const byteOffset = new TextEncoder().encode(sourceText.slice(0, position)).byteLength;
+    void host.selectSourcePositionFromCode(host.currentSourceRelativePath, byteOffset);
+    return;
+  }
+
+  if (!host.activeScannedPath?.endsWith(".md")) return;
+  const target = markdownTargetAtPosition(sourceText, position);
+  if (!target) return;
   const previewDoc = host.getPreviewDocument();
-  const element = previewDoc ? findPreviewElementForMarkdownTarget(previewDoc, action.target) : null;
+  const element = previewDoc ? findPreviewElementForMarkdownTarget(previewDoc, target) : null;
   if (!element) {
-    withSyncingCode(host, () => host.postPreviewMessage({ type: "select-markdown-target", target: action.target }));
+    withSyncingCode(host, () => host.postPreviewMessage({ type: "select-markdown-target", target }));
     return;
   }
   withSyncingCode(host, () => host.selectPreviewElement(element));
@@ -154,31 +136,27 @@ export function updateMarkdownSource(
   }
   host.sourceCache = { ...host.sourceCache, [cacheKey]: nextSource };
   queueFileBufferDraftTextTransitionForPath(relativePath, previousSource, nextSource, "markdown.editor");
-  host.setGlobalStatus(`Modificări nesalvate în ${relativePath}`, "unsaved");
+  host.setGlobalStatus(t("source-editor-unsaved", { path: relativePath }), "unsaved");
 }
 
 export function syncCodeSelectionHighlight(host: SourceEditorControllerHost, reveal = false) {
   if (!host.codeEditorController) return;
   host.codeEditorController.setSelectedRange(
-    codeSelectionRangeForTemplateSource(host)
-      ?? codeSelectionRangeForActiveCssSelector(host)
-      ?? codeSelectionRangeForSelection(host.sourceLanguage, host.htmlSourceNodes, host.selectedElement),
+    codeSelectionRangeForCoordinator(host) ?? null,
     reveal,
   );
 }
 
-function codeSelectionRangeForTemplateSource(host: SourceEditorControllerHost) {
-  const node = host.selectedTemplateSourceNode;
-  if (!node?.range || host.sourceLanguage !== "html") return null;
-  if (projectRelativeZolaPath(node.file) !== host.currentSourceRelativePath) return null;
-  return codeSelectionRangeForSourceRange(host.source, node.range);
-}
-
-function codeSelectionRangeForActiveCssSelector(host: SourceEditorControllerHost) {
-  if (host.sourceLanguage !== "css" && host.sourceLanguage !== "scss") return null;
-  if (!host.activeCssSelector || !host.targetCssFile) return null;
-  if (zolaRelativePath(host.targetCssFile) !== zolaRelativePath(host.currentSourceRelativePath)) return null;
-  return codeSelectionRangeForCssSelector(host.source, host.activeCssSelector);
+function codeSelectionRangeForCoordinator(host: SourceEditorControllerHost) {
+  const projection = host.selectionSnapshot?.projections.code;
+  if (
+    !projection?.range
+    || !["html", "css", "scss"].includes(host.sourceLanguage)
+  ) return null;
+  if (projectRelativeZolaPath(projection.file ?? "") !== host.currentSourceRelativePath) {
+    return null;
+  }
+  return codeSelectionRangeForSourceRange(host.source, projection.range);
 }
 
 export function withSyncingCode(host: SourceEditorControllerHost, fn: () => void) {

@@ -20,6 +20,7 @@ use crate::{
         },
         write_authority::ComponentValidationSandboxLease,
     },
+    localization::LocalizedDiagnostic,
     source_graph::{
         build_source_graph_from_workspace_projection,
         model::{
@@ -34,7 +35,7 @@ use crate::{
     },
 };
 
-pub const COMPONENT_MUTATION_SCHEMA_VERSION: u32 = 1;
+pub const COMPONENT_MUTATION_SCHEMA_VERSION: u32 = 2;
 static COMPONENT_VALIDATION_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -112,8 +113,7 @@ pub struct ComponentPlannedWrite {
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComponentMutationDiagnostic {
-    pub code: String,
-    pub message: String,
+    pub diagnostic: LocalizedDiagnostic,
     pub relative_path: Option<String>,
 }
 
@@ -391,9 +391,13 @@ pub fn plan_component_mutation(
                         .to_string()
                 })?;
             if !source_node.capabilities.can_extract_partial {
-                return Err(source_node.capabilities.reason.clone().unwrap_or_else(|| {
-                    format!("Nodul {} nu poate fi extras lossless.", source_node.label)
-                }));
+                return Err(source_node
+                    .capabilities
+                    .technical_reason()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        format!("Nodul {} nu poate fi extras lossless.", source_node.label)
+                    }));
             }
             let source_text = require_workspace_text(workspace, &source)?;
             if extraction_range.start >= extraction_range.end
@@ -544,10 +548,7 @@ pub fn plan_component_mutation(
     touched_files.sort();
     touched_files.dedup();
     diagnostics.push(ComponentMutationDiagnostic {
-        code: "semantic_preflight_passed".to_string(),
-        message:
-            "SourceGraph și ComponentGraph au acceptat starea de bază; planul va fi reverificat pe candidatul complet înainte de commit."
-                .to_string(),
+        diagnostic: LocalizedDiagnostic::new("component-mutation-semantic-preflight-passed"),
         relative_path: destination_relative_path
             .clone()
             .or_else(|| source_relative_path.clone()),
@@ -790,18 +791,15 @@ fn require_graph_without_errors(graph: &SourceGraph, stage: &str) -> Result<(), 
 
 fn require_graph_without_errors_for(
     graph: &SourceGraph,
-    stage: &str,
-    mutation_label: &str,
+    _stage: &str,
+    _mutation_label: &str,
 ) -> Result<(), String> {
     if let Some(diagnostic) = graph
         .diagnostics
         .iter()
         .find(|diagnostic| diagnostic.severity == SourceDiagnosticSeverity::Error)
     {
-        return Err(format!(
-            "{mutation_label} este blocată: {stage} are eroarea SourceGraph: {}",
-            diagnostic.message
-        ));
+        return Err(localized_diagnostic_error(&diagnostic.diagnostic));
     }
     if let Some(diagnostic) = graph
         .component_graph
@@ -823,10 +821,7 @@ fn require_graph_without_errors_for(
         )
         .find(|diagnostic| diagnostic.severity == SourceDiagnosticSeverity::Error)
     {
-        return Err(format!(
-            "{mutation_label} este blocată: {stage} are eroarea ComponentGraph: {}",
-            diagnostic.message
-        ));
+        return Err(localized_diagnostic_error(&diagnostic.diagnostic));
     }
     Ok(())
 }
@@ -909,13 +904,22 @@ fn require_capability(
     if allowed {
         Ok(())
     } else {
-        Err(definition.capabilities.reason.clone().unwrap_or_else(|| {
-            format!(
-                "Componenta {} nu poate fi {action}.",
-                definition.display_name
-            )
-        }))
+        Err(definition
+            .capabilities
+            .reason_diagnostic
+            .as_ref()
+            .map(localized_diagnostic_error)
+            .unwrap_or_else(|| {
+                format!(
+                    "Componenta {} nu poate fi {action}.",
+                    definition.display_name
+                )
+            }))
     }
+}
+
+fn localized_diagnostic_error(diagnostic: &crate::localization::LocalizedDiagnostic) -> String {
+    serde_json::to_string(diagnostic).unwrap_or_else(|_| diagnostic.code.clone())
 }
 
 fn component_source_path(definition: &ComponentDefinition) -> Result<String, String> {
@@ -1037,20 +1041,18 @@ fn plan_component_companion_bundle(
             deletes.insert(source.clone());
         }
         diagnostics.push(ComponentMutationDiagnostic {
-            code: if transfer == ComponentCompanionTransfer::Relocate && !shared {
-                "component_companion_relocated"
-            } else {
-                "component_companion_copied"
-            }
-            .to_string(),
-            message: if transfer == ComponentCompanionTransfer::Relocate && !shared {
-                format!("Resursa companion {source} este mutată atomic în {destination}.")
+            diagnostic: if transfer == ComponentCompanionTransfer::Relocate && !shared {
+                LocalizedDiagnostic::new("component-mutation-companion-relocated")
+                    .with_argument("source", source.clone())
+                    .with_argument("destination", destination.clone())
             } else if shared {
-                format!(
-                    "Resursa companion partajată {source} este păstrată și copiată în {destination}."
-                )
+                LocalizedDiagnostic::new("component-mutation-companion-shared-copied")
+                    .with_argument("source", source.clone())
+                    .with_argument("destination", destination.clone())
             } else {
-                format!("Resursa companion {source} este copiată atomic în {destination}.")
+                LocalizedDiagnostic::new("component-mutation-companion-copied")
+                    .with_argument("source", source.clone())
+                    .with_argument("destination", destination.clone())
             },
             relative_path: Some(destination),
         });
@@ -1070,20 +1072,16 @@ fn plan_component_companion_deletes(
         require_workspace_text(workspace, &source)?;
         if component_companion_has_other_consumers(graph, definition, dependency) {
             diagnostics.push(ComponentMutationDiagnostic {
-                code: "component_companion_retained".to_string(),
-                message: format!(
-                    "Resursa companion partajată {source} este păstrată deoarece are și alți consumatori."
-                ),
+                diagnostic: LocalizedDiagnostic::new("component-mutation-companion-retained")
+                    .with_argument("source", source.clone()),
                 relative_path: Some(source),
             });
             continue;
         }
         deletes.insert(source.clone());
         diagnostics.push(ComponentMutationDiagnostic {
-            code: "component_companion_deleted".to_string(),
-            message: format!(
-                "Resursa companion exclusivă {source} este eliminată în aceeași tranzacție."
-            ),
+            diagnostic: LocalizedDiagnostic::new("component-mutation-companion-deleted")
+                .with_argument("source", source.clone()),
             relative_path: Some(source),
         });
     }
@@ -1871,10 +1869,9 @@ mod tests {
             .text_for("sass/partials/_card.scss")
             .is_none());
         assert!(workspace.documents.text_for("static/js/card.js").is_some());
-        assert!(plan
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "component_companion_retained"));
+        assert!(plan.diagnostics.iter().any(
+            |diagnostic| diagnostic.diagnostic.code == "component-mutation-companion-retained"
+        ));
 
         workspace.undo(&current_identity(&workspace), 3).unwrap();
         assert!(workspace
@@ -2097,9 +2094,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error.contains("SourceGraph")
-                || error.contains("Source Graph")
-                || error.contains("ComponentGraph"),
+            error.contains("source-graph-tera-syntax-invalid"),
             "{error}"
         );
         assert_eq!(workspace.revision, revision_before);
@@ -2170,8 +2165,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: sources.len(),
                 directory_count: 3,

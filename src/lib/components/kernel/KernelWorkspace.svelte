@@ -5,6 +5,7 @@
   import ProjectTransitionControl from "$lib/components/kernel/ProjectTransitionControl.svelte";
   import RecoveryControl from "$lib/components/kernel/RecoveryControl.svelte";
   import WriteAuthorityRecoveryControl from "$lib/components/kernel/WriteAuthorityRecoveryControl.svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
 
   let {
     currentProjectPath = "",
@@ -14,6 +15,7 @@
     canSave = false,
     diskBlockedReason = null,
     projectStatus = "",
+    observabilityFocusSerial = 0,
     onStatusUpdate = undefined as ((text: string, kind: "restored" | "saving" | "error") => void) | undefined,
   }: {
     currentProjectPath?: string;
@@ -23,6 +25,7 @@
     canSave?: boolean;
     diskBlockedReason?: string | null;
     projectStatus?: string;
+    observabilityFocusSerial?: number;
     onStatusUpdate?: (text: string, kind: "restored" | "saving" | "error") => void;
   } = $props();
 
@@ -32,9 +35,16 @@
   let observabilityRefreshToken = $state(0);
   let writeAuthorityRefreshToken = $state(0);
 
-  const projectName = $derived(currentProjectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? "Proiect");
-  const dirtyLabel = $derived(dirtyAreas.length ? dirtyAreas.join(", ") : "curat");
-  const statusLabel = $derived(projectStatus || "Sesiunea proiectului este activă");
+  const projectName = $derived(
+    currentProjectPath.split(/[\\/]/).filter(Boolean).at(-1)
+      ?? t("project-kernel-project-fallback"),
+  );
+  const dirtyLabel = $derived(
+    dirtyAreas.length ? dirtyAreas.join(", ") : t("project-kernel-clean"),
+  );
+  const statusLabel = $derived(
+    projectStatus || t("project-kernel-session-active"),
+  );
 
   function refreshKernelSurfaces() {
     recoveryRefreshToken += 1;
@@ -45,21 +55,18 @@
   }
 </script>
 
-<section class="kernel-workspace" aria-label="Nucleu Pană Studio">
+<section class="kernel-workspace" aria-label={t("project-kernel-aria")}>
   <header class="kernel-header">
     <div>
-      <span class="kicker">Autoritate unică</span>
-      <h1>Nucleul proiectului</h1>
-      <p>
-        HTML, CSS/SCSS, JavaScript, codul, previzualizarea și istoricul proiectează aceeași revizie din memorie.
-        Numai salvarea trece prin verificarea de conflict și granița de scriere pe disc.
-      </p>
+      <span class="kicker">{t("project-kernel-single-authority")}</span>
+      <h1>{t("project-kernel-title")}</h1>
+      <p>{t("project-kernel-description")}</p>
     </div>
     <dl>
-      <div><dt>Proiect</dt><dd title={currentProjectPath}>{projectName}</dd></div>
-      <div><dt>Fișiere</dt><dd>{projectFileCount}</dd></div>
-      <div><dt>Noduri sursă</dt><dd>{sourceNodeCount}</dd></div>
-      <div><dt>Sesiune</dt><dd class:warning={canSave}>{dirtyLabel}</dd></div>
+      <div><dt>{t("project-kernel-project")}</dt><dd title={currentProjectPath}>{projectName}</dd></div>
+      <div><dt>{t("project-kernel-files")}</dt><dd>{l10n.formatNumber(projectFileCount)}</dd></div>
+      <div><dt>{t("project-kernel-source-nodes")}</dt><dd>{l10n.formatNumber(sourceNodeCount)}</dd></div>
+      <div><dt>{t("project-kernel-session")}</dt><dd class:warning={canSave}>{dirtyLabel}</dd></div>
     </dl>
   </header>
 
@@ -72,23 +79,23 @@
     <div class="section-title">
       <IconGitBranch size={18} stroke={1.8} />
       <div>
-        <h2 id="authority-flow-title">Contractul de editare</h2>
-        <p>O singură stare autoritativă, două tipuri clare de efect: proiecție și salvare.</p>
+        <h2 id="authority-flow-title">{t("project-kernel-editing-contract")}</h2>
+        <p>{t("project-kernel-editing-contract-description")}</p>
       </div>
     </div>
     <div class="flow">
-      <span>Intenție UI</span>
-      <span>Sesiunea proiectului</span>
-      <span>Revizie + istoric</span>
-      <span>Previzualizare / panouri</span>
-      <span>Salvare verificată</span>
-      <span>Disc</span>
+      <span>{t("project-kernel-flow-ui-intent")}</span>
+      <span>{t("project-kernel-flow-session")}</span>
+      <span>{t("project-kernel-flow-revision")}</span>
+      <span>{t("project-kernel-flow-projection")}</span>
+      <span>{t("project-kernel-flow-save")}</span>
+      <span>{t("project-kernel-flow-disk")}</span>
     </div>
     <div class="invariants">
-      <span><IconActivity size={15} stroke={1.9} /> Editările nu scriu pe disc</span>
-      <span><IconActivity size={15} stroke={1.9} /> Anularea și refacerea schimbă sesiunea</span>
-      <span><IconActivity size={15} stroke={1.9} /> Previzualizarea este derivată din revizia curentă</span>
-      <span><IconActivity size={15} stroke={1.9} /> Salvarea verifică baza și jurnalizează atomic</span>
+      <span><IconActivity size={15} stroke={1.9} /> {t("project-kernel-invariant-edit")}</span>
+      <span><IconActivity size={15} stroke={1.9} /> {t("project-kernel-invariant-history")}</span>
+      <span><IconActivity size={15} stroke={1.9} /> {t("project-kernel-invariant-preview")}</span>
+      <span><IconActivity size={15} stroke={1.9} /> {t("project-kernel-invariant-save")}</span>
     </div>
   </section>
 
@@ -113,13 +120,14 @@
     <ObservabilityLogControl
       projectKey={currentProjectPath}
       refreshToken={observabilityRefreshToken}
+      focusToken={observabilityFocusSerial}
       {onStatusUpdate}
     />
   </div>
 </section>
 
 <style>
-  .kernel-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+  .kernel-workspace { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; overflow: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--material-panel); box-shadow: var(--shadow-panel); }
   .kernel-header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 500px); gap: 24px; padding: 22px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
   .kicker { color: var(--brand-strong); font-size: 12px; font-weight: 850; text-transform: uppercase; }
   h1 { margin: 7px 0 0; color: var(--text-strong); font-size: 30px; }

@@ -62,8 +62,6 @@ pub fn prepare_project_session<R: Runtime>(
         last_seen_at_ms: opened_at_ms,
         root_fingerprint: fingerprint_project_root(&root)?,
         scan_summary: ProjectSessionScanSummary {
-            is_zola: scan.is_zola,
-            is_empty: scan.is_empty,
             active_theme: scan.active_theme.clone(),
             file_count: scan
                 .files

@@ -7,6 +7,7 @@ import {
 import type { SourceGraph, SourceGraphNode, SourceGraphTemplate } from "$lib/types";
 import type { TeraDropRequest, TeraDropResolution } from "$lib/tera/model";
 import { teraSnippetForItem } from "$lib/tera/palette";
+import { t } from "$lib/i18n/runtime.svelte";
 
 function nodeById(graph: SourceGraph | null, id: string | null | undefined) {
   if (!id) return null;
@@ -107,14 +108,14 @@ function validateTeraDrop(
   if (!anchor) {
     return {
       allowed: false,
-      reason: "Nu există o ancoră Source Graph stabilă pentru drop-ul Tera.",
+      reason: t("tera-drop-anchor-missing"),
     };
   }
 
   if (!anchor.range) {
     return {
       allowed: false,
-      reason: "Ancora aleasă nu are range de sursă suficient pentru inserare source-preserving.",
+      reason: t("tera-drop-range-missing"),
       anchor,
     };
   }
@@ -122,7 +123,7 @@ function validateTeraDrop(
   if (!isTemplateOwner(anchor)) {
     return {
       allowed: false,
-      reason: "Tera poate fi inserat doar în template-uri Zola.",
+      reason: t("tera-drop-zola-template-only"),
       anchor,
     };
   }
@@ -130,7 +131,7 @@ function validateTeraDrop(
   if (anchor.kind === "tera") {
     return {
       allowed: false,
-      reason: "Sintaxa Tera nespecializată nu este o ancoră sigură pentru inserare vizuală.",
+      reason: t("tera-drop-generic-unsafe"),
       anchor,
     };
   }
@@ -138,7 +139,7 @@ function validateTeraDrop(
   if (request.item.kind === "extends" && request.position === "inside") {
     return {
       allowed: false,
-      reason: "Extends trebuie inserat la nivel de template, nu în interiorul unui element HTML.",
+      reason: t("tera-drop-extends-template-level"),
       anchor,
     };
   }
@@ -146,7 +147,10 @@ function validateTeraDrop(
   if (request.item.kind === "extends" && template?.extends) {
     return {
       allowed: false,
-      reason: `Template-ul ${templateReferenceForFile(anchor.file)} are deja extends către ${template.extends}.`,
+      reason: t("tera-drop-extends-exists", {
+        template: templateReferenceForFile(anchor.file),
+        target: template.extends,
+      }),
       anchor,
     };
   }
@@ -154,7 +158,7 @@ function validateTeraDrop(
   if (template?.isPartial && request.item.kind === "extends") {
     return {
       allowed: false,
-      reason: "Partialurile nu folosesc extends. Creează un template de pagină/layout pentru extends.",
+      reason: t("tera-drop-partial-no-extends"),
       anchor,
     };
   }
@@ -162,7 +166,7 @@ function validateTeraDrop(
   if (template?.isPartial && request.item.kind === "block") {
     return {
       allowed: false,
-      reason: "Partialurile nu definesc block-uri Tera. Pune HTML-ul direct în partial și include partialul în pagina dorită.",
+      reason: t("tera-drop-partial-no-blocks"),
       anchor,
     };
   }
@@ -172,18 +176,24 @@ function validateTeraDrop(
     if (template?.blocks.includes(name)) {
       return {
         allowed: false,
-        reason: `Block-ul ${name} există deja în ${templateReferenceForFile(anchor.file)}.`,
+        reason: t("tera-drop-block-exists", {
+          name,
+          template: templateReferenceForFile(anchor.file),
+        }),
         anchor,
       };
     }
   }
 
   if (request.item.kind === "macro") {
-    const name = request.item.name || "componenta";
+    const name = request.item.name || "component";
     if (template?.macros.includes(name)) {
       return {
         allowed: false,
-        reason: `Macro-ul ${name} există deja în ${templateReferenceForFile(anchor.file)}.`,
+        reason: t("tera-drop-macro-exists", {
+          name,
+          template: templateReferenceForFile(anchor.file),
+        }),
         anchor,
       };
     }
@@ -192,7 +202,9 @@ function validateTeraDrop(
   if ((request.item.kind === "include" || request.item.kind === "import") && !templateTargetExists(graph, request.item.target)) {
     return {
       allowed: false,
-      reason: `Template-ul țintă nu există încă: ${request.item.target || "(gol)"}. Creează fișierul sau alege un partial existent.`,
+      reason: t("tera-drop-target-missing", {
+        target: request.item.target || t("tera-drop-empty"),
+      }),
       anchor,
     };
   }
@@ -200,7 +212,7 @@ function validateTeraDrop(
   if (request.item.kind === "import" && request.position === "inside") {
     return {
       allowed: false,
-      reason: "Importurile Tera se inserează la nivel de template, înainte sau după o ancoră stabilă.",
+      reason: t("tera-drop-import-template-level"),
       anchor,
     };
   }
@@ -212,7 +224,7 @@ function validateTeraDrop(
   ) {
     return {
       allowed: false,
-      reason: "Acest element nu poate primi conținut Tera în interior. Alege înainte sau după element.",
+      reason: t("tera-drop-cannot-receive-inside"),
       anchor,
     };
   }

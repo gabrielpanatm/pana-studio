@@ -330,12 +330,14 @@ test("Canvas observability covers cache, stale, fallback, rollback, FOUC and JS 
 
 test("project entry create, delete and rename are session mutations", () => {
   const entries = source("src-tauri/src/commands/workspace_entries.rs");
-  const filesController = source("src/lib/state/files-controller.ts");
+  const explorer = source("src-tauri/src/commands/file_explorer.rs");
+  const filesPanel = source("src/lib/components/project/ProjectFilesTab.svelte");
   assert.match(entries, /stage_resource_texts/);
-  assert.match(entries, /stage_resource_changes/);
-  assert.match(entries, /stage_composite_changes/);
-  assert.match(filesController, /Ctrl\+S persistă pe disc/);
-  assert.doesNotMatch(filesController, /acceptedManifest|InternalWriteEvidence/);
+  assert.match(explorer, /stage_project_bundle_changes/);
+  assert.match(explorer, /FileExplorerOperationRequest::(?:Create|Delete|Rename)/);
+  assert.match(filesPanel, /planOperation/);
+  assert.match(filesPanel, /commitOperation/);
+  assert.doesNotMatch(filesPanel, /acceptedManifest|InternalWriteEvidence/);
 });
 
 test("external disk reconciliation remains a conflict gate, never an internal edit authority", () => {

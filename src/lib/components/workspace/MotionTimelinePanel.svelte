@@ -1,701 +1,1219 @@
 <script lang="ts">
-  import { untrack } from "svelte";
-  import MotionTimeline from "$lib/components/inspector/js/MotionTimeline.svelte";
-  import { createMotionItem, emptyExpression, normalizeMotionConfig } from "$lib/js/motion-config";
-  import { emptyPageJsConfig, normalizePageJsConfig } from "$lib/js/page-config";
+  import { onDestroy } from "svelte";
   import {
-    activeOrchestratorTimeline,
-    appendOrchestratorTimeline,
-    motionActorItems,
-    orphanTimelineAnimations,
-    replaceOrchestratorTimeline,
-    timelineComposerItems,
-    timelineStepTargetItems,
-  } from "$lib/js/motion-orchestrator";
+    IconArrowsMaximize,
+    IconChevronDown,
+    IconChevronUp,
+    IconCopy,
+    IconPlayerPause,
+    IconPlayerPlay,
+    IconPlayerSkipBack,
+    IconRepeat,
+    IconRewindBackward10,
+    IconTrash,
+    IconVolume,
+    IconVolumeOff,
+    IconX,
+    IconZoomIn,
+    IconZoomOut,
+  } from "@tabler/icons-svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
   import {
-    MOTION_TIMELINE_DEFAULT_TRACK_ID,
-    timelineStepFromItem,
-    timelineStepFromAnimation,
-  } from "$lib/js/motion-timeline";
-  import { pageConfigWithTimeline } from "$lib/js/motion-timeline-draft";
-  import { applyMotionTimelineStepTimingProjection } from "$lib/js/motion-graph-step-timing";
-  import {
-    createMotionStepTimingQueue,
-    type MotionStepTimingTask,
-  } from "$lib/js/motion-step-timing-queue";
-  import type { MotionTimelineTimingPatch } from "$lib/js/motion-timeline-interaction";
-  import { getPageJsWorkspaceState } from "$lib/project/io";
-  import { registerEditFlushHandler, type EditFlushReason } from "$lib/session/edit-flush-registry";
-  import {
-    createPageJsRequestIdentity,
-    isPageJsRequestIdentityCurrent,
-    pageJsCommandPayload,
-  } from "$lib/session/page-js-command-session";
-  import { normalizePageJsTemplatePath } from "$lib/js/page-path";
-  import { queuePageJsDraftSync } from "$lib/session/page-js-draft-sync";
+    actionDuration,
+    actionSpan,
+    createAnimateAction,
+    interactionDuration,
+    motionId,
+    targetForDataAnim,
+    triggerTarget,
+  } from "$lib/js/motion-v2";
   import type {
-    PageJsConfig,
-    PanaMotionConfig,
-    PanaMotionTimelineItem,
-    PanaMotionTimelineStep,
+    MotionAction,
+    MotionInteraction,
+    MotionTarget,
+    MotionTargetRelation,
+    InspectorSelectionSummarySnapshot,
   } from "$lib/types";
 
   let {
-    activeTemplatePath = null,
-    projectRoot = "",
-    runtimeSessionId = "",
-    refreshToken = 0,
-    onPendingChange = undefined as ((pending: boolean) => void) | undefined,
+    workspace,
+    selectionSummary = null,
+    dataAnim = null,
   }: {
-    activeTemplatePath?: string | null;
-    projectRoot?: string;
-    runtimeSessionId?: string;
-    refreshToken?: number;
-    onPendingChange?: (pending: boolean) => void;
+    workspace: MotionWorkspaceState;
+    selectionSummary?: InspectorSelectionSummarySnapshot | null;
+    dataAnim?: string | null;
   } = $props();
 
-  const templatePath = $derived.by(() => {
-    const canonicalPath = normalizePageJsTemplatePath(activeTemplatePath);
-    return canonicalPath || null;
-  });
+  type TimingDraft = { start: number; duration: number };
+  type PendingTimingCommit = {
+    serial: number;
+    draft: TimingDraft;
+  };
+  type DragState = {
+    action: MotionAction;
+    interactionId: string;
+    mode: "move" | "resize";
+    pointerId: number;
+    captureElement: HTMLElement;
+    startX: number;
+    latestX: number;
+    canvasWidth: number;
+    timelineDuration: number;
+    domain: MotionInteraction["domain"];
+    snap: boolean;
+    original: TimingDraft;
+    animationFrame: number | null;
+    safetyTimer: number | null;
+  };
+  type SeekDragState = {
+    interactionId: string;
+    pointerId: number;
+    captureElement: HTMLElement;
+    latestX: number;
+    canvasLeft: number;
+    canvasWidth: number;
+    timelineDuration: number;
+    domain: MotionInteraction["domain"];
+    snap: boolean;
+    animationFrame: number | null;
+    safetyTimer: number | null;
+    lastPublishedValue: number | null;
+  };
+  type TargetPresentation = {
+    title: string;
+    detail: string;
+  };
+  type TimelineLane = TargetPresentation & {
+    key: string;
+    actions: MotionAction[];
+  };
 
-  type TimelineConfigLoadState = "idle" | "loading" | "ready" | "error";
+  let timingDrafts = $state<Record<string, TimingDraft>>({});
+  let drag: DragState | null = null;
+  let seekDrag: SeekDragState | null = null;
+  let clipboard = $state<MotionAction | null>(null);
+  let playhead = $state(0);
+  let playing = $state(false);
+  let targetPresentationRevision = $state(0);
+  let timingCommitSerial = 0;
+  const targetPresentations = new Map<string, TargetPresentation>();
+  const pendingTimingCommits = new Map<string, PendingTimingCommit>();
 
-  let config = $state<PageJsConfig>(emptyPageJsConfig());
-  let baseConfig = $state<PageJsConfig>(emptyPageJsConfig());
-  let timelineConfigLoadState = $state<TimelineConfigLoadState>("idle");
-  let readyTemplatePath = "";
-  let readyProjectRoot = "";
-  let readyRuntimeSessionId = "";
-  let readyRefreshToken: number | null = null;
-  let lastTplPath = "";
-  let lastProjectRoot = "";
-  let lastRuntimeSessionId = "";
-  let lastHandledRefreshToken: number | null = null;
-  let timelineDraftTimer: number | null = null;
-  let timelineDraftDirty = $state(false);
-  let timelineDraftTarget: string | null = null;
-  let loadSerial = 0;
-  let templateTransitionSerial = 0;
-  let timelineLoadError = $state("");
-  let localSelectedStepId = $state<string | null>(null);
-  let unregisterFlushHandler: (() => void) | null = null;
-  let disposed = false;
-  const stepTimingQueue = createMotionStepTimingQueue(commitStepTimingTask);
-
-  const TIMELINE_DRAFT_COMMIT_MS = 320;
-
-  const jsPending = $derived.by(() => {
-    return Boolean(templatePath && timelineDraftDirty);
-  });
-
-  $effect(() => {
-    const pending = jsPending;
-    untrack(() => onPendingChange?.(pending));
-  });
-
-  $effect(() => {
-    const tpl = templatePath;
-    const root = projectRoot;
-    const sessionId = runtimeSessionId;
-    const nextPath = tpl ?? "";
-    if (
-      nextPath === lastTplPath
-      && root === lastProjectRoot
-      && sessionId === lastRuntimeSessionId
-    ) return;
-    beginTemplateTransition(tpl, root, sessionId);
-  });
-
-  function beginTemplateTransition(
-    tpl: string | null,
-    targetProjectRoot = projectRoot,
-    targetRuntimeSessionId = runtimeSessionId,
-  ) {
-    if (disposed) return;
-    const transitionSerial = ++templateTransitionSerial;
-    loadSerial += 1;
-    timelineConfigLoadState = "loading";
-    timelineLoadError = "";
-    void stepTimingQueue.flush({ throwOnFailure: true }).then(() => {
-      if (
-        disposed
-        || transitionSerial !== templateTransitionSerial
-        || templatePath !== tpl
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-      ) return;
-      flushTimelineDraftToSession("template-switch");
-      lastTplPath = tpl ?? "";
-      lastProjectRoot = targetProjectRoot;
-      lastRuntimeSessionId = targetRuntimeSessionId;
-      if (tpl && targetProjectRoot && targetRuntimeSessionId) {
-        void loadConfig(tpl, targetProjectRoot, targetRuntimeSessionId);
-      } else {
-        stepTimingQueue.reset();
-        readyTemplatePath = "";
-        readyProjectRoot = "";
-        readyRuntimeSessionId = "";
-        readyRefreshToken = null;
-        baseConfig = emptyPageJsConfig();
-        config = emptyPageJsConfig();
-        timelineDraftDirty = false;
-        timelineDraftTarget = null;
-        timelineConfigLoadState = tpl ? "error" : "idle";
-        timelineLoadError = tpl
-          ? "Sesiunea proiectului nu este disponibilă pentru citirea JavaScript-ului paginii."
-          : "";
+  const interaction = $derived(workspace.selectedInteraction);
+  const duration = $derived(interaction ? interactionDuration(interaction) : 1);
+  const unit = $derived(interaction?.domain === "progress" ? "%" : "ms");
+  const lanes = $derived.by(() => {
+    if (!interaction) return [];
+    targetPresentationRevision;
+    const groups = new Map<string, TimelineLane>();
+    for (const action of interaction.actions) {
+      const key = actionTargetKey(action);
+      const group = groups.get(key);
+      if (group) {
+        group.actions.push(action);
+        continue;
       }
-    }).catch((error) => {
-      if (
-        disposed
-        || transitionSerial !== templateTransitionSerial
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-      ) return;
-      timelineLoadError = error instanceof Error ? error.message : String(error);
-      timelineConfigLoadState = "error";
+      groups.set(key, {
+        key,
+        ...actionTargetPresentation(action, interaction),
+        actions: [action],
+      });
+    }
+    return Array.from(groups.values());
+  });
+  const ticks = $derived.by(() => {
+    const count = 10;
+    return Array.from({ length: count + 1 }, (_, index) => {
+      const value = duration * index / count;
+      return { value, left: index * 10 };
     });
+  });
+
+  $effect(() => {
+    if (!interaction) return;
+    playhead = Math.min(playhead, duration);
+  });
+
+  $effect(() => {
+    const status = workspace.previewStatus;
+    if (!interaction || !status || status.interactionId !== interaction.id) return;
+    if (seekDrag?.interactionId === interaction.id) return;
+    playhead = Math.max(0, Math.min(duration, status.value));
+    playing = !status.paused;
+  });
+
+  $effect(() => {
+    const interactionId = interaction?.id ?? null;
+    if (drag && drag.interactionId !== interactionId) cancelDrag();
+    if (seekDrag && seekDrag.interactionId !== interactionId) cancelSeekDrag();
+  });
+
+  $effect(() => {
+    const summary = selectionSummary;
+    const selectedDataAnim = dataAnim?.trim() ?? "";
+    if (summary?.state !== "resolved" || !selectedDataAnim) return;
+    const presentation = {
+      title: selectionTitle(summary),
+      detail: `[data-anim="${selectedDataAnim}"]`,
+    };
+    const current = targetPresentations.get(selectedDataAnim);
+    if (current?.title === presentation.title && current.detail === presentation.detail) return;
+    targetPresentations.set(selectedDataAnim, presentation);
+    targetPresentationRevision += 1;
+  });
+
+  function selectionTitle(selection: InspectorSelectionSummarySnapshot) {
+    const tag = selection.tag?.trim().toLowerCase() || "element";
+    if (selection.elementId?.trim()) return `${tag}#${selection.elementId.trim()}`;
+    const classes = selection.classes
+      .map((name) => name.trim())
+      .filter(Boolean)
+      .slice(0, 2);
+    return `${tag}${classes.map((name) => `.${name}`).join("")}`;
   }
 
-  $effect(() => {
-    const token = refreshToken;
-    const tpl = templatePath;
-    if (lastHandledRefreshToken === null) {
-      lastHandledRefreshToken = token;
-      return;
+  function targetKey(target: MotionTarget) {
+    return [
+      target.kind,
+      target.dataAnim,
+      target.selector,
+      target.relation,
+      target.scope,
+    ].join("\u0000");
+  }
+
+  function actionTargetKey(action: MotionAction) {
+    return "target" in action ? `target\u0000${targetKey(action.target)}` : "control";
+  }
+
+  function technicalTargetDetail(target: MotionTarget) {
+    if (target.kind === "element") {
+      return target.dataAnim
+        ? `[data-anim="${target.dataAnim}"]`
+        : t("motion-timeline-target-element");
     }
-    if (token === lastHandledRefreshToken) return;
-    lastHandledRefreshToken = token;
-    if (!tpl || tpl !== lastTplPath) return;
-    const targetProjectRoot = projectRoot;
-    const targetRuntimeSessionId = runtimeSessionId;
-    const targetRefreshToken = token;
-    loadSerial += 1;
-    timelineConfigLoadState = "loading";
-    timelineLoadError = "";
-    void stepTimingQueue.flush({ throwOnFailure: true }).then(() => {
-      if (
-        disposed
-        || templatePath !== tpl
-        || lastTplPath !== tpl
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-        || lastProjectRoot !== targetProjectRoot
-        || lastRuntimeSessionId !== targetRuntimeSessionId
-        || refreshToken !== targetRefreshToken
-      ) return;
-      flushTimelineDraftToSession("manual");
-      void loadConfig(tpl, targetProjectRoot, targetRuntimeSessionId, targetRefreshToken);
-    }).catch((error) => {
-      if (
-        disposed
-        || templatePath !== tpl
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-        || refreshToken !== targetRefreshToken
-      ) return;
-      timelineLoadError = error instanceof Error ? error.message : String(error);
-      timelineConfigLoadState = "error";
-    });
-  });
+    if (target.kind === "selector") return target.selector || t("motion-target-selector");
+    if (target.kind === "relative") {
+      return `${relationLabel(target.relation)}${target.selector ? ` · ${target.selector}` : ""}`;
+    }
+    if (target.kind === "trigger") return t("motion-trigger-target");
+    return target.kind === "viewport"
+      ? t("motion-target-viewport")
+      : t("motion-target-document");
+  }
 
-  $effect(() => {
-    return () => {
-      untrack(() => onPendingChange?.(false));
-      // Teardown cannot await. Invalidate all pending/in-flight work first,
-      // synchronously stage only an already-resolved local draft, then forbid
-      // every async continuation from publishing after this instance is gone.
-      templateTransitionSerial += 1;
-      loadSerial += 1;
-      stepTimingQueue.reset();
-      flushTimelineDraftToSession("unmount");
-      readyTemplatePath = "";
-      readyProjectRoot = "";
-      readyRuntimeSessionId = "";
-      readyRefreshToken = null;
-      disposed = true;
-      unregisterFlushHandler?.();
-      unregisterFlushHandler = null;
-    };
-  });
-
-  $effect(() => {
-    unregisterFlushHandler?.();
-    unregisterFlushHandler = registerEditFlushHandler("motion-timeline-panel", async (reason) => {
-      await stepTimingQueue.flush({ throwOnFailure: true });
-      flushTimelineDraftToSession(reason);
-    });
-    return () => {
-      unregisterFlushHandler?.();
-      unregisterFlushHandler = null;
-    };
-  });
-
-  async function loadConfig(
-    tpl: string,
-    targetProjectRoot = projectRoot,
-    targetRuntimeSessionId = runtimeSessionId,
-    targetRefreshToken = refreshToken,
-  ) {
-    flushTimelineDraftToSession("manual");
-    const serial = ++loadSerial;
-    timelineConfigLoadState = "loading";
-    timelineLoadError = "";
-    stepTimingQueue.reset();
-    timelineDraftDirty = false;
-    timelineDraftTarget = null;
-    readyTemplatePath = "";
-    readyProjectRoot = "";
-    readyRuntimeSessionId = "";
-    readyRefreshToken = null;
-
-    try {
-      const identity = createPageJsRequestIdentity(targetProjectRoot, targetRuntimeSessionId);
-      const receipt = await getPageJsWorkspaceState(tpl, identity);
-      if (
-        disposed
-        || serial !== loadSerial
-        || templatePath !== tpl
-        || lastTplPath !== tpl
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-        || lastProjectRoot !== targetProjectRoot
-        || lastRuntimeSessionId !== targetRuntimeSessionId
-        || refreshToken !== targetRefreshToken
-      ) return;
-      if (!isPageJsRequestIdentityCurrent(identity, projectRoot, runtimeSessionId)) return;
-      const workspaceState = pageJsCommandPayload(
-        receipt,
-        identity,
-        "Citirea JavaScript-ului paginii din cronologie",
-      );
-      baseConfig = normalizePageJsConfig(workspaceState.accepted);
-      config = normalizePageJsConfig(workspaceState.current);
-      readyTemplatePath = tpl;
-      readyProjectRoot = targetProjectRoot;
-      readyRuntimeSessionId = targetRuntimeSessionId;
-      readyRefreshToken = targetRefreshToken;
-      timelineConfigLoadState = "ready";
-    } catch (error) {
-      if (
-        disposed
-        || serial !== loadSerial
-        || templatePath !== tpl
-        || lastTplPath !== tpl
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-        || lastProjectRoot !== targetProjectRoot
-        || lastRuntimeSessionId !== targetRuntimeSessionId
-        || refreshToken !== targetRefreshToken
-      ) return;
-      timelineLoadError = error instanceof Error ? error.message : String(error);
-      timelineConfigLoadState = "error";
+  function relationLabel(relation: MotionTargetRelation) {
+    switch (relation) {
+      case "selfElement": return t("motion-target-selected");
+      case "children": return t("motion-relation-children");
+      case "descendants": return t("motion-relation-descendants");
+      case "parent": return t("motion-relation-parent");
+      case "ancestors": return t("motion-relation-ancestors");
+      case "siblings": return t("motion-relation-siblings");
+      case "nextSibling": return t("motion-relation-next");
+      case "previousSibling": return t("motion-relation-previous");
     }
   }
 
-  function isLoadedConfigTarget(
-    target: string | null,
-    targetProjectRoot = projectRoot,
-    targetRuntimeSessionId = runtimeSessionId,
-  ): target is string {
-    return Boolean(
-      target
-      && readyTemplatePath === target
-      && readyProjectRoot === targetProjectRoot
-      && readyRuntimeSessionId === targetRuntimeSessionId
+  function targetPresentation(target: MotionTarget): TargetPresentation {
+    if (target.kind === "element" && target.dataAnim) {
+      return targetPresentations.get(target.dataAnim) ?? {
+        title: t("motion-timeline-target-element"),
+        detail: technicalTargetDetail(target),
+      };
+    }
+    if (target.kind === "selector") {
+      return { title: t("motion-timeline-target-selector"), detail: technicalTargetDetail(target) };
+    }
+    if (target.kind === "relative") {
+      return { title: t("motion-timeline-target-relative"), detail: technicalTargetDetail(target) };
+    }
+    if (target.kind === "viewport") {
+      return {
+        title: t("motion-target-viewport"),
+        detail: t("motion-timeline-page-viewport"),
+      };
+    }
+    if (target.kind === "document") {
+      return {
+        title: t("motion-target-document"),
+        detail: t("motion-timeline-page-document"),
+      };
+    }
+    return {
+      title: t("motion-target-trigger"),
+      detail: t("motion-trigger-target"),
+    };
+  }
+
+  function actionTargetPresentation(
+    action: MotionAction,
+    currentInteraction: MotionInteraction,
+  ): TargetPresentation {
+    if (!("target" in action)) {
+      return {
+        title: t("motion-timeline-control-logic"),
+        detail: t("motion-timeline-no-visual-target"),
+      };
+    }
+    if (action.target.kind !== "trigger") return targetPresentation(action.target);
+    const triggerPresentation = targetPresentation(currentInteraction.triggerTarget);
+    return {
+      title: triggerPresentation.title === t("motion-timeline-target-element")
+        ? t("motion-target-trigger")
+        : triggerPresentation.title,
+      detail: triggerPresentation.detail,
+    };
+  }
+
+  function triggerTypeLabel(type: MotionInteraction["trigger"]["type"]) {
+    switch (type) {
+      case "load": return t("motion-trigger-load");
+      case "inView": return t("motion-trigger-in-view");
+      case "click": return t("motion-trigger-click");
+      case "hover": return t("motion-trigger-hover");
+      case "scroll": return t("motion-trigger-scroll");
+      case "pointer": return t("motion-trigger-pointer");
+      case "custom": return t("motion-trigger-custom");
+    }
+  }
+
+  function actionTypeLabel(type: MotionAction["type"]) {
+    switch (type) {
+      case "animate": return t("motion-action-animate");
+      case "set": return t("motion-action-set");
+      case "media": return t("motion-media-command");
+      case "call": return t("motion-isolated-code");
+      case "nested": return t("motion-action-nested");
+    }
+  }
+
+  function draftFor(action: MotionAction): TimingDraft {
+    return timingDrafts[action.id] ?? {
+      start: action.start,
+      duration: actionDuration(action),
+    };
+  }
+
+  function draftSpan(action: MotionAction, draft: TimingDraft) {
+    if (action.type !== "animate" || action.repeat.infinite) return draft.duration;
+    return draft.duration * (action.repeat.count + 1)
+      + action.repeat.delayMs * action.repeat.count;
+  }
+
+  function percent(value: number) {
+    return Math.max(0, Math.min(100, value / Math.max(1, duration) * 100));
+  }
+
+  function formatValue(value: number) {
+    if (interaction?.domain === "progress") {
+      return `${l10n.formatNumber(Math.round(value * 10) / 10)}%`;
+    }
+    if (value >= 1_000) {
+      return `${l10n.formatNumber(value / 1_000, {
+        maximumFractionDigits: value % 1_000 ? 1 : 0,
+      })}s`;
+    }
+    return `${l10n.formatNumber(Math.round(value))}ms`;
+  }
+
+  function snapValue(value: number) {
+    if (!workspace.timelineSnap) return Math.max(0, value);
+    const step = interaction?.domain === "progress" ? 1 : 50;
+    return Math.max(0, Math.round(value / step) * step);
+  }
+
+  function removeTimingDraft(actionId: string) {
+    if (!(actionId in timingDrafts)) return;
+    timingDrafts = Object.fromEntries(
+      Object.entries(timingDrafts).filter(([id]) => id !== actionId),
     );
   }
 
-  function isCurrentConfigReady(): boolean {
-    return timelineConfigLoadState === "ready"
-      && isLoadedConfigTarget(templatePath, projectRoot, runtimeSessionId)
-      && readyRefreshToken === refreshToken
-      && lastTplPath === templatePath
-      && lastProjectRoot === projectRoot
-      && lastRuntimeSessionId === runtimeSessionId;
-  }
-
-  function retryTimelineLoad() {
-    const tpl = templatePath;
-    const targetProjectRoot = projectRoot;
-    const targetRuntimeSessionId = runtimeSessionId;
-    if (
-      tpl
-      && tpl === lastTplPath
-      && targetProjectRoot === lastProjectRoot
-      && targetRuntimeSessionId === lastRuntimeSessionId
-    ) {
-      void loadConfig(tpl, targetProjectRoot, targetRuntimeSessionId, refreshToken);
-      return;
-    }
-    beginTemplateTransition(tpl, targetProjectRoot, targetRuntimeSessionId);
-  }
-
-  function clearTimelineDraftTimer() {
-    if (timelineDraftTimer === null) return;
-    window.clearTimeout(timelineDraftTimer);
-    timelineDraftTimer = null;
-  }
-
-  function commitConfigToSession(
-    nextConfig: PageJsConfig,
-    target: string | null = templatePath,
-  ) {
-    const targetPath = target ?? "";
-    if (!targetPath || !isLoadedConfigTarget(targetPath, projectRoot)) return false;
-    queuePageJsDraftSync({
-      templatePath: targetPath,
-      baseConfig,
-      currentConfig: nextConfig,
-      cachebustAssets: false,
-      source: "motion.timeline",
-      coalesceKey: "page_js.timeline",
-    });
-    return true;
-  }
-
-  function stageConfig(nextConfig: PageJsConfig) {
-    if (!isCurrentConfigReady()) return;
-    clearTimelineDraftTimer();
-    timelineDraftDirty = false;
-    timelineDraftTarget = null;
-    const nextNormalized = normalizePageJsConfig(nextConfig);
-    config = nextNormalized;
-    commitConfigToSession(nextNormalized);
-  }
-
-  function updateMotionConfig(motion: PanaMotionConfig) {
-    stageConfig({ ...config, version: 1, motion });
-  }
-
-  function commitTimelineDraftToSession(
-    timeline: PanaMotionTimelineItem,
-    target: string | null = timelineDraftTarget ?? templatePath,
-  ) {
-    const targetPath = target ?? "";
-    if (!targetPath || !isLoadedConfigTarget(targetPath, projectRoot)) return false;
-    const nextConfig = pageConfigWithTimeline(config, timeline);
-    config = nextConfig;
-    return commitConfigToSession(nextConfig, targetPath);
-  }
-
-  function flushTimelineDraftToSession(_reason: EditFlushReason) {
-    clearTimelineDraftTimer();
-    if (!timelineDraftDirty) return false;
-    const target = timelineDraftTarget ?? templatePath;
-    const timeline = activeOrchestratorTimeline(normalizeMotionConfig(config.motion));
-    timelineDraftDirty = false;
-    timelineDraftTarget = null;
-    if (!target || !timeline) return false;
-    return commitTimelineDraftToSession(timeline, target);
-  }
-
-  function markTimelineDraftDirty(targetOverride: string | null = templatePath) {
-    if (disposed) return;
-    const target = targetOverride;
-    if (!target || !isLoadedConfigTarget(target, projectRoot)) return;
-    timelineDraftDirty = true;
-    timelineDraftTarget = target;
-    clearTimelineDraftTimer();
-    timelineDraftTimer = window.setTimeout(() => {
-      timelineDraftTimer = null;
-      flushTimelineDraftToSession("manual");
-    }, TIMELINE_DRAFT_COMMIT_MS);
-  }
-
-  const motionState = $derived.by(() => normalizeMotionConfig(config.motion));
-  const activeTimeline = $derived.by(() => activeOrchestratorTimeline(motionState));
-  const composerItems = $derived.by(() => timelineComposerItems(motionState.items, activeTimeline?.id ?? null));
-  const selectedStepId = $derived.by(() => {
-    if (!activeTimeline) return null;
-    if (localSelectedStepId && activeTimeline.steps.some((step) => step.id === localSelectedStepId)) {
-      return localSelectedStepId;
-    }
-    const activeStep = activeTimeline.steps.find((step) => step.id === motionState.activeItemId);
-    return activeStep?.id ?? null;
-  });
-
-  const orphanAnimations = $derived.by(() => {
-    return orphanTimelineAnimations(motionState.items);
-  });
-
-  function setActiveStep(stepId: string) {
-    localSelectedStepId = stepId;
-  }
-
-  function updateTimelineItem(
-    nextTimeline: PanaMotionTimelineItem,
-    activeId: string | null | undefined = undefined,
-  ) {
-    if (!isCurrentConfigReady()) return;
-    const motion = normalizeMotionConfig(config.motion);
-    const nextMotion = replaceOrchestratorTimeline(motion, nextTimeline, activeId);
-    if (nextMotion === motion) return;
-    updateMotionConfig(nextMotion);
-  }
-
-  function firstTrackId(timeline: PanaMotionTimelineItem): string {
-    return timeline.tracks[0]?.id || MOTION_TIMELINE_DEFAULT_TRACK_ID;
-  }
-
-  function createTimeline() {
-    if (!isCurrentConfigReady()) return;
-    const motion = normalizeMotionConfig(config.motion);
-    const timeline = createMotionItem("timeline") as PanaMotionTimelineItem;
-    updateMotionConfig(appendOrchestratorTimeline(motion, timeline));
-  }
-
-  function updateStepTiming(stepIndex: number, patch: MotionTimelineTimingPatch) {
-    if (disposed || !isCurrentConfigReady() || !activeTimeline) return;
-    const target = templatePath;
-    const step = activeTimeline.steps[stepIndex];
-    if (!target || !step) return;
-    stepTimingQueue.enqueue({
-      projectRoot,
-      runtimeSessionId,
-      templatePath: target,
-      timelineId: activeTimeline.id,
-      stepId: step.id,
-      stepIndex,
-      patch,
-    });
-  }
-
-  async function commitStepTimingTask(
-    task: MotionStepTimingTask,
-    context: { isCurrent: () => boolean },
-  ) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (
-        disposed
-        || !context.isCurrent()
-        || task.projectRoot !== projectRoot
-        || task.runtimeSessionId !== runtimeSessionId
-        || task.templatePath !== lastTplPath
-        || !isLoadedConfigTarget(task.templatePath, task.projectRoot, task.runtimeSessionId)
-      ) return;
-      const taskMotion = normalizeMotionConfig(config.motion);
-      const taskTimeline = taskMotion.items.find(
-        (item): item is PanaMotionTimelineItem => item.type === "timeline" && item.id === task.timelineId,
-      );
-      if (!taskTimeline?.steps.some((step) => step.id === task.stepId)) return;
-      const sourceConfig = config;
-      const result = await applyMotionTimelineStepTimingProjection({
-        config: sourceConfig,
-        timelineId: task.timelineId,
-        stepId: task.stepId,
-        stepIndex: task.stepIndex,
-        patch: task.patch,
-      });
-      if (
-        disposed
-        || !context.isCurrent()
-        || task.projectRoot !== projectRoot
-        || task.runtimeSessionId !== runtimeSessionId
-        || task.templatePath !== lastTplPath
-        || !isLoadedConfigTarget(task.templatePath, task.projectRoot, task.runtimeSessionId)
-      ) return;
-      // A different editor may have committed while Rust validated the patch.
-      // Retry against that newer projection instead of overwriting it.
-      if (config !== sourceConfig) continue;
-      if (!result.changed) return;
-      if (result.selectedStepId) localSelectedStepId = result.selectedStepId;
-      config = result.config;
-      markTimelineDraftDirty(task.templatePath);
-      return;
-    }
-    throw new Error("Cronologia animațiilor nu a putut compune sincronizarea pasului peste configurația aflată în schimbare.");
-  }
-
-  function updateStep(nextStep: PanaMotionTimelineStep) {
-    if (!isCurrentConfigReady() || !activeTimeline) return;
-    const steps = activeTimeline.steps.map((step) => step.id === nextStep.id ? nextStep : step);
-    localSelectedStepId = nextStep.id;
-    updateTimelineItem({ ...activeTimeline, steps });
-  }
-
-  function deleteStep(stepId: string) {
-    if (!isCurrentConfigReady() || !activeTimeline) return;
-    const steps = activeTimeline.steps.filter((step) => step.id !== stepId);
-    localSelectedStepId = steps[0]?.id ?? null;
-    updateTimelineItem({ ...activeTimeline, steps });
-  }
-
-  function addAnimationStep(animationId: string) {
-    if (!isCurrentConfigReady()) return;
-    const motion = normalizeMotionConfig(config.motion);
-    const timeline = activeTimeline;
-    const animation = motionActorItems(motion.items).find((item) => item.id === animationId && item.type === "animation");
-    if (!timeline || !animation || animation.type !== "animation") return;
-    const step = { ...timelineStepFromAnimation(animation, timeline.steps.length), lane: firstTrackId(timeline) };
-    const nextTimeline = { ...timeline, steps: [...timeline.steps, step] };
-    localSelectedStepId = step.id;
-    updateMotionConfig(replaceOrchestratorTimeline(motion, nextTimeline));
-  }
-
-  function addCallbackStep(position: string) {
-    if (!isCurrentConfigReady()) return;
-    const motion = normalizeMotionConfig(config.motion);
-    const timeline = activeTimeline;
-    if (!timeline) return;
-    const step: PanaMotionTimelineStep = {
-      id: `step-${Math.random().toString(36).slice(2, 9)}`,
-      type: "callback",
-      label: "Callback",
-      position,
-      duration: 50,
-      lane: firstTrackId(timeline),
-      targetItemId: "",
-      callback: emptyExpression("Timeline callback"),
+  function setTimingDraft(actionId: string, draft: TimingDraft) {
+    timingDrafts = {
+      ...timingDrafts,
+      [actionId]: draft,
     };
-    const nextTimeline = { ...timeline, steps: [...timeline.steps, step] };
-    localSelectedStepId = step.id;
-    updateMotionConfig(replaceOrchestratorTimeline(motion, nextTimeline));
   }
 
-  function addGenericStep(type: PanaMotionTimelineStep["type"], position: string) {
-    if (!isCurrentConfigReady()) return;
-    const motion = normalizeMotionConfig(config.motion);
-    const timeline = activeTimeline;
-    if (!timeline) return;
-    const target = timelineStepTargetItems(motion.items, timeline.id, type)[0] ?? null;
-    const step = { ...timelineStepFromItem(target, type, position, timeline.steps.length), lane: firstTrackId(timeline) };
-    const nextTimeline = { ...timeline, steps: [...timeline.steps, step] };
-    localSelectedStepId = step.id;
-    updateMotionConfig(replaceOrchestratorTimeline(motion, nextTimeline));
+  function restorePendingTimingDraft(actionId: string) {
+    const pending = pendingTimingCommits.get(actionId);
+    if (pending) {
+      setTimingDraft(actionId, pending.draft);
+      return;
+    }
+    removeTimingDraft(actionId);
   }
 
-  function addLabel(position: string) {
-    if (!isCurrentConfigReady()) return;
-    const timeline = activeTimeline;
-    if (!timeline) return;
-    updateTimelineItem({
-      ...timeline,
-      labels: [
-        ...timeline.labels,
-        { id: `label-${Math.random().toString(36).slice(2, 9)}`, name: `Label ${timeline.labels.length + 1}`, position },
-      ],
-    }, timeline.id);
+  function settleTimingCommit(actionId: string, serial: number) {
+    if (pendingTimingCommits.get(actionId)?.serial !== serial) return;
+    pendingTimingCommits.delete(actionId);
+    removeTimingDraft(actionId);
   }
 
+  function dragTimingAt(current: DragState, clientX: number): TimingDraft {
+    const delta = (clientX - current.startX)
+      / Math.max(1, current.canvasWidth)
+      * current.timelineDuration;
+    const snap = (value: number) => {
+      if (!current.snap) return Math.max(0, value);
+      const step = current.domain === "progress" ? 1 : 50;
+      return Math.max(0, Math.round(value / step) * step);
+    };
+    const next = { ...current.original };
+    if (current.mode === "move") {
+      next.start = snap(
+        current.domain === "progress"
+          ? Math.min(100 - Math.max(0, next.duration), current.original.start + delta)
+          : current.original.start + delta,
+      );
+    } else {
+      next.duration = snap(Math.max(
+        current.domain === "progress" ? 1 : 50,
+        current.domain === "progress"
+          ? Math.min(100 - next.start, current.original.duration + delta)
+          : current.original.duration + delta,
+      ));
+    }
+    return next;
+  }
+
+  function flushDragDraft(current: DragState) {
+    current.animationFrame = null;
+    if (drag !== current) return;
+    timingDrafts = {
+      ...timingDrafts,
+      [current.action.id]: dragTimingAt(current, current.latestX),
+    };
+  }
+
+  function beginDrag(event: PointerEvent, action: MotionAction, mode: "move" | "resize") {
+    if (event.button !== 0 || !interaction || seekDrag) return;
+    cancelDrag();
+    event.preventDefault();
+    event.stopPropagation();
+    const canvas = (event.currentTarget as HTMLElement).closest<HTMLElement>(".timeline-canvas");
+    if (!canvas) return;
+    const captureElement = event.currentTarget as HTMLElement;
+    try {
+      captureElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Window listeners still guarantee cleanup when pointer capture is unavailable.
+    }
+    workspace.selectInteraction(interaction.id, action.id);
+    drag = {
+      action,
+      interactionId: interaction.id,
+      mode,
+      pointerId: event.pointerId,
+      captureElement,
+      startX: event.clientX,
+      latestX: event.clientX,
+      canvasWidth: canvas.getBoundingClientRect().width,
+      timelineDuration: duration,
+      domain: interaction.domain,
+      snap: workspace.timelineSnap,
+      original: draftFor(action),
+      animationFrame: null,
+      safetyTimer: null,
+    };
+    document.body.classList.add("motion-timeline-dragging");
+    drag.safetyTimer = window.setTimeout(cancelDrag, 8_000);
+    window.addEventListener("pointermove", moveDrag);
+    window.addEventListener("pointerup", finishDrag);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    window.addEventListener("blur", cancelDrag, { once: true });
+    window.addEventListener("keydown", handleDragKeydown);
+    document.addEventListener("visibilitychange", handleDragVisibilityChange);
+  }
+
+  function moveDrag(event: PointerEvent) {
+    const current = drag;
+    if (!current || event.pointerId !== current.pointerId) return;
+    event.preventDefault();
+    current.latestX = event.clientX;
+    if (current.animationFrame !== null) return;
+    current.animationFrame = window.requestAnimationFrame(() => flushDragDraft(current));
+  }
+
+  function finishDrag(event: PointerEvent) {
+    const current = drag;
+    if (!current || event.pointerId !== current.pointerId) return;
+    current.latestX = event.clientX;
+    const next = dragTimingAt(current, current.latestX);
+    teardownDrag();
+    if (workspace.selectedInteraction?.id !== current.interactionId) {
+      restorePendingTimingDraft(current.action.id);
+      return;
+    }
+    const commitSerial = ++timingCommitSerial;
+    pendingTimingCommits.set(current.action.id, {
+      serial: commitSerial,
+      draft: next,
+    });
+    setTimingDraft(current.action.id, next);
+    void workspace.mutate({
+      command: "setActionTiming",
+      interactionId: current.interactionId,
+      actionId: current.action.id,
+      start: next.start,
+      ...(current.action.type === "animate" || current.action.type === "nested"
+        ? { duration: next.duration }
+        : {}),
+    }).then(
+      () => settleTimingCommit(current.action.id, commitSerial),
+      () => {
+        // The optimistic draft is removed only after Rust exposes the authoritative error.
+        settleTimingCommit(current.action.id, commitSerial);
+      },
+    );
+  }
+
+  function cancelDrag() {
+    const actionId = drag?.action.id;
+    teardownDrag();
+    if (actionId) restorePendingTimingDraft(actionId);
+  }
+
+  function handlePointerCancel(event: PointerEvent) {
+    if (drag && event.pointerId === drag.pointerId) cancelDrag();
+  }
+
+  function handleDragKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    cancelDrag();
+  }
+
+  function handleDragVisibilityChange() {
+    if (document.visibilityState === "hidden") cancelDrag();
+  }
+
+  function teardownDrag() {
+    const current = drag;
+    if (current?.animationFrame !== null && current?.animationFrame !== undefined) {
+      window.cancelAnimationFrame(current.animationFrame);
+      current.animationFrame = null;
+    }
+    if (current?.safetyTimer !== null && current?.safetyTimer !== undefined) {
+      window.clearTimeout(current.safetyTimer);
+      current.safetyTimer = null;
+    }
+    if (current) {
+      try {
+        if (current.captureElement.hasPointerCapture(current.pointerId)) {
+          current.captureElement.releasePointerCapture(current.pointerId);
+        }
+      } catch {
+        // Pointer capture can already be released by the browser on pointerup.
+      }
+    }
+    drag = null;
+    document.body.classList.remove("motion-timeline-dragging");
+    window.removeEventListener("pointermove", moveDrag);
+    window.removeEventListener("pointerup", finishDrag);
+    window.removeEventListener("pointercancel", handlePointerCancel);
+    window.removeEventListener("blur", cancelDrag);
+    window.removeEventListener("keydown", handleDragKeydown);
+    document.removeEventListener("visibilitychange", handleDragVisibilityChange);
+  }
+
+  function seekValueAt(current: SeekDragState, clientX: number) {
+    const raw = (clientX - current.canvasLeft)
+      / Math.max(1, current.canvasWidth)
+      * current.timelineDuration;
+    const bounded = Math.max(0, Math.min(current.timelineDuration, raw));
+    if (!current.snap) return bounded;
+    const step = current.domain === "progress" ? 1 : 50;
+    return Math.max(
+      0,
+      Math.min(current.timelineDuration, Math.round(bounded / step) * step),
+    );
+  }
+
+  function publishSeekDrag(current: SeekDragState) {
+    current.animationFrame = null;
+    if (seekDrag !== current) return;
+    const next = seekValueAt(current, current.latestX);
+    playhead = next;
+    if (current.lastPublishedValue === next) return;
+    current.lastPublishedValue = next;
+    workspace.requestPreview("seek", current.interactionId, next);
+  }
+
+  function beginSeekDrag(event: PointerEvent) {
+    if (event.button !== 0 || !interaction || drag || seekDrag) return;
+    event.preventDefault();
+    const captureElement = event.currentTarget as HTMLElement;
+    const rect = captureElement.getBoundingClientRect();
+    if (captureElement.tabIndex >= 0) captureElement.focus({ preventScroll: true });
+    try {
+      captureElement.setPointerCapture(event.pointerId);
+    } catch {
+      // Window listeners still guarantee cleanup when pointer capture is unavailable.
+    }
+    seekDrag = {
+      interactionId: interaction.id,
+      pointerId: event.pointerId,
+      captureElement,
+      latestX: event.clientX,
+      canvasLeft: rect.left,
+      canvasWidth: rect.width,
+      timelineDuration: duration,
+      domain: interaction.domain,
+      snap: workspace.timelineSnap,
+      animationFrame: null,
+      safetyTimer: null,
+      lastPublishedValue: null,
+    };
+    document.body.classList.add("motion-timeline-seeking");
+    publishSeekDrag(seekDrag);
+    seekDrag.safetyTimer = window.setTimeout(cancelSeekDrag, 15_000);
+    window.addEventListener("pointermove", moveSeekDrag);
+    window.addEventListener("pointerup", finishSeekDrag);
+    window.addEventListener("pointercancel", handleSeekPointerCancel);
+    window.addEventListener("blur", cancelSeekDrag, { once: true });
+    window.addEventListener("keydown", handleSeekDragKeydown);
+    document.addEventListener("visibilitychange", handleSeekVisibilityChange);
+  }
+
+  function moveSeekDrag(event: PointerEvent) {
+    const current = seekDrag;
+    if (!current || event.pointerId !== current.pointerId) return;
+    event.preventDefault();
+    current.latestX = event.clientX;
+    if (current.animationFrame !== null) return;
+    current.animationFrame = window.requestAnimationFrame(() => publishSeekDrag(current));
+  }
+
+  function finishSeekDrag(event: PointerEvent) {
+    const current = seekDrag;
+    if (!current || event.pointerId !== current.pointerId) return;
+    current.latestX = event.clientX;
+    if (current.animationFrame !== null) {
+      window.cancelAnimationFrame(current.animationFrame);
+      current.animationFrame = null;
+    }
+    publishSeekDrag(current);
+    teardownSeekDrag();
+  }
+
+  function cancelSeekDrag() {
+    teardownSeekDrag();
+  }
+
+  function handleSeekPointerCancel(event: PointerEvent) {
+    if (seekDrag && event.pointerId === seekDrag.pointerId) cancelSeekDrag();
+  }
+
+  function handleSeekDragKeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    cancelSeekDrag();
+  }
+
+  function handleSeekVisibilityChange() {
+    if (document.visibilityState === "hidden") cancelSeekDrag();
+  }
+
+  function teardownSeekDrag() {
+    const current = seekDrag;
+    if (current?.animationFrame !== null && current?.animationFrame !== undefined) {
+      window.cancelAnimationFrame(current.animationFrame);
+      current.animationFrame = null;
+    }
+    if (current?.safetyTimer !== null && current?.safetyTimer !== undefined) {
+      window.clearTimeout(current.safetyTimer);
+      current.safetyTimer = null;
+    }
+    if (current) {
+      try {
+        if (current.captureElement.hasPointerCapture(current.pointerId)) {
+          current.captureElement.releasePointerCapture(current.pointerId);
+        }
+      } catch {
+        // Pointer capture can already be released by the browser on pointerup.
+      }
+    }
+    seekDrag = null;
+    document.body.classList.remove("motion-timeline-seeking");
+    window.removeEventListener("pointermove", moveSeekDrag);
+    window.removeEventListener("pointerup", finishSeekDrag);
+    window.removeEventListener("pointercancel", handleSeekPointerCancel);
+    window.removeEventListener("blur", cancelSeekDrag);
+    window.removeEventListener("keydown", handleSeekDragKeydown);
+    document.removeEventListener("visibilitychange", handleSeekVisibilityChange);
+  }
+
+  function stopPlayback() {
+    playing = false;
+  }
+
+  function play(direction = 1) {
+    if (!interaction) return;
+    if (direction > 0 && playhead >= duration) playhead = 0;
+    if (direction < 0 && playhead <= 0) playhead = duration;
+    playing = true;
+    workspace.requestPreview(direction > 0 ? "play" : "reverse", interaction.id);
+  }
+
+  function pause() {
+    stopPlayback();
+    workspace.requestPreview("pause");
+  }
+
+  function restart() {
+    stopPlayback();
+    playhead = 0;
+    workspace.requestPreview("restart");
+  }
+
+  function updateInteraction(next: MotionInteraction) {
+    return workspace.mutate({ command: "updateInteraction", interaction: next });
+  }
+
+  function toggleMute(action: MotionAction) {
+    if (!interaction) return;
+    return workspace.mutate({
+      command: "updateAction",
+      interactionId: interaction.id,
+      action: { ...structuredClone(action), enabled: !action.enabled },
+    });
+  }
+
+  async function duplicate(action: MotionAction) {
+    if (!interaction) return;
+    const copy = structuredClone(action);
+    copy.id = motionId("action");
+    copy.name = `${action.name} copy`;
+    copy.start += action.type === "animate" || action.type === "nested"
+      ? actionSpan(action)
+      : interaction.domain === "progress" ? 2 : 100;
+    if (interaction.domain === "progress") {
+      copy.start = Math.max(0, Math.min(100 - actionSpan(copy), copy.start));
+    }
+    await workspace.mutate({
+      command: "insertAction",
+      interactionId: interaction.id,
+      index: interaction.actions.findIndex((item) => item.id === action.id) + 1,
+      action: copy,
+    });
+    workspace.selectInteraction(interaction.id, copy.id);
+  }
+
+  async function pasteAction() {
+    if (!interaction || !clipboard) return;
+    const action = structuredClone(clipboard);
+    action.id = motionId("action");
+    action.name = `${clipboard.name} copy`;
+    action.start = playhead;
+    await workspace.mutate({
+      command: "insertAction",
+      interactionId: interaction.id,
+      index: interaction.actions.length,
+      action,
+    });
+    workspace.selectInteraction(interaction.id, action.id);
+  }
+
+  async function addAction() {
+    if (!interaction) return;
+    const selectedDataAnim = dataAnim?.trim() ?? "";
+    const target = selectedDataAnim
+      ? (
+          interaction.triggerTarget.kind === "element"
+          && interaction.triggerTarget.dataAnim === selectedDataAnim
+            ? triggerTarget()
+            : targetForDataAnim(selectedDataAnim)
+        )
+      : triggerTarget();
+    const action = createAnimateAction("custom", target);
+    action.start = playhead;
+    action.duration = interaction.domain === "progress" ? 20 : 600;
+    await workspace.mutate({
+      command: "insertAction",
+      interactionId: interaction.id,
+      index: interaction.actions.length,
+      action,
+    });
+    workspace.selectInteraction(interaction.id, action.id);
+  }
+
+  function addMarker() {
+    if (!interaction) return;
+    const marker = {
+      id: motionId("marker"),
+      name: `Marker ${interaction.markers.length + 1}`,
+      at: playhead,
+    };
+    return updateInteraction({
+      ...structuredClone(interaction),
+      markers: [...interaction.markers, marker],
+    });
+  }
+
+  function removeMarker(markerId: string) {
+    if (!interaction) return;
+    return updateInteraction({
+      ...structuredClone(interaction),
+      markers: interaction.markers.filter((marker) => marker.id !== markerId),
+    });
+  }
+
+  async function deleteAction(action: MotionAction) {
+    if (!interaction) return;
+    if (interaction.actions.length === 1) {
+      await workspace.mutate({ command: "deleteInteraction", interactionId: interaction.id });
+      return;
+    }
+    await workspace.mutate({
+      command: "deleteAction",
+      interactionId: interaction.id,
+      actionId: action.id,
+    });
+  }
+
+  function fitTimeline() {
+    workspace.timelineZoom = 1;
+  }
+
+  function seekFromKeyboard(event: KeyboardEvent) {
+    if (!interaction) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+      event.preventDefault();
+      void pasteAction();
+      return;
+    }
+    if (event.key === " ") {
+      event.preventDefault();
+      if (playing) pause();
+      else play();
+      return;
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      restart();
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const step = interaction.domain === "progress"
+      ? event.shiftKey ? 5 : 1
+      : event.shiftKey ? 250 : 50;
+    playhead = Math.max(
+      0,
+      Math.min(duration, snapValue(playhead + (event.key === "ArrowRight" ? step : -step))),
+    );
+    workspace.requestPreview("seek", interaction.id, playhead);
+  }
+
+  function editClipFromKeyboard(event: KeyboardEvent, action: MotionAction) {
+    if (!interaction) return;
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      void deleteAction(action);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+      event.preventDefault();
+      clipboard = structuredClone(action);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+      event.preventDefault();
+      void pasteAction();
+      return;
+    }
+    if (
+      (event.ctrlKey || event.metaKey)
+      && (event.key === "ArrowUp" || event.key === "ArrowDown")
+    ) {
+      event.preventDefault();
+      const index = interaction.actions.findIndex((candidate) => candidate.id === action.id);
+      void workspace.mutate({
+        command: "reorderAction",
+        interactionId: interaction.id,
+        actionId: action.id,
+        index: Math.max(
+          0,
+          Math.min(interaction.actions.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)),
+        ),
+      });
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    const step = interaction.domain === "progress"
+      ? event.shiftKey ? 5 : 1
+      : event.shiftKey ? 250 : 50;
+    if (event.altKey && (action.type === "animate" || action.type === "nested")) {
+      void workspace.mutate({
+        command: "setActionTiming",
+        interactionId: interaction.id,
+        actionId: action.id,
+        duration: Math.max(
+          interaction.domain === "progress" ? 1 : 50,
+          action.duration + direction * step,
+        ),
+      });
+    } else {
+      void workspace.mutate({
+        command: "setActionTiming",
+        interactionId: interaction.id,
+        actionId: action.id,
+        start: Math.max(0, action.start + direction * step),
+      });
+    }
+  }
+
+  onDestroy(() => {
+    cancelDrag();
+    cancelSeekDrag();
+  });
 </script>
 
-<section class="motion-timeline-pane-shell" aria-label="Cronologie Motion">
-  <div class="motion-design-safe-note" role="status">
-    <strong>Editare sigură</strong>
-    <span>Redarea și navigarea JavaScript sunt oprite în editor; deschiderea externă execută animația completă.</span>
-  </div>
-  {#if timelineConfigLoadState === "error"}
-    <div class="motion-empty-state motion-error-state" role="alert">
-      <strong>JS-ul paginii nu a putut fi încărcat</strong>
-      <span>{timelineLoadError || "Citirea cronologiei Motion a eșuat."}</span>
-      <button type="button" onclick={retryTimelineLoad}>Reîncearcă</button>
+<section class="motion-timeline-panel" aria-label={t("motion-timeline-aria")}>
+  <header class="timeline-header">
+    <div class="timeline-identity">
+      <span>{t("motion-timeline-heading")}</span>
+      {#if interaction}
+        <strong>{interaction.name}</strong>
+        <small>
+          {triggerTypeLabel(interaction.trigger.type)}
+          ·
+          {interaction.domain === "progress"
+            ? t("motion-timeline-domain-progress")
+            : t("motion-timeline-domain-time")}
+        </small>
+      {:else}
+        <strong>{t("motion-timeline-none-selected")}</strong>
+      {/if}
     </div>
-  {:else if !templatePath}
-    <div class="motion-empty-state">
-      <strong>Cronologie Motion</strong>
-      <span>Nu există un template activ.</span>
+    <div class="timeline-window-actions">
+      <button type="button" title={workspace.timelineCollapsed ? t("motion-timeline-expand") : t("motion-timeline-collapse")} onclick={() => {
+        workspace.timelineCollapsed = !workspace.timelineCollapsed;
+      }}>
+        {#if workspace.timelineCollapsed}<IconChevronUp size={15} />{:else}<IconChevronDown size={15} />{/if}
+      </button>
+      <button class="ui-icon-button ui-close-button" type="button" title={t("motion-timeline-close")} onclick={() => workspace.closeTimeline()}>
+        <IconX size={15} />
+      </button>
     </div>
-  {:else if !isCurrentConfigReady()}
-    <div class="motion-empty-state" aria-live="polite">
-      <strong>Cronologie Anime</strong>
-      <span>Se citește JS-ul paginii curente…</span>
-    </div>
-  {:else if !activeTimeline}
-    <div class="motion-empty-state">
-      <strong>Cronologie Anime</strong>
-      <span>Creează o cronologie pentru pagina curentă.</span>
-      <button type="button" onclick={createTimeline}>Creează cronologia</button>
-    </div>
-  {:else}
-    <MotionTimeline
-      timelineItem={activeTimeline}
-      motionItems={composerItems}
-      selectedStepId={selectedStepId}
-      emptyMessage={orphanAnimations.length > 0 ? "Adaugă animații ca steps în timeline." : "Creează animații în Efecte."}
-      onSelectStep={setActiveStep}
-      onTimingChange={updateStepTiming}
-      onAddAnimationStep={addAnimationStep}
-      onAddCallbackStep={addCallbackStep}
-      onAddTimerStep={(position) => addGenericStep("timer", position)}
-      onAddSyncStep={(position) => addGenericStep("sync", position)}
-      onAddSetStep={(position) => addGenericStep("set", position)}
-      onAddLabel={addLabel}
-    />
+  </header>
+
+  {#if !workspace.timelineCollapsed}
+    {#if interaction}
+      <div class="timeline-toolbar">
+        <div class="transport">
+          <button type="button" title={t("motion-timeline-restart")} onclick={restart}><IconPlayerSkipBack size={15} /></button>
+          <button type="button" title={t("motion-timeline-reverse")} onclick={() => play(-1)}><IconRewindBackward10 size={15} /></button>
+          {#if playing}
+            <button class="primary" type="button" title={t("motion-timeline-pause")} onclick={pause}><IconPlayerPause size={15} /></button>
+          {:else}
+            <button class="primary" type="button" title={t("motion-timeline-play")} onclick={() => play(1)}><IconPlayerPlay size={15} /></button>
+          {/if}
+          <span class="time-readout">{formatValue(playhead)} / {formatValue(duration)}</span>
+        </div>
+        <div class="timeline-tools">
+          <button
+            type="button"
+            class:active={interaction.playback.infinite}
+            disabled={interaction.domain === "progress"}
+            title={t("motion-loop")}
+            onclick={() => { void updateInteraction({
+              ...structuredClone(interaction),
+              playback: { ...interaction.playback, infinite: !interaction.playback.infinite },
+            }); }}
+          ><IconRepeat size={14} /></button>
+          <label class="speed-field" title={t("motion-timeline-playback-speed")}>
+            <span>{t("motion-speed")}</span>
+            <select value={interaction.playback.playbackRate} onchange={(event) => {
+              void updateInteraction({
+                ...structuredClone(interaction),
+                playback: {
+                  ...interaction.playback,
+                  playbackRate: Number(event.currentTarget.value),
+                },
+              });
+            }}>
+              <option value={0.25}>0.25×</option>
+              <option value={0.5}>0.5×</option>
+              <option value={1}>1×</option>
+              <option value={1.5}>1.5×</option>
+              <option value={2}>2×</option>
+            </select>
+          </label>
+          <button type="button" class:active={workspace.timelineSnap} title={t("motion-timeline-snap")} onclick={() => {
+            workspace.timelineSnap = !workspace.timelineSnap;
+          }}>{t("motion-timeline-snap")}</button>
+          <button type="button" title={t("motion-timeline-zoom-out")} onclick={() => {
+            workspace.timelineZoom = Math.max(1, workspace.timelineZoom - 0.25);
+          }}><IconZoomOut size={14} /></button>
+          <button type="button" title={t("motion-timeline-zoom-in")} onclick={() => {
+            workspace.timelineZoom = Math.min(4, workspace.timelineZoom + 0.25);
+          }}><IconZoomIn size={14} /></button>
+          <button type="button" title={t("motion-timeline-fit")} onclick={fitTimeline}><IconArrowsMaximize size={14} /></button>
+          <button type="button" disabled={!clipboard} title={t("motion-timeline-paste-at-playhead")} onclick={() => { void pasteAction(); }}>{t("motion-timeline-paste")}</button>
+          <button type="button" title={t("motion-timeline-add-marker-at-playhead")} onclick={() => { void addMarker(); }}>+ {t("motion-timeline-marker")}</button>
+          <button class="add-action" type="button" onclick={() => { void addAction(); }}>+ {t("motion-timeline-action")}</button>
+        </div>
+      </div>
+
+      <div class="timeline-scroll">
+        <div
+          class="timeline-grid"
+          style={`--timeline-width: ${Math.max(100, workspace.timelineZoom * 100)}%;`}
+        >
+          <div class="track-label ruler-label">
+            <span>{t("motion-timeline-target-track")}</span>
+          </div>
+          <div
+            class="timeline-ruler timeline-canvas"
+            role="slider"
+            tabindex="0"
+            aria-label={t("motion-timeline-playhead")}
+            aria-valuemin="0"
+            aria-valuemax={duration}
+            aria-valuenow={playhead}
+            onpointerdown={beginSeekDrag}
+            onkeydown={seekFromKeyboard}
+          >
+            {#each ticks as tick, index (tick.left)}
+              <span
+                class="ruler-tick"
+                class:end={index === ticks.length - 1}
+                style={`left:${tick.left}%`}
+              >
+                <i></i><b>{formatValue(tick.value)}</b>
+              </span>
+            {/each}
+          </div>
+
+          {#each lanes as lane (lane.key)}
+            <div
+              class="track-label target-group-label"
+              style={`grid-row:span ${Math.max(1, lane.actions.length)};`}
+              title={`${lane.title} · ${lane.detail}`}
+            >
+              <strong>{lane.title}</strong>
+              <small>{lane.detail}</small>
+            </div>
+            {#each lane.actions as action (action.id)}
+              {@const draft = draftFor(action)}
+              {@const instant = actionDuration(action) === 0}
+              <div
+                class="track timeline-canvas"
+                role="group"
+                aria-label={t("motion-timeline-action-aria", {
+                  target: lane.title,
+                  action: action.name,
+                })}
+                onpointerdown={beginSeekDrag}
+              >
+                <button
+                  type="button"
+                  class="action-clip ui-entity-selectable"
+                  data-ui-selected={workspace.selectedActionId === action.id ? "true" : undefined}
+                  aria-pressed={workspace.selectedActionId === action.id}
+                  class:muted={!action.enabled}
+                  class:instant
+                  data-type={action.type}
+                  style={`left:${percent(draft.start)}%;width:${instant ? "8px" : `${Math.max(1.2, percent(draftSpan(action, draft)))}%`};`}
+                  title={`${action.name} · ${formatValue(draft.start)}`}
+                  onpointerdown={(event) => beginDrag(event, action, "move")}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    workspace.selectInteraction(interaction.id, action.id);
+                  }}
+                  onkeydown={(event) => editClipFromKeyboard(event, action)}
+                >
+                  <span>{action.name}</span>
+                  {#if !instant}
+                    <i
+                      role="slider"
+                      aria-label={t("motion-timeline-action-duration", { action: action.name })}
+                      aria-valuemin="0"
+                      aria-valuemax={duration}
+                      aria-valuenow={draft.duration}
+                      tabindex="0"
+                      onpointerdown={(event) => beginDrag(event, action, "resize")}
+                    ></i>
+                  {/if}
+                </button>
+                {#each interaction.markers as marker (marker.id)}
+                  <button
+                    type="button"
+                    class="marker"
+                    style={`left:${percent(marker.at)}%`}
+                    title={t("motion-timeline-marker-tooltip", { marker: marker.name })}
+                    onpointerdown={(event) => event.stopPropagation()}
+                    onclick={(event) => {
+                      event.stopPropagation();
+                      playhead = marker.at;
+                      workspace.requestPreview("seek", interaction.id, marker.at);
+                    }}
+                    ondblclick={(event) => {
+                      event.stopPropagation();
+                      void removeMarker(marker.id);
+                    }}
+                  ></button>
+                {/each}
+              </div>
+            {/each}
+          {/each}
+          <div
+            class="timeline-playhead-layer"
+            style={`--playhead-position:${percent(playhead)}%;`}
+            aria-hidden="true"
+          >
+            <span
+              class="timeline-playhead"
+              class:at-start={playhead <= 0}
+              class:at-end={playhead >= duration}
+            ></span>
+          </div>
+        </div>
+      </div>
+
+      {#if workspace.selectedAction}
+        <footer class="selection-toolbar">
+          <strong>{workspace.selectedAction.name}</strong>
+          <span>{formatValue(draftFor(workspace.selectedAction).start)} · {actionTypeLabel(workspace.selectedAction.type)}</span>
+          <button type="button" title={workspace.selectedAction.enabled ? t("motion-timeline-mute") : t("motion-enable")} onclick={() => {
+            if (workspace.selectedAction) void toggleMute(workspace.selectedAction);
+          }}>
+            {#if workspace.selectedAction.enabled}<IconVolume size={14} />{:else}<IconVolumeOff size={14} />{/if}
+          </button>
+          <button type="button" title={t("motion-timeline-copy")} onclick={() => {
+            if (workspace.selectedAction) clipboard = structuredClone(workspace.selectedAction);
+          }}><IconCopy size={14} /></button>
+          <button type="button" title={t("motion-duplicate")} onclick={() => {
+            if (workspace.selectedAction) void duplicate(workspace.selectedAction);
+          }}>{t("motion-duplicate")}</button>
+          <button class="danger" type="button" title={t("motion-delete")} onclick={() => {
+            if (workspace.selectedAction) void deleteAction(workspace.selectedAction);
+          }}><IconTrash size={14} /></button>
+        </footer>
+      {/if}
+    {:else}
+      <div class="timeline-empty">
+        <strong>{t("motion-timeline-contextual")}</strong>
+        <span>{t("motion-timeline-contextual-description")}</span>
+      </div>
+    {/if}
   {/if}
 </section>
 
 <style>
-  .motion-timeline-pane-shell {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
+  .motion-timeline-panel { display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; min-width:0; min-height:0; overflow:hidden; border:1px solid var(--border-2); border-radius:var(--radius-panel); background:var(--surface-panel); color:var(--text); }
+  button, select { color:inherit; font:inherit; }
+  button { cursor:pointer; }
+  .timeline-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:36px; padding:4px 7px 4px 10px; border-bottom:1px solid var(--border-3); background:var(--surface-2); }
+  .timeline-identity { display:flex; align-items:baseline; gap:7px; min-width:0; }
+  .timeline-identity > span { color:var(--brand-strong); font-size:11px; font-weight:900; letter-spacing:.08em; }
+  .timeline-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .timeline-identity small { color:var(--text-muted); font-size:11px; }
+  .timeline-window-actions, .transport, .timeline-tools, .selection-toolbar { display:flex; align-items:center; gap:4px; }
+  .timeline-window-actions button, .timeline-toolbar button, .selection-toolbar button { display:grid; place-items:center; min-width:27px; min-height:27px; padding:0 6px; border:1px solid var(--border-2); border-radius:5px; background:var(--surface); font-size:11px; }
+  .timeline-toolbar button.active, .timeline-toolbar button.primary { border-color:var(--brand); background:var(--brand-soft); color:var(--brand-strong); }
+  .timeline-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:38px; padding:4px 7px; border-bottom:1px solid var(--border-3); }
+  .time-readout { min-width:96px; color:var(--text-muted); font:11px "JetBrains Mono",monospace; }
+  .speed-field { display:flex; align-items:center; gap:4px; color:var(--text-muted); font-size:11px; }
+  .speed-field select { min-height:27px; border:1px solid var(--border-2); border-radius:5px; background:var(--surface); font-size:11px; }
+  .timeline-tools { flex-wrap:wrap; justify-content:flex-end; }
+  .timeline-tools .add-action { color:var(--brand-strong); font-weight:800; }
+  .timeline-scroll {
+    min-height:0;
+    overflow:auto;
+    background:var(--surface);
+    scrollbar-color:var(--border-strong) transparent;
+    scrollbar-width:thin;
   }
-
-  .motion-design-safe-note {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    min-width: 0;
-    padding: 5px 8px;
-    border: 1px solid var(--border-2);
-    border-radius: 7px;
-    color: var(--text-muted);
-    font-size: 12px;
-    background: var(--surface-3);
+  .timeline-scroll::-webkit-scrollbar { width:8px; height:8px; }
+  .timeline-scroll::-webkit-scrollbar-track { background:transparent; }
+  .timeline-scroll::-webkit-scrollbar-thumb {
+    border:2px solid transparent;
+    border-radius:999px;
+    background:var(--border-strong);
+    background-clip:padding-box;
   }
-
-  .motion-design-safe-note strong {
-    flex: 0 0 auto;
-    color: var(--brand-strong);
-    font-weight: 850;
+  .timeline-grid {
+    --timeline-label-width:150px;
+    position:relative;
+    display:grid;
+    grid-template-columns:var(--timeline-label-width) minmax(600px,1fr);
+    align-content:start;
+    width:var(--timeline-width);
+    min-width:760px;
+    min-height:100%;
+    isolation:isolate;
   }
-
-  .motion-design-safe-note span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .timeline-grid::before {
+    position:absolute;
+    z-index:0;
+    top:28px;
+    right:0;
+    bottom:0;
+    left:var(--timeline-label-width);
+    background-image:linear-gradient(
+      to right,
+      var(--border-3) 0 1px,
+      transparent 1px
+    );
+    background-repeat:repeat-x;
+    background-size:10% 100%;
+    content:"";
+    pointer-events:none;
   }
-
-  .motion-empty-state {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-    gap: 6px;
-    height: 100%;
-    min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface-7);
-    color: var(--text-muted);
-    box-shadow: var(--shadow);
-    font-size: 12px;
+  .track-label { position:sticky; left:0; z-index:5; display:flex; flex-direction:column; justify-content:center; gap:2px; min-height:45px; padding:0 9px; border-right:1px solid var(--border-2); border-bottom:1px solid var(--border-3); background:var(--surface-2); }
+  .track-label strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .track-label small, .track-label span { color:var(--text-muted); font-size:11px; }
+  .target-group-label { align-self:stretch; min-width:0; border-bottom-color:var(--border-2); }
+  .target-group-label small {
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    font:11px "JetBrains Mono",monospace;
   }
-
-  .motion-empty-state button {
-    min-height: 28px;
-    border: 1px solid var(--brand);
-    border-radius: 6px;
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-    font-size: 12px;
-    font-weight: 900;
-    cursor: pointer;
+  .ruler-label { min-height:28px; }
+  .timeline-canvas { position:relative; z-index:1; min-width:600px; }
+  .timeline-ruler { min-height:28px; overflow:hidden; border-bottom:1px solid var(--border-2); background:var(--surface-3); cursor:crosshair; touch-action:none; }
+  .ruler-tick { position:absolute; top:0; bottom:0; border-left:1px solid var(--border-3); pointer-events:none; }
+  .ruler-tick i { display:block; height:6px; border-left:1px solid var(--text-muted); }
+  .ruler-tick b { position:absolute; top:7px; left:4px; color:var(--text-muted); font:11px "JetBrains Mono",monospace; white-space:nowrap; }
+  .ruler-tick.end b { right:4px; left:auto; }
+  .track { min-height:45px; border-bottom:1px solid var(--border-3); cursor:crosshair; overflow:hidden; touch-action:none; }
+  .action-clip { --ui-entity-background:color-mix(in srgb,var(--brand-soft) 78%,var(--surface)); --ui-entity-border-color:color-mix(in srgb,var(--brand) 68%,var(--border)); --ui-entity-color:var(--brand-strong); position:absolute; z-index:2; top:8px; height:29px; min-width:8px; overflow:hidden; padding:0 14px 0 7px; border:1px solid var(--ui-entity-border-color); border-radius:5px; background:var(--ui-entity-background); color:var(--ui-entity-color); text-align:left; font-size:11px; font-weight:800; cursor:grab; touch-action:none; }
+  .action-clip[data-ui-selected="true"] { z-index:3; }
+  .action-clip[data-type="set"] { --ui-entity-border-color:#b88630; --ui-entity-color:#8b5c13; --ui-entity-background:color-mix(in srgb,#f4d78e 34%,var(--surface)); }
+  .action-clip[data-type="media"] { --ui-entity-border-color:#4679b8; --ui-entity-color:#315f96; --ui-entity-background:color-mix(in srgb,#9dc7f4 30%,var(--surface)); }
+  .action-clip[data-type="call"], .action-clip[data-type="nested"] { --ui-entity-border-color:#8061ad; --ui-entity-color:#684493; --ui-entity-background:color-mix(in srgb,#c4abe7 28%,var(--surface)); }
+  .action-clip.muted { opacity:.42; filter:saturate(.2); }
+  .action-clip.instant { padding:0; border-radius:2px; }
+  .action-clip span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; pointer-events:none; }
+  .action-clip i { position:absolute; top:0; right:0; width:8px; height:100%; cursor:ew-resize; background:color-mix(in srgb,var(--brand) 22%,transparent); }
+  .timeline-playhead-layer { position:absolute; z-index:4; top:0; right:0; bottom:0; left:var(--timeline-label-width); overflow:clip; pointer-events:none; }
+  .timeline-playhead { position:absolute; top:0; bottom:0; left:clamp(0px,calc(var(--playhead-position) - 1px),calc(100% - 1px)); width:1px; background:#d14b65; }
+  .timeline-playhead::before { content:""; position:absolute; top:0; left:-4px; border-left:4px solid transparent; border-right:4px solid transparent; border-top:6px solid #d14b65; }
+  .timeline-playhead.at-start::before { left:0; border-left-width:0; border-right-width:8px; }
+  .timeline-playhead.at-end::before { left:-7px; border-right-width:0; border-left-width:8px; }
+  .marker { position:absolute; z-index:3; top:0; bottom:0; width:7px; margin-left:-3px; padding:0; border:0; border-left:1px dashed #d99735; background:transparent; cursor:pointer; }
+  .selection-toolbar { min-height:34px; padding:3px 7px; border-top:1px solid var(--border-2); background:var(--surface-2); }
+  .selection-toolbar strong { font-size:11px; }
+  .selection-toolbar > span { flex:1; color:var(--text-muted); font:11px "JetBrains Mono",monospace; }
+  .selection-toolbar .danger { color:var(--danger); }
+  .timeline-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:110px; padding:18px; text-align:center; color:var(--text-muted); }
+  .timeline-empty strong { color:var(--text); font-size:11px; }
+  .timeline-empty span { max-width:520px; font-size:11px; line-height:1.45; }
+  :global(body.motion-timeline-dragging) { cursor:grabbing; user-select:none; }
+  :global(body.motion-timeline-seeking) { cursor:ew-resize; user-select:none; }
+  @media (max-width:900px) {
+    .timeline-toolbar { align-items:flex-start; }
+    .timeline-tools { max-width:55%; }
+    .timeline-grid { --timeline-label-width:120px; }
   }
-
-  .motion-empty-state strong {
-    color: var(--text);
-    font-size: 13px;
-  }
-
-  :global(.motion-timeline-pane-shell .motion-panel) {
-    flex: 1;
-  }
-
 </style>

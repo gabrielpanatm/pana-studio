@@ -15,50 +15,53 @@
     IconTrash,
     IconX,
   } from "@tabler/icons-svelte";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
   import { tick } from "svelte";
-  import type { ProjectFile } from "$lib/types";
-  import {
-    allProjectPaneFiles,
-    buildProjectFileTree,
-    type FlatProjectFileNode,
-    flattenVisibleProjectFiles,
-    projectFileExt,
-    type ProjectTreeNode,
-    resolveCreateTarget,
-    type PendingCreate,
-  } from "$lib/project/pane-tree";
-  import {
-    fileDropBlockedLabel,
-    fileMoveHintLabel,
-    validateFileDrop,
-    type FileMoveRequest,
-  } from "$lib/project/files-drag";
-  import {
-    validateFileRenameRequest,
-    type FileRenameRequest,
-  } from "$lib/project/files-rename";
+  import type {
+    FileExplorerEntry,
+    FileExplorerOperationPlan,
+    FileExplorerOperationRequest,
+    FileExplorerSnapshot,
+  } from "$lib/types";
   import { onDestroy, onMount } from "svelte";
   import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
 
   export let scannedProject = false;
   export let projectRoot = "";
   export let runtimeSessionId = "";
-  export let allProjectFiles: ProjectFile[] = [];
-  export let scannedPages: ProjectFile[] = [];
-  export let scannedStyles: ProjectFile[] = [];
-  export let scannedTemplates: ProjectFile[] = [];
-  export let scannedScripts: ProjectFile[] = [];
-  export let scannedAssets: ProjectFile[] = [];
-  export let activeScannedPath: string | null = null;
-  export let fileMoveBlockedReason = "";
-  export let openScannedFile: (file: ProjectFile) => void;
-  export let createProjectFile: (relativePath: string, content: string) => Promise<void>;
-  export let moveProjectFile: (request: FileMoveRequest) => void | Promise<void>;
-  export let renameProjectFile: (request: FileRenameRequest & { type: "file" | "dir" }) => boolean | void | Promise<boolean | void>;
-  export let deleteProjectFile: (request: { path: string; type: "file" | "dir" }) => void | Promise<void>;
+  export let snapshot: FileExplorerSnapshot | null = null;
+  export let loading = false;
+  export let error = "";
+  export let selectEntry: (entryId: string) => void | Promise<void>;
+  export let planOperation: (
+    operation: FileExplorerOperationRequest,
+  ) => Promise<FileExplorerOperationPlan>;
+  export let commitOperation: (
+    plan: FileExplorerOperationPlan,
+  ) => Promise<unknown>;
 
   export let collapsedDirs = new Set<string>();
   export let knownDirPaths = new Set<string>();
+  type ExplorerRowNode = {
+    type: "dir" | "file";
+    name: string;
+    path: string;
+    depth: number;
+    entry?: FileExplorerEntry;
+    hasChildren: boolean;
+  };
+  type PendingCreate = {
+    parentPath: string;
+    parentEntryId: string | null;
+    depth: number;
+    kind: "file" | "dir";
+    name: string;
+  };
   let pendingCreate: PendingCreate | null = null;
   let createInputEl: HTMLInputElement | undefined;
   let createError = "";
@@ -66,7 +69,6 @@
   let dragCandidate: {
     path: string;
     pointerId: number;
-    sourceType: "dir" | "file";
     startX: number;
     startY: number;
     expectedProjectRoot: string;
@@ -79,34 +81,35 @@
   let dragDropInvalid = false;
   let dragDropMessage = "";
   let dragDropLabel = "";
+  let dragPlan: FileExplorerOperationPlan | null = null;
+  let dragPlanKey = "";
+  let dragPlanSerial = 0;
+  let dragPlanPromise: Promise<FileExplorerOperationPlan | null> | null = null;
   let suppressNextClick = false;
-  let pendingDelete: FlatProjectFileNode | null = null;
+  let pendingDelete: ExplorerRowNode | null = null;
   let deleting = false;
-  let pendingRename: FlatProjectFileNode | null = null;
+  let pendingRename: ExplorerRowNode | null = null;
   let renameName = "";
   let renameError = "";
   let renaming = false;
   let renameInputEl: HTMLInputElement | undefined;
+  let revealedSelectionKey = "";
 
-  $: allFiles = allProjectPaneFiles({
-    allProjectFiles,
-    scannedPages: scannedPages.filter((file) => file.kind !== "DIR"),
-    scannedStyles: scannedStyles.filter((file) => file.kind !== "DIR"),
-    scannedTemplates: scannedTemplates.filter((file) => file.kind !== "DIR"),
-    scannedScripts: scannedScripts.filter((file) => file.kind !== "DIR"),
-    scannedAssets: scannedAssets.filter((file) => file.kind !== "DIR"),
-  });
-  $: internalTree = buildProjectFileTree(allFiles);
-  $: syncCollapsedDirectories(internalTree);
-  $: flatTree = flattenVisibleProjectFiles(internalTree, collapsedDirs);
+  $: syncCollapsedDirectories(snapshot?.entries ?? []);
+  $: flatTree = visibleExplorerEntries(snapshot?.entries ?? [], collapsedDirs);
   $: projectRootDropNode = {
     type: "dir",
-    name: "Rădăcina proiectului",
+    name: t("project-files-root"),
     path: "",
-    commandPath: "",
     depth: 0,
     hasChildren: flatTree.length > 0,
-  } satisfies FlatProjectFileNode;
+  } satisfies ExplorerRowNode;
+  $: if (
+    snapshot?.selectedEntry?.entryId
+    && `${snapshot.runtimeSessionId}:${snapshot.selectedEntry.entryId}` !== revealedSelectionKey
+  ) {
+    void revealSelectedEntry(snapshot.selectedEntry.entryId);
+  }
   $: dragSourceNode = flatTree.find((item) => item.path === dragSourcePath) ?? null;
   $: dragTargetNode = targetNodeForPath(dragTargetPath);
   $: if (typeof document !== "undefined") {
@@ -125,6 +128,10 @@
 
   async function startCreate(parentPath: string, depth: number, kind: "file" | "dir", event: MouseEvent) {
     event.stopPropagation();
+    const capability = parentPath
+      ? targetNodeForPath(parentPath)?.entry?.capabilities.createChild
+      : snapshot?.rootCapabilities.createChild;
+    if (!capability?.allowed) return;
 
     if (parentPath) {
       const next = new Set(collapsedDirs);
@@ -134,7 +141,7 @@
 
     pendingCreate = {
       parentPath,
-      commandParentPath: targetNodeForPath(parentPath)?.commandPath ?? "",
+      parentEntryId: targetNodeForPath(parentPath)?.entry?.id ?? null,
       depth,
       kind,
       name: "",
@@ -161,10 +168,10 @@
     createError = "";
   }
 
-  async function startRename(node: FlatProjectFileNode, event: MouseEvent) {
+  async function startRename(node: ExplorerRowNode, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    if (fileMoveBlockedReason) return;
+    if (!node.entry?.capabilities.rename.allowed) return;
     pendingRename = node;
     renameName = node.name;
     renameError = "";
@@ -184,45 +191,47 @@
     if (!pendingRename || renaming) return;
     const target = pendingRename;
     const newName = renameName.trim();
-    const validation = validateFileRenameRequest(allFiles, {
-      path: target.commandPath,
-      type: target.type,
-      newName,
-    });
-    if (!validation.allowed) {
-      renameError = validation.reason ?? "Redenumire invalidă.";
-      return;
-    }
+    if (!target.entry) return;
 
     renaming = true;
     renameError = "";
-    const result = await renameProjectFile({ path: target.commandPath, type: target.type, newName });
-    renaming = false;
-    if (result === false) {
-      renameError = "Redenumirea nu a fost aplicată.";
-      return;
+    try {
+      const plan = await planOperation({
+        kind: "rename",
+        entryId: target.entry.id,
+        newName,
+      });
+      if (!plan.allowed) {
+        renameError = plan.diagnostic ?? t("project-files-rename-invalid");
+        return;
+      }
+      await commitOperation(plan);
+      pendingRename = null;
+      renameName = "";
+    } catch (error) {
+      renameError = String(error);
+    } finally {
+      renaming = false;
     }
-    pendingRename = null;
-    renameName = "";
   }
 
   async function confirmCreate() {
     if (!pendingCreate) return;
 
     const rawName = pendingCreate.name.trim();
-    if (!rawName) {
-      createError = "Numele nu poate fi gol.";
-      return;
-    }
-    if (rawName.includes("..") || rawName.startsWith("/")) {
-      createError = "Nume invalid.";
-      return;
-    }
-
     try {
       createError = "";
-      const target = resolveCreateTarget({ ...pendingCreate, name: rawName });
-      await createProjectFile(target.filePath, target.content);
+      const plan = await planOperation({
+        kind: "create",
+        parentEntryId: pendingCreate.parentEntryId,
+        entryKind: pendingCreate.kind === "dir" ? "directory" : "text",
+        name: rawName,
+      });
+      if (!plan.allowed) {
+        createError = plan.diagnostic ?? t("project-files-name-invalid");
+        return;
+      }
+      await commitOperation(plan);
       pendingCreate = null;
     } catch (error) {
       createError = String(error);
@@ -241,6 +250,10 @@
 
   function isImageFile(name: string): boolean {
     return ["jpg", "jpeg", "png", "webp", "gif", "svg", "avif", "ico"].includes(projectFileExt(name));
+  }
+
+  function projectFileExt(name: string): string {
+    return name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
   }
 
   function isCodeFile(name: string): boolean {
@@ -262,6 +275,7 @@
   }
 
   function clearDragState() {
+    dragPlanSerial += 1;
     dragCandidate = null;
     dragSourcePath = null;
     dragTargetPath = null;
@@ -269,6 +283,9 @@
     dragDropInvalid = false;
     dragDropMessage = "";
     dragDropLabel = "";
+    dragPlan = null;
+    dragPlanKey = "";
+    dragPlanPromise = null;
   }
 
   function cancelDragForExternalReconcile() {
@@ -276,14 +293,16 @@
     clearDragState();
   }
 
-  function targetNodeForPath(path: string | null): FlatProjectFileNode | null {
+  function targetNodeForPath(path: string | null): ExplorerRowNode | null {
     if (path === null) return null;
     if (path === "") return projectRootDropNode;
     return flatTree.find((item) => item.path === path) ?? null;
   }
 
-  function syncCollapsedDirectories(nodes: ProjectTreeNode[]) {
-    const paths = collectDirectoryPaths(nodes);
+  function syncCollapsedDirectories(entries: FileExplorerEntry[]) {
+    const paths = entries
+      .filter((entry) => entry.kind === "directory")
+      .map((entry) => entry.relativePath);
     const nextKnown = new Set<string>();
     const nextCollapsed = new Set<string>();
 
@@ -298,13 +317,107 @@
     if (!sameStringSet(nextCollapsed, collapsedDirs)) collapsedDirs = nextCollapsed;
   }
 
-  function collectDirectoryPaths(nodes: ProjectTreeNode[], paths: string[] = []) {
-    for (const node of nodes) {
-      if (!node.isDir) continue;
-      paths.push(node.path);
-      collectDirectoryPaths(node.children, paths);
+  function visibleExplorerEntries(
+    entries: FileExplorerEntry[],
+    collapsed: Set<string>,
+  ): ExplorerRowNode[] {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const parentIds = new Set(entries.map((entry) => entry.parentId).filter(Boolean));
+    return entries
+      .filter((entry) => {
+        let parentId = entry.parentId;
+        while (parentId) {
+          const parent = byId.get(parentId);
+          if (!parent) return false;
+          if (collapsed.has(parent.relativePath)) return false;
+          parentId = parent.parentId;
+        }
+        return true;
+      })
+      .map((entry) => ({
+        type: entry.kind === "directory" ? "dir" : "file",
+        name: entry.name,
+        path: entry.relativePath,
+        depth: entry.depth,
+        entry,
+        hasChildren: parentIds.has(entry.id),
+      }));
+  }
+
+  async function revealSelectedEntry(entryId: string) {
+    const entries = snapshot?.entries ?? [];
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const selected = byId.get(entryId);
+    if (!selected) return;
+    const nextCollapsed = new Set(collapsedDirs);
+    let parentId = selected.parentId;
+    while (parentId) {
+      const parent = byId.get(parentId);
+      if (!parent) break;
+      nextCollapsed.delete(parent.relativePath);
+      parentId = parent.parentId;
     }
-    return paths;
+    collapsedDirs = nextCollapsed;
+    revealedSelectionKey = `${snapshot?.runtimeSessionId ?? ""}:${entryId}`;
+    await tick();
+    document
+      .querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(entryId)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }
+
+  function focusExplorerEntry(entryId: string | undefined) {
+    if (!entryId) return;
+    document
+      .querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(entryId)}"]`)
+      ?.focus();
+  }
+
+  function handleTreeRowKeydown(node: ExplorerRowNode, event: KeyboardEvent) {
+    if (event.target !== event.currentTarget) return;
+    const index = flatTree.findIndex((candidate) => candidate.entry?.id === node.entry?.id);
+    if (index < 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusExplorerEntry(flatTree[index + 1]?.entry?.id);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusExplorerEntry(flatTree[index - 1]?.entry?.id);
+      return;
+    }
+    if (event.key === "ArrowRight" && node.type === "dir") {
+      event.preventDefault();
+      if (collapsedDirs.has(node.path)) {
+        const next = new Set(collapsedDirs);
+        next.delete(node.path);
+        collapsedDirs = next;
+      } else {
+        focusExplorerEntry(flatTree[index + 1]?.entry?.id);
+      }
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      if (node.type === "dir" && !collapsedDirs.has(node.path)) {
+        const next = new Set(collapsedDirs);
+        next.add(node.path);
+        collapsedDirs = next;
+      } else {
+        focusExplorerEntry(node.entry?.parentId ?? undefined);
+      }
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleEntryClick(node.entry);
+      if (node.type === "dir") {
+        const next = new Set(collapsedDirs);
+        if (next.has(node.path)) next.delete(node.path);
+        else next.add(node.path);
+        collapsedDirs = next;
+      }
+    }
   }
 
   function sameStringSet(left: Set<string>, right: Set<string>) {
@@ -329,13 +442,13 @@
   function handlePointerDown(node: typeof flatTree[number], event: PointerEvent) {
     if (event.button !== 0) return;
     if (!projectRoot || !runtimeSessionId) return;
+    if (!node.entry?.capabilities.moveEntry.allowed) return;
     if (event.target instanceof HTMLElement && event.target.closest(".icon-action, .inline-rename")) return;
     if (pendingRename) return;
     cleanupPointerListeners();
     dragCandidate = {
       path: node.path,
       pointerId: event.pointerId,
-      sourceType: node.type,
       startX: event.clientX,
       startY: event.clientY,
       expectedProjectRoot: projectRoot,
@@ -362,22 +475,70 @@
     const target = nodeForPointer(event);
     if (!target) {
       dragTargetPath = null;
-      dragDropInvalid = false;
+      dragDropInvalid = true;
       dragDropMessage = "";
       dragDropLabel = "";
+      dragPlan = null;
+      dragPlanKey = "";
+      dragPlanPromise = null;
       return;
     }
 
-    const validation = validateFileDrop(sourceNode, target.node, {
-      files: allFiles,
-      blockedReason: fileMoveBlockedReason,
-    });
     dragTargetPath = target.node.path;
-    dragDropInvalid = !validation.allowed;
-    dragDropLabel = validation.allowed ? "Mută aici" : fileDropBlockedLabel(validation);
-    dragDropMessage = validation.allowed
-      ? fileMoveHintLabel(dragCandidate.path, target.node.path)
-      : validation.reason ?? "Drop invalid";
+    if (
+      !sourceNode?.entry
+      || target.node.type !== "dir"
+    ) {
+      dragDropInvalid = true;
+      dragPlan = null;
+      dragDropLabel = t("project-files-drop-choose-folder-short");
+      dragDropMessage = t("project-files-drop-target-folder");
+      return;
+    }
+    requestDragPlan(sourceNode.entry.id, target.node.entry?.id ?? null, target.node.path);
+  }
+
+  function requestDragPlan(
+    sourceEntryId: string,
+    targetDirectoryEntryId: string | null,
+    targetPath: string,
+  ) {
+    const key = `${sourceEntryId}::${targetDirectoryEntryId ?? "root"}`;
+    if (dragPlanKey === key && dragPlanPromise) return;
+    dragPlanKey = key;
+    dragPlan = null;
+    dragDropInvalid = true;
+    dragDropLabel = "";
+    dragDropMessage = "";
+    const serial = ++dragPlanSerial;
+    const promise = planOperation({
+      kind: "move",
+      entryId: sourceEntryId,
+      targetDirectoryEntryId,
+    })
+      .then((plan) => {
+        if (
+          serial !== dragPlanSerial
+          || dragPlanKey !== key
+          || dragTargetPath !== targetPath
+        ) return null;
+        dragPlan = plan;
+        dragDropInvalid = !plan.allowed;
+        dragDropLabel = plan.allowed
+          ? t("project-files-move-here")
+          : t("project-files-drop-forbidden");
+        dragDropMessage = plan.diagnostic ?? "";
+        return plan;
+      })
+      .catch((error) => {
+        if (serial !== dragPlanSerial || dragPlanKey !== key) return null;
+        dragPlan = null;
+        dragDropInvalid = true;
+        dragDropLabel = t("project-files-drop-forbidden");
+        dragDropMessage = String(error);
+        return null;
+      });
+    dragPlanPromise = promise;
   }
 
   async function handleWindowPointerUp(event: PointerEvent) {
@@ -385,35 +546,38 @@
     cleanupPointerListeners();
 
     const sourcePath = dragCandidate.path;
-    const sourceType = dragCandidate.sourceType;
     const expectedProjectRoot = dragCandidate.expectedProjectRoot;
     const expectedSessionId = dragCandidate.expectedSessionId;
     const targetPath = dragTargetPath;
     const wasDrag = dragActive;
-    const wasInvalid = dragDropInvalid;
-    clearDragState();
+    const planned = dragPlan;
+    const pendingPlan = dragPlanPromise;
 
-    if (expectedProjectRoot !== projectRoot || expectedSessionId !== runtimeSessionId) return;
+    if (expectedProjectRoot !== projectRoot || expectedSessionId !== runtimeSessionId) {
+      clearDragState();
+      return;
+    }
 
-    if (!wasDrag) return;
+    if (!wasDrag) {
+      clearDragState();
+      return;
+    }
     suppressNextClick = true;
     window.setTimeout(() => {
       suppressNextClick = false;
     }, 0);
     event.preventDefault();
-    const sourceNode = flatTree.find((item) => item.path === sourcePath);
-    if (wasInvalid || targetPath === null || targetPath === sourcePath) return;
+    const resolvedPlan = planned ?? await pendingPlan;
+    clearDragState();
+    if (!resolvedPlan?.allowed || !resolvedPlan.commitToken) return;
+    if (targetPath === null || targetPath === sourcePath) return;
 
     const targetNode = targetNodeForPath(targetPath);
     if (!targetNode || targetNode.type !== "dir") return;
     const nextCollapsed = new Set(collapsedDirs);
     nextCollapsed.delete(targetPath);
     collapsedDirs = nextCollapsed;
-    await moveProjectFile({
-      sourcePath: sourceNode?.commandPath ?? sourcePath,
-      sourceType,
-      targetDirectory: targetNode.commandPath,
-    });
+    await commitOperation(resolvedPlan);
   }
 
   function handleWindowPointerCancel(event: PointerEvent) {
@@ -422,30 +586,33 @@
     clearDragState();
   }
 
-  function handleFileClick(file: ProjectFile | undefined) {
+  function handleEntryClick(entry: FileExplorerEntry | undefined) {
     if (suppressNextClick) {
       suppressNextClick = false;
       return;
     }
-    if (file) openScannedFile(file);
+    if (entry) void selectEntry(entry.id);
   }
 
-  function handleDirRowClick(node: FlatProjectFileNode) {
+  function handleDirRowClick(node: ExplorerRowNode) {
     return (event: MouseEvent) => {
-      if (!isRenaming(node)) toggleDirCollapse(node.path, event);
+      if (!isRenaming(node)) {
+        handleEntryClick(node.entry);
+        toggleDirCollapse(node.path, event);
+      }
     };
   }
 
-  function handleFileRowClick(node: FlatProjectFileNode) {
+  function handleFileRowClick(node: ExplorerRowNode) {
     return () => {
-      if (!isRenaming(node)) handleFileClick(node.file);
+      if (!isRenaming(node)) handleEntryClick(node.entry);
     };
   }
 
-  function requestDelete(node: FlatProjectFileNode, event: MouseEvent) {
+  function requestDelete(node: ExplorerRowNode, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
-    if (fileMoveBlockedReason) return;
+    if (!node.entry?.capabilities.delete.allowed) return;
     pendingDelete = node;
   }
 
@@ -458,22 +625,40 @@
     if (!pendingDelete || deleting) return;
     deleting = true;
     const target = pendingDelete;
-    await deleteProjectFile({ path: target.commandPath, type: target.type });
-    deleting = false;
-    pendingDelete = null;
+    try {
+      if (!target.entry) return;
+      const plan = await planOperation({
+        kind: "delete",
+        entryId: target.entry.id,
+      });
+      if (!plan.allowed) {
+        throw new Error(plan.diagnostic ?? t("project-files-drop-forbidden"));
+      }
+      await commitOperation(plan);
+      pendingDelete = null;
+    } catch (error) {
+      createError = String(error);
+    } finally {
+      deleting = false;
+    }
   }
 
-  function deleteTitle(node: FlatProjectFileNode) {
-    if (fileMoveBlockedReason) return fileMoveBlockedReason;
-    return node.type === "dir" ? "Șterge dosar" : "Șterge fișier";
+  function deleteTitle(node: ExplorerRowNode) {
+    return node.type === "dir" ? t("project-files-delete-folder") : t("project-files-delete-file");
   }
 
   function renameTitle() {
-    if (fileMoveBlockedReason) return fileMoveBlockedReason;
-    return "Redenumește";
+    return t("project-files-rename");
   }
 
-  function isRenaming(node: FlatProjectFileNode) {
+  function localizedMoveHint(sourcePath: string, targetDirectory: string) {
+    return t("project-files-move-hint", {
+      name: sourcePath.split("/").pop() ?? sourcePath,
+      directory: targetDirectory.split("/").pop() || t("project-files-root"),
+    });
+  }
+
+  function isRenaming(node: ExplorerRowNode) {
     return pendingRename?.path === node.path;
   }
 
@@ -494,12 +679,13 @@
 
 {#if scannedProject}
   <div class="file-tree-header">
-    <span class="file-tree-title">EXPLORER</span>
+    <span class="file-tree-title">{t("project-files-explorer")}</span>
     <div class="file-tree-header-actions">
       <button
         type="button"
         class="icon-action"
-        title="Fișier nou în rădăcină"
+        disabled={!snapshot?.rootCapabilities.createChild.allowed}
+        title={t("project-files-new-root-file")}
         onclick={(event) => startCreate("", 0, "file", event)}
       >
         <IconFilePlus size={14} stroke={1.8} />
@@ -507,13 +693,20 @@
       <button
         type="button"
         class="icon-action"
-        title="Dosar nou în rădăcină"
+        disabled={!snapshot?.rootCapabilities.createChild.allowed}
+        title={t("project-files-new-root-folder")}
         onclick={(event) => startCreate("", 0, "dir", event)}
       >
         <IconFolderPlus size={14} stroke={1.8} />
       </button>
     </div>
   </div>
+
+  {#if loading && !snapshot}
+    <p class="no-project-hint">{t("common-loading")}</p>
+  {:else if error && !snapshot}
+    <p class="create-error">{error}</p>
+  {/if}
 
   {#if pendingCreate && pendingCreate.parentPath === "" && flatTree.length > 0 === false}
     <div class="create-row" style="--depth: 0;">
@@ -526,11 +719,11 @@
         bind:this={createInputEl}
         class="create-input"
         type="text"
-        placeholder={pendingCreate.kind === "dir" ? "nume-dosar" : "name.ext"}
+        placeholder={pendingCreate.kind === "dir" ? t("project-files-folder-placeholder") : t("project-files-file-placeholder")}
         bind:value={pendingCreate.name}
         onkeydown={handleCreateKeydown}
       />
-      <button type="button" class="create-confirm" onclick={confirmCreate}>OK</button>
+      <button type="button" class="create-confirm" onclick={confirmCreate}>{t("common-confirm")}</button>
       <button type="button" class="create-cancel" onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
     </div>
   {/if}
@@ -542,17 +735,17 @@
         class:drop-inside={isDropTarget("")}
         class:drop-invalid={isInvalidDropTarget("")}
         data-file-drop-path=""
-        role="none"
+        aria-hidden="true"
         style="--depth: 0;"
       >
-        <button class="file-row-btn" type="button">
+        <button class="file-row-btn" type="button" tabindex="-1">
           <span class="file-chevron"></span>
           <span class="file-icon dir"><IconFolderOpen size={14} stroke={1.6} /></span>
-          <span class="file-name">Rădăcina proiectului</span>
+          <span class="file-name">{t("project-files-root")}</span>
           {#if isDropTarget("")}
-            <span class="file-drop-label">Mută aici</span>
+            <span class="file-drop-label">{t("project-files-move-here")}</span>
           {:else if isInvalidDropTarget("")}
-            <span class="file-drop-label invalid">{dragDropLabel || "Interzis"}</span>
+            <span class="file-drop-label invalid">{dragDropLabel || t("project-files-drop-forbidden")}</span>
           {/if}
         </button>
       </div>
@@ -570,30 +763,37 @@
           bind:this={createInputEl}
           class="create-input"
           type="text"
-          placeholder={pendingCreate.kind === "dir" ? "nume-dosar" : "name.ext"}
+          placeholder={pendingCreate.kind === "dir" ? t("project-files-folder-placeholder") : t("project-files-file-placeholder")}
           bind:value={pendingCreate.name}
           onkeydown={handleCreateKeydown}
         />
-        <button type="button" class="create-confirm" onclick={confirmCreate}>OK</button>
+        <button type="button" class="create-confirm" onclick={confirmCreate}>{t("common-confirm")}</button>
         <button type="button" class="create-cancel" onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
       </div>
     {/if}
 
     {#each flatTree as node}
       <div
-        class="file-row"
-        class:active={node.file?.relativePath === activeScannedPath}
-        class:file-draggable={node.type === "file" || node.type === "dir"}
+        class="file-row ui-entity-selectable"
+        data-ui-selected={node.entry?.id === snapshot?.selectedEntry?.entryId ? "true" : undefined}
+        class:file-draggable={node.entry?.capabilities.moveEntry.allowed}
         class:dragging={dragSourcePath === node.path}
         class:drop-inside={isDropTarget(node.path)}
         class:drop-invalid={isInvalidDropTarget(node.path)}
         data-file-path={node.path}
         data-file-drop-path={node.path}
-        role="none"
+        data-file-entry-id={node.entry?.id}
+        role="treeitem"
+        tabindex={node.entry?.id === snapshot?.selectedEntry?.entryId
+          || (!snapshot?.selectedEntry && node === flatTree[0]) ? 0 : -1}
+        aria-level={node.depth + 1}
+        aria-selected={node.entry?.id === snapshot?.selectedEntry?.entryId}
+        aria-expanded={node.type === "dir" ? !collapsedDirs.has(node.path) : undefined}
         style="--depth: {node.depth};"
         onmouseenter={() => { hoveredPath = node.path; }}
         onmouseleave={() => { if (hoveredPath === node.path) hoveredPath = ""; }}
         onpointerdown={(event) => handlePointerDown(node, event)}
+        onkeydown={(event) => handleTreeRowKeydown(node, event)}
       >
         <span class="file-indent" style="width: {node.depth * 16}px;"></span>
 
@@ -603,6 +803,7 @@
             class="file-row-btn"
             class:renaming-row={isRenaming(node)}
             type={isRenaming(node) ? undefined : "button"}
+            tabindex={isRenaming(node) ? undefined : -1}
             role={isRenaming(node) ? "group" : undefined}
             onclick={handleDirRowClick(node)}
           >
@@ -629,27 +830,27 @@
                   bind:value={renameName}
                   onkeydown={handleRenameKeydown}
                   disabled={renaming}
-                  aria-label="Nume nou pentru {node.name}"
+                  aria-label={t("project-files-new-name", { name: node.name })}
                 />
-                <button type="button" class="rename-confirm" disabled={renaming} onclick={confirmRename}>OK</button>
+                <button type="button" class="rename-confirm" disabled={renaming} onclick={confirmRename}>{t("common-confirm")}</button>
                 <button type="button" class="rename-cancel" disabled={renaming} onclick={cancelRename}><IconX size={11} stroke={2} /></button>
               </span>
             {:else}
               <span class="file-name">{node.name}</span>
             {/if}
             {#if dragTargetPath === node.path && !dragDropInvalid}
-              <span class="file-drop-label">Mută aici</span>
+              <span class="file-drop-label">{t("project-files-move-here")}</span>
             {:else if isInvalidDropTarget(node.path)}
-              <span class="file-drop-label invalid">{dragDropLabel || "Interzis"}</span>
+              <span class="file-drop-label invalid">{dragDropLabel || t("project-files-drop-forbidden")}</span>
             {/if}
           </svelte:element>
 
-          {#if hoveredPath === node.path && scannedProject}
+          {#if (hoveredPath === node.path || node.entry?.id === snapshot?.selectedEntry?.entryId) && scannedProject}
             <div class="row-actions">
               <button
                 type="button"
                 class="icon-action small"
-                disabled={Boolean(fileMoveBlockedReason) || isRenaming(node)}
+                disabled={!node.entry?.capabilities.rename.allowed || isRenaming(node)}
                 title={renameTitle()}
                 onclick={(event) => startRename(node, event)}
               >
@@ -658,8 +859,8 @@
               <button
                 type="button"
                 class="icon-action small"
-                disabled={isRenaming(node)}
-                title="Fișier nou"
+                disabled={!node.entry?.capabilities.createChild.allowed || isRenaming(node)}
+                title={t("project-files-new-file")}
                 onclick={(event) => startCreate(node.path, node.depth + 1, "file", event)}
               >
                 <IconFilePlus size={12} stroke={1.8} />
@@ -667,8 +868,8 @@
               <button
                 type="button"
                 class="icon-action small"
-                disabled={isRenaming(node)}
-                title="Dosar nou"
+                disabled={!node.entry?.capabilities.createChild.allowed || isRenaming(node)}
+                title={t("project-files-new-folder")}
                 onclick={(event) => startCreate(node.path, node.depth + 1, "dir", event)}
               >
                 <IconFolderPlus size={12} stroke={1.8} />
@@ -676,7 +877,7 @@
               <button
                 type="button"
                 class="icon-action small danger"
-                disabled={Boolean(fileMoveBlockedReason) || isRenaming(node)}
+                disabled={!node.entry?.capabilities.delete.allowed || isRenaming(node)}
                 title={deleteTitle(node)}
                 onclick={(event) => requestDelete(node, event)}
               >
@@ -690,6 +891,7 @@
             class="file-row-btn"
             class:renaming-row={isRenaming(node)}
             type={isRenaming(node) ? undefined : "button"}
+            tabindex={isRenaming(node) ? undefined : -1}
             role={isRenaming(node) ? "group" : undefined}
             onclick={handleFileRowClick(node)}
           >
@@ -716,24 +918,24 @@
                   bind:value={renameName}
                   onkeydown={handleRenameKeydown}
                   disabled={renaming}
-                  aria-label="Nume nou pentru {node.name}"
+                  aria-label={t("project-files-new-name", { name: node.name })}
                 />
-                <button type="button" class="rename-confirm" disabled={renaming} onclick={confirmRename}>OK</button>
+                <button type="button" class="rename-confirm" disabled={renaming} onclick={confirmRename}>{t("common-confirm")}</button>
                 <button type="button" class="rename-cancel" disabled={renaming} onclick={cancelRename}><IconX size={11} stroke={2} /></button>
               </span>
             {:else}
               <span class="file-name">{node.name}</span>
             {/if}
             {#if isInvalidDropTarget(node.path)}
-              <span class="file-drop-label invalid">{dragDropLabel || "Interzis"}</span>
+              <span class="file-drop-label invalid">{dragDropLabel || t("project-files-drop-forbidden")}</span>
             {/if}
           </svelte:element>
-          {#if hoveredPath === node.path && scannedProject}
+          {#if (hoveredPath === node.path || node.entry?.id === snapshot?.selectedEntry?.entryId) && scannedProject}
             <div class="row-actions">
               <button
                 type="button"
                 class="icon-action small"
-                disabled={Boolean(fileMoveBlockedReason) || isRenaming(node)}
+                disabled={!node.entry?.capabilities.rename.allowed || isRenaming(node)}
                 title={renameTitle()}
                 onclick={(event) => startRename(node, event)}
               >
@@ -742,7 +944,7 @@
               <button
                 type="button"
                 class="icon-action small danger"
-                disabled={Boolean(fileMoveBlockedReason) || isRenaming(node)}
+                disabled={!node.entry?.capabilities.delete.allowed || isRenaming(node)}
                 title={deleteTitle(node)}
                 onclick={(event) => requestDelete(node, event)}
               >
@@ -765,11 +967,11 @@
             bind:this={createInputEl}
             class="create-input"
             type="text"
-            placeholder={pendingCreate.kind === "dir" ? "nume-dosar" : "name.ext"}
+            placeholder={pendingCreate.kind === "dir" ? t("project-files-folder-placeholder") : t("project-files-file-placeholder")}
             bind:value={pendingCreate.name}
             onkeydown={handleCreateKeydown}
           />
-          <button type="button" class="create-confirm" onclick={confirmCreate}>OK</button>
+          <button type="button" class="create-confirm" onclick={confirmCreate}>{t("common-confirm")}</button>
           <button type="button" class="create-cancel" onclick={cancelCreate}><IconX size={11} stroke={2} /></button>
         </div>
       {/if}
@@ -791,18 +993,18 @@
       style="left: {dragPointer.x + 14}px; top: {dragPointer.y + 14}px;"
     >
       {#if dragDropInvalid}
-        {dragDropMessage || "Drop invalid"}
+        {dragDropMessage || t("project-files-drop-invalid")}
       {:else if dragTargetNode && dragSourceNode}
-        {dragDropMessage || fileMoveHintLabel(dragSourceNode.path, dragTargetNode.path)}
+        {dragDropMessage || localizedMoveHint(dragSourceNode.path, dragTargetNode.path)}
       {:else if dragDropMessage}
         {dragDropMessage}
       {:else}
-        Alege dosarul destinație
+        {t("project-files-choose-destination")}
       {/if}
     </div>
   {/if}
 {:else}
-  <p class="no-project-hint">Deschide un proiect pentru a vedea fisierele.</p>
+  <p class="no-project-hint">{t("project-files-open-project")}</p>
 {/if}
 
 {#if pendingDelete}
@@ -812,20 +1014,20 @@
         <IconTrash size={18} stroke={2} />
       </div>
       <div class="delete-modal-body">
-        <h3 id="delete-title">Mutare în coș</h3>
+        <h3 id="delete-title">{t("project-files-trash-title")}</h3>
         <p>
           {#if pendingDelete.type === "dir"}
-            Dosarul <strong>{pendingDelete.path}</strong> și tot conținutul lui vor fi mutate în coșul sesiunii Pană Studio.
+            {t("project-files-trash-folder", { path: pendingDelete.path })}
           {:else}
-            Fișierul <strong>{pendingDelete.path}</strong> va fi mutat în coșul sesiunii Pană Studio.
+            {t("project-files-trash-file", { path: pendingDelete.path })}
           {/if}
         </p>
-        <p class="delete-modal-note">Operația trece prin kernel și poate fi inversată din Undo/Redo în sesiunea curentă.</p>
+        <p class="delete-modal-note">{t("project-files-trash-note")}</p>
       </div>
       <div class="delete-modal-actions">
-        <button type="button" class="delete-cancel-btn" disabled={deleting} onclick={cancelDelete}>Anulează</button>
+        <button type="button" class="delete-cancel-btn" disabled={deleting} onclick={cancelDelete}>{t("project-files-cancel")}</button>
         <button type="button" class="delete-confirm-btn" disabled={deleting} onclick={confirmDelete}>
-          {deleting ? "Se mută..." : "Mută în coș"}
+          {deleting ? t("project-files-moving") : t("project-files-move-trash")}
         </button>
       </div>
     </div>
@@ -907,16 +1109,9 @@
     min-height: 24px;
     border: 1px solid transparent;
     border-radius: 5px;
-    transition: background 60ms ease;
-  }
-
-  .file-row:hover {
-    background: var(--surface-4);
-  }
-
-  .file-row.active {
-    border-color: var(--brand);
-    background: var(--brand-soft);
+    transition:
+      border-color 60ms ease,
+      background 60ms ease;
   }
 
   .file-row.dragging {
@@ -924,9 +1119,9 @@
   }
 
   .file-row.drop-inside {
-    border-color: var(--brand);
-    background: color-mix(in srgb, var(--brand) 16%, var(--surface-4));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 54%, transparent);
+    border-color: var(--success);
+    background: color-mix(in srgb, var(--success) 10%, var(--surface-4));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 34%, transparent);
   }
 
   .file-row.drop-invalid {
@@ -1056,12 +1251,12 @@
     max-width: 72px;
     padding: 1px 5px;
     border-radius: 999px;
-    color: var(--brand-strong);
+    color: var(--success);
     font-size: 12px;
     font-weight: 800;
     line-height: 1.3;
     text-transform: uppercase;
-    background: color-mix(in srgb, var(--brand) 16%, var(--surface-3));
+    background: color-mix(in srgb, var(--success) 13%, var(--surface-3));
   }
 
   .file-drop-label.invalid {
@@ -1228,12 +1423,6 @@
     color: var(--text);
     font-size: 12px;
     line-height: 1.45;
-  }
-
-  .delete-modal-body strong {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    overflow-wrap: anywhere;
   }
 
   .delete-modal-body .delete-modal-note {

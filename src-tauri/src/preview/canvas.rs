@@ -138,6 +138,7 @@ pub(crate) struct CanvasNodeCapabilities {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CanvasRenderNode {
     pub render_instance_id: String,
+    pub document_order: usize,
     pub source_node_id: Option<String>,
     pub template_source_node_id: Option<String>,
     pub parent_render_instance_id: Option<String>,
@@ -154,11 +155,34 @@ pub(crate) struct CanvasRenderNode {
     pub capabilities: CanvasNodeCapabilities,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CanvasBoundaryMarkerKind {
+    Source,
+    Expression,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CanvasBoundaryInstance {
+    pub boundary_instance_id: String,
+    pub document_order: usize,
+    pub source_node_id: String,
+    pub parent_boundary_instance_id: Option<String>,
+    pub root_render_instance_ids: Vec<String>,
+    pub binding_key: Option<String>,
+    pub binding_path: Option<String>,
+    pub occurrence: usize,
+    pub marker_kind: CanvasBoundaryMarkerKind,
+    pub closed: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CanvasDocumentGraph {
     pub route: String,
     pub nodes: Vec<CanvasRenderNode>,
+    pub boundaries: Vec<CanvasBoundaryInstance>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
@@ -215,6 +239,26 @@ struct CanvasSemanticIndex<'a> {
     block_definition_by_source_instance: HashMap<String, Option<String>>,
     binding_path_by_source: HashMap<String, String>,
     repeated_sources: HashSet<String>,
+}
+
+pub(crate) struct CanvasDocumentAnnotator<'a> {
+    semantic_index: CanvasSemanticIndex<'a>,
+}
+
+#[derive(Clone, Debug)]
+struct CanvasBoundaryFrame {
+    draft_index: usize,
+    source_node_id: String,
+}
+
+#[derive(Clone, Debug)]
+struct CanvasBoundaryDraft {
+    source_node_id: String,
+    document_order: usize,
+    parent_draft_index: Option<usize>,
+    render_instance_ids: Vec<String>,
+    marker_kind: CanvasBoundaryMarkerKind,
+    closed: bool,
 }
 
 impl<'a> CanvasSemanticIndex<'a> {
@@ -382,28 +426,11 @@ impl CanvasGraph {
         route: &str,
         html: &str,
     ) -> Result<String, String> {
-        let semantic_index = CanvasSemanticIndex::from_model(model);
-        let document = parse(html.to_string());
-        let mut occurrences = HashMap::new();
-        let mut binding_occurrences = HashMap::new();
-        let mut nodes = Vec::new();
-        let mut diagnostics = Vec::new();
-        let mut total_nodes = 0usize;
-        let mut provenance_stack = Vec::new();
-        collect_render_nodes(
-            &document,
-            route,
-            None,
-            &semantic_index,
-            &mut provenance_stack,
-            &mut occurrences,
-            &mut binding_occurrences,
-            &mut nodes,
-            &mut diagnostics,
-            &mut total_nodes,
-        )?;
-        String::from_utf8(serialize_node(&document))
-            .map_err(|error| format!("CanvasGraph nu a putut serializa documentul anotat: {error}"))
+        CanvasDocumentAnnotator::new(model).annotate(route, html)
+    }
+
+    pub(crate) fn document_annotator(model: &ProjectModel) -> CanvasDocumentAnnotator<'_> {
+        CanvasDocumentAnnotator::new(model)
     }
 
     pub(crate) fn from_rendered_documents<'a>(
@@ -429,21 +456,30 @@ impl CanvasGraph {
             let mut occurrences = HashMap::new();
             let mut binding_occurrences = HashMap::new();
             let mut provenance_stack = Vec::new();
+            let mut boundary_stack = Vec::new();
+            let mut boundary_drafts = Vec::new();
+            let mut semantic_order = 0usize;
             collect_render_nodes(
                 &document,
                 route,
                 None,
                 &semantic_index,
                 &mut provenance_stack,
+                &mut boundary_stack,
+                &mut boundary_drafts,
                 &mut occurrences,
                 &mut binding_occurrences,
                 &mut nodes,
                 &mut diagnostics,
                 &mut total_nodes,
+                &mut semantic_order,
             )?;
+            let boundaries =
+                finalize_boundary_instances(route, &nodes, boundary_drafts, &mut diagnostics);
             result_documents.push(CanvasDocumentGraph {
                 route: route.to_string(),
                 nodes,
+                boundaries,
             });
         }
         result_documents.sort_by(|left, right| left.route.cmp(&right.route));
@@ -462,6 +498,44 @@ impl CanvasGraph {
             runtime_nodes,
             diagnostics,
         })
+    }
+}
+
+impl CanvasDocumentAnnotator<'_> {
+    fn new(model: &ProjectModel) -> CanvasDocumentAnnotator<'_> {
+        CanvasDocumentAnnotator {
+            semantic_index: CanvasSemanticIndex::from_model(model),
+        }
+    }
+
+    pub(crate) fn annotate(&self, route: &str, html: &str) -> Result<String, String> {
+        let document = parse(html.to_string());
+        let mut occurrences = HashMap::new();
+        let mut binding_occurrences = HashMap::new();
+        let mut nodes = Vec::new();
+        let mut diagnostics = Vec::new();
+        let mut total_nodes = 0usize;
+        let mut semantic_order = 0usize;
+        let mut provenance_stack = Vec::new();
+        let mut boundary_stack = Vec::new();
+        let mut boundary_drafts = Vec::new();
+        collect_render_nodes(
+            &document,
+            route,
+            None,
+            &self.semantic_index,
+            &mut provenance_stack,
+            &mut boundary_stack,
+            &mut boundary_drafts,
+            &mut occurrences,
+            &mut binding_occurrences,
+            &mut nodes,
+            &mut diagnostics,
+            &mut total_nodes,
+            &mut semantic_order,
+        )?;
+        String::from_utf8(serialize_node(&document))
+            .map_err(|error| format!("CanvasGraph nu a putut serializa documentul anotat: {error}"))
     }
 }
 
@@ -850,25 +924,32 @@ fn derive_runtime_nodes(
                 &block.id,
             ));
         }
-        if let Some(items) = config
-            .motion
-            .as_ref()
-            .and_then(|motion| motion.get("items"))
-            .and_then(serde_json::Value::as_array)
-        {
-            for (index, item) in items.iter().enumerate() {
-                let key = item
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|id| !id.trim().is_empty())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| format!("motion-{index}"));
+        if let Some(motion) = config.motion.as_ref() {
+            for interaction in &motion.interactions {
                 runtime_nodes.push(canvas_runtime_node(
                     script,
                     &routes,
                     CanvasRuntimeKind::Motion,
                     CanvasNodeOrigin::PanaRuntime,
-                    &key,
+                    &interaction.id,
+                ));
+            }
+            for behavior in &motion.behaviors {
+                runtime_nodes.push(canvas_runtime_node(
+                    script,
+                    &routes,
+                    CanvasRuntimeKind::Motion,
+                    CanvasNodeOrigin::PanaRuntime,
+                    behavior.id(),
+                ));
+            }
+            for custom in &motion.custom_code {
+                runtime_nodes.push(canvas_runtime_node(
+                    script,
+                    &routes,
+                    CanvasRuntimeKind::Motion,
+                    CanvasNodeOrigin::PanaRuntime,
+                    &custom.id,
                 ));
             }
         }
@@ -930,16 +1011,24 @@ fn collect_render_nodes(
     parent_render_instance_id: Option<String>,
     semantic_index: &CanvasSemanticIndex<'_>,
     provenance_stack: &mut Vec<String>,
+    boundary_stack: &mut Vec<CanvasBoundaryFrame>,
+    boundary_drafts: &mut Vec<CanvasBoundaryDraft>,
     occurrences: &mut HashMap<(String, String, String), usize>,
     binding_occurrences: &mut HashMap<(String, String, String, String), usize>,
     nodes: &mut Vec<CanvasRenderNode>,
     diagnostics: &mut Vec<CanvasGraphDiagnostic>,
     total_nodes: &mut usize,
+    semantic_order: &mut usize,
 ) -> Result<(), String> {
     if let Some(comment) = node.as_comment() {
-        apply_provenance_marker(
+        let document_order = *semantic_order;
+        *semantic_order = semantic_order.saturating_add(1);
+        apply_canvas_marker(
             comment.borrow().as_str(),
             provenance_stack,
+            boundary_stack,
+            boundary_drafts,
+            document_order,
             route,
             diagnostics,
         );
@@ -948,6 +1037,8 @@ fn collect_render_nodes(
 
     let mut descendant_parent = parent_render_instance_id;
     if let Some(element) = node.as_element() {
+        let document_order = *semantic_order;
+        *semantic_order = semantic_order.saturating_add(1);
         let (source_node_id, template_source_node_id, binding_key) = {
             let attributes = element.attributes.borrow();
             let binding_key = [
@@ -1040,6 +1131,11 @@ fn collect_render_nodes(
                 .attributes
                 .borrow_mut()
                 .insert("data-pana-render-instance-id", render_instance_id.clone());
+            for frame in boundary_stack.iter() {
+                if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
+                    push_unique(&mut draft.render_instance_ids, &render_instance_id);
+                }
+            }
 
             for candidate in &provenance_stack_snapshot {
                 if !semantic_index.live_source_ids.contains(candidate.as_str()) {
@@ -1071,6 +1167,7 @@ fn collect_render_nodes(
             }
             nodes.push(CanvasRenderNode {
                 render_instance_id: render_instance_id.clone(),
+                document_order,
                 source_node_id,
                 template_source_node_id,
                 parent_render_instance_id: descendant_parent.clone(),
@@ -1099,6 +1196,7 @@ fn collect_render_nodes(
     }
 
     let mut descendant_provenance = provenance_stack.clone();
+    let mut descendant_boundaries = boundary_stack.clone();
     for child in node.children() {
         collect_render_nodes(
             &child,
@@ -1106,11 +1204,14 @@ fn collect_render_nodes(
             descendant_parent.clone(),
             semantic_index,
             &mut descendant_provenance,
+            &mut descendant_boundaries,
+            boundary_drafts,
             occurrences,
             binding_occurrences,
             nodes,
             diagnostics,
             total_nodes,
+            semantic_order,
         )?;
     }
     Ok(())
@@ -1145,17 +1246,39 @@ fn render_instance_id(
     format!("ri_{}", short_hex(&hasher.finalize()))
 }
 
-fn apply_provenance_marker(
+fn apply_canvas_marker(
     comment: &str,
     stack: &mut Vec<String>,
+    boundary_stack: &mut Vec<CanvasBoundaryFrame>,
+    boundary_drafts: &mut Vec<CanvasBoundaryDraft>,
+    document_order: usize,
     route: &str,
     diagnostics: &mut Vec<CanvasGraphDiagnostic>,
 ) {
     let marker = comment.trim();
     let start = marker
         .strip_prefix("pana-template-source-start:")
-        .or_else(|| marker.strip_prefix("pana-template-expression-start:"));
-    if let Some(source_id) = start.map(str::trim).filter(|value| !value.is_empty()) {
+        .map(|source_id| (source_id, CanvasBoundaryMarkerKind::Source))
+        .or_else(|| {
+            marker
+                .strip_prefix("pana-template-expression-start:")
+                .map(|source_id| (source_id, CanvasBoundaryMarkerKind::Expression))
+        });
+    if let Some((source_id, marker_kind)) = start.filter(|(value, _)| !value.trim().is_empty()) {
+        let source_id = source_id.trim();
+        let draft_index = boundary_drafts.len();
+        boundary_drafts.push(CanvasBoundaryDraft {
+            source_node_id: source_id.to_string(),
+            document_order,
+            parent_draft_index: boundary_stack.last().map(|frame| frame.draft_index),
+            render_instance_ids: Vec::new(),
+            marker_kind,
+            closed: false,
+        });
+        boundary_stack.push(CanvasBoundaryFrame {
+            draft_index,
+            source_node_id: source_id.to_string(),
+        });
         stack.push(source_id.to_string());
         return;
     }
@@ -1167,10 +1290,12 @@ fn apply_provenance_marker(
     };
     if stack.last().is_some_and(|active| active == source_id) {
         stack.pop();
+        close_boundary_frame(boundary_stack, boundary_drafts, source_id);
         return;
     }
     if let Some(position) = stack.iter().rposition(|active| active == source_id) {
         stack.truncate(position);
+        recover_boundary_frames(boundary_stack, boundary_drafts, source_id);
         diagnostics.push(CanvasGraphDiagnostic {
             code: "recovered_provenance_stack".to_string(),
             message: format!(
@@ -1189,6 +1314,188 @@ fn apply_provenance_marker(
             source_node_id: Some(source_id.to_string()),
         });
     }
+}
+
+fn close_boundary_frame(
+    boundary_stack: &mut Vec<CanvasBoundaryFrame>,
+    boundary_drafts: &mut [CanvasBoundaryDraft],
+    source_id: &str,
+) {
+    if boundary_stack
+        .last()
+        .is_some_and(|frame| frame.source_node_id == source_id)
+    {
+        if let Some(frame) = boundary_stack.pop() {
+            if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
+                draft.closed = true;
+            }
+        }
+    }
+}
+
+fn recover_boundary_frames(
+    boundary_stack: &mut Vec<CanvasBoundaryFrame>,
+    boundary_drafts: &mut [CanvasBoundaryDraft],
+    source_id: &str,
+) {
+    let Some(position) = boundary_stack
+        .iter()
+        .rposition(|frame| frame.source_node_id == source_id)
+    else {
+        return;
+    };
+    for frame in boundary_stack.drain(position..) {
+        if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
+            draft.closed = true;
+        }
+    }
+}
+
+fn finalize_boundary_instances(
+    route: &str,
+    nodes: &[CanvasRenderNode],
+    drafts: Vec<CanvasBoundaryDraft>,
+    diagnostics: &mut Vec<CanvasGraphDiagnostic>,
+) -> Vec<CanvasBoundaryInstance> {
+    let render_nodes = nodes
+        .iter()
+        .map(|node| (node.render_instance_id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let mut occurrences = HashMap::<(String, Option<usize>), usize>::new();
+    let mut ids = Vec::with_capacity(drafts.len());
+    let mut roots_by_draft = Vec::with_capacity(drafts.len());
+
+    for draft in &drafts {
+        let explicit_render_ids = draft
+            .render_instance_ids
+            .iter()
+            .filter(|render_id| {
+                render_nodes.get(render_id.as_str()).is_some_and(|node| {
+                    node.source_node_id.is_some() || node.template_source_node_id.is_some()
+                })
+            })
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let render_ids = if explicit_render_ids.is_empty() {
+            draft
+                .render_instance_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>()
+        } else {
+            explicit_render_ids
+        };
+        let mut roots = render_ids
+            .iter()
+            .copied()
+            .filter(|render_id| {
+                render_nodes
+                    .get(*render_id)
+                    .and_then(|node| node.parent_render_instance_id.as_deref())
+                    .is_none_or(|parent| !render_ids.contains(parent))
+            })
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        roots.sort();
+        roots.dedup();
+        let occurrence_key = (draft.source_node_id.clone(), draft.parent_draft_index);
+        let occurrence = occurrences.entry(occurrence_key).or_default();
+        let current_occurrence = *occurrence;
+        *occurrence = occurrence.saturating_add(1);
+        ids.push(boundary_instance_id(
+            route,
+            &draft.source_node_id,
+            &roots,
+            current_occurrence,
+        ));
+        roots_by_draft.push(roots);
+    }
+
+    let result = drafts
+        .iter()
+        .enumerate()
+        .map(|(index, draft)| {
+            let roots = roots_by_draft[index].clone();
+            let root_nodes = roots
+                .iter()
+                .filter_map(|root| render_nodes.get(root.as_str()).copied())
+                .collect::<Vec<_>>();
+            let binding_key = single_shared_value(
+                root_nodes
+                    .iter()
+                    .filter_map(|node| node.binding_key.as_deref()),
+            );
+            let binding_path = single_shared_value(
+                root_nodes
+                    .iter()
+                    .filter_map(|node| node.binding_path.as_deref()),
+            );
+            CanvasBoundaryInstance {
+                boundary_instance_id: ids[index].clone(),
+                document_order: draft.document_order,
+                source_node_id: draft.source_node_id.clone(),
+                parent_boundary_instance_id: draft
+                    .parent_draft_index
+                    .and_then(|parent| ids.get(parent).cloned()),
+                root_render_instance_ids: roots,
+                binding_key,
+                binding_path,
+                occurrence: drafts[..index]
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.source_node_id == draft.source_node_id
+                            && candidate.parent_draft_index == draft.parent_draft_index
+                    })
+                    .count(),
+                marker_kind: draft.marker_kind,
+                closed: draft.closed,
+            }
+        })
+        .collect::<Vec<_>>();
+    for boundary in result.iter().filter(|boundary| !boundary.closed) {
+        diagnostics.push(CanvasGraphDiagnostic {
+            code: "unclosed_provenance_boundary".to_string(),
+            message: format!(
+                "CanvasGraph a găsit un boundary de proveniență neînchis pentru {}.",
+                boundary.source_node_id
+            ),
+            route: Some(route.to_string()),
+            source_node_id: Some(boundary.source_node_id.clone()),
+        });
+    }
+    result
+}
+
+fn single_shared_value<'a>(mut values: impl Iterator<Item = &'a str>) -> Option<String> {
+    let first = values.next()?;
+    values
+        .all(|value| value == first)
+        .then(|| first.to_string())
+}
+
+fn boundary_instance_id(
+    route: &str,
+    source_id: &str,
+    root_render_instance_ids: &[String],
+    occurrence: usize,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"canvas-boundary");
+    hasher.update([0]);
+    hasher.update(route.as_bytes());
+    hasher.update([0]);
+    hasher.update(source_id.as_bytes());
+    hasher.update([0]);
+    for render_id in root_render_instance_ids {
+        hasher.update(render_id.as_bytes());
+        hasher.update([0]);
+    }
+    if root_render_instance_ids.is_empty() {
+        hasher.update(b"empty");
+        hasher.update([0]);
+        hasher.update(occurrence.to_le_bytes());
+    }
+    format!("cb_{}", short_hex(&hasher.finalize()))
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
@@ -1875,6 +2182,87 @@ mod tests {
             .template_stack
             .iter()
             .any(|source_id| source_id == &invocation_source_id));
+        assert_eq!(graph.documents[0].boundaries.len(), 1);
+        let boundary = &graph.documents[0].boundaries[0];
+        assert_eq!(boundary.source_node_id, invocation_source_id);
+        assert_eq!(
+            boundary.root_render_instance_ids,
+            vec![graph.documents[0].nodes[0].render_instance_id.clone()]
+        );
+        assert!(boundary.closed);
+        assert!(graph.diagnostics.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canvas_graph_keeps_repeated_and_empty_tera_boundaries_unambiguous() {
+        let root = test_project_root("repeated-tera-boundaries");
+        let model = test_project_model(
+            &root,
+            33,
+            HashMap::from([
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
+                (
+                    "templates/index.html".to_string(),
+                    "{% include \"partials/card.html\" %}".to_string(),
+                ),
+                (
+                    "templates/partials/card.html".to_string(),
+                    "<article>Card</article>".to_string(),
+                ),
+            ]),
+        );
+        let invocation_source_id = model
+            .source_graph
+            .component_graph
+            .invocations
+            .iter()
+            .find(|invocation| invocation.kind == ComponentInvocationKind::Include)
+            .and_then(|invocation| invocation.source_node_id.clone())
+            .unwrap();
+        let article_source_id = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Html
+                    && node.file == "templates/partials/card.html"
+                    && node.label.contains("article")
+            })
+            .map(|node| node.id.clone())
+            .unwrap();
+        let rendered = format!(
+            "<!-- pana-template-source-start:{invocation_source_id} -->\
+             <article data-pana-source-id=\"{article_source_id}\" data-key=\"alpha\">A</article>\
+             <!-- pana-template-source-end:{invocation_source_id} -->\
+             <!-- pana-template-source-start:{invocation_source_id} -->\
+             <article data-pana-source-id=\"{article_source_id}\" data-key=\"beta\">B</article>\
+             <!-- pana-template-source-end:{invocation_source_id} -->\
+             <!-- pana-template-source-start:{invocation_source_id} -->\
+             <!-- pana-template-source-end:{invocation_source_id} -->"
+        );
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            33,
+            "preview-33",
+            [("/", rendered.as_str())],
+        )
+        .unwrap();
+        let boundaries = &graph.documents[0].boundaries;
+        assert_eq!(boundaries.len(), 3);
+        assert_ne!(
+            boundaries[0].boundary_instance_id,
+            boundaries[1].boundary_instance_id
+        );
+        assert_ne!(
+            boundaries[1].boundary_instance_id,
+            boundaries[2].boundary_instance_id
+        );
+        assert_eq!(boundaries[0].binding_key.as_deref(), Some("data-key:alpha"));
+        assert_eq!(boundaries[1].binding_key.as_deref(), Some("data-key:beta"));
+        assert!(boundaries[2].root_render_instance_ids.is_empty());
+        assert_eq!(boundaries[2].occurrence, 2);
+        assert!(boundaries.iter().all(|boundary| boundary.closed));
         assert!(graph.diagnostics.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
@@ -1962,7 +2350,7 @@ mod tests {
                 ),
                 (
                     "static/js/index.js".to_string(),
-                    "// @pana-motion {\"version\":1,\"motion\":{\"items\":[{\"id\":\"hero-motion\",\"type\":\"animation\"}]}}\n// @pana-component id=accordion\n"
+                    "// @pana-motion {\"version\":2,\"motion\":{\"schemaVersion\":2,\"animeVersion\":\"4.4.1\",\"interactions\":[{\"id\":\"hero-motion\",\"name\":\"Hero motion\",\"trigger\":{\"type\":\"load\"},\"triggerTarget\":{\"kind\":\"document\"},\"actions\":[{\"type\":\"animate\",\"id\":\"hero-fade\",\"name\":\"Fade\",\"target\":{\"kind\":\"selector\",\"selector\":\"main\"},\"duration\":300,\"properties\":[{\"id\":\"opacity\",\"name\":\"opacity\",\"category\":\"style\",\"to\":{\"kind\":\"number\",\"value\":\"1\"}}]}]}]}}\n// @pana-component id=accordion\n"
                         .to_string(),
                 ),
                 (

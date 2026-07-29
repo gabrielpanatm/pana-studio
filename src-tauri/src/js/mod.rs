@@ -1,6 +1,7 @@
 mod draft_store;
 mod generator;
 mod motion;
+pub(crate) mod motion_model;
 mod parser;
 mod paths;
 mod reader;
@@ -14,6 +15,10 @@ pub use draft_store::{
     PageJsDraftStageInput, PageJsDraftStageReceipt, PageJsDraftStore, PageJsDraftStoreSnapshot,
 };
 pub use generator::generate_page_js;
+pub use motion_model::{
+    MotionAction, MotionBehavior, MotionCustomCode, MotionDiagnostic, MotionDocument,
+    MotionInteraction, MotionTarget, MotionTargetKind,
+};
 pub use parser::parse_page_js;
 pub use paths::{js_relative_path, template_to_slug};
 pub use reader::{read_page_data_anims, read_page_js_config};

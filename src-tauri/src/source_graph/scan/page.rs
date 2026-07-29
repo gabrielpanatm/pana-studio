@@ -1,31 +1,35 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::source_graph::{
-    model::{
-        SourceCapabilities, SourceDataFormat, SourceGraphPage, SourceNodeKind, SourceOrigin,
-        SourceRelationKind,
-    },
-    scan::{
-        builder::SourceGraphBuilder,
-        data_file::project_data_nodes_into_source_graph,
-        files::{normalize_template_name, read_source, relative_project_path},
-        style::conventional_style_files_for_template,
-        summary::TemplateSummary,
-    },
-    structured_data::{parse_lossless_toml, parse_zola_data_adapter, rebase_data_node_ranges},
-    zola::{
-        parse_zola_content_frontmatter, resolve_zola_page_template,
-        resolve_zola_section_page_template, zola_content_page_kind, zola_content_url,
-        zola_frontmatter_range,
-    },
-    zola_shortcode::{parse_zola_shortcodes, ZolaShortcodeInvocation},
-};
 use crate::zola_theme::ZolaThemeResolver;
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        model::{
+            SourceCapabilities, SourceCapabilityReason, SourceDataFormat, SourceGraphPage,
+            SourceNodeKind, SourceOrigin, SourceRelationKind,
+        },
+        scan::{
+            builder::SourceGraphBuilder,
+            data_file::project_data_nodes_into_source_graph,
+            files::{normalize_template_name, read_source, relative_project_path},
+            style::conventional_style_files_for_template,
+            summary::TemplateSummary,
+        },
+        structured_data::{parse_lossless_toml, parse_zola_data_adapter, rebase_data_node_ranges},
+        zola::{
+            parse_zola_content_frontmatter, resolve_zola_page_template,
+            resolve_zola_section_page_template, zola_content_page_kind, zola_content_url,
+            zola_frontmatter_range,
+        },
+        zola_shortcode::{parse_zola_shortcodes, ZolaShortcodeInvocation},
+    },
+};
 
 pub(super) fn scan_content_page(
     project_root: &Path,
     zola_root: &Path,
     path: &Path,
+    inherited_page_template: Option<&str>,
     template_node_by_name: &HashMap<String, String>,
     template_by_name: &HashMap<String, TemplateSummary>,
     style_by_file: &HashMap<String, String>,
@@ -41,7 +45,11 @@ pub(super) fn scan_content_page(
         .title
         .clone()
         .unwrap_or_else(|| fallback_page_title(path));
-    let resolved_template = resolve_zola_page_template(&frontmatter.template, &page_kind);
+    let effective_template = frontmatter
+        .template
+        .clone()
+        .or_else(|| inherited_page_template.map(str::to_string));
+    let resolved_template = resolve_zola_page_template(&effective_template, &page_kind);
     let resolved_page_template =
         resolve_zola_section_page_template(&frontmatter.page_template, &page_kind);
     let node_id = builder.add_node(
@@ -52,7 +60,7 @@ pub(super) fn scan_content_page(
         title.clone(),
         None,
         None,
-        SourceCapabilities::code_only("Pagină Markdown Zola."),
+        SourceCapabilities::code_only(SourceCapabilityReason::MarkdownPage),
     );
     let (frontmatter_format, frontmatter_parse_error, mut frontmatter_nodes) =
         project_frontmatter(&source, &file, builder);
@@ -71,7 +79,8 @@ pub(super) fn scan_content_page(
     if let Some(error) = shortcode_parse_error.as_ref() {
         builder.add_diagnostic(
             crate::source_graph::model::SourceDiagnosticSeverity::Error,
-            format!("Conținutul Markdown are sintaxă shortcode Zola invalidă: {error}"),
+            LocalizedDiagnostic::new("source-graph-shortcode-syntax-invalid")
+                .with_argument("details", error.clone()),
             Some(file.clone()),
             None,
         );
@@ -113,7 +122,8 @@ pub(super) fn scan_content_page(
     } else if let Some(template) = resolved_template.as_ref() {
         builder.add_diagnostic(
             crate::source_graph::model::SourceDiagnosticSeverity::Warning,
-            format!("Template-ul paginii nu a fost găsit: {}", template),
+            LocalizedDiagnostic::new("source-graph-page-template-missing")
+                .with_argument("template", template.clone()),
             Some(file.clone()),
             None,
         );
@@ -137,10 +147,8 @@ pub(super) fn scan_content_page(
     } else if let Some(template) = resolved_page_template.as_ref() {
         builder.add_diagnostic(
             crate::source_graph::model::SourceDiagnosticSeverity::Warning,
-            format!(
-                "Template-ul page_template al secțiunii nu a fost găsit: {}",
-                template
-            ),
+            LocalizedDiagnostic::new("source-graph-section-page-template-missing")
+                .with_argument("template", template.clone()),
             Some(file.clone()),
             None,
         );
@@ -161,6 +169,7 @@ pub(super) fn scan_content_page(
         frontmatter_format,
         frontmatter_parse_error,
         frontmatter_nodes,
+        taxonomies: frontmatter.taxonomies,
         shortcode_parse_error,
         shortcodes,
     }
@@ -186,7 +195,7 @@ fn project_shortcode_nodes(
                 invocation.range.end,
             )),
             Some(parent_node_id.to_string()),
-            SourceCapabilities::code_only("Invocare shortcode Zola în conținut Markdown."),
+            SourceCapabilities::code_only(SourceCapabilityReason::MarkdownShortcode),
         );
         invocation.source_node_id = Some(node_id.clone());
         project_shortcode_nodes(source, file, &node_id, &mut invocation.inner, builder);
@@ -225,7 +234,9 @@ fn project_frontmatter(
         Err(error) => {
             builder.add_diagnostic(
                 crate::source_graph::model::SourceDiagnosticSeverity::Error,
-                format!("Frontmatter {:?} invalid: {error}", format),
+                LocalizedDiagnostic::new("source-graph-frontmatter-invalid")
+                    .with_argument("format", format!("{format:?}"))
+                    .with_argument("details", error.clone()),
                 Some(file.to_string()),
                 Some(crate::source_graph::scan::ranges::source_range(
                     source, start, end,

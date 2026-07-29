@@ -43,7 +43,7 @@ impl ContextHubRuntime {
                         )));
                     }
                     if publication.ui_revision == current.ui_revision_seen
-                        && current.core != publication.core
+                        && !semantically_equal(&current.core, &publication.core)
                     {
                         return Err(ContextHubError::new(
                             "Aceeași revizie UI nu poate publica două contexte semantice diferite.",
@@ -55,7 +55,7 @@ impl ContextHubRuntime {
             let changed = state
                 .published
                 .as_ref()
-                .is_none_or(|current| current.core != publication.core);
+                .is_none_or(|current| !semantically_equal(&current.core, &publication.core));
             if changed {
                 state.next_context_revision = state.next_context_revision.saturating_add(1).max(1);
                 state.published = Some(PublishedContext {
@@ -67,6 +67,9 @@ impl ContextHubRuntime {
                 });
             } else if let Some(current) = state.published.as_mut() {
                 current.ui_revision_seen = current.ui_revision_seen.max(publication.ui_revision);
+                // Heartbeat fields remain fresh in the in-memory snapshot, but
+                // do not create a new canonical revision or rewrite MCP files.
+                current.core = publication.core;
             }
 
             let current = state.published.as_ref().ok_or_else(|| {
@@ -110,4 +113,14 @@ impl ContextHubRuntime {
             .map_err(|_| ContextHubError::new("ContextHubRuntime mutex este compromis."))?;
         operation(&mut state)
     }
+}
+
+fn semantically_equal(
+    current: &super::model::AiContextCore,
+    candidate: &super::model::AiContextCore,
+) -> bool {
+    let mut current = current.clone();
+    current.external_disk.last_checked_at = candidate.external_disk.last_checked_at;
+    current.external_disk.checking = candidate.external_disk.checking;
+    current == *candidate
 }

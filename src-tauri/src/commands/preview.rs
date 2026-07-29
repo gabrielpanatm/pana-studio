@@ -34,6 +34,7 @@ pub enum PreviewRuntimeEventKind {
     InteractiveJsFailed,
     CanvasPatchRolledBack,
     CanvasFallback,
+    CanvasAckTimeout,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -171,6 +172,8 @@ pub struct TemplateWorkbenchPreviewRequest {
     pub template_path: String,
     #[serde(default)]
     pub preferred_page_path: Option<String>,
+    #[serde(default)]
+    pub preferred_route: Option<String>,
 }
 
 impl TemplateWorkbenchPreviewRequest {
@@ -252,7 +255,8 @@ pub async fn start_project_preview(
                     &task_project_root,
                     &task_identity.expected_session_id,
                 )?;
-            let projection = capture_workspace_projection(state.inner(), None)?;
+            let (projection, project_model) =
+                capture_workspace_projection_with_model(state.inner(), None)?;
             let owner = PersistentPreviewOwner::new(
                 task_identity.expected_project_root.clone(),
                 task_identity.expected_session_id.clone(),
@@ -286,7 +290,11 @@ pub async fn start_project_preview(
                     canvas_projection: active.canvas_transaction.plan(),
                 });
             }
-            let candidate = engine.render_candidate(&app, &projection)?;
+            let candidate = engine.render_candidate_with_project_model(
+                &app,
+                &projection,
+                project_model.as_ref(),
+            )?;
             let canvas_projection = stage_candidate_if_current(
                 &app,
                 state.inner(),
@@ -357,7 +365,8 @@ pub async fn project_project_workspace_preview(
                     &task_root,
                     &task_identity.expected_session_id,
                 )?;
-            let projection = capture_workspace_projection(state.inner(), Some(expected_revision))?;
+            let (projection, project_model) =
+                capture_workspace_projection_with_model(state.inner(), Some(expected_revision))?;
             let owner = PersistentPreviewOwner::new(
                 task_identity.expected_project_root.clone(),
                 task_identity.expected_session_id.clone(),
@@ -383,7 +392,11 @@ pub async fn project_project_workspace_preview(
                 }
                 return Ok((None, Vec::new()));
             }
-            let candidate = engine.render_candidate(&app, &projection)?;
+            let candidate = engine.render_candidate_with_project_model(
+                &app,
+                &projection,
+                project_model.as_ref(),
+            )?;
             let projected_paths = candidate.projected_paths.clone();
             let canvas_projection = stage_candidate_if_current(
                 &app,
@@ -463,6 +476,7 @@ pub async fn project_template_workbench_preview(
                     &TemplateWorkbenchPlanInput {
                         template_path: task_input.template_path,
                         preferred_page_path: task_input.preferred_page_path,
+                        preferred_route: task_input.preferred_route,
                     },
                 )?;
                 let mut engine_slot = state.preview_engine.lock().map_err(|_| {
@@ -648,6 +662,10 @@ pub fn record_preview_runtime_event(
         PreviewRuntimeEventKind::CanvasFallback => {
             (KernelEventKind::PreviewCanvasFallback, KernelLogLevel::Info)
         }
+        PreviewRuntimeEventKind::CanvasAckTimeout => (
+            KernelEventKind::PreviewCanvasAckTimeout,
+            KernelLogLevel::Error,
+        ),
     };
     let event = KernelLogEvent::new(
         level,
@@ -720,7 +738,7 @@ fn stage_candidate_if_current<R: tauri::Runtime>(
             .current_root
             .lock()
             .map_err(|_| "Nu am putut valida root-ul la staging Canvas.".to_string())?;
-        let workspace = state
+        let mut workspace = state
             .project_workspace
             .lock()
             .map_err(|_| "Nu am putut valida ProjectWorkspace la staging Canvas.".to_string())?;
@@ -729,10 +747,18 @@ fn stage_candidate_if_current<R: tauri::Runtime>(
                 "Staging-ul Canvas a fost anulat: proiectul activ s-a schimbat.".to_string(),
             );
         }
-        let workspace = workspace.as_ref().ok_or_else(|| {
+        let workspace = workspace.as_mut().ok_or_else(|| {
             "Staging-ul Canvas a fost anulat: ProjectWorkspace lipsește.".to_string()
         })?;
         workspace.require_current_projection(lease)?;
+        workspace.publish_project_model(
+            lease,
+            candidate
+                .as_ref()
+                .expect("candidate exists before staging")
+                .project_model()
+                .clone(),
+        )?;
         let generation = engine.stage_candidate(
             app,
             candidate
@@ -779,6 +805,20 @@ fn capture_workspace_projection(
     state: &AppState,
     expected_revision: Option<u64>,
 ) -> Result<crate::kernel::project_workspace::WorkspaceProjectionLease, String> {
+    capture_workspace_projection_with_model(state, expected_revision)
+        .map(|(projection, _)| projection)
+}
+
+fn capture_workspace_projection_with_model(
+    state: &AppState,
+    expected_revision: Option<u64>,
+) -> Result<
+    (
+        crate::kernel::project_workspace::WorkspaceProjectionLease,
+        Option<crate::project_model::model::ProjectModel>,
+    ),
+    String,
+> {
     let workspace = state
         .project_workspace
         .lock()
@@ -794,7 +834,13 @@ fn capture_workspace_projection(
             ));
         }
     }
-    workspace.capture_projection_lease()
+    let projection = workspace.capture_projection_lease()?;
+    let project_model = if workspace.project_model_source_revision == Some(projection.revision) {
+        workspace.project_model.clone()
+    } else {
+        None
+    };
+    Ok((projection, project_model))
 }
 
 fn normalize_requested_paths(paths: Vec<String>) -> Result<Vec<String>, String> {

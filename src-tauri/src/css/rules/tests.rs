@@ -1,18 +1,6 @@
-use std::{
-    collections::HashMap,
-    fs,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashMap;
 
 use super::{write::upsert_css_rule, *};
-
-fn temp_rules_root(name: &str) -> std::path::PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!("panastudio-css-rules-test-{name}-{unique}"))
-}
 
 #[test]
 fn extracts_properties_from_rule() {
@@ -23,6 +11,31 @@ fn extracts_properties_from_rule() {
     assert_eq!(props[0].value, "$color-primary");
     assert_eq!(props[1].property, "color");
     assert_eq!(props[1].value, "$text-inverse");
+}
+
+#[test]
+fn resolves_css_selector_source_targets_in_rust() {
+    let source = "/* theme */\n@media (max-width: 768px) {\n  .card,\n  .hero-title:hover {\n    color: red;\n  }\n}\n";
+    let cursor = source.find(".hero-title").unwrap() + 3;
+    let target = selector_source_target_at_offset(source, cursor).unwrap();
+    assert_eq!(target.selector, ".hero-title:hover");
+    assert_eq!(
+        &source[target.range.start..target.range.end],
+        ".hero-title:hover"
+    );
+    assert_eq!(target.range.line, 4);
+
+    let card = selector_source_target(source, ".card").unwrap();
+    assert_eq!(&source[card.range.start..card.range.end], ".card");
+    assert!(
+        selector_source_target_at_offset(source, source.find("color").unwrap()).is_none(),
+        "o declarație comună unei liste de selectori trebuie să rămână ambiguă",
+    );
+
+    let simple = ".hero {\n  color: red;\n}\n";
+    let declaration =
+        selector_source_target_at_offset(simple, simple.find("color").unwrap()).unwrap();
+    assert_eq!(declaration.selector, ".hero");
 }
 
 #[test]
@@ -50,42 +63,6 @@ fn extracts_multiple_properties_from_single_line_rule() {
     assert_eq!(props[0].value, "grid");
     assert_eq!(props[1].property, "grid-template-columns");
     assert_eq!(props[1].value, "auto auto atuo");
-}
-
-#[test]
-fn project_style_search_finds_rule_outside_scanned_list() {
-    let root = temp_rules_root("project-style-search");
-    let style_path = root.join("themes/pana-studio/sass/pagini/despre.scss");
-    fs::create_dir_all(style_path.parent().unwrap()).unwrap();
-    fs::write(
-        &style_path,
-        ".ps-section-test { display: grid; backdrop-filter: blur(12px); }\n",
-    )
-    .unwrap();
-
-    let result = find_class_in_sources(
-        ["themes/pana-studio/sass/pagini/despre.scss".to_string()],
-        ".ps-section-test",
-        |relative_path| {
-            std::fs::read_to_string(root.join(relative_path))
-                .map(Some)
-                .map_err(|error| error.to_string())
-        },
-    )
-    .unwrap()
-    .unwrap();
-
-    assert_eq!(result.0, "themes/pana-studio/sass/pagini/despre.scss");
-    assert!(result
-        .1
-        .iter()
-        .any(|prop| prop.property == "display" && prop.value == "grid"));
-    assert!(result
-        .1
-        .iter()
-        .any(|prop| prop.property == "backdrop-filter" && prop.value == "blur(12px)"));
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

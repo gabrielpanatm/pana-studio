@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import { IconChevronDown, IconPhoto } from "@tabler/icons-svelte";
   import type { ProjectFile } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
   import {
     assetEditLeaseMatches,
     cancelledAssetEditValue,
@@ -224,7 +225,7 @@
   <button
     type="button"
     class="asset-toggle"
-    title="Alege imagine din proiect"
+    title={t("inspector-asset-choose-project")}
     disabled={disabled || !assets.length}
     onclick={() => {
       open = !open;
@@ -237,7 +238,7 @@
 </div>
 
 {#if open && filteredAssets.length}
-  <div class="asset-popover" role="listbox" aria-label="Imagini din proiect" style={popoverStyle}>
+  <div class="asset-popover" role="listbox" aria-label={t("inspector-asset-project-images")} style={popoverStyle}>
     {#each filteredAssets as asset}
       {@const url = assetUrl(asset)}
       {@const meta = assetMeta?.(asset) ?? ""}

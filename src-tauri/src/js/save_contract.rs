@@ -544,7 +544,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::js::NativeBlockRuntimeEntry;
+    use crate::js::{MotionDocument, NativeBlockRuntimeEntry};
 
     fn request(template_source: Option<&str>, config: PageJsConfig) -> PageJsSaveContractRequest {
         PageJsSaveContractRequest {
@@ -592,8 +592,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 0,
                 directory_count: 0,
@@ -661,8 +659,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 0,
                 directory_count: 0,
@@ -737,8 +733,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 2,
                 directory_count: 2,
@@ -818,8 +812,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: Some("theme-a".to_string()),
                 file_count: 3,
                 directory_count: 4,
@@ -878,12 +870,25 @@ mod tests {
 "#,
             ),
             PageJsConfig {
-                version: Some(1),
-                motion: Some(json!({
-                    "schemaVersion": 1,
-                    "animeVersion": "4.4.1",
-                    "items": [{ "id": "animation-a", "type": "animation" }]
-                })),
+                version: Some(2),
+                motion: Some(
+                    MotionDocument::from_value(json!({
+                        "schemaVersion": 1,
+                        "animeVersion": "4.4.1",
+                        "items": [{
+                            "id": "animation-a",
+                            "type": "animation",
+                            "target": { "dataAnim": "hero" },
+                            "properties": [{
+                                "id": "opacity",
+                                "property": "opacity",
+                                "category": "css",
+                                "value": { "mode": "fromTo", "from": 0, "to": 1 }
+                            }]
+                        }]
+                    }))
+                    .expect("legacy migration"),
+                ),
                 ..PageJsConfig::default()
             },
         );

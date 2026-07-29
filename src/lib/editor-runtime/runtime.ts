@@ -20,30 +20,33 @@ import {
   type EditorTeraTarget,
   type EditorTransaction,
 } from "$lib/editor-runtime/commands";
-import type { PageSection, SaveState } from "$lib/types";
+import type { PageSection } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type EditorRuntimeHost = {
   centerView: string;
   setCenterView: (view: "code") => Promise<boolean>;
-  templateHtmlEditSourceId: string | null;
   htmlActionsControllerHost: () => HtmlActionsControllerHost;
   selectionControllerHost: () => SelectionControllerHost;
-  selectDomNode: (selector: string, options?: { revealCode?: boolean }) => void;
+  selectHtmlTarget: (
+    target: Extract<EditorCommand["target"], { kind: "html" }>,
+    options?: { revealCode?: boolean },
+  ) => void;
   selectTeraLayerSource: (section: PageSection, sourceId: string) => void;
   setPreviewTeraSelection: (
-    gate: {
+    target: {
       selector: string;
       sourceId: string;
       origin: "current" | "local" | "theme" | "unknown";
       themeName: string | null;
-      canSelectHtml?: boolean;
     },
-    options?: { status?: string; showGate?: boolean; clearHtmlMarker?: boolean },
+    options?: { status?: string },
   ) => void;
-  allowTemplateHtmlEdit: (sourceId: string | null, selector: string | null) => void | Promise<void>;
+  enterEditorNavigationScope: (scopeId: string) => Promise<unknown>;
   openSelectedTeraSource: () => Promise<void>;
   deleteSelectedTeraNode: (target?: EditorTeraTarget | null) => Promise<EditorActionOutcome>;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 function commandSurface(command: EditorCommand): EditorSurface {
@@ -81,10 +84,16 @@ export class EditorRuntime {
       return canMutateHtmlTarget(command.target);
     }
     if ((command.type === "select-html" || command.type === "open-html-code") && !command.target.selector) {
-      return { allowed: false, reason: "Elementul nu are selector stabil." };
+      return { allowed: false, reason: t("editor-runtime-html-selector-missing") };
     }
-    if ((command.type === "edit-tera-html" || command.type === "select-tera") && !command.target.selector) {
-      return { allowed: false, reason: "Nodul Tera nu are selector de preview." };
+    if (command.type === "select-tera" && !command.target.selector) {
+      return { allowed: false, reason: t("editor-runtime-tera-selector-missing") };
+    }
+    if (
+      command.type === "enter-tera-boundary"
+      && (!command.target.editorNodeId || command.target.canEnterBoundary !== true)
+    ) {
+      return { allowed: false, reason: t("editor-navigation-boundary-missing") };
     }
     return { allowed: true, reason: "" };
   }
@@ -134,15 +143,15 @@ export class EditorRuntime {
   private async execute(command: EditorCommand): Promise<EditorActionOutcome> {
     switch (command.type) {
       case "select-html":
-        this.host.selectDomNode(command.target.selector, {
+        this.host.selectHtmlTarget(command.target, {
           revealCode: command.revealCode === true,
         });
         return committedAction();
       case "open-html-code":
         if (!await this.host.setCenterView("code")) {
-          return blockedAction("Editorul de cod nu a acceptat schimbarea de suprafață.");
+          return blockedAction(t("editor-runtime-code-surface-rejected"));
         }
-        this.host.selectDomNode(command.target.selector, { revealCode: true });
+        this.host.selectHtmlTarget(command.target, { revealCode: true });
         return committedAction();
       case "delete-html":
         return await deleteSelectedHtmlElement(this.host.htmlActionsControllerHost(), command.target);
@@ -151,15 +160,14 @@ export class EditorRuntime {
       case "select-tera":
         this.selectTera(command);
         return committedAction();
-      case "edit-tera-html":
-        this.selectTera(command);
-        await this.host.allowTemplateHtmlEdit(command.target.sourceId, command.target.selector);
+      case "enter-tera-boundary":
+        await this.host.enterEditorNavigationScope(command.target.editorNodeId!);
         return committedAction();
       case "open-tera-code":
         this.selectTera(command);
         await this.host.openSelectedTeraSource();
         if (!await this.host.setCenterView("code")) {
-          return blockedAction("Editorul de cod nu a acceptat schimbarea de suprafață.");
+          return blockedAction(t("editor-runtime-code-surface-rejected"));
         }
         return committedAction();
       case "delete-tera":
@@ -179,7 +187,6 @@ export class EditorRuntime {
       sourceId: target.sourceId,
       origin: target.origin ?? "unknown",
       themeName: target.themeName ?? null,
-      canSelectHtml: target.canSelectHtml,
     });
   }
 }

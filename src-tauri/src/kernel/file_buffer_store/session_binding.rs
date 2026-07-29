@@ -20,14 +20,16 @@ pub struct FileBufferRequestIdentity {
 pub struct FileBufferCommandReceipt<T> {
     pub project_root: String,
     pub runtime_session_id: String,
+    pub workspace_revision: u64,
     pub payload: T,
 }
 
 impl<T> FileBufferCommandReceipt<T> {
-    pub fn new(session: &ProjectSessionSnapshot, payload: T) -> Self {
+    pub fn new(session: &ProjectSessionSnapshot, workspace_revision: u64, payload: T) -> Self {
         Self {
             project_root: session.project_root.clone(),
             runtime_session_id: session.runtime_instance_id(),
+            workspace_revision,
             payload,
         }
     }
@@ -109,8 +111,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 0,
                 directory_count: 0,
@@ -149,9 +149,10 @@ mod tests {
     #[test]
     fn receipt_carries_the_exact_runtime_not_only_the_root() {
         let runtime = session("/project", 7);
-        let receipt = FileBufferCommandReceipt::new(&runtime, "payload");
+        let receipt = FileBufferCommandReceipt::new(&runtime, 7, "payload");
         assert_eq!(receipt.project_root, "/project");
         assert_eq!(receipt.runtime_session_id, runtime.runtime_instance_id());
+        assert_eq!(receipt.workspace_revision, 7);
         assert_eq!(receipt.payload, "payload");
     }
 }

@@ -4,11 +4,58 @@ import { registerNativeWindowCloseGuard } from "$lib/state/native-window-close-c
 import { savePaneDimensions } from "$lib/ui/preferences";
 import { readProjectWorkspaceState } from "$lib/project/io";
 import { subscribeProjectWorkspaceMutations } from "$lib/kernel/project-workspace-events";
-import { scheduleProjectWorkspaceDerivedPreviewProjection } from "$lib/kernel/project-workspace-preview-coordinator";
+import { applyApplicationAppearanceToPreviewDocument } from "$lib/preview/bridge";
+import { contrastingTextColor } from "$lib/state/app-helpers";
+import { synchronizeCanvasInteractionBinding } from "$lib/state/canvas-interaction-controller";
+import {
+  projectWorkspacePreviewRevisionIsPublished,
+  scheduleProjectWorkspaceDerivedPreviewProjection,
+} from "$lib/kernel/project-workspace-preview-coordinator";
+import { t } from "$lib/i18n/runtime.svelte";
 
 const TERMINAL_SESSION_VERSION = 6;
 
 export function registerAppEffects(app: AppState) {
+  // Rebind the same physical document whenever Rust publishes a new Canvas
+  // identity (for example after an in-place structural commit).
+  $effect(() => {
+    app.previewFrame;
+    app.activeCanvasUrl;
+    app.previewSrc;
+    app.browserPreviewRoute;
+    app.activeCanvasIdentity?.projectRoot;
+    app.activeCanvasIdentity?.runtimeSessionId;
+    app.activeCanvasIdentity?.workspaceRevision;
+    app.activeCanvasIdentity?.transactionId;
+    app.activeCanvasIdentity?.previewRevision;
+    synchronizeCanvasInteractionBinding(app);
+  });
+
+  // Project the Rust-owned File Explorer only after both authoritative
+  // Workspace and Workbench mirrors identify the same live session.
+  $effect(() => {
+    const projectRoot = app.sessionProjectRoot;
+    const sessionId = app.kernelProjectSessionId;
+    const workspaceRevision = app.projectWorkspaceSnapshot?.revision ?? null;
+    const workbenchRevision = app.workbenchSnapshot?.revision ?? null;
+    app.aiCoordinationSnapshot?.coordinationRevision;
+    if (
+      !projectRoot
+      || !sessionId
+      || workspaceRevision === null
+      || workbenchRevision === null
+    ) {
+      app.fileExplorerSnapshot = null;
+      app.fileExplorerLoading = false;
+      app.fileExplorerError = "";
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void app.refreshFileExplorerSnapshot();
+    }, 24);
+    return () => window.clearTimeout(timer);
+  });
+
   $effect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
@@ -17,8 +64,19 @@ export function registerAppEffects(app: AppState) {
         notice.projectRoot === app.sessionProjectRoot
         && notice.runtimeSessionId === app.kernelProjectSessionId
       ) {
-        app.markProjectWorkspaceMutation();
-        if (notice.previewProjectionRequired) {
+        const workspaceAlreadyVisible = (
+          app.projectWorkspaceSnapshot?.projectRoot === notice.projectRoot
+          && app.projectWorkspaceSnapshot.runtimeSessionId === notice.runtimeSessionId
+          && app.projectWorkspaceSnapshot.revision >= notice.workspaceRevision
+        );
+        const previewAlreadyVisible = !notice.previewProjectionRequired
+          || projectWorkspacePreviewRevisionIsPublished(
+            notice.projectRoot,
+            notice.runtimeSessionId,
+            notice.workspaceRevision,
+          );
+        if (!workspaceAlreadyVisible) app.markProjectWorkspaceMutation();
+        if (notice.previewProjectionRequired && !previewAlreadyVisible) {
           scheduleProjectWorkspaceDerivedPreviewProjection(
             app,
             "workspace-mutation",
@@ -49,10 +107,10 @@ export function registerAppEffects(app: AppState) {
       void app.refreshWorkbenchState().catch((error) => {
         if (cancelled) return;
         app.workbenchSnapshot = null;
-        app.notify({
+        app.escalateGlobalStatus({
           id: "workbench.restore",
           level: "warning",
-          title: "Workbench nu a fost restaurat",
+          title: t("workbench-restore-failed-title"),
           message: error instanceof Error ? error.message : String(error),
         });
       });
@@ -83,13 +141,16 @@ export function registerAppEffects(app: AppState) {
             || app.sessionProjectRoot !== projectRoot
             || app.kernelProjectSessionId !== sessionId
           ) return;
-          app.projectWorkspaceSnapshot = snapshot?.projectRoot === projectRoot
+          if (
+            snapshot?.projectRoot === projectRoot
             && snapshot.runtimeSessionId === sessionId
-            ? snapshot
-            : null;
+          ) {
+            app.projectWorkspaceSnapshot = snapshot;
+          }
         })
         .catch(() => {
-          if (!cancelled) app.projectWorkspaceSnapshot = null;
+          // Păstrăm ultimul snapshot Rust confirmat. Un read derivat temporar
+          // indisponibil nu poate șterge autoritatea deja publicată în UI.
         });
     }, 40);
     return () => {
@@ -169,7 +230,30 @@ export function registerAppEffects(app: AppState) {
   // Sync code editor theme.
   $effect(() => {
     if (!app.codeEditorController) return;
+    // Theme CSS references the root accent variables. Tracking the accent here
+    // also refreshes WebKit versions which cache CodeMirror theme declarations.
+    app.uiAccent;
     app.codeEditorController.setTheme(app.uiTheme);
+  });
+
+  // Keep same-origin and bridged preview surfaces on the same application
+  // appearance authority. Frame/navigation dependencies re-publish after load.
+  $effect(() => {
+    const accent = app.uiAccent;
+    app.previewFrame;
+    app.previewSrc;
+    app.previewReloadSerial;
+    app.previewDocumentMarkup;
+    const textOnAccent = contrastingTextColor(accent);
+    const previewDocument = app.getPreviewDocument();
+    if (previewDocument) {
+      applyApplicationAppearanceToPreviewDocument(previewDocument, accent, textOnAccent);
+    }
+    app.postPreviewMessage({
+      type: "set-application-appearance",
+      accent,
+      textOnAccent,
+    });
   });
 
   // Freeze source ingress while a project transition or kernel history
@@ -198,7 +282,8 @@ export function registerAppEffects(app: AppState) {
     app.source;
     app.sourceLanguage;
     app.currentSourceRelativePath;
-    app.selectedElement;
+    app.selectionSnapshot;
+    app.coordinatedElementSelection;
     app.selectedTemplateSourceNode;
     app.activeCssSelector;
     app.targetCssFile;
@@ -213,6 +298,7 @@ export function registerAppEffects(app: AppState) {
       tab: app.activeTerminalTab,
       host: app.terminalHost,
       theme: app.uiTheme,
+      accent: app.uiAccent,
       cwd: app.currentProjectPath,
     });
   });
@@ -228,6 +314,7 @@ export function registerAppEffects(app: AppState) {
         tab: app.activeTerminalTab,
         host: app.terminalHost,
         theme: app.uiTheme,
+        accent: app.uiAccent,
         cwd: app.currentProjectPath,
       });
     }
@@ -254,7 +341,8 @@ export function registerAppEffects(app: AppState) {
     app.centerView;
     app.previewDevice;
     app.sourceLanguage;
-    app.selectedElement;
+    app.selectionSnapshot;
+    app.coordinatedElementSelection;
     app.activeCssSelector;
     app.targetCssFile;
     app.scssVariables.length;
@@ -267,8 +355,6 @@ export function registerAppEffects(app: AppState) {
     app.externalDiskState.lastDetectedAt;
     app.externalDiskState.lastAppliedAt;
     app.externalDiskState.lastAppliedFiles.join(",");
-    app.externalDiskState.lastCheckedAt;
-    app.externalDiskState.checking;
     app.externalDiskState.reconciling;
     app.externalDiskState.workspaceProjectionRecoveryRequired;
     app.externalDiskState.truncated;

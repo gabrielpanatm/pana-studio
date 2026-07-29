@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-design-token-catalog"
+description = "Enables the read_design_token_catalog command without any pre-configured scope."
+commands.allow = ["read_design_token_catalog"]
+
+[[permission]]
+identifier = "deny-read-design-token-catalog"
+description = "Denies the read_design_token_catalog command without any pre-configured scope."
+commands.deny = ["read_design_token_catalog"]

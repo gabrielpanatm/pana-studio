@@ -21,11 +21,19 @@ import { scannedCacheKey } from "$lib/project/files";
 import { executePreviewHtmlTagIntent } from "$lib/project/io";
 import { sourceLocationForEditTarget } from "$lib/source-graph/location";
 import { errorMessage } from "$lib/util";
-import type { HtmlPendingArea, ProjectHtmlTagPatch, SaveState, SelectionInfo, SourceEditLocation, SourceEditTarget } from "$lib/types";
+import type {
+  CoordinatedElementSelection,
+  HtmlPendingArea,
+  ProjectHtmlTagPatch,
+  SourceEditLocation,
+  SourceEditTarget,
+} from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type HtmlEditControllerHost = PreviewStructuralCanonicalProjectionHost & {
   htmlMutationRevision: number;
-  selectedElement: SelectionInfo | null;
+  coordinatedElementSelection: CoordinatedElementSelection | null;
   pendingTag: string | null;
   pendingTagOriginal: string | null;
   pendingTagSourceLocation: SourceEditLocation | null;
@@ -37,7 +45,7 @@ export type HtmlEditControllerHost = PreviewStructuralCanonicalProjectionHost & 
   currentHtmlRelativePath: string;
   isActivePreviewHtmlSource: boolean;
   setHtmlPending: (area: HtmlPendingArea, pending: boolean) => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   resolveSourceEditTargetForSourceId: (sourceId: string | null | undefined) => SourceEditTarget | null;
 };
 
@@ -146,26 +154,37 @@ async function executePendingKernelTagChange(
   targetLocation: SourceEditLocation,
   selector: string | null,
   revision: number,
-  project: (patch: ProjectHtmlTagPatch, selection: SelectionInfo) => Promise<void> | void,
+  capturedSelection: CoordinatedElementSelection,
+  project: (
+    patch: ProjectHtmlTagPatch,
+    selection: CoordinatedElementSelection,
+  ) => Promise<void> | void,
 ): Promise<EditorActionOutcome> {
   try {
     const committed = await runInPreviewStructuralLane(host, async (lease) => {
       if (host.htmlMutationRevision !== revision) {
         throw new Error(
-          "O modificare HTML mai nouă a înlocuit schimbarea de tag înainte de commit.",
+          t("html-tag-newer-change-before-commit"),
         );
       }
-      const selection = host.selectedElement;
-      if (!selection || selection.tag !== oldTag || selection.domPath !== selector) {
-        throw new Error("Ținta schimbării de tag nu mai corespunde selecției active.");
+      const current = host.coordinatedElementSelection;
+      const observation = capturedSelection.observation;
+      if (
+        !current
+        || current.snapshot.selectionRevision !== capturedSelection.snapshot.selectionRevision
+        || current.renderInstanceId !== capturedSelection.renderInstanceId
+        || observation.tag !== oldTag
+        || observation.domPath !== selector
+      ) {
+        throw new Error(t("html-tag-target-selection-mismatch"));
       }
-      const liveTarget = host.resolveSourceEditTargetForSourceId(selection.sourceId);
+      const liveTarget = host.resolveSourceEditTargetForSourceId(capturedSelection.sourceNodeId);
       const liveLocation =
         (liveTarget ? sourceLocationForEditTarget(liveTarget) : null)
-        ?? selection.sourceLocation
+        ?? capturedSelection.sourceLocation
         ?? activeHtmlSourceLocationForTarget(host, {
-          selector: selection.domPath,
-          cssSelector: selection.cssSelector,
+          selector: observation.domPath,
+          cssSelector: observation.cssSelector,
           tag: oldTag,
         })
         ?? targetLocation;
@@ -173,41 +192,41 @@ async function executePendingKernelTagChange(
         intent: {
           messageType: "preview-html-tag",
           selector,
-          sourceId: selection.sourceId,
+          sourceId: capturedSelection.sourceNodeId,
           sourceTag: oldTag,
           elementTag: newTag,
         },
         tagIntent: {
-          targetSourceId: selection.sourceId,
+          targetSourceId: capturedSelection.sourceNodeId,
           targetLocation: projectSourceLocation(liveLocation),
           targetTag: oldTag,
           targetSelector: selector,
           newTag,
         },
-      }, previewStructuralCommandIdentity(lease));
+      }, previewStructuralCommandIdentity(lease, true));
       const patch = requireCommittedPreviewStructuralPatch(
         receipt,
-        "HTML Tag Engine-ul a blocat schimbarea tag-ului.",
+        t("html-tag-engine-blocked"),
       );
       await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
         if (host.htmlMutationRevision !== revision) {
           throw new Error(
-            "O modificare HTML mai nouă a înlocuit proiecția tag-ului deja comis.",
+            t("html-tag-newer-change-after-commit"),
           );
         }
         cacheKernelTagPatch(host, patch);
         clearPendingTag(host);
-        await project(patch, selection);
+        await project(patch, capturedSelection);
       });
       return true;
     });
     return committed === true
       ? committedAction()
-      : cancelledAction("Schimbarea de tag a fost anulată odată cu sesiunea structurală.");
+      : cancelledAction(t("html-tag-session-cancelled"));
   } catch (error) {
     const reason = errorMessage(error);
-    host.tagStatus = `eroare: ${reason}`;
-    host.setGlobalStatus(`Eroare tag: ${reason}`, "error");
+    host.tagStatus = t("html-tag-error-short", { message: reason });
+    host.setGlobalStatus(t("html-tag-error", { message: reason }), "error");
     return failedAction(reason);
   }
 }
@@ -216,31 +235,33 @@ export async function changeElementTag(
   host: HtmlEditControllerHost,
   newTag: string,
 ): Promise<EditorActionOutcome> {
-  if (!host.selectedElement) {
-    return blockedAction("Selectează un element înainte să schimbi tag-ul.");
+  const selection = host.coordinatedElementSelection;
+  if (!selection) {
+    return blockedAction(t("html-tag-select-element"));
   }
-  if (newTag === host.selectedElement.tag) {
+  const observation = selection.observation;
+  if (newTag === observation.tag) {
     clearPendingTag(host);
-    return noopAction("Tag-ul selectat este deja aplicat.");
+    return noopAction(t("html-tag-already-applied"));
   }
   const revision = ++host.htmlMutationRevision;
-  const originalTag = host.selectedElement.tag;
-  const sourceEditTarget = host.resolveSourceEditTargetForSourceId(host.selectedElement.sourceId);
+  const originalTag = observation.tag;
+  const sourceEditTarget = host.resolveSourceEditTargetForSourceId(selection.sourceNodeId);
   const sourceLocationTarget =
     (sourceEditTarget ? sourceLocationForEditTarget(sourceEditTarget) : null) ??
-    host.selectedElement.sourceLocation;
-  const selector = host.selectedElement.domPath;
+    selection.sourceLocation;
+  const selector = observation.domPath;
   const kernelTargetLocation =
     sourceLocationTarget ??
     activeHtmlSourceLocationForTarget(host, {
       selector,
-      cssSelector: host.selectedElement.cssSelector,
+      cssSelector: observation.cssSelector,
       tag: originalTag,
     });
   if (!kernelTargetLocation) {
     const message = host.isActivePreviewHtmlSource
-      ? "Nu pot executa schimbarea de tag: ținta nu are locație sursă unică pentru kernel."
-      : "Elementul nu are sursă HTML editabilă pentru schimbarea de tag.";
+      ? t("html-tag-location-missing")
+      : t("html-tag-source-not-editable");
     host.tagStatus = message;
     host.setGlobalStatus(message, "error");
     return blockedAction(message);
@@ -248,10 +269,10 @@ export async function changeElementTag(
   host.pendingTag = newTag;
   host.pendingTagOriginal = originalTag;
   host.pendingTagSourceLocation = kernelTargetLocation;
-  host.tagStatus = `Tag ales: <${newTag}>. Se trimite la kernel...`;
+  host.tagStatus = t("html-tag-sending", { tag: newTag });
   host.setHtmlPending("tag", true);
   host.setGlobalStatus(
-    `<${originalTag}> → <${newTag}> se execută prin kernel`,
+    t("html-tag-executing", { oldTag: originalTag, newTag }),
     "saving",
   );
 
@@ -262,17 +283,18 @@ export async function changeElementTag(
     kernelTargetLocation,
     selector,
     revision,
+    selection,
     (_patch, _selection) => {
-      host.tagStatus = `Tag modificat prin kernel: <${originalTag}> → <${newTag}>`;
+      host.tagStatus = t("html-tag-changed", { oldTag: originalTag, newTag });
     },
   );
 }
 
 export async function applyTagChange(host: HtmlEditControllerHost): Promise<EditorActionOutcome> {
   if (!host.pendingTag && !host.htmlPending.tag) {
-    return noopAction("Nu există o schimbare de tag pending.");
+    return noopAction(t("html-tag-no-pending-change"));
   }
   return blockedAction(
-    "Schimbarea etichetei este încă în așteptare sau a eșuat; salvarea nu o poate declara aplicată fără un commit confirmat de nucleul Rust.",
+    t("html-tag-save-unconfirmed"),
   );
 }

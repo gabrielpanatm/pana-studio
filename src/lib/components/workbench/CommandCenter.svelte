@@ -22,6 +22,8 @@
     CommandCenterItem,
     CommandCenterSearchResponse,
   } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
+  import { errorMessage as applicationErrorMessage } from "$lib/util";
 
   let {
     open = false,
@@ -41,6 +43,7 @@
   let inputValue = $state("");
   let response = $state<CommandCenterSearchResponse | null>(null);
   let selectedIndex = $state(0);
+  let hoveredIndex = $state<number | null>(null);
   let loading = $state(false);
   let executingId = $state<string | null>(null);
   let errorMessage = $state("");
@@ -55,6 +58,7 @@
       inputValue = "";
       response = null;
       selectedIndex = 0;
+      hoveredIndex = null;
       errorMessage = "";
       void tick().then(() => {
         inputElement?.focus();
@@ -86,7 +90,7 @@
       }).catch((error) => {
         if (serial !== requestSerial || !open) return;
         response = null;
-        errorMessage = error instanceof Error ? error.message : String(error);
+        errorMessage = applicationErrorMessage(error);
       }).finally(() => {
         if (serial === requestSerial) loading = false;
       });
@@ -96,6 +100,7 @@
 
   function moveSelection(delta: number) {
     if (results.length === 0) return;
+    hoveredIndex = null;
     selectedIndex = (selectedIndex + delta + results.length) % results.length;
     void tick().then(() => {
       document.getElementById(optionId(results[selectedIndex]))?.scrollIntoView({
@@ -122,11 +127,13 @@
     }
     if (event.key === "Home" && results.length > 0) {
       event.preventDefault();
+      hoveredIndex = null;
       selectedIndex = 0;
       return;
     }
     if (event.key === "End" && results.length > 0) {
       event.preventDefault();
+      hoveredIndex = null;
       selectedIndex = results.length - 1;
       return;
     }
@@ -144,7 +151,7 @@
       await execute(item.action);
       close();
     } catch (error) {
-      errorMessage = error instanceof Error ? error.message : String(error);
+      errorMessage = applicationErrorMessage(error);
     } finally {
       executingId = null;
     }
@@ -152,6 +159,36 @@
 
   function optionId(item: CommandCenterItem) {
     return "command-center-" + item.id.replace(/[^a-zA-Z0-9_-]/g, "-");
+  }
+
+  function itemSubtitle(item: CommandCenterItem) {
+    if (item.disabledDiagnostic) return applicationErrorMessage(item.disabledDiagnostic);
+    if (item.subtitleDiagnostic) return applicationErrorMessage(item.subtitleDiagnostic);
+    return item.subtitle ?? t("workbench-command-copy-unavailable");
+  }
+
+  function itemTitle(item: CommandCenterItem) {
+    if (item.titleDiagnostic) return applicationErrorMessage(item.titleDiagnostic);
+    return item.title ?? t("workbench-command-copy-unavailable");
+  }
+
+  function scopeLabel() {
+    if (parsedQuery.scope === "commands") return t("workbench-command-scope-commands");
+    if (parsedQuery.scope === "symbols") return t("workbench-command-scope-symbols");
+    if (parsedQuery.scope === "files") return t("workbench-command-scope-files");
+    return t("workbench-command-scope-all");
+  }
+
+  function kindLabel(kind: CommandCenterItem["kind"]) {
+    if (kind === "command") return t("workbench-command-kind-command");
+    if (kind === "activity") return t("workbench-command-kind-activity");
+    if (kind === "page") return t("workbench-command-kind-page");
+    if (kind === "component") return t("workbench-command-kind-component");
+    if (kind === "style") return t("workbench-command-kind-style");
+    if (kind === "asset") return t("workbench-command-kind-asset");
+    if (kind === "symbol") return t("workbench-command-kind-symbol");
+    if (kind === "diagnostic") return t("workbench-command-kind-diagnostic");
+    return t("workbench-command-kind-file");
   }
 </script>
 
@@ -169,12 +206,12 @@
       aria-modal="true"
       aria-labelledby="command-center-title"
     >
-      <h2 id="command-center-title">Command Center</h2>
+      <h2 id="command-center-title">{t("workbench-command-center-title")}</h2>
       <div class="search-field">
         <span class="search-icon" aria-hidden="true">
           <IconSearch size={19} stroke={1.8} />
         </span>
-        <span class="scope-chip">{parsedQuery.scopeLabel}</span>
+        <span class="scope-chip">{scopeLabel()}</span>
         <input
           bind:this={inputElement}
           bind:value={inputValue}
@@ -183,14 +220,14 @@
           aria-controls="command-center-results"
           aria-expanded="true"
           aria-activedescendant={selectedItem ? optionId(selectedItem) : undefined}
-          aria-label="Caută comenzi, fișiere și simboluri"
-          placeholder="Caută comenzi, fișiere și simboluri…"
+          aria-label={t("workbench-command-center-search-label")}
+          placeholder={t("workbench-command-center-search")}
           autocomplete="off"
           spellcheck="false"
           onkeydown={handleInputKeydown}
         />
         {#if loading}
-          <IconLoader2 class="loading-icon" size={17} stroke={1.8} aria-label="Se caută" />
+          <IconLoader2 class="loading-icon" size={17} stroke={1.8} aria-label={t("workbench-command-center-searching")} />
         {:else}
           <kbd>Esc</kbd>
         {/if}
@@ -200,7 +237,7 @@
         id="command-center-results"
         class="results"
         role="listbox"
-        aria-label="Rezultate Command Center"
+        aria-label={t("workbench-command-center-results")}
       >
         {#if errorMessage}
           <div class="result-state error" role="alert">
@@ -210,21 +247,23 @@
         {:else if !loading && results.length === 0}
           <div class="result-state">
             <IconSearch size={18} stroke={1.8} />
-            <span>Niciun rezultat pentru această căutare.</span>
+            <span>{t("workbench-command-center-empty")}</span>
           </div>
         {:else}
           {#each results as item, index (item.id)}
             <button
               id={optionId(item)}
               type="button"
-              class:selected={selectedIndex === index}
+              class="ui-entity-selectable"
+              data-ui-selected={selectedIndex === index && hoveredIndex === null ? "true" : undefined}
               class:disabled={!item.enabled}
               role="option"
               aria-selected={selectedIndex === index ? "true" : "false"}
               disabled={!item.enabled || executingId !== null}
-              title={item.disabledReason ?? item.subtitle}
+              title={itemSubtitle(item)}
               tabindex="-1"
-              onmouseenter={() => { selectedIndex = index; }}
+              onmouseenter={() => { hoveredIndex = index; selectedIndex = index; }}
+              onmouseleave={() => { if (hoveredIndex === index) hoveredIndex = null; }}
               onclick={() => { void choose(item); }}
             >
               <span class="result-icon" aria-hidden="true">
@@ -251,13 +290,13 @@
                 {/if}
               </span>
               <span class="result-copy">
-                <strong>{item.title}</strong>
-                <small>{item.disabledReason ?? item.subtitle}</small>
+                <strong>{itemTitle(item)}</strong>
+                <small>{itemSubtitle(item)}</small>
               </span>
               {#if item.shortcut}
                 <kbd>{item.shortcut}</kbd>
               {:else}
-                <span class="result-kind">{item.kind.replace("_", " ")}</span>
+                <span class="result-kind">{kindLabel(item.kind)}</span>
               {/if}
             </button>
           {/each}
@@ -265,13 +304,13 @@
       </div>
 
       <footer>
-        <span><kbd>↑↓</kbd> navigare</span>
-        <span><kbd>Enter</kbd> deschide</span>
-        <span><kbd>&gt;</kbd> comenzi</span>
-        <span><kbd>#</kbd> fișiere</span>
-        <span><kbd>@</kbd> simboluri</span>
+        <span><kbd>↑↓</kbd> {t("workbench-command-navigation")}</span>
+        <span><kbd>Enter</kbd> {t("workbench-command-open")}</span>
+        <span><kbd>&gt;</kbd> {t("workbench-command-commands")}</span>
+        <span><kbd>#</kbd> {t("workbench-command-files")}</span>
+        <span><kbd>@</kbd> {t("workbench-command-symbols")}</span>
         {#if response?.truncated}
-          <span class="match-count">{response.totalMatches} rezultate</span>
+          <span class="match-count">{t("workbench-command-results-count", { count: response.totalMatches })}</span>
         {/if}
       </footer>
     </div>
@@ -390,16 +429,6 @@
     color: var(--wb-text-primary);
     text-align: left;
     background: transparent;
-  }
-
-  .results button:hover:not(:disabled),
-  .results button.selected {
-    border-color: color-mix(in srgb, var(--wb-accent) 24%, transparent);
-    background: var(--wb-control-hover);
-  }
-
-  .results button.selected {
-    box-shadow: inset 3px 0 0 var(--wb-accent);
   }
 
   .results button.disabled {

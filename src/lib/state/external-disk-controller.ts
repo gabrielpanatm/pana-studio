@@ -27,13 +27,17 @@ import type {
   ProjectDiskManifestEntry,
   ProjectScan,
   ProjectWorkspaceSnapshot,
-  SaveState,
   ScssVariable,
 } from "$lib/types";
+import type {
+  GlobalStatusEscalationRequest,
+  GlobalStatusKind,
+} from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 import { errorMessage } from "$lib/util";
 
-const ACTIVE_CHECK_INTERVAL = 2000;
-const BACKGROUND_CHECK_INTERVAL = 8000;
+const ACTIVE_CHECK_INTERVAL = 5000;
+const BACKGROUND_CHECK_INTERVAL = 15000;
 const EXTERNAL_PROJECTION_DEADLINE_MS = 30_000;
 export const EXTERNAL_CHANGE_NOTIFICATION_ID = "project.external-disk-change";
 export const EXTERNAL_CHANGE_RELOAD_ACTION_ID = "external-disk.reload";
@@ -90,17 +94,8 @@ export type ExternalDiskControllerHost = {
     dirty: boolean;
   };
   projectStatus: string;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  notify: (notification: {
-    id: string;
-    level: "info" | "warning" | "error";
-    title: string;
-    message: string;
-    actionLabel?: string | null;
-    actionId?: string | null;
-    secondaryActionLabel?: string | null;
-    secondaryActionId?: string | null;
-  }) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+  escalateGlobalStatus: (notification: GlobalStatusEscalationRequest) => void;
   clearNotification: (id: string) => void;
   refreshSourceGraph?: (options?: { strict?: boolean }) => Promise<void>;
   quiesceExternalReconcileInteractions: () => void;
@@ -178,12 +173,12 @@ export async function suspendAndDrainExternalDiskMonitoring(
     )
   ) {
     throw new Error(
-      "Monitorul extern a pornit o verificare nouă după rezervarea scrierii proiectului.",
+      t("external-disk-monitor-restarted"),
     );
   }
   if (host.externalDiskState.checking || host.externalDiskState.reconciling) {
     throw new Error(
-      "Monitorul extern nu a ajuns într-o stare terminală înaintea scrierii proiectului.",
+      t("external-disk-monitor-not-terminal"),
     );
   }
 }
@@ -195,7 +190,7 @@ export function resumeExternalDiskMonitoringAfterSave(
   if (
     host.projectTransitionFrontendLeaseActive
     || host.kernelUndoRedoFrontendLeaseActive
-    || !host.scannedProject?.isZola
+    || !host.scannedProject
   ) return;
   startExternalDiskPolling(host);
 }
@@ -208,7 +203,7 @@ export function resumeExternalDiskMonitoringAfterTransitionLease(
     || host.kernelUndoRedoFrontendLeaseActive
   ) return;
   host.externalDiskSuspended = false;
-  if (!host.scannedProject?.isZola) return;
+  if (!host.scannedProject) return;
   startExternalDiskPolling(host);
 }
 
@@ -254,7 +249,7 @@ export function resumeExternalMonitoringAfterFailedTransition(
     checking: false,
   };
   if (
-    host.scannedProject?.isZola &&
+    host.scannedProject &&
     !host.externalDiskState.workspaceProjectionRecoveryRequired
   ) {
     startExternalDiskPolling(host);
@@ -277,18 +272,18 @@ export function markWorkspaceProjectionRecoveryRequired(
     blockedByDirtySession: true,
     workspaceProjectionRecoveryRequired: true,
   };
-  host.notify({
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "error",
-    title: "Interfața necesită reproiectare",
+    title: t("external-disk-reprojection-title"),
     message,
-    actionLabel: "Reîncarcă de pe disc",
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
 }
 
 export async function establishExternalDiskBaseline(host: ExternalDiskControllerHost) {
-  if (!host.scannedProject?.isZola) return;
+  if (!host.scannedProject) return;
   if (
     host.externalDiskState.checking ||
     host.externalDiskState.reconciling ||
@@ -339,7 +334,7 @@ export function acceptProjectWorkspaceSaveBaseline(
     || acceptedManifest.truncated
   ) {
     throw new Error(
-      "Starea de referință a salvării nu poate fi publicată în monitorul extern pentru alt proiect, altă sesiune sau un manifest invalid.",
+      t("external-disk-save-baseline-invalid"),
     );
   }
 
@@ -367,7 +362,7 @@ async function checkExternalDisk(
   checkLease: ExternalDiskCheckLease,
 ) {
   if (
-    !host.scannedProject?.isZola ||
+    !host.scannedProject ||
     host.externalDiskSuspended ||
     host.projectTransitionFrontendLeaseActive ||
     host.kernelUndoRedoFrontendLeaseActive ||
@@ -379,7 +374,7 @@ async function checkExternalDisk(
   const expectedRoot = checkLease.projectRoot;
   const expectedSessionEpoch = checkLease.projectSessionEpoch;
   const reconcileGenerationAtStart = externalReconcileGeneration;
-  host.externalDiskState = { ...host.externalDiskState, checking: true };
+  host.externalDiskState.checking = true;
 
   try {
     if (host.externalDiskSuspended) {
@@ -421,9 +416,41 @@ async function checkExternalDisk(
     );
     const blockedByDirtySession = changed && host.globalDirtyState.dirty;
 
+    if (!changed) {
+      host.externalDiskState.baseline = current;
+      if (host.externalDiskState.reconciling) {
+        host.externalDiskState.reconciling = false;
+      }
+      if (host.externalDiskState.changed) {
+        host.externalDiskState.changed = false;
+      }
+      if (host.externalDiskState.changedFiles.length > 0) {
+        host.externalDiskState.changedFiles = [];
+      }
+      if (host.externalDiskState.activeFileChanged) {
+        host.externalDiskState.activeFileChanged = false;
+      }
+      if (host.externalDiskState.previewRelevantChanged) {
+        host.externalDiskState.previewRelevantChanged = false;
+      }
+      if (host.externalDiskState.blockedByDirtySession) {
+        host.externalDiskState.blockedByDirtySession = false;
+      }
+      host.externalDiskState.lastCheckedAt = Date.now();
+      host.externalDiskState.checking = false;
+      if (host.externalDiskState.workspaceProjectionRecoveryRequired) {
+        host.externalDiskState.workspaceProjectionRecoveryRequired = false;
+      }
+      if (host.externalDiskState.truncated !== current.truncated) {
+        host.externalDiskState.truncated = current.truncated;
+      }
+      host.clearNotification(EXTERNAL_CHANGE_NOTIFICATION_ID);
+      return;
+    }
+
     host.externalDiskState = {
       // A changed manifest is only accepted after the Rust reconcile receipt.
-      baseline: changed ? host.externalDiskState.baseline : current,
+      baseline: host.externalDiskState.baseline,
       reconciling: false,
       changed,
       changedFiles: diff.changedFiles,
@@ -446,13 +473,8 @@ async function checkExternalDisk(
       truncated: current.truncated,
     };
 
-    if (!changed) {
-      host.clearNotification(EXTERNAL_CHANGE_NOTIFICATION_ID);
-      return;
-    }
-
     if (blockedByDirtySession) {
-      notifyBlockedExternalChange(host, diff.changedFiles);
+      escalateBlockedExternalChange(host, diff.changedFiles);
       return;
     }
 
@@ -467,21 +489,17 @@ async function checkExternalDisk(
       host.projectSessionEpoch !== expectedSessionEpoch ||
       host.scannedProject?.root !== expectedRoot
     ) return;
-    host.externalDiskState = {
-      ...host.externalDiskState,
-      checking: false,
-      lastCheckedAt: Date.now(),
-    };
-    host.projectStatus = `Monitorizarea fișierelor a eșuat: ${errorMessage(error)}`;
+    host.externalDiskState.checking = false;
+    host.externalDiskState.lastCheckedAt = Date.now();
+    host.projectStatus = t("external-disk-monitor-failed", {
+      message: errorMessage(error),
+    });
   }
 }
 
 function finishSuspendedCheck(host: ExternalDiskControllerHost) {
-  host.externalDiskState = {
-    ...host.externalDiskState,
-    checking: false,
-    lastCheckedAt: Date.now(),
-  };
+  host.externalDiskState.checking = false;
+  host.externalDiskState.lastCheckedAt = Date.now();
 }
 
 function scheduleNextExternalDiskCheck(host: ExternalDiskControllerHost, delay?: number) {
@@ -506,7 +524,7 @@ function scheduleNextExternalDiskCheck(host: ExternalDiskControllerHost, delay?:
       || !externalDiskCheckLeaseMatches(host, completedLease)
     ) return;
     if (
-      host.scannedProject?.isZola &&
+      host.scannedProject &&
       !host.externalDiskSuspended &&
       !host.projectTransitionFrontendLeaseActive &&
       !host.kernelUndoRedoFrontendLeaseActive &&
@@ -571,7 +589,7 @@ function currentExternalDiskCheckLease(
 ): ExternalDiskCheckLease | null {
   const project = host.scannedProject;
   if (
-    !project?.isZola
+    !project
     || !project.root
     || !host.kernelProjectSessionId
   ) return null;
@@ -588,7 +606,7 @@ function externalDiskCheckBelongsToCurrentSession(
   lease: ExternalDiskCheckLease,
 ) {
   return Boolean(
-    host.scannedProject?.isZola
+    host.scannedProject
     && host.scannedProject.root === lease.projectRoot
     && host.kernelProjectSessionId === lease.runtimeSessionId
     && host.projectSessionEpoch === lease.projectSessionEpoch
@@ -651,7 +669,7 @@ async function applyCleanExternalChanges(
       checking: false,
       lastCheckedAt: Date.now(),
     };
-    notifyBlockedExternalChange(host, changedFiles);
+    escalateBlockedExternalChange(host, changedFiles);
     return;
   }
 
@@ -667,7 +685,7 @@ async function applyCleanExternalChanges(
     receipt.projectRoot !== expectedRoot ||
     receipt.sessionId !== host.kernelProjectSessionId
   ) {
-    throw new Error("Receipt-ul external reconcile aparține altei sesiuni de proiect.");
+    throw new Error(t("external-disk-receipt-session-mismatch"));
   }
 
   if (receipt.status === "blocked" || receipt.status === "stale_evidence") {
@@ -680,7 +698,7 @@ async function applyCleanExternalChanges(
   }
   rustReceiptAccepted = true;
   if (receipt.workspaceRevision === null) {
-    throw new Error("Reconcilierea externă nu a publicat revizia rezultată a sesiunii proiectului.");
+    throw new Error(t("external-disk-revision-missing"));
   }
   const workspaceAfterCommit = await readProjectWorkspaceState();
   if (!isCurrentReconcile(host, expectedRoot, reconcileGeneration)) return;
@@ -692,7 +710,7 @@ async function applyCleanExternalChanges(
     || workspaceAfterCommit.dirty
   ) {
     throw new Error(
-      "Instantaneul sesiunii proiectului nu confirmă exact reconcilierea externă.",
+      t("external-disk-snapshot-mismatch"),
     );
   }
   host.projectWorkspaceSnapshot = workspaceAfterCommit;
@@ -733,8 +751,18 @@ async function applyCleanExternalChanges(
   }
 
   if (receipt.projectionHints.projectRescan) {
+    const scanned = await scanProject(expectedRoot);
+    if (
+      scanned.root !== receipt.projectRoot
+      || scanned.kernelSessionId !== receipt.sessionId
+      || scanned.workspaceRevision !== receipt.workspaceRevision
+    ) {
+      throw new Error(
+        t("external-disk-scan-mismatch"),
+      );
+    }
     const project = preservePreviewBaseUrl(
-      await scanProject(expectedRoot),
+      scanned,
       projectBeforeReconcile,
     );
     if (!isCurrentReconcile(host, expectedRoot, reconcileGeneration)) return;
@@ -742,14 +770,17 @@ async function applyCleanExternalChanges(
   }
   if (receipt.projectionHints.sourceGraph) {
     if (!receipt.sourceGraphInvalidated) {
-      throw new Error("Nucleul nu a confirmat invalidarea cache-ului Source Graph.");
+      throw new Error(t("external-disk-source-graph-not-invalidated"));
     }
     await host.refreshSourceGraph?.({ strict: true });
     if (!isCurrentReconcile(host, expectedRoot, reconcileGeneration)) return;
   }
   if (receipt.projectionHints.scss) {
     const cssIdentity = createCssRequestIdentity(receipt.projectRoot, receipt.sessionId);
-    const nextScssVariables = await getScssVariables(cssIdentity);
+    const nextScssVariables = await getScssVariables(
+      cssIdentity,
+      receipt.workspaceRevision ?? undefined,
+    );
     if (
       !isCurrentReconcile(host, expectedRoot, reconcileGeneration)
       || host.scannedProject?.root !== cssIdentity.expectedProjectRoot
@@ -806,7 +837,7 @@ async function applyCleanExternalChanges(
   };
   host.clearNotification(EXTERNAL_CHANGE_NOTIFICATION_ID);
   host.setGlobalStatus(
-    `Schimbări externe detectate și reîncărcate: ${formatChangedFiles(changedFiles)}.`,
+    t("external-disk-reloaded", { files: formatChangedFiles(changedFiles) }),
     "restored",
   );
   } catch (error) {
@@ -815,6 +846,7 @@ async function applyCleanExternalChanges(
       && isCurrentReconcile(host, expectedRoot, reconcileGeneration)
     ) {
       preserveProjectionFailureAfterCommit(host, changedFiles, flags, error);
+      return;
     }
     throw error;
   } finally {
@@ -828,17 +860,19 @@ async function applyCleanExternalChanges(
   }
 }
 
-async function withExternalProjectionDeadline(operation: Promise<void>) {
+async function withExternalProjectionDeadline<T>(operation: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const deadline = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       reject(new Error(
-        `Proiecția UI nu a ajuns într-o stare terminală în ${EXTERNAL_PROJECTION_DEADLINE_MS / 1000} de secunde.`,
+        t("external-disk-projection-timeout", {
+          seconds: EXTERNAL_PROJECTION_DEADLINE_MS / 1000,
+        }),
       ));
     }, EXTERNAL_PROJECTION_DEADLINE_MS);
   });
   try {
-    await Promise.race([operation, deadline]);
+    return await Promise.race([operation, deadline]);
   } finally {
     if (timer !== null) clearTimeout(timer);
   }
@@ -871,8 +905,7 @@ function preserveConcurrentUiMutationAfterCommit(
   changedFiles: string[],
   flags: { activeFileChanged: boolean; previewRelevantChanged: boolean },
 ) {
-  const message =
-    "Nucleul a reconciliat discul, dar o intenție de editare sau selecție a apărut în timpul operației. Proiecția a fost oprită înainte să suprascrie interfața; reîncărcarea explicită este necesară.";
+  const message = t("external-disk-concurrent-ui-message");
   host.externalDiskState = {
     ...host.externalDiskState,
     changed: true,
@@ -884,24 +917,24 @@ function preserveConcurrentUiMutationAfterCommit(
     checking: false,
     lastCheckedAt: Date.now(),
   };
-  host.notify({
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "error",
-    title: "Proiecție externă oprită în siguranță",
+    title: t("external-disk-concurrent-ui-title"),
     message,
-    actionLabel: "Reîncarcă de pe disc",
+    statusMessage: message,
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
-  host.setGlobalStatus(message, "error");
 }
 
 function preserveUninitializedExternalMonitor(
   host: ExternalDiskControllerHost,
   observedRoot: string,
 ) {
-  const message =
-    `Monitorul extern nu are un baseline Rust verificat pentru ${observedRoot}. ` +
-    "Manifestul observat nu a fost acceptat automat.";
+  const message = t("external-disk-baseline-unverified-message", {
+    root: observedRoot,
+  });
   host.externalDiskState = {
     ...host.externalDiskState,
     changed: true,
@@ -910,15 +943,15 @@ function preserveUninitializedExternalMonitor(
     workspaceProjectionRecoveryRequired: true,
     lastCheckedAt: Date.now(),
   };
-  host.notify({
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "error",
-    title: "Baseline extern neverificat",
+    title: t("external-disk-baseline-unverified-title"),
     message,
-    actionLabel: "Reîncarcă de pe disc",
+    statusMessage: message,
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
-  host.setGlobalStatus(message, "error");
 }
 
 function preserveProjectionFailureAfterCommit(
@@ -927,9 +960,9 @@ function preserveProjectionFailureAfterCommit(
   flags: { activeFileChanged: boolean; previewRelevantChanged: boolean },
   error: unknown,
 ) {
-  const message =
-    `Nucleul a reconciliat discul, dar proiecția interfeței nu s-a încheiat: ${errorMessage(error)}. ` +
-    "Spațiul de lucru rămâne blocat până la reîncărcarea explicită de pe disc.";
+  const message = t("external-disk-projection-failed-message", {
+    message: errorMessage(error),
+  });
   host.externalDiskState = {
     ...host.externalDiskState,
     changed: true,
@@ -941,15 +974,15 @@ function preserveProjectionFailureAfterCommit(
     checking: false,
     lastCheckedAt: Date.now(),
   };
-  host.notify({
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "error",
-    title: "Proiecția externă necesită recuperare",
+    title: t("external-disk-projection-recovery-title"),
     message,
-    actionLabel: "Reîncarcă de pe disc",
+    statusMessage: message,
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   });
-  host.setGlobalStatus(message, "error");
 }
 
 function preserveBlockedReceipt(
@@ -968,17 +1001,17 @@ function preserveBlockedReceipt(
     checking: false,
     lastCheckedAt: Date.now(),
   };
-  host.notify({
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "warning",
-    title: "Reconciliere externă blocată",
-    message: receipt.verdictReason,
-    actionLabel: "Reîncarcă de pe disc",
+    title: t("external-disk-reconcile-blocked-title"),
+    message: localizedExternalReconcileVerdict(receipt),
+    statusMessage: localizedExternalReconcileVerdict(receipt),
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
-    secondaryActionLabel: "Păstrează sesiunea",
+    secondaryActionLabel: t("external-disk-keep-session"),
     secondaryActionId: EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,
   });
-  host.setGlobalStatus(receipt.verdictReason, "error");
 }
 
 function preserveReloadRequiredReceipt(
@@ -998,45 +1031,39 @@ function preserveReloadRequiredReceipt(
     lastCheckedAt: Date.now(),
   };
   if (host.aiEditLeaseFrontendLockActive) {
-    host.notify({
-      id: EXTERNAL_CHANGE_NOTIFICATION_ID,
-      level: "info",
-      title: "Se aplică modificările AI",
-      message:
-        "Manifestul autorizat schimbă structura proiectului. Pană Studio reconstruiește automat proiecția de pe disc.",
-    });
     host.setGlobalStatus(
-      "Structura declarată de AI a fost detectată; se reconstruiește automat ProjectSession.",
-      "idle",
+      t("external-disk-ai-structure-detected"),
+      "saving",
     );
     return;
   }
-  host.notify({
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "warning",
-    title: "Structura proiectului s-a schimbat",
-    message: receipt.verdictReason,
-    actionLabel: "Reîncarcă de pe disc",
+    title: t("external-disk-structure-changed-title"),
+    message: localizedExternalReconcileVerdict(receipt),
+    statusMessage: localizedExternalReconcileVerdict(receipt),
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
-    secondaryActionLabel: "Păstrează sesiunea",
+    secondaryActionLabel: t("external-disk-keep-session"),
     secondaryActionId: EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,
   });
-  host.setGlobalStatus(receipt.verdictReason, "error");
 }
 
-function notifyBlockedExternalChange(host: ExternalDiskControllerHost, changedFiles: string[]) {
-  host.notify({
+function escalateBlockedExternalChange(host: ExternalDiskControllerHost, changedFiles: string[]) {
+  host.escalateGlobalStatus({
     id: EXTERNAL_CHANGE_NOTIFICATION_ID,
     level: "warning",
-    title: "Fișiere modificate din exterior",
-    message:
-      `Am detectat schimbări pe disk (${formatChangedFiles(changedFiles)}), dar sesiunea Pană Studio are modificări nesalvate. Salvează sau reîncarcă manual înainte de a continua.`,
-    actionLabel: "Reîncarcă de pe disc",
+    title: t("external-disk-files-changed-title"),
+    message: t("external-disk-files-changed-message", {
+      files: formatChangedFiles(changedFiles),
+    }),
+    statusMessage: t("external-disk-files-changed-status"),
+    actionLabel: t("external-disk-reload"),
     actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
-    secondaryActionLabel: "Păstrează sesiunea",
+    secondaryActionLabel: t("external-disk-keep-session"),
     secondaryActionId: EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID,
   });
-  host.setGlobalStatus("Fișiere modificate din exterior. Sesiunea curentă are modificări nesalvate.", "error");
 }
 
 function formatChangedFiles(files: string[]) {
@@ -1062,17 +1089,37 @@ function requireAcceptedExternalDiskGeneration(
     || beforeManifest.truncated
   ) {
     throw new Error(
-      "Receipt-ul reconcile nu poate avansa o generație AcceptedDisk neinițializată sau invalidă.",
+      t("external-disk-generation-invalid"),
     );
   }
   const changedFiles = diffDiskManifests(beforeManifest, acceptedManifest).changedFiles;
   const expectedGeneration = currentGeneration! + (changedFiles.length > 0 ? 1 : 0);
   if (acceptedDiskGeneration !== expectedGeneration) {
     throw new Error(
-      `Receipt-ul reconcile are generație AcceptedDisk stale (așteptat=${expectedGeneration}; primit=${acceptedDiskGeneration}).`,
+      t("external-disk-generation-stale", {
+        expected: expectedGeneration,
+        actual: acceptedDiskGeneration,
+      }),
     );
   }
   return acceptedDiskGeneration;
+}
+
+function localizedExternalReconcileVerdict(
+  receipt: KernelExternalDiskReconcileReceipt,
+): string {
+  const diagnostic = receipt.diagnostics[0]?.messageDiagnostic;
+  if (diagnostic) return errorMessage(diagnostic);
+  if (receipt.status === "reload_required") return t("external-disk-verdict-reload-required");
+  if (receipt.status === "stale_evidence") return t("external-disk-verdict-stale");
+  if (receipt.status === "blocked") return t("external-disk-verdict-blocked");
+  if (receipt.status === "applied") {
+    return t("external-disk-verdict-applied", {
+      content: receipt.reconciledCount,
+      metadata: receipt.metadataRefreshedCount,
+    });
+  }
+  return t("external-disk-verdict-noop");
 }
 
 function acknowledgedInternalWriteBaseline(

@@ -5,6 +5,7 @@ import {
   isTemplateProjectFile,
   preferredCenterViewForProjectFile,
 } from "$lib/project/workflow";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type ProjectOpenPlan = {
   projectStatus: string;
@@ -73,7 +74,7 @@ export function planContentPageCreation(
   if (!title) {
     return {
       ok: false,
-      status: "Titlul paginii nu poate fi gol.",
+      status: t("project-page-title-empty"),
     };
   }
 
@@ -82,7 +83,7 @@ export function planContentPageCreation(
   if (!slug) {
     return {
       ok: false,
-      status: "Nu am putut genera un slug valid din titlul dat.",
+      status: t("project-page-slug-invalid"),
     };
   }
 
@@ -93,7 +94,7 @@ export function planContentPageCreation(
   if (section.split("/").some((segment) => segment === "." || segment === "..")) {
     return {
       ok: false,
-      status: "Secțiunea de conținut nu poate ieși din folderul content/.",
+      status: t("project-page-section-outside-content"),
     };
   }
 
@@ -102,7 +103,7 @@ export function planContentPageCreation(
     section,
     slug,
     title,
-    creatingStatus: `Se creeaza pagina ${slug}.md...`,
+    creatingStatus: t("project-page-creating", { slug }),
   };
 }
 

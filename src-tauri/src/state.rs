@@ -7,11 +7,15 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 use crate::kernel::{
-    ai_coordination::AiCoordinationRuntime, context_hub::ContextHubRuntime,
+    ai_coordination::AiCoordinationRuntime, canvas_interaction::CanvasInteractionRuntime,
+    context_hub::ContextHubRuntime, editor_navigation::EditorNavigationRuntime,
+    file_explorer::FileExplorerRuntime, global_status::GlobalStatusRuntime,
     project_workspace::ProjectWorkspace, publish_operation::PublishOperationControl,
-    recovery_coordinator::RecoveryCoordinatorScan, workbench::WorkbenchRuntime,
+    recovery_coordinator::RecoveryCoordinatorScan,
+    selection_coordinator::SelectionCoordinatorRuntime, workbench::WorkbenchRuntime,
 };
 use crate::preview::{PersistentZolaPreviewEngine, SourceBrowserEngine};
+use crate::project::StartupFlowRuntime;
 use crate::versioning::VersionNetworkOperationControl;
 
 pub struct McpServerHandle {
@@ -58,7 +62,13 @@ impl Drop for McpServerHandle {
 
 pub struct AppState {
     pub ai_coordination: AiCoordinationRuntime,
+    pub canvas_interaction: CanvasInteractionRuntime,
     pub context_hub: ContextHubRuntime,
+    pub editor_navigation: EditorNavigationRuntime,
+    pub file_explorer: FileExplorerRuntime,
+    pub global_status: GlobalStatusRuntime,
+    pub selection_coordinator: SelectionCoordinatorRuntime,
+    pub startup_flow: StartupFlowRuntime,
     pub mcp_access_token: Mutex<Option<String>>,
     pub current_root: Mutex<Option<PathBuf>>,
     pub project_workspace: Mutex<Option<ProjectWorkspace>>,
@@ -80,7 +90,13 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             ai_coordination: AiCoordinationRuntime::default(),
+            canvas_interaction: CanvasInteractionRuntime::default(),
             context_hub: ContextHubRuntime::default(),
+            editor_navigation: EditorNavigationRuntime::default(),
+            file_explorer: FileExplorerRuntime::default(),
+            global_status: GlobalStatusRuntime::default(),
+            selection_coordinator: SelectionCoordinatorRuntime::default(),
+            startup_flow: StartupFlowRuntime::default(),
             mcp_access_token: Mutex::new(None),
             current_root: Mutex::new(None),
             project_workspace: Mutex::new(None),

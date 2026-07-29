@@ -227,8 +227,6 @@ fn session() -> ProjectSessionSnapshot {
             unix_inode: None,
         },
         scan_summary: ProjectSessionScanSummary {
-            is_zola: true,
-            is_empty: false,
             active_theme: None,
             file_count: 1,
             directory_count: 2,
@@ -267,6 +265,9 @@ fn disk_snapshot(
         max_file_bytes: 1024 * 1024,
         summary: KernelDiskConflictSummary {
             status,
+            verdict_diagnostic: crate::localization::LocalizedDiagnostic::new(
+                "diagnostic-disk-conflict-summary-clean",
+            ),
             verdict_reason: "test".to_string(),
             tracked_file_count: 1,
             clean_count: usize::from(conflict_count == 0),

@@ -1,11 +1,13 @@
 <script lang="ts">
   import type { RecoveryCoordinatorDiagnostic } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
   import { recoverySeverityLabel } from "$lib/kernel/recovery-control";
+  import { errorMessage } from "$lib/util";
 
   let {
     diagnostics = [],
     compact = false,
-    label = "Diagnostics Transaction Log",
+    label = t("recovery-diagnostics-default-label"),
     highlighted = false,
   }: {
     diagnostics?: RecoveryCoordinatorDiagnostic[];
@@ -20,7 +22,7 @@
     {#each diagnostics as diagnostic}
       <article class={`diagnostic-item ${diagnostic.severity}`}>
         <strong>{recoverySeverityLabel(diagnostic.severity)} · {diagnostic.code}</strong>
-        <span>{diagnostic.message}</span>
+        <span>{errorMessage(diagnostic.messageDiagnostic)}</span>
       </article>
     {/each}
   </div>

@@ -1,18 +1,11 @@
-import { collectMatchedCssRules, collectRelevantCssVariables, formatBox } from "$lib/css/matcher";
-import {
-  createCssSelector,
-  findHtmlNodeAtPosition,
-  findHtmlNodeForSelection,
-  parseHtmlSourceNodes,
-} from "$lib/html/parser";
-import { zolaImagePresentationFromElement } from "$lib/html/zola-image";
+import { createCssSelector } from "$lib/html/parser";
+import { t } from "$lib/i18n/runtime.svelte";
+import type { MessageId } from "$lib/i18n/generated/catalog";
 import type {
   DomNodeLink,
   EditableAttributes,
   PageSection,
-  SelectionInfo,
-  SourceLanguage,
-  SourceNodeRange,
+  CanvasElementObservation,
 } from "$lib/types";
 
 export type MarkdownSelectionTarget = {
@@ -23,50 +16,50 @@ export type MarkdownSelectionTarget = {
 
 function normalizeText(text: string | null) {
   const compact = text?.replace(/\s+/g, " ").trim();
-  return compact && compact.length > 0 ? compact : "Fara text";
+  return compact && compact.length > 0 ? compact : t("preview-selection-no-text");
 }
 
 function escapeCssIdentifier(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);
 }
 
-const SEMANTIC_TAG_LABELS: Record<string, string> = {
-  main: "Conținut principal",
-  section: "Secțiune",
-  article: "Articol",
-  header: "Antet",
-  footer: "Subsol",
-  nav: "Navigație",
-  aside: "Conținut lateral",
-  div: "Container",
-  figure: "Figură",
-  figcaption: "Legendă",
-  ul: "Listă",
-  ol: "Listă ordonată",
-  li: "Element listă",
-  form: "Formular",
-  fieldset: "Grup formular",
-  table: "Tabel",
-  thead: "Antet tabel",
-  tbody: "Corp tabel",
-  tr: "Rând tabel",
-  th: "Celulă antet",
-  td: "Celulă tabel",
-  img: "Imagine",
-  video: "Video",
-  audio: "Audio",
-  iframe: "Iframe",
-  a: "Link",
-  button: "Buton",
-  p: "Paragraf",
-  span: "Text",
-  small: "Text mic",
-  strong: "Text important",
-  em: "Text accentuat",
-  blockquote: "Citat",
-  code: "Cod",
-  pre: "Text preformatat",
-  label: "Etichetă",
+const SEMANTIC_TAG_LABEL_IDS: Record<string, MessageId> = {
+  main: "project-html-tag-main",
+  section: "project-html-tag-section",
+  article: "project-html-tag-article",
+  header: "project-html-tag-header",
+  footer: "project-html-tag-footer",
+  nav: "project-html-tag-nav",
+  aside: "project-html-tag-aside",
+  div: "project-html-tag-div",
+  figure: "project-html-tag-figure",
+  figcaption: "project-html-tag-figcaption",
+  ul: "project-html-tag-ul",
+  ol: "project-html-tag-ol",
+  li: "project-html-tag-li",
+  form: "project-html-tag-form",
+  fieldset: "project-html-tag-fieldset",
+  table: "project-html-tag-table",
+  thead: "project-html-tag-thead",
+  tbody: "project-html-tag-tbody",
+  tr: "project-html-tag-tr",
+  th: "project-html-tag-th",
+  td: "project-html-tag-td",
+  img: "project-html-tag-img",
+  video: "project-html-tag-video",
+  audio: "project-html-tag-audio",
+  iframe: "project-html-tag-iframe",
+  a: "project-html-tag-a",
+  button: "project-html-tag-button",
+  p: "project-html-tag-p",
+  span: "project-html-tag-span",
+  small: "project-html-tag-small",
+  strong: "project-html-tag-strong",
+  em: "project-html-tag-em",
+  blockquote: "project-html-tag-blockquote",
+  code: "project-html-tag-code",
+  pre: "project-html-tag-pre",
+  label: "project-html-tag-label",
 };
 
 const FULL_TEXT_LABEL_TAGS = new Set([
@@ -79,7 +72,8 @@ const GENERATED_CLASS_RE = /^(ps|pana)-/;
 const UTILITY_CLASS_RE = /^(container|section|row|col|grid|flex|btn|button|active|open|hidden|show|cont-\d+)/;
 
 function semanticTagLabel(tag: string) {
-  return SEMANTIC_TAG_LABELS[tag] ?? tag;
+  const id = SEMANTIC_TAG_LABEL_IDS[tag];
+  return id ? t(id) : tag;
 }
 
 function shortenLabel(text: string | null | undefined) {
@@ -227,42 +221,20 @@ const SKIP_ATTRS = new Set([
   "data-pana-empty-label",
 ]);
 const RUNTIME_CLASSES = new Set([
-  "pana-studio-selected-element",
-  "pana-studio-selected-template-source",
   "pana-studio-empty-editable",
   "pana-studio-empty-tera-slot",
 ]);
 
-function collectElementAttributes(element: Element, selectedClass: string): Record<string, string> {
+function collectElementAttributes(element: Element): Record<string, string> {
   const result: Record<string, string> = {};
   for (const attr of Array.from(element.attributes)) {
     // `data-pana-*` belongs exclusively to the Preview runtime. Filtering the
     // complete namespace prevents newly introduced runtime identities from
     // leaking into an editable ProjectWorkspace draft.
     if (attr.name.startsWith("data-pana-") || SKIP_ATTRS.has(attr.name)) continue;
-    // Remove the selection marker class from id if it matches
-    if (attr.name === "id" && attr.value === selectedClass) continue;
     result[attr.name] = attr.value;
   }
   return result;
-}
-
-function blockContextForElement(element: Element): SelectionInfo["blockContext"] {
-  const root = element.closest("[data-pana-block],[data-pana-component]");
-  if (!root) return null;
-  const canonical = root.getAttribute("data-pana-block");
-  const legacy = root.getAttribute("data-pana-component");
-  const providerId = (canonical ?? legacy ?? "").trim();
-  if (!providerId) return null;
-  return {
-    providerId,
-    markerKind: canonical ? "canonical" : "legacy",
-    rootSelector: createDomPathSelector(root),
-    rootTag: root.tagName.toLowerCase(),
-    rootSourceId: root.getAttribute(SOURCE_ID_ATTR),
-    rootTemplateSourceId: inheritedTemplateSourceId(root),
-    rootSessionId: root.getAttribute(SESSION_ID_ATTR),
-  };
 }
 
 export function createDomNodeLink(element: Element): DomNodeLink {
@@ -301,7 +273,7 @@ export function summarizeElementText(text: string | null) {
   const normalized = text?.replace(/\s+/g, " ").trim() ?? "";
 
   if (normalized.length <= 90) {
-    return normalized || "Fara text";
+    return normalized || t("preview-selection-no-text");
   }
 
   return `${normalized.slice(0, 87)}...`;
@@ -352,10 +324,6 @@ const SKIP_TAGS = new Set([
 ]);
 const SVG_TAGS = new Set(["svg", "path", "g", "defs", "use", "circle", "rect", "polygon", "polyline", "line", "text", "tspan"]);
 const STUDIO_OVERLAY_IDS = new Set([
-  "pana-studio-html-selection",
-  "pana-studio-preview-hover",
-  "pana-studio-template-gate",
-  "pana-studio-template-gate-actions",
   "pana-studio-preview-drop-line",
   "pana-studio-preview-drop-box",
   "pana-studio-preview-drop-hint",
@@ -520,234 +488,14 @@ export function findPreviewElementForMarkdownTarget(document: Document, target: 
   );
 }
 
-export function findSourceElementForSelection(
-  document: Document,
-  selection: SelectionInfo | null,
-  preferredSelector: string | null = null,
-) {
-  return (
-    (preferredSelector ? document.querySelector(preferredSelector) : null) ??
-    (selection
-      ? document.querySelector(selection.domPath) ?? document.querySelector(selection.cssSelector)
-      : null) ??
-    document.body
-  );
-}
-
-export type CodeCursorSelectionAction =
-  | {
-      type: "none";
-    }
-  | {
-      type: "select-html-node";
-      selector: string;
-    }
-  | {
-      type: "select-markdown-target";
-      target: MarkdownSelectionTarget;
-    };
-
-export function resolveCodeCursorSelectionAction(options: {
-  sourceLanguage: SourceLanguage;
-  sourceText: string;
-  position: number;
-  selectedElement: SelectionInfo | null;
-  activeScannedPath: string | null;
-  htmlVoidTags: ReadonlySet<string>;
-}): CodeCursorSelectionAction {
-  if (options.sourceLanguage === "html") {
-    const node = findHtmlNodeAtPosition(
-      parseHtmlSourceNodes(options.sourceText, options.htmlVoidTags),
-      options.position,
-    );
-
-    if (!node || options.selectedElement?.domPath === node.selector) {
-      return { type: "none" };
-    }
-
-    return { type: "select-html-node", selector: node.selector };
-  }
-
-  if (!options.activeScannedPath?.endsWith(".md")) {
-    return { type: "none" };
-  }
-
-  const target = markdownTargetAtPosition(options.sourceText, options.position);
-
-  return target ? { type: "select-markdown-target", target } : { type: "none" };
-}
-
-export function codeSelectionRangeForSelection(
-  sourceLanguage: SourceLanguage,
-  nodes: SourceNodeRange[],
-  selection: SelectionInfo | null,
-) {
-  const node = sourceLanguage === "html" ? findHtmlNodeForSelection(nodes, selection) : null;
-  return node ? { from: node.openStart, to: node.openEnd } : null;
-}
-
-export function resolveHtmlSourceSelectionContext(options: {
-  sourceText: string;
-  cursorPosition: number;
-  selectedElement: SelectionInfo | null;
-  htmlVoidTags: ReadonlySet<string>;
-}) {
-  const parsedDocument = new DOMParser().parseFromString(options.sourceText, "text/html");
-  const parsedNodes = parseHtmlSourceNodes(options.sourceText, options.htmlVoidTags);
-  const activeNode =
-    findHtmlNodeAtPosition(parsedNodes, options.cursorPosition) ??
-    findHtmlNodeForSelection(parsedNodes, options.selectedElement);
-  const activeSelector = activeNode?.selector ?? null;
-
-  return {
-    parsedDocument,
-    pageSections: collectDomTree(parsedDocument),
-    activeSelector,
-    pendingSelector:
-      activeSelector ??
-      options.selectedElement?.domPath ??
-      options.selectedElement?.cssSelector ??
-      "body",
-  };
-}
-
-export function createSelectionInfoFromSourceElement(
-  element: Element,
-  fallback: SelectionInfo | null,
-  selectedClass: string,
-): SelectionInfo {
-  const tag = element.tagName.toLowerCase();
-  const id = element.id;
-  const classes = Array.from(element.classList).filter((className) =>
-    className !== selectedClass && !RUNTIME_CLASSES.has(className)
-  );
-  const parentElement =
-    element.parentElement && element.parentElement.tagName.toLowerCase() !== "html"
-      ? element.parentElement
-      : null;
-  const childNodes = Array.from(element.children)
-    .filter((child): child is Element => child instanceof Element && !isEmptyTeraSlot(child))
-    .slice(0, 24)
-    .map((child) => createDomNodeLink(child));
-  const hasChildElements = Array.from(element.children).some((child) =>
-    child instanceof Element && !isEmptyTeraSlot(child)
-  );
-
-  return {
-    selector: formatElementSelector(tag, id, classes),
-    cssSelector: createCssSelector(tag, id, classes),
-    domPath: createDomPathSelector(element),
-    tag,
-    id,
-    href: element.getAttribute("href") ?? "",
-    title: element.getAttribute("title") ?? "",
-    alt: element.getAttribute("alt") ?? "",
-    classes,
-    text: summarizeElementText(element.textContent),
-    rawText: element.textContent ?? "",
-    hasChildElements,
-    rect:
-      fallback?.rect ?? {
-        width: "-",
-        height: "-",
-        top: "-",
-        left: "-",
-      },
-    styles: fallback?.styles ?? [],
-    variables: fallback?.variables ?? [],
-    matchedRules: fallback?.matchedRules ?? [],
-    imageSrc: tag === "img" ? element.getAttribute("src") : null,
-    zolaImage: tag === "img" ? zolaImagePresentationFromElement(element) : null,
-    attributes: collectElementAttributes(element, selectedClass),
-    parentNode: parentElement ? createDomNodeLink(parentElement) : null,
-    childNodes,
-    sourceLocation: null,
-    sourceId: element.getAttribute(SOURCE_ID_ATTR) ?? null,
-    templateSourceId: inheritedTemplateSourceId(element),
-    sessionId: element.getAttribute(SESSION_ID_ATTR) ?? null,
-    blockContext: blockContextForElement(element),
-  };
-}
-
-export function createSelectionInfo(element: Element, previewWindow: Window, selectedClass: string): SelectionInfo {
-  const computed = previewWindow.getComputedStyle(element);
-  const rect = element.getBoundingClientRect();
-  const tag = element.tagName.toLowerCase();
-  const id = element.id;
-  const classes = Array.from(element.classList).filter((className) =>
-    className !== selectedClass && !RUNTIME_CLASSES.has(className)
-  );
-  const variables = collectRelevantCssVariables(element, previewWindow);
-  const matchedRules = collectMatchedCssRules(element, previewWindow);
-  const parentElement =
-    element.parentElement && element.parentElement.tagName.toLowerCase() !== "html"
-      ? element.parentElement
-      : null;
-  const childNodes = Array.from(element.children)
-    .filter((child): child is Element => child instanceof Element && !isEmptyTeraSlot(child))
-    .slice(0, 24)
-    .map((child) => createDomNodeLink(child));
-  const hasChildElements = Array.from(element.children).some((child) =>
-    child instanceof Element && !isEmptyTeraSlot(child)
-  );
-
-  return {
-    selector: formatElementSelector(tag, id, classes),
-    cssSelector: createCssSelector(tag, id, classes),
-    domPath: createDomPathSelector(element),
-    tag,
-    id,
-    href: element.getAttribute("href") ?? "",
-    title: element.getAttribute("title") ?? "",
-    alt: element.getAttribute("alt") ?? "",
-    classes,
-    text: summarizeElementText(element.textContent),
-    rawText: element.textContent ?? "",
-    hasChildElements,
-    rect: {
-      width: `${Math.round(rect.width)}px`,
-      height: `${Math.round(rect.height)}px`,
-      top: `${Math.round(rect.top)}px`,
-      left: `${Math.round(rect.left)}px`,
-    },
-    styles: [
-      { label: "color", value: computed.color },
-      { label: "background", value: computed.backgroundColor },
-      { label: "font-size", value: computed.fontSize },
-      { label: "line-height", value: computed.lineHeight },
-      { label: "text-align", value: computed.textAlign },
-      { label: "font-weight", value: computed.fontWeight },
-      { label: "display", value: computed.display },
-      { label: "flex-direction", value: computed.flexDirection },
-      { label: "justify-content", value: computed.justifyContent },
-      { label: "align-items", value: computed.alignItems },
-      { label: "gap", value: computed.gap },
-      { label: "margin", value: formatBox(computed, "margin") },
-      { label: "padding", value: formatBox(computed, "padding") },
-      { label: "border-radius", value: computed.borderRadius },
-    ],
-    variables,
-    matchedRules,
-    imageSrc: tag === "img" ? element.getAttribute("src") : null,
-    zolaImage: tag === "img" ? zolaImagePresentationFromElement(element) : null,
-    attributes: collectElementAttributes(element, selectedClass),
-    parentNode: parentElement ? createDomNodeLink(parentElement) : null,
-    childNodes,
-    sourceLocation: null,
-    sourceId: element.getAttribute(SOURCE_ID_ATTR) ?? null,
-    templateSourceId: inheritedTemplateSourceId(element),
-    sessionId: element.getAttribute(SESSION_ID_ATTR) ?? null,
-    blockContext: blockContextForElement(element),
-  };
-}
-
 type SelectionEditorStateOptions = {
   variableOverrides: Record<string, string>;
   canEditHtmlSource: boolean;
+  canEditSemanticSource: boolean;
   blockedReason: string;
 };
 
-export function deriveSelectionEditorState(selection: SelectionInfo, options: SelectionEditorStateOptions) {
+export function deriveSelectionEditorState(selection: CanvasElementObservation, options: SelectionEditorStateOptions) {
   const variableValues: Record<string, string> = {};
 
   for (const variable of selection.variables) {
@@ -756,26 +504,25 @@ export function deriveSelectionEditorState(selection: SelectionInfo, options: Se
 
   const attributeValues: EditableAttributes = { ...selection.attributes };
 
-  const hasSourceAnchor = Boolean(selection.sourceId || selection.sourceLocation || selection.sessionId);
-  const canEdit = options.canEditHtmlSource || hasSourceAnchor;
-  const editViaTemplate = !options.canEditHtmlSource && hasSourceAnchor;
-  const templateLabel = editViaTemplate ? " (template Tera)" : "";
+  const canEdit = options.canEditHtmlSource || options.canEditSemanticSource;
+  const editViaTemplate = !options.canEditHtmlSource && options.canEditSemanticSource;
+  const templateLabel = editViaTemplate ? t("preview-selection-template-suffix") : "";
 
   const classStatus = canEdit
-    ? `Clasele elementului pot fi editate direct in HTML${templateLabel}.`
+    ? t("preview-selection-classes-editable", { context: templateLabel })
     : options.blockedReason;
   const imageStatus = selection.imageSrc
     ? canEdit
-      ? `Sursa imaginii poate fi editata direct in HTML${templateLabel}.`
+      ? t("preview-selection-image-editable", { context: templateLabel })
       : options.blockedReason
-    : "Elementul selectat nu foloseste atributul src.";
+    : t("preview-selection-no-image-source");
   const attributeStatus = canEdit
-    ? `Atributele HTML pot fi editate direct${templateLabel}.`
+    ? t("preview-selection-attributes-editable", { context: templateLabel })
     : options.blockedReason;
   const textStatus = canEdit
     ? selection.hasChildElements
-      ? "Elementul selectat contine alti noduri HTML. Editarea textului este blocata."
-      : `Textul poate fi editat pentru elemente simple, fara copii HTML${templateLabel}.`
+      ? t("preview-selection-text-children-blocked")
+      : t("preview-selection-text-editable", { context: templateLabel })
     : options.blockedReason;
 
   return {

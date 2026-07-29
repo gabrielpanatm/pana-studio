@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-font-preload"
+description = "Enables the set_font_preload command without any pre-configured scope."
+commands.allow = ["set_font_preload"]
+
+[[permission]]
+identifier = "deny-set-font-preload"
+description = "Denies the set_font_preload command without any pre-configured scope."
+commands.deny = ["set_font_preload"]

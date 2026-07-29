@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Component, Path};
 
 use super::content::validate_safe_zola_reference;
 
@@ -24,12 +24,6 @@ pub(crate) fn static_asset_reference(path: &str) -> Option<String> {
 pub(crate) fn data_file_reference(path: &str) -> Option<String> {
     let normalized = path.trim().replace('\\', "/");
     if normalized.is_empty()
-        || normalized.starts_with("@/")
-        || normalized.starts_with('/')
-        || normalized.starts_with("static/")
-        || normalized.starts_with("content/")
-        || normalized.starts_with("public/")
-        || normalized.starts_with("themes/")
         || normalized.starts_with("http://")
         || normalized.starts_with("https://")
         || normalized.starts_with("//")
@@ -118,20 +112,16 @@ pub(crate) fn rewrite_zola_data_file_reference(
             original
         ));
     }
-    if normalized.starts_with("@/")
-        || normalized.starts_with('/')
-        || normalized.starts_with("static/")
-        || normalized.starts_with("content/")
-        || normalized.starts_with("public/")
-        || normalized.starts_with("themes/")
-    {
-        return Err(format!(
-            "SourceGraphRewrite blocat: referința data '{}' nu este path local canonic sub rădăcina Zola.",
-            original
-        ));
-    }
-    validate_safe_zola_reference(&normalized, original, "data")?;
-    validate_safe_zola_reference(new_name, new_name, "data")?;
+    validate_safe_zola_reference(
+        normalized.strip_prefix('/').unwrap_or(&normalized),
+        original,
+        "data",
+    )?;
+    validate_safe_zola_reference(
+        new_name.strip_prefix('/').unwrap_or(new_name),
+        new_name,
+        "data",
+    )?;
     Ok(new_name.to_string())
 }
 
@@ -143,10 +133,20 @@ pub(crate) fn local_static_asset_project_file_reference(relative_path: &str) -> 
 }
 
 pub(crate) fn local_zola_data_project_file_reference(relative_path: &str) -> Option<String> {
-    relative_path
-        .strip_prefix("date/")
-        .filter(|name| !name.is_empty())
-        .map(|name| format!("date/{name}"))
+    let normalized = relative_path.trim().replace('\\', "/");
+    let path = Path::new(&normalized);
+    if normalized.is_empty()
+        || normalized.starts_with("@output/")
+        || matches!(normalized.as_str(), "zola.toml" | "config.toml")
+        || normalized.starts_with("themes/")
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(normalized)
 }
 
 pub(crate) fn static_asset_logical_path(
@@ -162,15 +162,6 @@ pub(crate) fn static_asset_logical_path(
         .ok()
         .map(|relative| relative.to_string_lossy().replace('\\', "/"))
         .filter(|relative| !relative.is_empty())
-}
-
-pub(crate) fn zola_data_file_logical_path(zola_root: &Path, path: &Path) -> Option<String> {
-    let data_root = zola_root.join("date");
-    path.strip_prefix(data_root)
-        .ok()
-        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-        .filter(|relative| !relative.is_empty())
-        .map(|relative| format!("date/{relative}"))
 }
 
 #[cfg(test)]
@@ -223,8 +214,13 @@ mod tests {
             rewrite_zola_data_file_reference("date/meniu.toml", "date/navigatie.toml").as_deref(),
             Ok("date/navigatie.toml")
         );
-        assert!(
-            rewrite_zola_data_file_reference("static/data/meniu.toml", "date/meniu.toml").is_err()
+        assert_eq!(
+            rewrite_zola_data_file_reference(
+                "static/data/meniu.toml",
+                "static/data/navigatie.toml"
+            )
+            .as_deref(),
+            Ok("static/data/navigatie.toml")
         );
     }
 }

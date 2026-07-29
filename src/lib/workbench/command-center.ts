@@ -4,6 +4,7 @@ import {
   type CommandCenterScope,
   type CommandCenterSearchResponse,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export async function searchCommandCenter(input: {
   query: string;
@@ -33,46 +34,45 @@ function requireCommandCenterResponse(
 ) {
   if (response.schemaVersion !== COMMAND_CENTER_SCHEMA_VERSION) {
     throw new Error(
-      "Command Center schema incompatibilă: " + response.schemaVersion + ".",
+      t("command-center-schema-mismatch", {
+        actual: response.schemaVersion,
+        expected: COMMAND_CENTER_SCHEMA_VERSION,
+      }),
     );
   }
   if (
     response.projectRoot !== projectRoot
     || response.runtimeSessionId !== runtimeSessionId
   ) {
-    throw new Error("Command Center a returnat rezultate pentru altă ProjectSession.");
+    throw new Error(t("command-center-session-mismatch"));
   }
   if (!Array.isArray(response.results)) {
-    throw new Error("Command Center nu a returnat o listă validă de rezultate.");
+    throw new Error(t("command-center-results-invalid"));
   }
 }
 
 export function commandCenterQuery(input: string): {
   query: string;
   scope: CommandCenterScope;
-  scopeLabel: string;
 } {
   const trimmedStart = input.trimStart();
   if (trimmedStart.startsWith(">")) {
     return {
       query: trimmedStart.slice(1).trimStart(),
       scope: "commands",
-      scopeLabel: "Comenzi",
     };
   }
   if (trimmedStart.startsWith("@")) {
     return {
       query: trimmedStart.slice(1).trimStart(),
       scope: "symbols",
-      scopeLabel: "Simboluri",
     };
   }
   if (trimmedStart.startsWith("#")) {
     return {
       query: trimmedStart.slice(1).trimStart(),
       scope: "files",
-      scopeLabel: "Fișiere",
     };
   }
-  return { query: input, scope: "all", scopeLabel: "Tot" };
+  return { query: input, scope: "all" };
 }

@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
+
+use toml_edit::DocumentMut;
 
 use crate::source_graph::{
     literals::find_first_string_literal,
@@ -12,13 +14,14 @@ pub(crate) struct ZolaContentFrontmatter {
     pub(crate) title: Option<String>,
     pub(crate) template: Option<String>,
     pub(crate) page_template: Option<String>,
+    pub(crate) taxonomies: BTreeMap<String, Vec<String>>,
 }
 
 pub(crate) fn parse_zola_content_frontmatter(source: &str) -> ZolaContentFrontmatter {
     let trimmed = source.trim_start_matches('\u{feff}');
     let Some(marker) = ["+++", "---"]
-        .iter()
-        .find(|marker| trimmed.starts_with(**marker))
+        .into_iter()
+        .find(|marker| trimmed.starts_with(marker))
     else {
         return ZolaContentFrontmatter::default();
     };
@@ -31,7 +34,59 @@ pub(crate) fn parse_zola_content_frontmatter(source: &str) -> ZolaContentFrontma
         title: frontmatter_string_value(frontmatter, "title"),
         template: frontmatter_string_value(frontmatter, "template"),
         page_template: frontmatter_string_value(frontmatter, "page_template"),
+        taxonomies: parse_taxonomies(frontmatter, marker),
     }
+}
+
+fn parse_taxonomies(frontmatter: &str, marker: &str) -> BTreeMap<String, Vec<String>> {
+    if marker == "+++" {
+        return frontmatter
+            .parse::<DocumentMut>()
+            .ok()
+            .and_then(|document| {
+                document
+                    .get("taxonomies")
+                    .and_then(|item| item.as_table_like())
+                    .map(|table| {
+                        table
+                            .iter()
+                            .filter_map(|(name, item)| {
+                                let values = item
+                                    .as_array()?
+                                    .iter()
+                                    .filter_map(|value| value.as_str().map(str::to_string))
+                                    .collect::<Vec<_>>();
+                                Some((name.to_string(), values))
+                            })
+                            .collect()
+                    })
+            })
+            .unwrap_or_default();
+    }
+
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(frontmatter) else {
+        return BTreeMap::new();
+    };
+    let Some(taxonomies) = value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(serde_yaml::Value::String("taxonomies".to_string())))
+        .and_then(serde_yaml::Value::as_mapping)
+    else {
+        return BTreeMap::new();
+    };
+    taxonomies
+        .iter()
+        .filter_map(|(name, terms)| {
+            let name = name.as_str()?.to_string();
+            let terms = terms
+                .as_sequence()?
+                .iter()
+                .filter_map(serde_yaml::Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            Some((name, terms))
+        })
+        .collect()
 }
 
 pub(crate) fn zola_content_page_kind(zola_root: &Path, path: &Path) -> SourcePageKind {
@@ -351,6 +406,33 @@ mod tests {
             Some("templates/about.html")
         );
         assert_eq!(frontmatter.page_template.as_deref(), Some("blog/page.html"));
+    }
+
+    #[test]
+    fn parses_arbitrary_toml_and_yaml_taxonomy_maps() {
+        let toml = parse_zola_content_frontmatter(
+            "+++\ntitle = \"Inline\"\ntaxonomies = { authors = [\"Gabriel\"], series = [\"Rust First\"] }\n+++\n",
+        );
+        assert_eq!(
+            toml.taxonomies.get("authors"),
+            Some(&vec!["Gabriel".to_string()])
+        );
+        assert_eq!(
+            toml.taxonomies.get("series"),
+            Some(&vec!["Rust First".to_string()])
+        );
+
+        let yaml = parse_zola_content_frontmatter(
+            "---\ntitle: YAML\ntaxonomies:\n  produse: [Studio, Editor]\n  autori:\n    - Gabriel\n---\n",
+        );
+        assert_eq!(
+            yaml.taxonomies.get("produse"),
+            Some(&vec!["Studio".to_string(), "Editor".to_string()])
+        );
+        assert_eq!(
+            yaml.taxonomies.get("autori"),
+            Some(&vec!["Gabriel".to_string()])
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
   import { IconPlus, IconSparkles } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
@@ -60,18 +61,18 @@
     "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)",
   ];
 
-  const FILTER_FNS = [
-    { name: "Blur",         fn: "blur(4px)"                                },
-    { name: "Brightness",   fn: "brightness(1.2)"                          },
-    { name: "Contrast",     fn: "contrast(1.2)"                            },
-    { name: "Drop Shadow",  fn: "drop-shadow(2px 4px 6px rgba(0,0,0,0.3))" },
-    { name: "Grayscale",    fn: "grayscale(100%)"                          },
-    { name: "Hue Rotate",   fn: "hue-rotate(90deg)"                        },
-    { name: "Invert",       fn: "invert(100%)"                             },
-    { name: "Opacity",      fn: "opacity(0.8)"                             },
-    { name: "Saturate",     fn: "saturate(2)"                              },
-    { name: "Sepia",        fn: "sepia(100%)"                              },
-  ];
+  const FILTER_FNS = $derived([
+    { name: t("inspector-filter-blur"), fn: "blur(4px)" },
+    { name: t("inspector-filter-brightness"), fn: "brightness(1.2)" },
+    { name: t("inspector-filter-contrast"), fn: "contrast(1.2)" },
+    { name: t("inspector-filter-drop-shadow"), fn: "drop-shadow(2px 4px 6px rgba(0,0,0,0.3))" },
+    { name: t("inspector-filter-grayscale"), fn: "grayscale(100%)" },
+    { name: t("inspector-filter-hue-rotate"), fn: "hue-rotate(90deg)" },
+    { name: t("inspector-filter-invert"), fn: "invert(100%)" },
+    { name: t("inspector-filter-opacity"), fn: "opacity(0.8)" },
+    { name: t("inspector-filter-saturate"), fn: "saturate(2)" },
+    { name: t("inspector-filter-sepia"), fn: "sepia(100%)" },
+  ]);
 
   const MASK_SIZE_OPTS   = ["auto", "cover", "contain", "100%", "50%"];
   const MASK_REPEAT_OPTS = ["no-repeat", "repeat", "repeat-x", "repeat-y", "space", "round"];
@@ -197,11 +198,11 @@
   </div>
 {/if}
 
-<InspectorSection title="Effects" {hasValues}>
+<InspectorSection title={t("inspector-effects-title")} {hasValues}>
   {#snippet icon()}<IconSparkles size={13} stroke={1.7} />{/snippet}
 
   <!-- Opacity -->
-  <div class="row-label">Opacity</div>
+  <div class="row-label">{t("inspector-effects-opacity")}</div>
   <PropInput
     label="Op"
     value={getValue("opacity")}
@@ -210,7 +211,7 @@
   />
 
   <!-- Mix Blend Mode -->
-  <div class="row-label" style="margin-top: 4px;">Mod de amestecare</div>
+  <div class="row-label" style="margin-top: 4px;">{t("inspector-effects-blend-mode")}</div>
   <TextWithOptions
     value={getValue("mix-blend-mode")}
     placeholder="normal"
@@ -219,7 +220,7 @@
   />
 
   <!-- Clip Path -->
-  <div class="row-label" style="margin-top: 4px;">Clip Path</div>
+  <div class="row-label" style="margin-top: 4px;">{t("inspector-effects-clip-path")}</div>
   <TextWithOptions
     value={getValue("clip-path")}
     placeholder="none"
@@ -229,14 +230,14 @@
 
   <!-- Filter -->
   <div class="effects-subheader" style="margin-top: 6px;">
-    <span class="effects-label" class:has-value={getValue("filter") !== ""}>FILTER</span>
+    <span class="effects-label" class:has-value={getValue("filter") !== ""}>{t("inspector-effects-filter")}</span>
     <button
       bind:this={filterBtnRef}
       type="button"
       class="add-btn"
       class:active={showFilter}
-      title="Adaugă funcție filter"
-      aria-label="Adaugă funcție filter"
+      title={t("inspector-effects-add-filter")}
+      aria-label={t("inspector-effects-add-filter")}
       onclick={openFilter}
     >
       <IconPlus size={13} stroke={1.9} />
@@ -250,14 +251,14 @@
 
   <!-- Backdrop Filter -->
   <div class="effects-subheader" style="margin-top: 4px;">
-    <span class="effects-label" class:has-value={getValue("backdrop-filter") !== ""}>BACKDROP FILTER</span>
+    <span class="effects-label" class:has-value={getValue("backdrop-filter") !== ""}>{t("inspector-effects-backdrop-filter")}</span>
     <button
       bind:this={bdFilterBtnRef}
       type="button"
       class="add-btn"
       class:active={showBdFilter}
-      title="Adaugă funcție backdrop-filter"
-      aria-label="Adaugă funcție backdrop-filter"
+      title={t("inspector-effects-add-backdrop-filter")}
+      aria-label={t("inspector-effects-add-backdrop-filter")}
       onclick={openBdFilter}
     >
       <IconPlus size={13} stroke={1.9} />
@@ -271,9 +272,9 @@
 
   <!-- Mask -->
   <div class="effects-subheader" style="margin-top: 6px;">
-    <span class="effects-label" class:has-value={getValue("mask-image") !== ""}>MASK</span>
+    <span class="effects-label" class:has-value={getValue("mask-image") !== ""}>{t("inspector-effects-mask")}</span>
   </div>
-  <div class="row-label">Mask Image</div>
+  <div class="row-label">{t("inspector-effects-mask-image")}</div>
   <AssetPicker
     value={maskImageUrl}
     assets={imageAssets}
@@ -285,8 +286,8 @@
   />
 
   <div class="row-2 label-row" style="margin-top: 4px;">
-    <span class="row-label">Mask Size</span>
-    <span class="row-label">Mask Repeat</span>
+    <span class="row-label">{t("inspector-effects-mask-size")}</span>
+    <span class="row-label">{t("inspector-effects-mask-repeat")}</span>
   </div>
   <div class="row-2">
     <TextWithOptions
@@ -303,7 +304,7 @@
     />
   </div>
 
-  <div class="row-label" style="margin-top: 2px;">Poziția măștii</div>
+  <div class="row-label" style="margin-top: 2px;">{t("inspector-effects-mask-position")}</div>
   <TextWithOptions
     value={getValue("mask-position")}
     placeholder="center"

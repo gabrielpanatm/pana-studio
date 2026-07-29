@@ -5,7 +5,7 @@ cu [Zola](https://www.getzola.org/). Aplicația combină un preview controlat cu
 editarea surselor HTML/Tera, SCSS, Markdown și JavaScript într-un workspace
 local. Este construită cu Tauri 2, Rust, SvelteKit și TypeScript.
 
-> **Stadiu:** versiune publică de test `0.1.1`. Interfața este în limba română,
+> **Stadiu:** versiune publică de test `0.1.2`. Interfața este disponibilă în română și engleză,
 > iar distribuția pregătită în prezent este pentru Linux x86-64. Fă backup sau
 > inițializează versionarea Git înainte de a lucra pe un proiect important.
 
@@ -49,9 +49,9 @@ După publicarea unei versiuni, descarcă fișierul `.AppImage` și fișierul s�
 Verifică și pornește aplicația astfel:
 
 ```bash
-sha256sum --check "Pana.Studio_0.1.1_amd64.AppImage.sha256"
-chmod +x "Pana.Studio_0.1.1_amd64.AppImage"
-./"Pana.Studio_0.1.1_amd64.AppImage"
+sha256sum --check "Pana.Studio_0.1.2_amd64.AppImage.sha256"
+chmod +x "Pana.Studio_0.1.2_amd64.AppImage"
+./"Pana.Studio_0.1.2_amd64.AppImage"
 ```
 
 AppImage-ul nu necesită instalare. Compatibilitatea depinde de distribuția și
@@ -118,7 +118,7 @@ src-tauri/target/release/bundle/appimage/
 `src-tauri/target/`, `node_modules/`, `build/` și artefactele AppImage sunt
 generate local și nu trebuie adăugate în Git.
 
-Un tag Git cu forma `v0.1.1` pornește workflow-ul de release pe Ubuntu 22.04.
+Un tag Git cu forma `v0.1.2` pornește workflow-ul de release pe Ubuntu 22.04.
 Acesta repetă verificările, construiește AppImage-ul, generează checksum-ul și
 publică release-ul GitHub ca prerelease după finalizarea cu succes.
 

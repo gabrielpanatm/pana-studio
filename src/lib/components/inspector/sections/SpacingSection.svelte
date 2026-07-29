@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
@@ -66,20 +67,20 @@
   const WHITE_SPACE_OPTS = ["normal","nowrap","pre","pre-wrap","pre-line","break-spaces"];
 </script>
 
-<InspectorSection title="Spacing" {hasValues}>
+<InspectorSection title={t("inspector-spacing-title")} {hasValues}>
   {#snippet icon()}<IconBoxPadding size={13} stroke={1.7} />{/snippet}
 
   <!-- PADDING -->
   <div class="sub-header">
-    <span class="sub-label">Padding</span>
-    <button type="button" class="expand-btn" title="Individual sides" onclick={() => (expandPadding = !expandPadding)}>
+    <span class="sub-label">{t("inspector-spacing-padding")}</span>
+    <button type="button" class="expand-btn" title={t("inspector-spacing-individual-sides")} onclick={() => (expandPadding = !expandPadding)}>
       <IconBoxPadding size={12} stroke={1.7} />
     </button>
   </div>
 
   {#if expandPadding}
     {#if getValue("padding") !== ""}
-      <div class="conflict-note">Shorthand activ</div>
+      <div class="conflict-note">{t("inspector-spacing-shorthand-active")}</div>
       <PropInput label="P" value={getValue("padding")} suggestions={variablesForProperty("padding", scssVariables)} {...edit.continuous("padding")} />
     {/if}
     <div class="row-2">
@@ -104,15 +105,15 @@
 
   <!-- MARGIN -->
   <div class="sub-header">
-    <span class="sub-label">Margin</span>
-    <button type="button" class="expand-btn" title="Individual sides" onclick={() => (expandMargin = !expandMargin)}>
+    <span class="sub-label">{t("inspector-spacing-margin")}</span>
+    <button type="button" class="expand-btn" title={t("inspector-spacing-individual-sides")} onclick={() => (expandMargin = !expandMargin)}>
       <IconBoxPadding size={12} stroke={1.7} />
     </button>
   </div>
 
   {#if expandMargin}
     {#if getValue("margin") !== ""}
-      <div class="conflict-note">Shorthand activ</div>
+      <div class="conflict-note">{t("inspector-spacing-shorthand-active")}</div>
       <PropInput label="M" value={getValue("margin")} suggestions={variablesForProperty("margin", scssVariables)} {...edit.continuous("margin")} />
     {/if}
     <div class="row-2">
@@ -137,12 +138,12 @@
 
   <!-- GAP -->
   <div class="sub-header">
-    <span class="sub-label">Gap</span>
+    <span class="sub-label">{t("inspector-spacing-gap")}</span>
     <button
       type="button"
       class="expand-btn"
       class:active={splitGap}
-      title={splitGap ? "Gap unificat" : "Gap separat rând/coloană"}
+      title={splitGap ? t("inspector-spacing-gap-unified") : t("inspector-spacing-gap-split")}
       onclick={() => { splitGap = !splitGap; }}
     >
       {#if splitGap}<IconUnlink size={11} stroke={1.8} />{:else}<IconLink size={11} stroke={1.8} />{/if}
@@ -150,7 +151,7 @@
   </div>
   {#if splitGap}
     {#if getValue("gap") !== ""}
-      <div class="conflict-note">Shorthand activ</div>
+      <div class="conflict-note">{t("inspector-spacing-shorthand-active")}</div>
       <PropInput label="G" value={getValue("gap")} suggestions={variablesForProperty("gap", scssVariables)} {...edit.continuous("gap")} />
     {/if}
     <div class="row-2">
@@ -167,14 +168,14 @@
 
   <!-- WHITE SPACE + OVERFLOW -->
   <div class="row-2 label-row">
-    <span class="sub-label">White space</span>
+    <span class="sub-label">{t("inspector-spacing-white-space")}</span>
     <div class="overflow-label">
-      <span class="sub-label">Overflow</span>
+      <span class="sub-label">{t("inspector-spacing-overflow")}</span>
       <button
         type="button"
         class="expand-btn"
         class:active={splitOverflow}
-        title={splitOverflow ? "Overflow unificat" : "Overflow separat X/Y"}
+        title={splitOverflow ? t("inspector-spacing-overflow-unified") : t("inspector-spacing-overflow-split")}
         onclick={() => { splitOverflow = !splitOverflow; }}
       >
         {#if splitOverflow}
@@ -189,37 +190,37 @@
   <div class="row-2">
     <SelectControl
       value={getValue("white-space")}
-      placeholder="normal (implicit)"
-      options={[{ value: "", label: "— implicit (normal)" }, ...WHITE_SPACE_OPTS.map((value) => ({ value, label: value }))]}
-      ariaLabel="White space"
+      placeholder={t("inspector-placeholder-normal-default")}
+      options={[{ value: "", label: t("inspector-spacing-default-normal") }, ...WHITE_SPACE_OPTS.map((value) => ({ value, label: value }))]}
+      ariaLabel={t("inspector-spacing-white-space")}
       onchange={(value) => edit.commit("white-space", value)}
     />
     <SelectControl
       value={splitOverflow ? getValue("overflow-x") : getValue("overflow")}
-      placeholder="visible (implicit)"
+      placeholder={t("inspector-placeholder-visible-default")}
       options={[
-        { value: "", label: "— implicit (visible)" },
+        { value: "", label: t("inspector-spacing-default-visible") },
         ...OVERFLOW_OPTS.map((opt) => ({ value: opt, label: splitOverflow ? `X: ${opt}` : opt })),
       ]}
-      ariaLabel={splitOverflow ? "Overflow X" : "Overflow"}
+      ariaLabel={splitOverflow ? t("inspector-spacing-overflow-x") : t("inspector-spacing-overflow")}
       onchange={(value) => edit.commit(splitOverflow ? "overflow-x" : "overflow", value)}
     />
   </div>
 
   {#if splitOverflow}
     {#if getValue("overflow") !== ""}
-      <div class="conflict-note">Shorthand overflow activ; îl poți elimina din modul unificat.</div>
+      <div class="conflict-note">{t("inspector-spacing-overflow-shorthand")}</div>
     {/if}
     <div class="row-2">
       <div></div>
       <SelectControl
         value={getValue("overflow-y")}
-        placeholder="visible (implicit)"
+        placeholder={t("inspector-placeholder-visible-default")}
         options={[
-          { value: "", label: "— implicit (visible)" },
+          { value: "", label: t("inspector-spacing-default-visible") },
           ...OVERFLOW_OPTS.map((opt) => ({ value: opt, label: `Y: ${opt}` })),
         ]}
-        ariaLabel="Overflow Y"
+        ariaLabel={t("inspector-spacing-overflow-y")}
         onchange={(value) => edit.commit("overflow-y", value)}
       />
     </div>

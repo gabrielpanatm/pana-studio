@@ -2,6 +2,7 @@ import type {
   ProjectOpenRecoveryAssessment,
   ProjectOpenRecoveryDecisionInput,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export const PROJECT_OPEN_RECOVERY_NOTIFICATION_ID = "project.open.recovery-decision";
 
@@ -19,7 +20,7 @@ export function createProjectOpenRecoveryDecisionRequest(
   operatorDecisionId: string | null,
 ): ProjectOpenRecoveryDecisionRequest {
   if (assessment.status !== "decision_required" || !assessment.assessmentToken) {
-    throw new Error("Verificarea recuperării nu cere o decizie explicită validă.");
+    throw new Error(t("project-recovery-decision-not-required"));
   }
   return {
     id: [
@@ -39,7 +40,7 @@ export function projectOpenRecoveryAbandonDecision(
 ): ProjectOpenRecoveryDecisionInput {
   const assessmentToken = request.assessment.assessmentToken;
   if (!assessmentToken || request.assessment.status !== "decision_required") {
-    throw new Error("Cererea de recuperare nu mai conține identificatorul inspectat.");
+    throw new Error(t("project-recovery-token-missing"));
   }
   return { action: "abandon", assessmentToken };
 }
@@ -49,11 +50,11 @@ export function projectOpenRecoveryReasonLabel(
 ) {
   switch (assessment.conflictReason) {
     case "project_root_replaced":
-      return "dosar fizic înlocuit";
+      return t("project-recovery-reason-root-replaced");
     case "recovery_invalid":
-      return "recuperare incompatibilă";
+      return t("project-recovery-reason-invalid");
     case "disk_baseline_changed":
     default:
-      return "conținut schimbat pe disc";
+      return t("project-recovery-reason-disk-changed");
   }
 }

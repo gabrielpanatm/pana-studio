@@ -6,18 +6,18 @@ import {
   type EditorActionOutcome,
 } from "$lib/editor-runtime/action-outcome";
 import {
-  getScssVariables,
   readProjectWorkspaceState,
   saveProjectWorkspace,
-  scanProject,
   type CanvasProjectionPlan,
 } from "$lib/project/io";
 import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
-import { planOpenedProject, preservePreviewBaseUrl } from "$lib/project/session";
 import {
   invalidateFileBufferDraftSyncCursor,
 } from "$lib/session/file-buffer-draft-sync";
-import { flushWorkspaceMutationInputs } from "$lib/session/workspace-mutation-coordinator";
+import {
+  flushWorkspaceMutationInputs,
+  type WorkspaceDerivedReconciliationOutcome,
+} from "$lib/session/workspace-mutation-coordinator";
 import { markDiskMutation, type DiskState } from "$lib/session/disk-state";
 import type {
   HtmlPendingArea,
@@ -25,10 +25,11 @@ import type {
   ProjectScan,
   ProjectWorkspaceSaveReceipt,
   ProjectWorkspaceSnapshot,
-  SaveState,
   ScssVariable,
 } from "$lib/types";
-import { errorMessage } from "$lib/util";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { errorMessage, isRecoveryRequiredError } from "$lib/util";
+import { t } from "$lib/i18n/runtime.svelte";
 
 /**
  * Frontend projection needed to present a ProjectWorkspace Save.
@@ -41,8 +42,6 @@ export type SaveControllerHost = {
   kernelProjectSessionId: string;
   editorMutationEpoch: number;
   projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
-  saveState: SaveState;
-  saveStatus: string;
   saveRequest: number;
   projectStatus: string;
   scannedProject: ProjectScan | null;
@@ -56,7 +55,7 @@ export type SaveControllerHost = {
   jsRefreshToken: number;
   previewWorkspaceRevision: string | null;
   pendingCanvasProjection: CanvasProjectionPlan | null;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   setInspectorPending: (area: InspectorPendingArea, pending: boolean) => void;
   applyTagChange: () => Promise<EditorActionOutcome>;
   applyClassesToHtml: () => Promise<EditorActionOutcome>;
@@ -64,6 +63,15 @@ export type SaveControllerHost = {
   applyImageSourceToHtml: (src?: string) => Promise<EditorActionOutcome>;
   applyTextContentToHtml: () => Promise<EditorActionOutcome>;
   refreshSourceGraph?: (options?: { strict?: boolean }) => Promise<void>;
+  reconcileWorkspaceDerivedState: (options: {
+    expectedProjectRoot: string;
+    expectedSessionId: string;
+    expectedWorkspaceRevision: number;
+    topologyChanged: boolean;
+    preferredRelativePath?: string | null;
+    refreshSourceGraph?: boolean;
+    refreshScss?: boolean;
+  }) => Promise<WorkspaceDerivedReconciliationOutcome>;
   requestPreviewRefresh: (reason: "after-save") => Promise<boolean>;
   markPreviewSavedToDisk?: (message?: string) => void;
   scheduleZolaValidation?: (reason?: "save") => void;
@@ -89,7 +97,7 @@ function captureSaveSession(host: SaveControllerHost): SaveSessionIdentity {
     expectedSessionId: host.kernelProjectSessionId.trim(),
   };
   if (!identity.expectedProjectRoot || !identity.expectedSessionId) {
-    throw new Error("Salvarea cere o sesiune activă a proiectului, legată de rădăcină și de identitatea Rust.");
+    throw new Error(t("save-controller-session-required"));
   }
   return identity;
 }
@@ -103,7 +111,7 @@ function requireCurrentSaveSession(
     host.sessionProjectRoot !== identity.expectedProjectRoot
     || host.kernelProjectSessionId !== identity.expectedSessionId
   ) {
-    throw new Error(`${operation} a fost invalidat de schimbarea ProjectSession.`);
+    throw new Error(t("save-controller-session-changed", { operation }));
   }
 }
 
@@ -111,15 +119,15 @@ function requireWorkspaceSnapshot(
   snapshot: ProjectWorkspaceSnapshot | null,
   identity: SaveSessionIdentity,
 ): ProjectWorkspaceSnapshot {
-  if (!snapshot) throw new Error("Sesiunea proiectului nu este inițializată.");
+  if (!snapshot) throw new Error(t("save-controller-session-uninitialized"));
   if (
     snapshot.projectRoot !== identity.expectedProjectRoot
     || snapshot.runtimeSessionId !== identity.expectedSessionId
   ) {
-    throw new Error("Instantaneul sesiunii proiectului aparține altei sesiuni.");
+    throw new Error(t("save-controller-snapshot-session-mismatch"));
   }
   if (!Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) {
-    throw new Error("Sesiunea proiectului a returnat o revizie invalidă.");
+    throw new Error(t("save-controller-revision-invalid"));
   }
   return snapshot;
 }
@@ -135,7 +143,7 @@ function requireSaveReceipt(
     || receipt.workspace.projectRoot !== identity.expectedProjectRoot
     || receipt.workspace.runtimeSessionId !== identity.expectedSessionId
   ) {
-    throw new Error("Confirmarea salvării aparține altei sesiuni.");
+    throw new Error(t("save-controller-receipt-session-mismatch"));
   }
   if (
     receipt.revisionBefore !== before.revision
@@ -143,10 +151,10 @@ function requireSaveReceipt(
     || receipt.diskGenerationBefore !== before.diskGeneration
     || receipt.diskGenerationAfter !== receipt.workspace.diskGeneration
   ) {
-    throw new Error("Confirmarea salvării nu respectă revizia și generația rezervate.");
+    throw new Error(t("save-controller-receipt-reservation-mismatch"));
   }
   if (receipt.workspace.dirty) {
-    throw new Error("Salvarea s-a încheiat cu modificări nesalvate; starea de referință nu a fost acceptată.");
+    throw new Error(t("save-controller-receipt-still-dirty"));
   }
   if (
     receipt.acceptedManifest.root !== identity.expectedProjectRoot
@@ -154,10 +162,10 @@ function requireSaveReceipt(
     || !Number.isSafeInteger(receipt.diskGenerationAfter)
     || receipt.diskGenerationAfter < 1
   ) {
-    throw new Error("Confirmarea salvării nu conține un manifest complet și valid al discului acceptat.");
+    throw new Error(t("save-controller-manifest-invalid"));
   }
   if (receipt.status === "noop" && before.dirty) {
-    throw new Error("Sesiunea proiectului nu a raportat nicio operație pentru o revizie modificată.");
+    throw new Error(t("save-controller-operations-missing"));
   }
 }
 
@@ -165,10 +173,10 @@ async function flushAllEditorDrafts(host: SaveControllerHost, identity: SaveSess
   await flushWorkspaceMutationInputs("save", {
     checkpoint: (phase) => {
       const label = phase === "editors"
-        ? "Save draft flush"
+        ? t("save-controller-operation-draft-flush")
         : phase === "page-js"
-          ? "Save Page JS flush"
-          : "Save FileBuffer flush";
+          ? t("save-controller-operation-page-js-flush")
+          : t("save-controller-operation-file-buffer-flush");
       requireCurrentSaveSession(host, identity, label);
     },
   });
@@ -188,7 +196,7 @@ export async function savePendingHtmlChanges(
     if (!editorActionSucceeded(result)) return result;
     if (host.htmlPending[area]) {
       return blockedAction(
-        `Salvarea a fost oprită: editarea HTML „${area}” a rămas în așteptare după ${result.status}.`,
+        t("save-controller-html-pending", { area, status: result.status }),
       );
     }
     committed ||= result.status === "committed";
@@ -210,10 +218,14 @@ export async function savePendingHtmlChanges(
     .find((area) => host.htmlPending[area]);
   if (remainingArea || host.pendingTag || host.inspectorPending.html) {
     return blockedAction(
-      `Salvarea a fost oprită: există încă o editare HTML în așteptare${remainingArea ? ` (${remainingArea})` : ""}.`,
+      t("save-controller-html-still-pending", {
+        area: remainingArea ? ` (${remainingArea})` : "",
+      }),
     );
   }
-  return committed ? committedAction() : noopAction("Nu există editări HTML în așteptare.");
+  return committed
+    ? committedAction()
+    : noopAction(t("save-controller-no-html-pending"));
 }
 
 async function settleFrontendProjection(
@@ -221,8 +233,15 @@ async function settleFrontendProjection(
   identity: SaveSessionIdentity,
   receipt: SaveSettlementReceipt,
   mutationEpoch: number,
-) {
-  requireCurrentSaveSession(host, identity, "Save settlement");
+  topologyChanged: boolean,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  if (
+    host.sessionProjectRoot !== identity.expectedProjectRoot
+    || host.kernelProjectSessionId !== identity.expectedSessionId
+  ) {
+    return warnings;
+  }
   const noNewFrontendMutation = host.editorMutationEpoch === mutationEpoch;
   if (noNewFrontendMutation) {
     host.setInspectorPending("css", false);
@@ -233,50 +252,60 @@ async function settleFrontendProjection(
   }
 
   if (receipt.status === "saved") {
-    const previousProject = host.scannedProject;
-    if (previousProject) {
-      host.scannedProject = preservePreviewBaseUrl(
-        await scanProject(identity.expectedProjectRoot),
-        previousProject,
+    try {
+      const derived = await host.reconcileWorkspaceDerivedState({
+        expectedProjectRoot: identity.expectedProjectRoot,
+        expectedSessionId: identity.expectedSessionId,
+        expectedWorkspaceRevision: receipt.revisionAfter,
+        topologyChanged,
+        preferredRelativePath: host.activeScannedPath,
+        refreshSourceGraph: true,
+        refreshScss: true,
+      });
+      warnings.push(...derived.warnings);
+    } catch (error) {
+      warnings.push(
+        t("save-controller-derived-resync", { message: errorMessage(error) }),
       );
-      requireCurrentSaveSession(host, identity, "Save project rescan");
-      host.projectStatus = planOpenedProject(host.scannedProject).projectStatus;
     }
-    await host.refreshSourceGraph?.({ strict: true });
-    requireCurrentSaveSession(host, identity, "Save Source Graph refresh");
-    host.scssVariables = await getScssVariables(identity).catch(() => host.scssVariables);
     host.refreshToken += 1;
     host.jsRefreshToken += 1;
-    await projectLatestProjectWorkspacePreview(host, {
-      reason: "after-save",
-      minimumWorkspaceRevision: receipt.revisionAfter,
-      requestedPaths: [...new Set([...receipt.writtenFiles, ...receipt.removedFiles])].sort(),
-      force: true,
-    });
-    requireCurrentSaveSession(host, identity, "Save ProjectWorkspace Preview projection");
+    try {
+      const preview = await projectLatestProjectWorkspacePreview(host, {
+        reason: "after-save",
+        minimumWorkspaceRevision: receipt.revisionAfter,
+        requestedPaths: [...new Set([...receipt.writtenFiles, ...receipt.removedFiles])].sort(),
+        force: true,
+      });
+      if (preview.status === "deferred") {
+        warnings.push(t("save-controller-preview-deferred"));
+      }
+    } catch (error) {
+      warnings.push(t("save-controller-preview-resync", { message: errorMessage(error) }));
+    }
     host.scheduleZolaValidation?.("save");
-    host.markPreviewSavedToDisk?.("Sesiunea proiectului a fost salvată atomic pe disc.");
+    host.markPreviewSavedToDisk?.(t("save-controller-preview-saved"));
     host.diskState = markDiskMutation(host.diskState, "save", host.activeScannedPath);
   }
+  return [...new Set(warnings)];
 }
 
 async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
   const identity = captureSaveSession(host);
   host.saveRequest += 1;
-  host.saveState = "saving";
-  host.saveStatus = "Se sincronizează editorii în sesiunea proiectului...";
+  host.setGlobalStatus(t("save-controller-syncing-editors"), "saving");
 
   await flushAllEditorDrafts(host, identity);
   const html = await savePendingHtmlChanges(host);
-  requireCurrentSaveSession(host, identity, "Save HTML staging");
+  requireCurrentSaveSession(host, identity, t("save-controller-operation-html-staging"));
   if (!editorActionSucceeded(html)) {
-    throw new Error(html.reason ?? `Salvarea HTML a fost oprită (${html.status}).`);
+    throw new Error(html.reason ?? t("save-controller-html-stopped", { status: html.status }));
   }
   // HTML staging may update a code-editor draft as part of the same action.
   await flushAllEditorDrafts(host, identity);
 
   const before = requireWorkspaceSnapshot(await readProjectWorkspaceState(), identity);
-  requireCurrentSaveSession(host, identity, "Save workspace snapshot");
+  requireCurrentSaveSession(host, identity, t("save-controller-operation-workspace-snapshot"));
   const mutationEpoch = host.editorMutationEpoch;
 
   if (!before.dirty) {
@@ -285,30 +314,56 @@ async function saveWorkspace(host: SaveControllerHost): Promise<boolean> {
       revisionAfter: before.revision,
       writtenFiles: [],
       removedFiles: [],
-    }, mutationEpoch);
+    }, mutationEpoch, false);
     host.projectWorkspaceSnapshot = before;
-    host.setGlobalStatus("Nicio modificare de salvat.", "saved");
+    host.setGlobalStatus(t("save-controller-no-changes"), "saved");
     return false;
   }
 
-  host.saveStatus = `Se salvează atomic revizia ${before.revision} a sesiunii proiectului...`;
+  host.setGlobalStatus(
+    t("save-controller-saving-revision", { revision: before.revision }),
+    "saving",
+  );
   const receipt = await saveProjectWorkspace({
     expectedProjectRoot: identity.expectedProjectRoot,
     expectedSessionId: identity.expectedSessionId,
     expectedRevision: before.revision,
   });
-  requireCurrentSaveSession(host, identity, "Save receipt");
+  requireCurrentSaveSession(host, identity, t("save-controller-operation-receipt"));
   requireSaveReceipt(receipt, before, identity);
   host.acceptProjectWorkspaceSaveBaseline(
     receipt.acceptedManifest,
     receipt.diskGenerationAfter,
   );
   host.projectWorkspaceSnapshot = receipt.workspace;
-  await settleFrontendProjection(host, identity, receipt, mutationEpoch);
+  const successMessage = t("save-controller-saved", {
+    written: receipt.writtenFiles.length,
+    removed: receipt.removedFiles.length,
+  });
   host.setGlobalStatus(
-    `Salvat atomic: ${receipt.writtenFiles.length} fișier(e) scrise, ${receipt.removedFiles.length} șterse.`,
+    successMessage,
     "saved",
   );
+  const warnings = await settleFrontendProjection(
+    host,
+    identity,
+    receipt,
+    mutationEpoch,
+    before.createdDocumentCount > 0 || before.deletedDocumentCount > 0,
+  );
+  if (
+    warnings.length > 0
+    && host.sessionProjectRoot === identity.expectedProjectRoot
+    && host.kernelProjectSessionId === identity.expectedSessionId
+  ) {
+    host.setGlobalStatus(
+      t("save-controller-saved-resync", {
+        success: successMessage,
+        warnings: warnings.join(" "),
+      }),
+      "saved",
+    );
+  }
   return receipt.status === "saved";
 }
 
@@ -316,7 +371,12 @@ export async function saveSessionDrafts(host: SaveControllerHost): Promise<boole
   try {
     return await saveWorkspace(host);
   } catch (error) {
-    host.setGlobalStatus(`Salvarea sesiunii proiectului a eșuat: ${errorMessage(error)}`, "error");
+    host.setGlobalStatus(
+      isRecoveryRequiredError(error)
+        ? t("save-controller-recovery-required", { message: errorMessage(error) })
+        : t("save-controller-rejected", { message: errorMessage(error) }),
+      "error",
+    );
     return false;
   }
 }

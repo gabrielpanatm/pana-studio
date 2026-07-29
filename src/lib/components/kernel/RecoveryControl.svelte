@@ -25,6 +25,8 @@
     recoveryJournalFamilyStateLabel,
     recoveryJournalFamilyStatusLabel,
   } from "$lib/kernel/recovery-control";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import { errorMessage } from "$lib/util";
 
   let {
     projectKey = "",
@@ -77,7 +79,10 @@
     } catch (error) {
       if (requestId !== requestSequence) return;
       loadError = errorMessage(error);
-      onStatusUpdate?.(`Recovery Coordinator nu a putut fi citit: ${loadError}`, "error");
+      onStatusUpdate?.(
+        t("project-recovery-read-failed", { detail: loadError }),
+        "error",
+      );
     } finally {
       if (requestId === requestSequence) loading = false;
     }
@@ -91,7 +96,7 @@
   function diagnosticFor(id: string): string | null {
     const diagnostic = normalizeRecoveryDiagnostic(notes[id] ?? "");
     if (recoveryDiagnosticIsActionable(diagnostic)) return diagnostic;
-    noteErrors = { ...noteErrors, [id]: "Descrie verificarea făcută în cel puțin 12 caractere." };
+    noteErrors = { ...noteErrors, [id]: t("project-recovery-note-minimum") };
     return null;
   }
 
@@ -107,12 +112,19 @@
       scan = result.recoveryCoordinator;
       pruneNotes(scan);
       onStatusUpdate?.(
-        `Recuperarea salvării sesiunii proiectului s-a încheiat pentru ${journal.transactionId}.`,
+        t("project-recovery-workspace-save-complete", {
+          transaction: journal.transactionId,
+        }),
         "restored",
       );
       onChanged?.();
     } catch (error) {
-      onStatusUpdate?.(`Recuperarea salvării sesiunii proiectului a eșuat: ${errorMessage(error)}`, "error");
+      onStatusUpdate?.(
+        t("project-recovery-workspace-save-failed", {
+          detail: errorMessage(error),
+        }),
+        "error",
+      );
       await refresh();
     } finally {
       busyId = null;
@@ -134,10 +146,16 @@
       );
       scan = result.recoveryCoordinator;
       pruneNotes(scan);
-      onStatusUpdate?.(`ProjectTransition recovery finalizat pentru ${journal.retentionId}.`, "restored");
+      onStatusUpdate?.(
+        t("project-recovery-transition-complete", { retention: journal.retentionId }),
+        "restored",
+      );
       onChanged?.();
     } catch (error) {
-      onStatusUpdate?.(`ProjectTransition recovery a eșuat: ${errorMessage(error)}`, "error");
+      onStatusUpdate?.(
+        t("project-recovery-transition-failed", { detail: errorMessage(error) }),
+        "error",
+      );
       await refresh();
     } finally {
       busyId = null;
@@ -152,9 +170,6 @@
     noteErrors = Object.fromEntries(Object.entries(noteErrors).filter(([id]) => validIds.has(id)));
   }
 
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-  }
 </script>
 
 <section class="recovery-control" aria-labelledby="recovery-coordinator-title">
@@ -169,10 +184,10 @@
       {/if}
       <div>
         <strong id="recovery-coordinator-title">{summary.label}</strong>
-        <span>{loading ? "Se scanează jurnalele active..." : summary.detail}</span>
+        <span>{loading ? t("project-recovery-scanning") : summary.detail}</span>
       </div>
     </div>
-    <button type="button" title="Recitește coordonatorul recuperării" disabled={loading || busyId !== null} onclick={() => void refresh()}>
+    <button type="button" title={t("project-recovery-refresh")} disabled={loading || busyId !== null} onclick={() => void refresh()}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
@@ -181,17 +196,17 @@
 
   {#if scan}
     <div class="scan-meta">
-      <span>scan {formatRecoveryTime(scan.scannedAtMs)}</span>
-      <span>session {scan.sessionId}</span>
-      <span>schema {scan.schemaVersion}</span>
+      <span>{t("project-recovery-scan-time", { time: formatRecoveryTime(scan.scannedAtMs) })}</span>
+      <span>{t("project-recovery-session", { session: scan.sessionId })}</span>
+      <span>{t("project-recovery-schema", { version: scan.schemaVersion })}</span>
     </div>
 
     {#if scan.hotJournalFamilies.length}
-      <div class="families" aria-label="Familii de recuperare active">
+      <div class="families" aria-label={t("project-recovery-active-families")}>
         {#each scan.hotJournalFamilies as family (family.family)}
           <article class:manual={family.status === "manual_review_required"}>
             <strong>{recoveryJournalFamilyLabel(family.family)}</strong>
-            <span>{recoveryJournalFamilyStatusLabel(family.status)} · {family.count}</span>
+            <span>{recoveryJournalFamilyStatusLabel(family.status)} · {l10n.formatNumber(family.count)}</span>
             <small>{recoveryJournalFamilyActionLabel(family)}</small>
             <small>{recoveryJournalFamilyStateLabel(family)}</small>
           </article>
@@ -199,11 +214,11 @@
       </div>
     {/if}
 
-    <RecoveryDiagnosticsList diagnostics={scan.diagnostics} compact label="Diagnosticele coordonatorului de recuperare" />
+    <RecoveryDiagnosticsList diagnostics={scan.diagnostics} compact label={t("project-recovery-diagnostics")} />
 
     {#if scan.hotProjectWorkspaceSaveJournals.length}
       <div class="journal-group">
-        <h3>Salvare întreruptă</h3>
+        <h3>{t("project-recovery-interrupted-save")}</h3>
         {#each scan.hotProjectWorkspaceSaveJournals as journal (journal.transactionId)}
           <RecoveryProjectWorkspaceSaveJournalCard
             {journal}
@@ -221,7 +236,7 @@
 
     {#if scan.hotProjectTransitionDecisionRetentionJournals.length}
       <div class="journal-group">
-        <h3>Retenția deciziilor de tranziție</h3>
+        <h3>{t("project-recovery-family-transition-retention")}</h3>
         {#each scan.hotProjectTransitionDecisionRetentionJournals as journal (journal.retentionId)}
           <RecoveryProjectTransitionDecisionJournalCard
             {journal}

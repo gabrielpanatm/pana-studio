@@ -45,16 +45,6 @@ export type TeraDropRequest = {
   item: TeraPaletteItem;
 };
 
-export type TeraMoveRequest = {
-  sourceId: string;
-  targetSelector: string;
-  targetSourceId: string | null;
-  targetTemplateSourceId: string | null;
-  targetTag: string;
-  targetKind: "html" | "tera" | "preview";
-  position: DropPosition;
-};
-
 export type TeraDropResolution =
   | {
       allowed: true;

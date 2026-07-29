@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-editor-move"
+description = "Enables the commit_editor_move command without any pre-configured scope."
+commands.allow = ["commit_editor_move"]
+
+[[permission]]
+identifier = "deny-commit-editor-move"
+description = "Denies the commit_editor_move command without any pre-configured scope."
+commands.deny = ["commit_editor_move"]

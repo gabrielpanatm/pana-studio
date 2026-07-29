@@ -3,6 +3,7 @@ import type {
   KernelProjectTransitionPolicy,
   KernelProjectTransitionReason,
 } from "$lib/types";
+import { l10n, t } from "$lib/i18n/runtime.svelte";
 
 export type ProjectTransitionDecisionMetric = {
   label: string;
@@ -75,25 +76,46 @@ export function createProjectTransitionDecisionRequest(
 }
 
 export function transitionReasonLabel(reason: KernelProjectTransitionReason) {
-  const labels: Record<KernelProjectTransitionReason, string> = {
-    no_open_project: "fără proiect curent",
-    clean: "sesiune curată",
-    metadata_changed: "metadata schimbată",
-    workspace_dirty: "modificări nesalvate",
-    disk_conflict: "conflict pe disc",
-    blocked_project_state: "stare proiect blocată",
-    unknown_warning: "avertisment necunoscut",
-  };
-  return labels[reason];
+  switch (reason) {
+    case "no_open_project": return t("project-transition-reason-no-project");
+    case "clean": return t("project-transition-reason-clean");
+    case "metadata_changed": return t("project-transition-reason-metadata");
+    case "workspace_dirty": return t("project-transition-reason-dirty");
+    case "disk_conflict": return t("project-transition-reason-disk-conflict");
+    case "blocked_project_state": return t("project-transition-reason-blocked");
+    case "unknown_warning": return t("project-transition-reason-unknown");
+  }
 }
 
 export function transitionActionLabel(action: KernelProjectTransitionAction) {
-  const labels: Record<KernelProjectTransitionAction, string> = {
-    open_project: "Deschide proiectul",
-    reload_project: "Reîncarcă proiectul",
-    close_project: "Închide proiectul",
-  };
-  return labels[action];
+  switch (action) {
+    case "open_project": return t("project-transition-action-open");
+    case "reload_project": return t("project-transition-action-reload");
+    case "close_project": return t("project-transition-action-close");
+  }
+}
+
+export function localizedTransitionPolicyCopy(policy: KernelProjectTransitionPolicy) {
+  const action = transitionActionLabel(policy.action);
+  const reason = transitionReasonLabel(policy.reason);
+  const title = policy.decision === "block"
+    ? t("project-transition-policy-title-blocked", { action })
+    : policy.decision === "confirm"
+      ? t("project-transition-policy-title-confirm", { action })
+      : t("project-transition-policy-title-allowed", { action });
+  const message = t("project-transition-policy-message", { action, reason });
+  const evidence = t("project-transition-policy-evidence", {
+    dirty: policy.workspaceDirtyResourceCount,
+    conflicts: policy.diskConflictCount,
+    blocking: policy.diskBlockingCount,
+    metadata: policy.metadataChangedCount,
+  });
+  const recommendedAction = policy.decision === "block"
+    ? t("project-transition-policy-recommend-blocked")
+    : policy.decision === "confirm"
+      ? t("project-transition-policy-recommend-confirm")
+      : t("project-transition-policy-recommend-allowed");
+  return { title, message, evidence, recommendedAction };
 }
 
 export function projectTransitionDecisionMetrics(
@@ -101,14 +123,29 @@ export function projectTransitionDecisionMetrics(
 ): ProjectTransitionDecisionMetric[] {
   return [
     metric(
-      "Modificări în sesiune",
+      t("project-transition-metric-dirty"),
       policy.workspaceDirtyResourceCount,
       policy.workspaceDirtyResourceCount > 0 ? "warning" : "neutral",
     ),
-    metric("Revizie sesiune", policy.workspaceRevision ?? "—", "neutral"),
-    metric("Istoric", `${policy.workspaceUndoCount} undo / ${policy.workspaceRedoCount} redo`, "neutral"),
-    metric("Conflicte pe disc", policy.diskConflictCount, policy.diskBlockingCount > 0 ? "danger" : "neutral"),
-    metric("Metadate schimbate", policy.metadataChangedCount, policy.metadataChangedCount > 0 ? "warning" : "neutral"),
+    metric(t("project-transition-metric-revision"), policy.workspaceRevision ?? "—", "neutral"),
+    metric(
+      t("project-transition-metric-history"),
+      t("project-transition-history-value", {
+        undo: policy.workspaceUndoCount,
+        redo: policy.workspaceRedoCount,
+      }),
+      "neutral",
+    ),
+    metric(
+      t("project-transition-metric-conflicts"),
+      policy.diskConflictCount,
+      policy.diskBlockingCount > 0 ? "danger" : "neutral",
+    ),
+    metric(
+      t("project-transition-metric-metadata"),
+      policy.metadataChangedCount,
+      policy.metadataChangedCount > 0 ? "warning" : "neutral",
+    ),
   ];
 }
 
@@ -117,7 +154,11 @@ function metric(
   value: string | number,
   tone: ProjectTransitionDecisionMetric["tone"],
 ): ProjectTransitionDecisionMetric {
-  return { label, value: String(value), tone };
+  return {
+    label,
+    value: typeof value === "number" ? l10n.formatNumber(value) : value,
+    tone,
+  };
 }
 
 function normalizeUiPath(path: string) {

@@ -5,14 +5,17 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::project::{ProjectDiskManifest, ProjectDiskManifestEntry};
+use crate::{
+    localization::LocalizedDiagnostic,
+    project::{ProjectDiskManifest, ProjectDiskManifestEntry},
+};
 
 use super::{
     model::{FileBufferBaseline, FileBufferStore, FileBufferStoreLimits, FileBufferTextSnapshot},
     reader::{read_project_disk_text_snapshot, ProjectDiskTextReadOutcome},
 };
 
-pub const KERNEL_EXTERNAL_DISK_RECONCILE_SCHEMA_VERSION: u32 = 1;
+pub const KERNEL_EXTERNAL_DISK_RECONCILE_SCHEMA_VERSION: u32 = 2;
 const MAX_RECONCILE_PATHS: usize = 1_000;
 static RECONCILE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -67,7 +70,7 @@ pub struct KernelExternalDiskReconcileItemReceipt {
 pub struct KernelExternalDiskReconcileDiagnostic {
     pub code: String,
     pub relative_path: Option<String>,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub blocking: bool,
 }
 
@@ -984,12 +987,38 @@ fn terminal_item(
 fn diagnostic(
     code: impl Into<String>,
     relative_path: Option<String>,
-    message: impl Into<String>,
+    _message: impl Into<String>,
 ) -> KernelExternalDiskReconcileDiagnostic {
+    let code = code.into();
+    let message_code = match code.as_str() {
+        "session_instance_stale" => "external-disk-verdict-session-stale",
+        "manifest_stale" => "external-disk-verdict-manifest-stale",
+        "invalid_request_path" => "external-disk-verdict-invalid-path",
+        "project_root_mismatch" => "external-disk-verdict-root-mismatch",
+        "manifest_truncated" => "external-disk-verdict-manifest-truncated",
+        "batch_limit_exceeded" => "external-disk-verdict-batch-limit",
+        "file_buffer_draft_present" => "external-disk-verdict-draft-present",
+        "project_topology_changed" => "external-disk-verdict-topology-changed",
+        "file_buffer_cas_failed" => "external-disk-verdict-cas-failed",
+        "disk_missing_after_manifest" => "external-disk-diagnostic-missing-after-manifest",
+        "disk_target_not_file" => "external-disk-diagnostic-not-file",
+        "disk_target_oversized" => "external-disk-diagnostic-oversized",
+        "disk_target_unsafe_path" => "external-disk-diagnostic-unsafe-path",
+        "disk_target_unstable" => "external-disk-diagnostic-unstable",
+        "disk_target_unreadable" => "external-disk-diagnostic-unreadable",
+        "manifest_file_evidence_stale" => "external-disk-diagnostic-file-evidence-stale",
+        "batch_bytes_exceeded" => "external-disk-diagnostic-batch-bytes-exceeded",
+        "store_bytes_exceeded" => "external-disk-diagnostic-store-bytes-exceeded",
+        _ => "external-disk-verdict-blocked",
+    };
+    let mut message_diagnostic = LocalizedDiagnostic::new(message_code);
+    if let Some(path) = relative_path.as_ref() {
+        message_diagnostic = message_diagnostic.with_argument("path", path.clone());
+    }
     KernelExternalDiskReconcileDiagnostic {
-        code: code.into(),
+        code,
         relative_path,
-        message: message.into(),
+        message_diagnostic,
         blocking: true,
     }
 }

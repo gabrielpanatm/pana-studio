@@ -14,7 +14,6 @@ pub mod model;
 pub mod move_engine;
 mod ranges;
 pub mod tag_engine;
-pub mod template_edit_gate;
 pub mod template_workbench;
 pub mod tera_delete_engine;
 mod tera_graph;
@@ -25,6 +24,7 @@ pub mod zola_image_engine;
 
 use crate::{
     kernel::project_workspace::WorkspaceProjectionLease,
+    localization::LocalizedDiagnostic,
     project::{is_zola_project, zola_project_root},
     project_model::{
         files::{
@@ -37,7 +37,6 @@ use crate::{
 };
 
 pub use model::ProjectModelSnapshot;
-pub use move_engine::{ProjectHtmlMoveIntent, ProjectHtmlMovePlan};
 
 pub fn build_project_model(
     project_root: &Path,
@@ -98,7 +97,7 @@ pub fn build_project_model_with_projection(
     if !is_zola_project(&root) {
         diagnostics.push(ProjectModelDiagnostic {
             severity: ProjectModelDiagnosticSeverity::Warning,
-            message: "Proiectul curent nu pare să fie un proiect Zola valid.".to_string(),
+            diagnostic: LocalizedDiagnostic::new("project-model-not-zola-project"),
             file: None,
             range: None,
         });

@@ -11,6 +11,7 @@ import type {
   WorkbenchSnapshot,
   WorkbenchSurface,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type WorkbenchProjectionHost = {
   sessionProjectRoot: string;
@@ -68,7 +69,7 @@ export class WorkbenchProjectionController {
         snapshot = await this.refresh();
       }
       if (!snapshot || !projectRoot || !runtimeSessionId) {
-        throw new Error("Workbench nu are o ProjectSession activă.");
+        throw new Error(t("workbench-session-missing"));
       }
 
       const receipt = await applyWorkbenchIntent(workbenchIdentity(snapshot), intent);
@@ -77,7 +78,7 @@ export class WorkbenchProjectionController {
         current.sessionProjectRoot !== receipt.projectRoot
         || current.kernelProjectSessionId !== receipt.runtimeSessionId
       ) {
-        throw new Error("Workbench a ignorat un receipt pentru o ProjectSession închisă.");
+        throw new Error(t("workbench-closed-session-receipt"));
       }
       current.workbenchSnapshot = receipt.snapshot;
       return receipt;

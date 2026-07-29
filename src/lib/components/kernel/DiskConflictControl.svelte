@@ -6,9 +6,11 @@
     IconInfoCircle,
     IconRefresh,
   } from "@tabler/icons-svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readKernelDiskConflicts } from "$lib/project/io";
   import type { KernelDiskConflictFileSnapshot, KernelDiskConflictSnapshot } from "$lib/types";
   import { compactKernelPath, formatBytes } from "$lib/kernel/recovery-control";
+  import { errorMessage } from "$lib/util";
 
   let {
     projectKey = "",
@@ -31,7 +33,11 @@
 
   const visibleFiles = $derived(snapshot?.files.filter((file) => file.status !== "clean").slice(0, 24) ?? []);
   const summaryTone = $derived(snapshot?.summary.status ?? "clean");
-  const summaryLabel = $derived(snapshot?.summary.verdictReason ?? "Instantaneul conflictelor pe disc este indisponibil.");
+  const summaryLabel = $derived(
+    snapshot
+      ? errorMessage(snapshot.summary.verdictDiagnostic)
+      : t("project-kernel-disk-unavailable"),
+  );
 
   $effect(() => {
     if (!projectKey) return;
@@ -65,7 +71,10 @@
       if (requestId === requestSequence) {
         loadError = errorMessage(error);
         staleReason = snapshot ? reasonLabel : "";
-        onStatusUpdate?.(`Disk Conflict Snapshot eșuat: ${loadError}`, "error");
+        onStatusUpdate?.(
+          t("project-kernel-disk-load-failed", { detail: loadError }),
+          "error",
+        );
       }
     } finally {
       if (requestId === requestSequence) {
@@ -76,31 +85,30 @@
   }
 
   function diskRefreshReasonLabel(reason: "project" | "workspace" | "manual") {
-    if (reason === "project") return "Sesiunea proiectului";
-    if (reason === "workspace") return "Spațiul de lucru";
-    return "actualizare manuală";
-  }
-
-  function errorMessage(error: unknown) {
-    return error instanceof Error ? error.message : String(error);
+    if (reason === "project") return t("project-kernel-disk-reason-project");
+    if (reason === "workspace") return t("project-kernel-disk-reason-workspace");
+    return t("project-kernel-disk-reason-manual");
   }
 
   function statusLabel(file: KernelDiskConflictFileSnapshot) {
-    if (file.kind === "dirty_only") return "modificat";
-    if (file.kind === "metadata_changed") return "metadate";
-    if (file.kind === "disk_changed") return "schimbat pe disc";
-    if (file.kind === "missing_on_disk") return "lipsește";
-    if (file.kind === "readonly") return "doar citire";
-    if (file.kind === "not_file") return "nu este fișier";
-    if (file.kind === "oversized") return "prea mare";
-    if (file.kind === "unreadable") return "necitibil";
-    if (file.kind === "invalid_path") return "cale invalidă";
-    return "curat";
+    if (file.kind === "dirty_only") return t("project-kernel-disk-status-dirty");
+    if (file.kind === "metadata_changed") return t("project-kernel-disk-status-metadata");
+    if (file.kind === "disk_changed") return t("project-kernel-disk-status-changed");
+    if (file.kind === "missing_on_disk") return t("project-kernel-disk-status-missing");
+    if (file.kind === "readonly") return t("project-kernel-disk-status-readonly");
+    if (file.kind === "not_file") return t("project-kernel-disk-status-not-file");
+    if (file.kind === "oversized") return t("project-kernel-disk-status-oversized");
+    if (file.kind === "unreadable") return t("project-kernel-disk-status-unreadable");
+    if (file.kind === "invalid_path") return t("project-kernel-disk-status-invalid");
+    return t("project-kernel-disk-status-clean");
   }
 
   function baselineLabel(file: KernelDiskConflictFileSnapshot) {
-    const diskHash = file.disk?.hash ?? "absent";
-    return `referință ${file.baseline.hash} · disc ${diskHash}`;
+    const diskHash = file.disk?.hash ?? t("project-kernel-disk-absent");
+    return t("project-kernel-disk-hashes", {
+      baseline: file.baseline.hash,
+      disk: diskHash,
+    });
   }
 </script>
 
@@ -124,15 +132,21 @@
         <IconAlertTriangle size={17} stroke={1.9} />
       {/if}
       <div>
-        <strong id="kernel-disk-conflict-title">Instantaneu conflicte pe disc</strong>
-        <span>{loading ? `Se verifică discul${syncReason ? ` după ${syncReason}` : ""}...` : summaryLabel}</span>
+        <strong id="kernel-disk-conflict-title">{t("project-kernel-disk-title")}</strong>
+        <span>
+          {loading
+            ? syncReason
+              ? t("project-kernel-disk-checking-after", { reason: syncReason })
+              : t("project-kernel-disk-checking")
+            : summaryLabel}
+        </span>
       </div>
     </div>
 
     <button
       type="button"
       class="disk-refresh"
-      title="Recitește instantaneul conflictelor pe disc"
+      title={t("project-kernel-disk-refresh")}
       onclick={() => void refreshDiskConflicts("manual")}
       disabled={loading}
     >
@@ -143,7 +157,7 @@
   {#if staleReason}
     <div class="disk-note warning" role="alert">
       <IconAlertTriangle size={15} stroke={1.9} />
-      <span>Conflictele pe disc afișează ultimul instantaneu valid; actualizarea după {staleReason} a eșuat.</span>
+      <span>{t("project-kernel-disk-stale", { reason: staleReason })}</span>
     </div>
   {/if}
 
@@ -152,47 +166,55 @@
   {/if}
 
   {#if snapshot}
-    <div class="disk-metrics" aria-label="Metrice conflicte pe disc">
+    <div class="disk-metrics" aria-label={t("project-kernel-disk-metrics")}>
       <span>
-        <em>URMĂRITE</em>
-        <strong>{snapshot.summary.trackedFileCount}</strong>
+        <em>{t("project-kernel-disk-tracked")}</em>
+        <strong>{l10n.formatNumber(snapshot.summary.trackedFileCount)}</strong>
       </span>
       <span>
-        <em>CONFLICTE</em>
-        <strong>{snapshot.summary.conflictCount}</strong>
+        <em>{t("project-kernel-disk-conflicts")}</em>
+        <strong>{l10n.formatNumber(snapshot.summary.conflictCount)}</strong>
       </span>
       <span>
-        <em>MODIFICATE</em>
-        <strong>{snapshot.summary.dirtyOnlyCount}</strong>
+        <em>{t("project-kernel-disk-modified")}</em>
+        <strong>{l10n.formatNumber(snapshot.summary.dirtyOnlyCount)}</strong>
       </span>
       <span>
-        <em>SCHIMBATE</em>
-        <strong>{snapshot.summary.diskChangedCount}</strong>
+        <em>{t("project-kernel-disk-changed")}</em>
+        <strong>{l10n.formatNumber(snapshot.summary.diskChangedCount)}</strong>
       </span>
       <span>
-        <em>DOAR CITIRE</em>
-        <strong>{snapshot.summary.readonlyCount}</strong>
+        <em>{t("project-kernel-disk-readonly")}</em>
+        <strong>{l10n.formatNumber(snapshot.summary.readonlyCount)}</strong>
       </span>
     </div>
 
     {#if visibleFiles.length}
-      <div class="disk-file-list" aria-label="Fișiere cu semnal de conflict pe disc">
+      <div class="disk-file-list" aria-label={t("project-kernel-disk-file-list")}>
         {#each visibleFiles as file (file.relativePath)}
           <article class={`disk-file ${file.status}`}>
             <header>
               <IconDeviceFloppy size={15} stroke={1.9} />
               <div>
-                <span>{statusLabel(file)} · rev {file.revision}</span>
+                <span>{statusLabel(file)} · {t("project-kernel-disk-revision", {
+                  revision: l10n.formatNumber(file.revision),
+                })}</span>
                 <strong title={file.relativePath}>{compactKernelPath(file.relativePath, 72)}</strong>
               </div>
               <em>{file.role}</em>
             </header>
-            <p>{file.message}</p>
+            <p>{errorMessage(file.diagnostic)}</p>
             <div class="disk-file-meta">
               <span title={baselineLabel(file)}>{baselineLabel(file)}</span>
-              <span>{formatBytes(file.baseline.size)} referință</span>
-              <span>{file.disk ? `${formatBytes(file.disk.size)} disc` : "absent pe disc"}</span>
-              <span>{file.hasDraft ? "ciornă" : "fără ciornă"}</span>
+              <span>{t("project-kernel-disk-baseline-size", {
+                size: formatBytes(file.baseline.size),
+              })}</span>
+              <span>{file.disk
+                ? t("project-kernel-disk-disk-size", { size: formatBytes(file.disk.size) })
+                : t("project-kernel-disk-absent-on-disk")}</span>
+              <span>{file.hasDraft
+                ? t("project-kernel-disk-has-draft")
+                : t("project-kernel-disk-no-draft")}</span>
             </div>
           </article>
         {/each}
@@ -200,13 +222,13 @@
     {:else}
       <div class="empty-disk-state">
         <IconCircleCheck size={17} stroke={1.9} />
-        <span>Nu există fișiere cu semnal de conflict în instantaneul curent.</span>
+        <span>{t("project-kernel-disk-no-conflicts")}</span>
       </div>
     {/if}
   {:else if !loading && !loadError}
     <div class="empty-disk-state">
       <IconDeviceFloppy size={17} stroke={1.9} />
-      <span>Instantaneul conflictelor pe disc nu este încă disponibil pentru sesiunea curentă.</span>
+      <span>{t("project-kernel-disk-session-unavailable")}</span>
     </div>
   {/if}
 </section>

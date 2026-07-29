@@ -9,6 +9,7 @@ import type {
   KernelObservabilityLogSourceFilter,
 } from "$lib/types";
 import { compactKernelPath } from "$lib/kernel/recovery-control";
+import { l10n, t } from "$lib/i18n/runtime.svelte";
 
 export type ObservabilitySummaryTone = "idle" | "clean" | "warning" | "error";
 
@@ -28,47 +29,45 @@ const levelLabels: Record<KernelLogLevel, string> = {
   error: "ERROR",
 };
 
-const sourceFilterLabels: Record<KernelObservabilityLogSourceFilter, string> = {
-  all: "toate sursele",
-  active: "log activ",
-  archives: "arhive",
-};
-
-const healthLabels: Record<KernelObservabilityHealthStatus, string> = {
-  clean: "Operațional curat",
-  warning: "Necesită atenție",
-  error: "Problemă operațională",
-};
-
 export function observabilitySummary(snapshot: KernelObservabilityLogSnapshot | null): ObservabilitySummary {
   if (!snapshot) {
     return {
       tone: "idle",
-      label: "Observability Log indisponibil",
-      detail: "Kernel-ul nu a încărcat încă logul operațional.",
+      label: t("observability-unavailable-title"),
+      detail: t("observability-unavailable-detail"),
     };
   }
 
   if (!snapshot.logExists) {
     return {
       tone: "warning",
-      label: "Log operațional lipsă",
-      detail: "Application Home nu conține încă kernel.jsonl.",
+      label: t("observability-log-missing-title"),
+      detail: t("observability-log-missing-detail"),
     };
   }
 
   if (snapshot.unreadableCount > 0) {
     return {
       tone: "error",
-      label: "Log citit cu diagnostics",
-      detail: `${snapshot.returnedCount} evenimente afișate, ${snapshot.unreadableCount} linii ignorate.`,
+      label: t("observability-diagnostics-title"),
+      detail: t("observability-diagnostics-detail", {
+        returned: snapshot.returnedCount,
+        unreadable: snapshot.unreadableCount,
+      }),
     };
   }
 
   return {
     tone: snapshot.truncated ? "warning" : "clean",
-    label: snapshot.recoveryOnly ? "Recovery events" : "Kernel events",
-    detail: `${snapshot.returnedCount} evenimente afișate din ${snapshot.scannedLineCount} linii scanate · ${kernelLogLevelFilterLabel(snapshot.levels)} · ${kernelLogSourceFilterLabel(snapshot.sourceFilter)}.`,
+    label: snapshot.recoveryOnly
+      ? t("observability-recovery-events")
+      : t("observability-kernel-events"),
+    detail: t("observability-summary-detail", {
+      returned: snapshot.returnedCount,
+      scanned: snapshot.scannedLineCount,
+      levels: kernelLogLevelFilterLabel(snapshot.levels),
+      source: kernelLogSourceFilterLabel(snapshot.sourceFilter),
+    }),
   };
 }
 
@@ -77,11 +76,11 @@ export function kernelLogLevelLabel(level: KernelLogLevel): string {
 }
 
 export function kernelLogLevelFilterLabel(levels: KernelLogLevel[]): string {
-  if (!levels.length) return "nicio severitate";
+  if (!levels.length) return t("observability-no-level");
   const unique = ["info", "warn", "error"].filter((level) =>
     levels.includes(level as KernelLogLevel),
   ) as KernelLogLevel[];
-  if (unique.length === 3) return "toate severitățile";
+  if (unique.length === 3) return t("observability-all-levels");
   return unique.map(kernelLogLevelLabel).join(", ");
 }
 
@@ -90,28 +89,30 @@ export function kernelLogLevelTone(level: KernelLogLevel): "info" | "warn" | "er
 }
 
 export function kernelObservabilityEventLimitLabel(limit: number): string {
-  return `${limit} evenimente`;
+  return t("observability-event-limit", { count: limit });
 }
 
 export function formatKernelLogTime(timestampMs: number): string {
-  if (!timestampMs) return "timp necunoscut";
-  return new Intl.DateTimeFormat("ro-RO", {
+  if (!timestampMs) return t("observability-time-unknown");
+  return l10n.formatDate(timestampMs, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).format(new Date(timestampMs));
+  });
 }
 
 export function kernelLogTargetLabel(event: KernelObservabilityLogEvent): string {
-  return event.target ? compactKernelPath(event.target, 72) : "fără target";
+  return event.target ? compactKernelPath(event.target, 72) : t("observability-no-target");
 }
 
 export function kernelLogSourceLabel(event: KernelObservabilityLogEvent): string {
-  return event.source?.label ?? "sursă necunoscută";
+  return event.source?.label ?? t("observability-source-unknown");
 }
 
 export function kernelLogSourceFilterLabel(sourceFilter: KernelObservabilityLogSourceFilter): string {
-  return sourceFilterLabels[sourceFilter] ?? sourceFilter;
+  if (sourceFilter === "active") return t("observability-source-active");
+  if (sourceFilter === "archives") return t("observability-source-archives");
+  return t("observability-source-all");
 }
 
 export function observabilityHealthTone(
@@ -121,23 +122,30 @@ export function observabilityHealthTone(
 }
 
 export function observabilityHealthLabel(health: KernelObservabilityHealthSnapshot): string {
-  return healthLabels[health.status] ?? health.status;
+  if (health.status === "warning") return t("observability-health-warning");
+  if (health.status === "error") return t("observability-health-error");
+  return t("observability-health-clean");
 }
 
 export function observabilityHealthDetail(health: KernelObservabilityHealthSnapshot): string {
-  const moduleDetail = health.moduleCount === 1 ? "1 modul" : `${health.moduleCount} module`;
-  return `${health.eventCount} evenimente analizate · ${health.recoveryCount} recovery · ${moduleDetail}`;
+  return t("observability-health-detail", {
+    events: health.eventCount,
+    recovery: health.recoveryCount,
+    modules: health.moduleCount,
+  });
 }
 
 export function observabilityHealthProblemLabel(health: KernelObservabilityHealthSnapshot): string {
-  if (!health.latestProblem) return "Fără eveniment critic recent";
+  if (!health.latestProblem) return t("observability-no-recent-problem");
   return `${kernelLogLevelLabel(health.latestProblem.level)} · ${health.latestProblem.owner} · ${health.latestProblem.eventName}`;
 }
 
 export function observabilityModuleHealthLabel(module: KernelObservabilityModuleHealthSnapshot): string {
   const problemCount = module.levelCounts.error || module.levelCounts.warn;
-  const problemDetail = problemCount ? `${problemCount} probleme` : "curat";
-  return `${module.eventCount} evenimente · ${problemDetail}`;
+  return t("observability-module-detail", {
+    events: module.eventCount,
+    problems: problemCount,
+  });
 }
 
 export function kernelLogAttributeEntries(
@@ -166,19 +174,29 @@ export function formatKernelAttributeValue(value: JsonValue): string {
 
 export function kernelLogPathSummary(snapshot: KernelObservabilityLogSnapshot): string {
   const scan = snapshot.truncated
-    ? `scan limitat la ${formatBytes(snapshot.scannedBytes)}`
-    : `${formatBytes(snapshot.scannedBytes)} scanați`;
+    ? t("observability-path-scan-limited", { size: formatBytes(snapshot.scannedBytes) })
+    : t("observability-path-scanned", { size: formatBytes(snapshot.scannedBytes) });
   const archives = snapshot.retention.archivedCount
-    ? ` · ${snapshot.retention.archivedCount}/${snapshot.retention.archiveCount} arhive, ${formatBytes(snapshot.retention.totalRetainedBytes)} retenție`
-    : ` · fără arhive, limită activă ${formatBytes(snapshot.retention.maxActiveBytes)}`;
+    ? t("observability-path-archives", {
+        retained: snapshot.retention.archivedCount,
+        limit: snapshot.retention.archiveCount,
+        size: formatBytes(snapshot.retention.totalRetainedBytes),
+      })
+    : t("observability-path-no-archives", {
+        size: formatBytes(snapshot.retention.maxActiveBytes),
+      });
   const sourceCount = snapshot.includeArchives
-    ? ` · ${snapshot.sources.filter((source) => source.exists).length} surse citite`
+    ? ` · ${t("observability-path-sources", {
+        count: snapshot.sources.filter((source) => source.exists).length,
+      })}`
     : "";
-  return `${compactKernelPath(snapshot.logPath, 92)} · ${scan}${archives}${sourceCount}`;
+  return `${compactKernelPath(snapshot.logPath, 92)} · ${scan} · ${archives}${sourceCount}`;
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  if (bytes < 1024) return `${l10n.formatNumber(bytes)} B`;
+  if (bytes < 1024 * 1024) {
+    return `${l10n.formatNumber(bytes / 1024, { maximumFractionDigits: 1 })} KiB`;
+  }
+  return `${l10n.formatNumber(bytes / (1024 * 1024), { maximumFractionDigits: 1 })} MiB`;
 }

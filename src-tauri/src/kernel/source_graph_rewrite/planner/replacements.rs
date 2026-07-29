@@ -305,6 +305,7 @@ pub(super) fn plan_zola_data_file_function_replacements(
     store: &FileBufferStore,
     from_node: &SourceNode,
     relation_kind: &SourceRelationKind,
+    relation_label: &str,
     target: &TemplateRewriteTarget,
     diagnostics: &mut Vec<SourceGraphRewriteDiagnostic>,
 ) -> Result<Vec<TextReplacement>, String> {
@@ -315,12 +316,23 @@ pub(super) fn plan_zola_data_file_function_replacements(
         if call.function != expected_function {
             continue;
         }
-        if zola_data_file_reference_for_rewrite(&call.path).as_deref()
-            != Some(target.old_name.as_str())
+        let normalized = zola_data_file_reference_for_rewrite(&call.path);
+        if normalized.as_deref() != zola_data_file_reference_for_rewrite(relation_label).as_deref()
         {
             continue;
         }
-        let new_reference = rewrite_zola_data_file_reference(&call.path, &target.new_name)?;
+        let Some((_, next_reference)) =
+            target
+                .data_reference_rewrites
+                .iter()
+                .find(|(old_reference, _)| {
+                    normalized.as_deref()
+                        == zola_data_file_reference_for_rewrite(old_reference).as_deref()
+                })
+        else {
+            continue;
+        };
+        let new_reference = rewrite_zola_data_file_reference(&call.path, next_reference)?;
         replacements.push(TextReplacement {
             range_start: call.path_start,
             range_end: call.path_end,

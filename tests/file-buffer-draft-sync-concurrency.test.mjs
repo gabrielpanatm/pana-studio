@@ -52,12 +52,12 @@ for (const conflictKind of ["revision", "hash"]) {
         serverRevision = 2;
         if (conflictKind === "revision") {
           throw new Error(
-            `FileBufferStore a refuzat change-set-ul pentru ${relativePath}: `
+            `[file_buffer_changeset_conflict] FileBufferStore rejected the change set for ${relativePath}: `
               + `revizia așteptată ${payload.input.baseRevision}, revizia curentă ${serverRevision}.`,
           );
         }
         throw new Error(
-          `FileBufferStore a refuzat change-set-ul pentru ${relativePath}: `
+          `[file_buffer_changeset_conflict] FileBufferStore rejected the change set for ${relativePath}: `
             + "hash-ul de bază nu mai corespunde bufferului curent.",
         );
       }
@@ -81,8 +81,8 @@ for (const conflictKind of ["revision", "hash"]) {
     await assert.rejects(
       flushFileBufferDraftSync(),
       (error) => error instanceof Error
-        && error.message.includes("(conflict)")
-        && error.message.includes("fallback-ul full-draft fără CAS este interzis"),
+        && error.message.includes("conflict")
+        && error.message.includes("full-draft fallback without CAS is forbidden"),
     );
     assert.equal(serverText, "concurrent authority");
     assert.equal(serverRevision, 2);
@@ -111,7 +111,7 @@ test("a revision-only conflict retries once when the authoritative hash is uncha
       if (applyCount === 1) {
         serverRevision = 2;
         throw new Error(
-          `FileBufferStore a refuzat change-set-ul pentru ${relativePath}: `
+          `[file_buffer_changeset_conflict] FileBufferStore rejected the change set for ${relativePath}: `
             + `revizia așteptată ${payload.input.baseRevision}, revizia curentă ${serverRevision}.`,
         );
       }
@@ -324,7 +324,7 @@ test("an invalid change-set fails closed without retry or full-draft replacement
     if (command === "apply_file_buffer_changeset") {
       applyCount += 1;
       throw new Error(
-        "FileBufferStore a refuzat change-set-ul: offsetul UTF-16 20 depășește documentul.",
+        "[file_buffer_changeset_invalid] FileBufferStore rejected the change set: invalid UTF-16 offset.",
       );
     }
     if (command === "set_file_buffer_draft") {
@@ -344,7 +344,7 @@ test("an invalid change-set fails closed without retry or full-draft replacement
 
   await assert.rejects(
     flushFileBufferDraftSync(),
-    (error) => error instanceof Error && error.message.includes("(invalid_change_set)"),
+    (error) => error instanceof Error && error.message.includes("invalid_change_set"),
   );
   assert.equal(readCount, 1);
   assert.equal(applyCount, 1);
@@ -669,6 +669,7 @@ function commandReceipt(payload, runtimeSessionId = sessionA) {
   return {
     projectRoot,
     runtimeSessionId,
+    workspaceRevision: 0,
     payload,
   };
 }

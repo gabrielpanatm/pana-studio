@@ -1252,6 +1252,35 @@ fn create_directory<R: Runtime>(
     target: &Path,
     label: &str,
 ) -> Result<(), String> {
+    if !target.starts_with(boundary) {
+        return Err(format!(
+            "Proiecția Preview a refuzat directorul din afara limitei {}: {}.",
+            boundary.display(),
+            target.display()
+        ));
+    }
+    match fs::symlink_metadata(target) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => return Ok(()),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "Proiecția Preview a refuzat directorul symlink {}.",
+                target.display()
+            ))
+        }
+        Ok(_) => {
+            return Err(format!(
+                "Proiecția Preview aștepta un director la {}, dar a găsit alt tip de intrare.",
+                target.display()
+            ))
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Proiecția Preview nu a putut inspecta directorul {}: {error}",
+                target.display()
+            ))
+        }
+    }
     let intent = WriteIntent::new(
         WriteCategory::PreviewWorkspaceWrite,
         WriteOwner::Preview,

@@ -6,12 +6,14 @@
     IconPalette,
     IconSearch,
   } from "@tabler/icons-svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import {
     applyThemeChange,
     planThemeChange,
     readThemeCatalog,
   } from "$lib/project/io";
+  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
   import type {
     ProjectWorkspaceIdentity,
     ThemeCatalogSnapshot,
@@ -31,15 +33,16 @@
   let applying = $state(false);
   let loadError = $state("");
   let loadedIdentityKey = "";
+  let loadSequence = 0;
 
   const selectedTheme = $derived(
     catalog?.themes.find((theme) => theme.id === selectedId) ?? catalog?.themes[0] ?? null,
   );
   const visibleThemes = $derived(
     (catalog?.themes ?? []).filter((theme) => {
-      const needle = query.trim().toLocaleLowerCase("ro");
+      const needle = query.trim().toLocaleLowerCase(l10n.locale);
       return !needle || `${theme.name} ${theme.description} ${theme.category}`
-        .toLocaleLowerCase("ro")
+        .toLocaleLowerCase(l10n.locale)
         .includes(needle);
     }),
   );
@@ -76,20 +79,35 @@
   async function loadCatalog(preferredId = selectedId) {
     const currentIdentity = identity();
     if (!currentIdentity) return;
+    const requestId = ++loadSequence;
     loadedIdentityKey = identityKey(currentIdentity);
     loading = true;
     loadError = "";
     try {
       const next = await readThemeCatalog(currentIdentity);
+      const latestIdentity = identity();
+      if (
+        requestId !== loadSequence
+        || !latestIdentity
+        || identityKey(latestIdentity) !== identityKey(currentIdentity)
+      ) return;
+      if (
+        next.projectRoot !== currentIdentity.expectedProjectRoot
+        || next.runtimeSessionId !== currentIdentity.expectedSessionId
+        || next.revision !== currentIdentity.expectedRevision
+      ) {
+        throw new Error(t("themes-catalog-revision-mismatch"));
+      }
       catalog = next;
       selectedId = next.themes.some((theme) => theme.id === preferredId)
         ? preferredId
         : (next.activeThemeId ?? next.themes[0]?.id ?? "");
       pendingPlan = null;
     } catch (error) {
+      if (requestId !== loadSequence) return;
       loadError = errorMessage(error);
     } finally {
-      loading = false;
+      if (requestId === loadSequence) loading = false;
     }
   }
 
@@ -120,12 +138,21 @@
         { themeId, operation, identity: currentIdentity },
         pendingPlan.planToken,
       );
-      app.projectWorkspaceSnapshot = receipt.workspace;
-      await app.rescanCurrentProject(null, { strict: true });
+      const settlement = await settleProjectWorkspaceMutation(app, {
+        projectRoot: receipt.workspace.projectRoot,
+        runtimeSessionId: receipt.workspace.runtimeSessionId,
+        mutation: receipt.mutation,
+        workspace: receipt.workspace,
+      }, {
+        preferredRelativePath: null,
+        warningLabel: t("themes-operation-label"),
+      });
       app.setGlobalStatus(
-        operation === "install"
-          ? `Tema ${themeId} a fost instalată și rămâne inactivă.`
-          : `Tema ${themeId} este activă; proiectul a fost revalidat.`,
+        settlement.warnings.length > 0
+          ? t("themes-status-resync", { theme: themeId })
+          : operation === "install"
+          ? t("themes-status-installed", { theme: themeId })
+          : t("themes-status-activated", { theme: themeId }),
         "unsaved",
       );
       loadedIdentityKey = "";
@@ -144,34 +171,34 @@
 
   function statusLabel(theme: ThemePackSnapshot) {
     if (theme.status === "active") {
-      return theme.installComplete ? "Activă" : "Activă, incompletă";
+      return theme.installComplete ? t("themes-status-active") : t("themes-status-active-incomplete");
     }
     if (theme.status === "installed") {
-      return theme.installComplete ? "Instalată" : "Instalare incompletă";
+      return theme.installComplete ? t("themes-status-installed-label") : t("themes-status-install-incomplete");
     }
-    return "Disponibilă";
+    return t("themes-status-available");
   }
 </script>
 
-<section class="themes-workspace" aria-label="Teme Zola">
+<section class="activity-workspace themes-workspace" aria-label={t("themes-label")}>
   <header class="workspace-header">
     <div>
-      <p class="eyebrow"><IconPalette size={14} stroke={1.8} /> Teme Zola incluse</p>
-      <h1>Teme</h1>
-      <p class="subtitle">Instalează și activează pachetele Zola incluse în aplicație.</p>
+      <p class="eyebrow"><IconPalette size={14} stroke={1.8} /> {t("themes-eyebrow")}</p>
+      <h1>{t("themes-title")}</h1>
+      <p class="subtitle">{t("themes-subtitle")}</p>
     </div>
-    <div class="metrics" aria-label="Rezumat catalog">
-      <span><strong>{catalog?.themes.length ?? 0}</strong> disponibile</span>
-      <span><strong>{installedCount}</strong> instalate</span>
-      <span><strong>{catalog?.embeddedZolaVersion ?? "—"}</strong> Zola</span>
-    </div>
+    <dl aria-label={t("themes-summary")}>
+      <div><dt>{t("themes-metric-available")}</dt><dd>{l10n.formatNumber(catalog?.themes.length ?? 0)}</dd></div>
+      <div><dt>{t("themes-metric-installed")}</dt><dd>{l10n.formatNumber(installedCount)}</dd></div>
+      <div><dt>Zola</dt><dd>{catalog?.embeddedZolaVersion ?? "—"}</dd></div>
+    </dl>
   </header>
 
-  <div class="catalog-toolbar">
-    <span>Toate temele</span>
-    <label class="search">
+  <div class="catalog-toolbar workspace-toolbar">
+    <span>{t("themes-all")}</span>
+    <label class="search-field">
       <IconSearch size={15} stroke={1.7} />
-      <input bind:value={query} type="search" placeholder="Caută teme" aria-label="Caută teme" />
+      <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("themes-search")} aria-label={t("themes-search")} />
     </label>
   </div>
 
@@ -180,12 +207,13 @@
   {/if}
 
   <div class="workspace-body">
-    <div class="theme-list" aria-label="Catalog de teme" aria-busy={loading}>
+    <div class="theme-list" aria-label={t("themes-catalog-label")} aria-busy={loading}>
       {#each visibleThemes as theme (theme.id)}
         <button
           type="button"
-          class:selected={selectedTheme?.id === theme.id}
-          class="theme-row"
+          class="theme-row ui-entity-selectable"
+          data-ui-selected={selectedTheme?.id === theme.id ? "true" : undefined}
+          aria-pressed={selectedTheme?.id === theme.id}
           onclick={() => selectTheme(theme)}
         >
           <img src={theme.previewDataUrl} alt="" />
@@ -198,13 +226,13 @@
           </span>
         </button>
       {:else}
-        <p class="empty-list">{loading ? "Se încarcă catalogul..." : "Nicio temă nu corespunde căutării."}</p>
+        <p class="empty-list">{loading ? t("themes-loading") : t("themes-no-match")}</p>
       {/each}
     </div>
 
     <aside class="theme-detail" aria-live="polite">
       {#if selectedTheme}
-        <img class="theme-preview" src={selectedTheme.previewDataUrl} alt={`Previzualizare ${selectedTheme.name}`} />
+        <img class="theme-preview" src={selectedTheme.previewDataUrl} alt={t("themes-preview-alt", { name: selectedTheme.name })} />
         <div class="detail-title">
           <div>
             <p class="eyebrow">{selectedTheme.category} · v{selectedTheme.version}</p>
@@ -217,10 +245,10 @@
         <p class="detail-description">{selectedTheme.description}</p>
 
         <dl class="theme-facts">
-          <div><dt>Compatibilitate</dt><dd>Zola {selectedTheme.compatibility.minimum}–{selectedTheme.compatibility.tested}</dd></div>
-          <div><dt>Fișiere temă</dt><dd>{selectedTheme.themeFileCount}</dd></div>
-          <div><dt>Rețetă proiect</dt><dd>{selectedTheme.recipeFileCount} fișiere</dd></div>
-          <div><dt>Override-uri locale</dt><dd>{selectedTheme.localOverrideCount}</dd></div>
+          <div><dt>{t("themes-compatibility")}</dt><dd>Zola {selectedTheme.compatibility.minimum}–{selectedTheme.compatibility.tested}</dd></div>
+          <div><dt>{t("themes-theme-files")}</dt><dd>{l10n.formatNumber(selectedTheme.themeFileCount)}</dd></div>
+          <div><dt>{t("themes-project-recipe")}</dt><dd>{t("themes-files-count", { count: selectedTheme.recipeFileCount })}</dd></div>
+          <div><dt>{t("themes-local-overrides")}</dt><dd>{l10n.formatNumber(selectedTheme.localOverrideCount)}</dd></div>
         </dl>
 
         {#if pendingPlan}
@@ -231,86 +259,59 @@
               {:else}
                 <IconCheck size={16} stroke={1.8} />
               {/if}
-              Impact {pendingPlan.operation === "install" ? "instalare" : "activare"}
+              {pendingPlan.operation === "install" ? t("themes-install-impact") : t("themes-activation-impact")}
             </h3>
-            <p>{pendingPlan.affectedFiles.length} fișiere afectate; {pendingPlan.localOverrides.length} override-uri locale.</p>
+            <p>{t("themes-impact-summary", {
+              files: l10n.formatNumber(pendingPlan.affectedFiles.length),
+              overrides: l10n.formatNumber(pendingPlan.localOverrides.length),
+            })}</p>
             {#each [...pendingPlan.conflicts, ...pendingPlan.missingRequirements, ...pendingPlan.localOverrides, ...pendingPlan.notices] as item}
-              <p class:blocking={item.blocking} class="impact-item">{item.message}</p>
+              <p class:blocking={item.blocking} class="impact-item">{errorMessage(item.messageDiagnostic)}</p>
             {/each}
             <div class="detail-actions">
-              <button type="button" class="secondary-action" onclick={() => { pendingPlan = null; }}>
-                Renunță
+              <button type="button" class="ui-button" onclick={() => { pendingPlan = null; }}>
+                {t("themes-cancel")}
               </button>
               <button
                 type="button"
-                class="primary-action"
+                class="ui-button primary primary-action"
                 disabled={pendingPlan.blocking || !pendingPlan.changed || applying}
                 onclick={applyPlan}
               >
-                {applying ? "Se aplică..." : "Confirmă"}
+                {applying ? t("themes-applying") : t("themes-confirm")}
               </button>
             </div>
           </section>
         {:else}
           <div class="detail-actions">
             {#if selectedTheme.status === "available" || !selectedTheme.installComplete}
-              <button type="button" class="primary-action" onclick={() => prepare("install")}>
-                <IconDownload size={15} stroke={1.8} /> Verifică instalarea
+              <button type="button" class="ui-button primary primary-action" onclick={() => prepare("install")}>
+                <IconDownload size={15} stroke={1.8} /> {t("themes-check-install")}
               </button>
             {:else if selectedTheme.status !== "active"}
-              <button type="button" class="primary-action" onclick={() => prepare("activate")}>
-                Verifică impactul și activează
+              <button type="button" class="ui-button primary primary-action" onclick={() => prepare("activate")}>
+                {t("themes-check-activate")}
               </button>
             {:else}
-              <button type="button" class="primary-action" onclick={() => app.setWorkbenchActivity("design_system")}>
-                Deschide în Sistem de design
+              <button type="button" class="ui-button primary primary-action" onclick={() => app.setWorkbenchActivity("design_system")}>
+                {t("themes-open-design-system")}
               </button>
             {/if}
           </div>
         {/if}
       {:else}
-        <p class="empty-list">Selectează o temă din catalog.</p>
+        <p class="empty-list">{t("themes-select")}</p>
       {/if}
     </aside>
   </div>
 </section>
 
 <style>
-  .themes-workspace {
-    display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    width: 100%;
-    height: 100%;
-    min-height: 0;
-    color: var(--text);
-    background: var(--surface-6);
-  }
-
-  .workspace-header,
-  .catalog-toolbar,
-  .workspace-body {
-    border: 1px solid var(--border);
-  }
-
-  .workspace-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 110px;
-    padding: 18px 20px;
-    background: var(--surface-5);
-  }
-
   h1,
   h2,
   h3,
   p {
     margin: 0;
-  }
-
-  h1 {
-    margin-top: 6px;
-    font-size: 20px;
   }
 
   h2 {
@@ -343,68 +344,18 @@
     line-height: 1.5;
   }
 
-  .metrics {
-    display: flex;
-    gap: 8px;
-  }
-
-  .metrics span {
-    display: grid;
-    min-width: 82px;
-    padding: 9px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
-    color: var(--text-muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    background: var(--surface-3);
-  }
-
-  .metrics strong {
-    color: var(--text);
-    font-size: 15px;
-  }
-
-  .catalog-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 44px;
-    padding: 5px 10px;
-    border-top: 0;
+  .catalog-toolbar > span {
     color: var(--brand-strong);
     font-size: 12px;
     font-weight: 700;
-    background: var(--surface-4);
-  }
-
-  .search {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: min(280px, 40%);
-    height: 32px;
-    padding: 0 9px;
-    border: 1px solid var(--border-3);
-    border-radius: var(--radius-control);
-    color: var(--text-muted);
-    background: var(--surface-1);
-  }
-
-  .search input {
-    min-width: 0;
-    flex: 1;
-    border: 0;
-    outline: 0;
-    color: var(--text);
-    background: transparent;
   }
 
   .workspace-body {
     display: grid;
     grid-template-columns: minmax(390px, 58%) minmax(300px, 42%);
     min-height: 0;
-    border-top: 0;
+    background: var(--material-panel);
+    box-shadow: var(--shadow-panel);
   }
 
   .theme-list,
@@ -415,12 +366,14 @@
 
   .theme-list {
     padding: 10px;
+    background: var(--surface-panel);
   }
 
   .theme-detail {
     padding: 16px;
     border-left: 1px solid var(--border);
-    background: var(--surface-4);
+    background: var(--material-panel);
+    box-shadow: inset 1px 0 0 var(--skeuo-edge-highlight);
   }
 
   .theme-row {
@@ -438,16 +391,6 @@
     background: transparent;
   }
 
-  .theme-row:hover,
-  .theme-row.selected {
-    border-color: var(--border-3);
-    background: var(--control-selected);
-  }
-
-  .theme-row.selected {
-    box-shadow: inset 3px 0 0 var(--brand);
-  }
-
   .theme-row img {
     width: 126px;
     aspect-ratio: 16 / 10;
@@ -455,6 +398,7 @@
     border-radius: 6px;
     object-fit: cover;
     background: var(--surface-2);
+    box-shadow: var(--shadow-control);
   }
 
   .theme-row-copy {
@@ -475,12 +419,14 @@
     border-radius: 999px;
     color: var(--text-muted);
     font-size: 11px;
-    background: var(--surface-2);
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
   }
 
   .status-badge.active {
     color: var(--brand-strong);
-    background: var(--control-selected);
+    background: var(--material-control-selected);
+    box-shadow: var(--shadow-pressed);
   }
 
   .theme-preview {
@@ -490,6 +436,7 @@
     border-radius: var(--radius-panel);
     object-fit: cover;
     background: var(--surface-2);
+    box-shadow: var(--shadow-control);
   }
 
   .detail-title {
@@ -511,7 +458,8 @@
     padding: 9px;
     border: 1px solid var(--border);
     border-radius: var(--radius-control);
-    background: var(--surface-3);
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
   }
 
   .theme-facts dt {
@@ -531,7 +479,8 @@
     padding: 12px;
     border: 1px solid var(--border-3);
     border-radius: var(--radius-panel);
-    background: var(--surface-3);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
   }
 
   .impact-panel.blocking {
@@ -561,40 +510,12 @@
     margin-top: 14px;
   }
 
-  .primary-action,
-  .secondary-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-height: 32px;
-    padding: 0 13px;
-    border-radius: var(--radius-control);
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  .primary-action {
-    border: 1px solid var(--brand);
-    color: white;
-    background: var(--brand);
-  }
-
-  .secondary-action {
-    border: 1px solid var(--border-3);
-    color: var(--text);
-    background: var(--surface-2);
-  }
-
-  .primary-action:disabled {
-    opacity: 0.45;
-  }
-
   .error-message {
     padding: 8px 12px;
     color: var(--danger);
     font-size: 12px;
-    background: var(--surface-4);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
   }
 
   .empty-list {
@@ -609,7 +530,7 @@
       grid-template-columns: minmax(320px, 52%) minmax(280px, 48%);
     }
 
-    .metrics span:nth-child(2) {
+    .workspace-header dl div:nth-child(2) {
       display: none;
     }
   }

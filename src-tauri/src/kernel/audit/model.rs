@@ -1,8 +1,8 @@
 use serde::Serialize;
 
-use crate::source_graph::model::SourceRange;
+use crate::{localization::LocalizedDiagnostic, source_graph::model::SourceRange};
 
-pub const PROJECT_AUDIT_SCHEMA_VERSION: u32 = 1;
+pub const PROJECT_AUDIT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,8 +30,8 @@ pub struct AuditDiagnostic {
     pub severity: AuditSeverity,
     pub category: AuditCategory,
     pub code: String,
-    pub title: String,
-    pub message: String,
+    pub title_diagnostic: LocalizedDiagnostic,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub file: Option<String>,
     pub range: Option<SourceRange>,
 }

@@ -1,20 +1,23 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::source_graph::{
-    html::{html_label, should_project_html_tag},
-    mixed_cst::{parse_mixed_cst, MixedCstDocument, MixedCstKind},
-    model::{
-        SourceCapabilities, SourceDiagnosticSeverity, SourceGraphInclude, SourceNodeKind,
-        SourceOrigin, SourceRelationKind,
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        html::{html_label, should_project_html_tag},
+        mixed_cst::{parse_mixed_cst, MixedCstDocument, MixedCstKind},
+        model::{
+            SourceCapabilities, SourceCapabilityReason, SourceDiagnosticSeverity,
+            SourceGraphInclude, SourceNodeKind, SourceOrigin, SourceRelationKind,
+        },
+        scan::{
+            builder::SourceGraphBuilder,
+            files::{read_source, relative_project_path, template_name},
+            ranges::source_range,
+            summary::{TemplateSummary, TeraScopeSummary},
+        },
+        tera::{tera_items_from_document, TeraItemKind},
+        zola::extract_zola_template_references,
     },
-    scan::{
-        builder::SourceGraphBuilder,
-        files::{read_source, relative_project_path, template_name},
-        ranges::source_range,
-        summary::{TemplateSummary, TeraScopeSummary},
-    },
-    tera::{tera_items_from_document, TeraItemKind},
-    zola::extract_zola_template_references,
 };
 
 #[derive(Clone)]
@@ -52,7 +55,7 @@ pub(super) fn scan_template(
         name.clone(),
         None,
         None,
-        SourceCapabilities::code_only("Fișier template Tera."),
+        SourceCapabilities::code_only(SourceCapabilityReason::TeraTemplateFile),
     );
 
     let source = read_source(path, &file, draft_sources, builder);
@@ -62,11 +65,11 @@ pub(super) fn scan_template(
     if !tera_document.is_valid_tera() {
         builder.add_diagnostic(
             SourceDiagnosticSeverity::Error,
-            format!(
-                "Template-ul nu respectă gramatica Tera folosită de Zola: {}",
+            LocalizedDiagnostic::new("source-graph-tera-syntax-invalid").with_argument(
+                "details",
                 tera_document
                     .validation_error()
-                    .unwrap_or("eroare Tera necunoscută")
+                    .unwrap_or("unknown Tera error"),
             ),
             Some(file.clone()),
             None,
@@ -108,7 +111,7 @@ pub(super) fn scan_template(
                         SourceNodeKind::Extends => {
                             builder.add_diagnostic(
                                 SourceDiagnosticSeverity::Warning,
-                                "Partialurile nu trebuie să folosească extends. Creează un template de pagină/layout pentru moștenire Tera.",
+                                LocalizedDiagnostic::new("source-graph-partial-extends-invalid"),
                                 Some(file.clone()),
                                 Some(range),
                             );
@@ -117,10 +120,9 @@ pub(super) fn scan_template(
                         SourceNodeKind::Block => {
                             builder.add_diagnostic(
                                 SourceDiagnosticSeverity::Warning,
-                                format!(
-                                    "Partialul {} conține block Tera '{}'. Partialurile trebuie să fie fragmente incluse, fără block/endblock.",
-                                    name, item.label
-                                ),
+                                LocalizedDiagnostic::new("source-graph-partial-block-invalid")
+                                    .with_argument("name", name.clone())
+                                    .with_argument("block", item.label.clone()),
                                 Some(file.clone()),
                                 Some(range),
                             );
@@ -146,7 +148,7 @@ pub(super) fn scan_template(
                         if extends.is_some() {
                             builder.add_diagnostic(
                                 SourceDiagnosticSeverity::Warning,
-                                "Template-ul are mai multe directive extends; Zola/Tera așteaptă una singură.",
+                                LocalizedDiagnostic::new("source-graph-multiple-extends"),
                                 Some(file.clone()),
                                 Some(source_range(&source, item.start, item.end)),
                             );
@@ -167,7 +169,8 @@ pub(super) fn scan_template(
                         if blocks.iter().any(|(block, _)| block == &item.label) {
                             builder.add_diagnostic(
                                 SourceDiagnosticSeverity::Warning,
-                                format!("Block Tera duplicat în același template: {}", item.label),
+                                LocalizedDiagnostic::new("source-graph-duplicate-tera-block")
+                                    .with_argument("block", item.label.clone()),
                                 Some(file.clone()),
                                 Some(source_range(&source, item.start, item.end)),
                             );
@@ -239,7 +242,7 @@ pub(super) fn scan_template(
         if !is_partial && cst_block_names != facts.blocks {
             builder.add_diagnostic(
                 SourceDiagnosticSeverity::Error,
-                "CST-ul lossless și AST-ul Tera nu au reconciliat aceleași block-uri.",
+                LocalizedDiagnostic::new("source-graph-tera-cst-ast-mismatch"),
                 Some(file.clone()),
                 None,
             );
@@ -270,6 +273,16 @@ pub(super) fn scan_template(
     );
 
     let zola_references = extract_zola_template_references(&source);
+    if zola_references.dynamic_data_loads > 0 {
+        builder.add_diagnostic(
+            crate::source_graph::model::SourceDiagnosticSeverity::Warning,
+            LocalizedDiagnostic::new("source-graph-dynamic-load-data")
+                .with_argument("count", zola_references.dynamic_data_loads as u64)
+                .with_argument("file", file.clone()),
+            Some(file.clone()),
+            None,
+        );
+    }
 
     TemplateSummary {
         id: node_id.clone(),
@@ -395,9 +408,7 @@ fn add_mixed_html_nodes(
                 block_id.to_string(),
                 marker_range,
                 Some(node_id.clone()),
-                SourceCapabilities::code_only(
-                    "Marcaj furnizat de registrul blocurilor native Rust.",
-                ),
+                SourceCapabilities::code_only(SourceCapabilityReason::NativeBlockMarker),
             );
         }
         projected_elements.insert(element_index, (node_id, opening_node.start));
@@ -449,23 +460,19 @@ fn html_capabilities(parent_scope: Option<&TeraScopeSummary>) -> SourceCapabilit
     };
 
     match scope.kind {
-        SourceNodeKind::For => SourceCapabilities::code_only(
-            "Element randat într-un loop Tera; editarea vizuală directă este nesigură.",
-        ),
-        SourceNodeKind::If => SourceCapabilities::code_only(
-            "Element randat condițional prin Tera; editarea vizuală directă este nesigură.",
-        ),
-        SourceNodeKind::Macro => SourceCapabilities::code_only(
-            "Element definit într-un macro Tera; modificarea poate afecta mai multe folosiri.",
-        ),
-        SourceNodeKind::Set | SourceNodeKind::SetGlobal | SourceNodeKind::Filter => {
-            SourceCapabilities::code_only(
-                "Element aflat într-un scope Tera local; editarea se face în cod.",
-            )
+        SourceNodeKind::For => {
+            SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraLoop)
         }
-        SourceNodeKind::Raw => SourceCapabilities::code_only(
-            "Element aflat într-un bloc raw Tera; editarea vizuală este dezactivată.",
-        ),
+        SourceNodeKind::If => {
+            SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraCondition)
+        }
+        SourceNodeKind::Macro => {
+            SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraMacro)
+        }
+        SourceNodeKind::Set | SourceNodeKind::SetGlobal | SourceNodeKind::Filter => {
+            SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraLocalScope)
+        }
+        SourceNodeKind::Raw => SourceCapabilities::code_only(SourceCapabilityReason::HtmlInTeraRaw),
         SourceNodeKind::Block => SourceCapabilities::visual_html(),
         _ => SourceCapabilities::visual_html(),
     }
@@ -480,30 +487,30 @@ fn push_unique(values: &mut Vec<String>, value: Option<String>) {
     }
 }
 
-fn tera_reason(kind: &SourceNodeKind) -> &'static str {
+fn tera_reason(kind: &SourceNodeKind) -> SourceCapabilityReason {
     match kind {
-        SourceNodeKind::Extends => "Moștenire Tera.",
-        SourceNodeKind::Block => "Block Tera.",
-        SourceNodeKind::Include => "Include Tera.",
-        SourceNodeKind::Import => "Import Tera.",
-        SourceNodeKind::Macro => "Macro Tera.",
-        SourceNodeKind::For => "Buclă Tera.",
-        SourceNodeKind::If => "Condiție Tera.",
-        SourceNodeKind::Elif => "Ramură elif Tera.",
-        SourceNodeKind::Else => "Ramură else Tera.",
-        SourceNodeKind::Set => "Setare Tera.",
-        SourceNodeKind::SetGlobal => "Setare globală Tera.",
-        SourceNodeKind::Filter => "Bloc filter Tera.",
-        SourceNodeKind::Break => "Break Tera.",
-        SourceNodeKind::Continue => "Continue Tera.",
-        SourceNodeKind::Super => "Apel super() Tera.",
-        SourceNodeKind::TeraVariable => "Variabilă Tera.",
-        SourceNodeKind::MacroCall => "Apel de macro Tera.",
-        SourceNodeKind::FunctionCall => "Apel de funcție Tera/Zola.",
-        SourceNodeKind::Shortcode => "Invocare shortcode Zola.",
-        SourceNodeKind::BlockMarker => "Marcaj al unui provider de bloc nativ.",
-        SourceNodeKind::TeraComment => "Comentariu Tera.",
-        SourceNodeKind::Raw => "Bloc raw Tera.",
-        _ => "Sintaxă Tera.",
+        SourceNodeKind::Extends => SourceCapabilityReason::TeraExtends,
+        SourceNodeKind::Block => SourceCapabilityReason::TeraBlock,
+        SourceNodeKind::Include => SourceCapabilityReason::TeraInclude,
+        SourceNodeKind::Import => SourceCapabilityReason::TeraImport,
+        SourceNodeKind::Macro => SourceCapabilityReason::TeraMacro,
+        SourceNodeKind::For => SourceCapabilityReason::TeraFor,
+        SourceNodeKind::If => SourceCapabilityReason::TeraIf,
+        SourceNodeKind::Elif => SourceCapabilityReason::TeraElif,
+        SourceNodeKind::Else => SourceCapabilityReason::TeraElse,
+        SourceNodeKind::Set => SourceCapabilityReason::TeraSet,
+        SourceNodeKind::SetGlobal => SourceCapabilityReason::TeraSetGlobal,
+        SourceNodeKind::Filter => SourceCapabilityReason::TeraFilter,
+        SourceNodeKind::Break => SourceCapabilityReason::TeraBreak,
+        SourceNodeKind::Continue => SourceCapabilityReason::TeraContinue,
+        SourceNodeKind::Super => SourceCapabilityReason::TeraSuper,
+        SourceNodeKind::TeraVariable => SourceCapabilityReason::TeraVariable,
+        SourceNodeKind::MacroCall => SourceCapabilityReason::TeraMacroCall,
+        SourceNodeKind::FunctionCall => SourceCapabilityReason::TeraFunctionCall,
+        SourceNodeKind::Shortcode => SourceCapabilityReason::ZolaShortcode,
+        SourceNodeKind::BlockMarker => SourceCapabilityReason::NativeBlockMarker,
+        SourceNodeKind::TeraComment => SourceCapabilityReason::TeraComment,
+        SourceNodeKind::Raw => SourceCapabilityReason::TeraRaw,
+        _ => SourceCapabilityReason::TeraSyntax,
     }
 }

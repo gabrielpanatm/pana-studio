@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::project_workspace::{
-    ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
+use crate::{
+    kernel::project_workspace::{
+        ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
+    },
+    localization::LocalizedDiagnostic,
 };
 
 pub const THEME_PACK_SCHEMA_VERSION: u32 = 1;
 pub const THEME_CATALOG_SCHEMA_VERSION: u32 = 1;
-pub const THEME_PLAN_SCHEMA_VERSION: u32 = 1;
+pub const THEME_PLAN_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,7 +121,7 @@ pub struct ThemeApplyRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ThemeImpactItem {
     pub code: String,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub relative_path: Option<String>,
     pub blocking: bool,
 }

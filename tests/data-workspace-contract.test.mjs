@@ -18,7 +18,7 @@ test("Date este o activitate distinctă cu modelul catalog și panou contextual"
   assert.match(center, /activeWorkbenchActivity === "data"[\s\S]*<DataWorkspace/);
   assert.match(types, /export type WorkbenchActivity[\s\S]*\|\s*"data"/);
   assert.match(workbench, /\bData,\s*\n\s*Versioning/);
-  assert.match(commandCenter, /WorkbenchActivity::Data[\s\S]*"Fișiere TOML reutilizabile/);
+  assert.match(commandCenter, /WorkbenchActivity::Data[\s\S]*"Surse locale structurate/);
   assert.match(workspace, /type DetailMode = "info" \| "create" \| "edit"/);
   assert.match(workspace, /class="workspace-header"/);
   assert.match(workspace, /class="workspace-toolbar"/);
@@ -26,6 +26,15 @@ test("Date este o activitate distinctă cu modelul catalog și panou contextual"
   assert.match(workspace, /type="search"/);
   assert.match(workspace, /detailMode === "create"/);
   assert.match(workspace, /detailMode === "edit"/);
+  assert.match(workspace, /file\.capabilities\.canEditVisual/);
+  assert.match(workspace, /sourceCapabilityReason\(selectedFile\.capabilities/);
+  assert.match(workspace, /loadPaths/);
+  assert.match(workspace, /t\("data-origin-label", \{ origin: originLabel\(selectedFile\) \}\)/);
+  assert.match(workspace, /t\("data-visually-editable"\) : t\("data-read-only"\)/);
+  assert.match(workspace, /<span class="sr-only">\{t\("data-search-files"\)\}<\/span>/);
+  assert.doesNotMatch(workspace, /^\s*label\s*\{/m);
+  assert.doesNotMatch(workspace, /^\s*input,\s*select\s*\{/m);
+  assert.match(types, /export type SourceDataLocation/);
   assert.doesNotMatch(workspace, /window\.(?:prompt|confirm)/);
 });
 
@@ -41,6 +50,7 @@ test("editorul vizual TOML păstrează Rust și ProjectWorkspace ca autoritate u
   assert.doesNotMatch(workspace, /DocumentMut|toml_edit|setFileBufferDraft/);
   assert.match(kernel, /stage_validated_data_mutation/);
   assert.match(kernel, /validate_semantic_workspace_candidate/);
+  assert.match(kernel, /editable_local_toml_path/);
   assert.match(kernel, /stage_resource_texts/);
   assert.match(kernel, /apply_exact_replacements/);
   assert.match(kernel, /DataMutationOperation::UpdateNode/);

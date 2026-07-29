@@ -27,14 +27,23 @@
     teraPaletteGroups,
   } from "$lib/tera/palette";
   import type { TeraPaletteItem } from "$lib/tera/model";
-  import type { SelectionInfo, SourceGraph } from "$lib/types";
+  import type { SourceGraph } from "$lib/types";
+  import {
+    l10n,
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
 
-  export let selectedElement: SelectionInfo | null = null;
+  $: t = legacyTranslator($localeRevision);
+
+  export let coordinatedSelectionTag: string | null = null;
   export let sourceGraph: SourceGraph | null = null;
   export let startElementPaletteDrag: (element: HtmlPaletteElement, event: PointerEvent) => void;
   export let startTeraPaletteDrag: (item: TeraPaletteItem, event: PointerEvent) => void;
 
   let blockPaletteGroups: HtmlPaletteGroup[] = [];
+  let localizedHtmlPaletteGroups: HtmlPaletteGroup[] = [];
+  $: localizedHtmlPaletteGroups = (l10n.revision, htmlPaletteGroups());
 
   onMount(() => {
     let cancelled = false;
@@ -53,15 +62,15 @@
 
 <section class="panel-card">
   <div class="section-heading">
-    <h3>Elemente HTML</h3>
-    <span>{selectedElement?.tag ?? "-"}</span>
+    <h3>{t("project-structure-html-elements")}</h3>
+    <span>{coordinatedSelectionTag ?? "-"}</span>
   </div>
 
   <div class="palette-groups">
-    <section class="palette-mode component-mode" aria-label="Blocuri native">
+    <section class="palette-mode component-mode" aria-label={t("project-structure-native-blocks")}>
       <div class="palette-mode-heading">
-        <strong>Blocuri</strong>
-        <span>provideri Rust</span>
+        <strong>{t("project-structure-blocks")}</strong>
+        <span>{t("project-structure-rust-providers")}</span>
       </div>
 
       {#each blockPaletteGroups as group}
@@ -72,7 +81,7 @@
               <button
                 class="palette-card component-card"
                 type="button"
-                aria-label={`Adaugă ${element.label}`}
+                aria-label={t("project-structure-add-item", { item: element.label })}
                 onpointerdown={(event) => startElementPaletteDrag(element, event)}
               >
                 <span class="palette-icon component-icon">
@@ -89,13 +98,13 @@
       {/each}
     </section>
 
-    <section class="palette-mode" aria-label="Elemente HTML">
+    <section class="palette-mode" aria-label={t("project-structure-html-elements")}>
       <div class="palette-mode-heading">
         <strong>HTML</strong>
-        <span>elemente vizuale</span>
+        <span>{t("project-structure-visual-elements")}</span>
       </div>
 
-    {#each htmlPaletteGroups as group}
+    {#each localizedHtmlPaletteGroups as group}
       <section class="palette-group" aria-label={group.label}>
         <h4>{group.label}</h4>
         <div class="palette-grid">
@@ -103,7 +112,7 @@
             <button
               class="palette-card"
               type="button"
-              aria-label={`Adaugă ${element.label}`}
+              aria-label={t("project-structure-add-item", { item: element.label })}
               onpointerdown={(event) => startElementPaletteDrag(element, event)}
             >
               <span class="palette-icon">
@@ -133,10 +142,10 @@
     {/each}
     </section>
 
-    <section class="palette-mode tera-mode" aria-label="Structură Tera">
+    <section class="palette-mode tera-mode" aria-label={t("project-structure-tera-structure")}>
       <div class="palette-mode-heading">
         <strong>Tera</strong>
-        <span>template, block, include</span>
+        <span>{t("project-structure-tera-items")}</span>
       </div>
 
       {#each teraPaletteGroups(sourceGraph) as group}
@@ -147,7 +156,7 @@
               <button
                 class="palette-card tera-card"
                 type="button"
-                aria-label={`Adaugă ${item.label}`}
+                aria-label={t("project-structure-add-item", { item: item.label })}
                 onpointerdown={(event) => startTeraPaletteDrag(item, event)}
               >
                 <span class="palette-icon tera-icon">
@@ -283,12 +292,12 @@
   }
 
   .palette-card.component-card {
-    border-color: rgba(29, 127, 106, 0.28);
+    border-color: color-mix(in srgb, var(--brand) 28%, transparent);
   }
 
   .palette-card.component-card:hover {
-    border-color: rgba(29, 127, 106, 0.72);
-    background: rgba(29, 127, 106, 0.08);
+    border-color: color-mix(in srgb, var(--brand) 72%, transparent);
+    background: color-mix(in srgb, var(--brand) 8%, transparent);
   }
 
   .palette-card:active {
@@ -314,9 +323,9 @@
   }
 
   .palette-icon.component-icon {
-    color: #13745f;
-    border-color: rgba(29, 127, 106, 0.28);
-    background: rgba(29, 127, 106, 0.08);
+    color: var(--brand-strong);
+    border-color: color-mix(in srgb, var(--brand) 28%, transparent);
+    background: color-mix(in srgb, var(--brand) 8%, transparent);
   }
 
   .palette-icon :global(svg) {

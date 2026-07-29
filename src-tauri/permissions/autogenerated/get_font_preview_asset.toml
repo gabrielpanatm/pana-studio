@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-font-preview-asset"
+description = "Enables the get_font_preview_asset command without any pre-configured scope."
+commands.allow = ["get_font_preview_asset"]
+
+[[permission]]
+identifier = "deny-get-font-preview-asset"
+description = "Denies the get_font_preview_asset command without any pre-configured scope."
+commands.deny = ["get_font_preview_asset"]

@@ -1,7 +1,11 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc, RwLock,
+    },
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,7 +17,10 @@ use zola_site::{sass, BuildMode, Site, SITE_CONTENT};
 use crate::{
     kernel::project_workspace::WorkspaceProjectionLease,
     preview::{
-        inject::{bind_canvas_identity_to_editor_html, prepare_design_safe_html},
+        inject::{
+            bind_canvas_identity_to_editor_html, bind_canvas_identity_to_initial_preview_html,
+            prepare_design_safe_html, prepare_initial_preview_html,
+        },
         preprocess::{
             create_persistent_preview_artifact_root, persistent_project_workspace_session_root,
             remove_persistent_preview_artifact_root, remove_persistent_preview_session,
@@ -54,6 +61,7 @@ impl PersistentPreviewOwner {
 
 pub(crate) struct PersistentPreviewCandidate {
     generation: Arc<ActivePreviewGeneration>,
+    project_model: ProjectModel,
     pub projected_paths: Vec<String>,
 }
 
@@ -69,6 +77,10 @@ pub(crate) struct TemplateWorkbenchPublication {
 impl PersistentPreviewCandidate {
     pub fn canvas_plan(&self) -> crate::preview::CanvasProjectionPlan {
         self.generation.canvas_transaction.plan()
+    }
+
+    pub fn project_model(&self) -> &ProjectModel {
+        &self.project_model
     }
 }
 
@@ -146,6 +158,16 @@ impl PersistentZolaPreviewEngine {
             .canvas_plan_for_identity(identity)
     }
 
+    pub(crate) fn generation_for_canvas_identity(
+        &self,
+        identity: &crate::preview::CanvasProjectionIdentity,
+    ) -> Result<Option<Arc<ActivePreviewGeneration>>, String> {
+        self.server
+            .as_ref()
+            .ok_or_else(|| "Serverul Preview persistent a fost oprit.".to_string())?
+            .generation_for_canvas_identity(identity)
+    }
+
     /// Randă template-ul ales în motorul Zola deja încărcat și îl publică în
     /// generația exactă a lease-ului. Generația poate fi încă staged: astfel
     /// Workbench-ul montat poate confirma chiar candidatul canonic, fără să
@@ -176,22 +198,34 @@ impl PersistentZolaPreviewEngine {
         })?;
         let model =
             build_project_model_from_workspace_projection(Path::new(&lease.project_root), lease)?;
-        let (rendered, canvas_route) = with_zola_engine("Context de template Preview", || {
+        let (rendered, _canvas_route) = with_zola_engine("Context de template Preview", || {
             render_template_workbench_document(site, &self.raw_content, &model, plan)
         })?;
-        let annotated = CanvasGraph::annotate_rendered_document(&model, &canvas_route, &rendered)?;
+        let route = template_workbench_route(&plan.active_template.source_id);
+        let annotated = CanvasGraph::annotate_rendered_document(&model, &route, &rendered)?;
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            lease.revision,
+            &generation.preview_revision,
+            [(route.as_str(), annotated.as_str())],
+        )?;
         let mut prepared = prepare_design_safe_html(&annotated, &generation.preview_revision)?;
         bind_canvas_identity_to_editor_html(
             &mut prepared,
             &generation.canvas_transaction.identity,
         )?;
 
-        let route = template_workbench_route(&plan.active_template.source_id);
         generation
             .workbench_content
             .write()
             .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?
-            .insert(route.clone(), RenderedPreviewContent::Html(prepared));
+            .insert(
+                route.clone(),
+                crate::preview::server::TemplateWorkbenchProjection {
+                    content: RenderedPreviewContent::Html(prepared),
+                    graph,
+                },
+            );
         let preview_url = format!(
             "{}{}?__pana_preview_revision={}&__pana_canvas_transaction={}",
             self.url()?,
@@ -212,6 +246,35 @@ impl PersistentZolaPreviewEngine {
         &mut self,
         app: &AppHandle<R>,
         lease: &WorkspaceProjectionLease,
+    ) -> Result<PersistentPreviewCandidate, String> {
+        self.render_candidate_with_project_model(app, lease, None)
+    }
+
+    pub fn render_candidate_with_project_model<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        lease: &WorkspaceProjectionLease,
+        project_model: Option<&ProjectModel>,
+    ) -> Result<PersistentPreviewCandidate, String> {
+        let model_root = PathBuf::from(&lease.project_root);
+        thread::scope(|scope| {
+            let model_task = if project_model.is_none() {
+                Some(scope.spawn(move || {
+                    build_project_model_from_workspace_projection(&model_root, lease)
+                }))
+            } else {
+                None
+            };
+            self.render_candidate_with_model_task(app, lease, project_model, model_task)
+        })
+    }
+
+    fn render_candidate_with_model_task<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        lease: &WorkspaceProjectionLease,
+        project_model: Option<&ProjectModel>,
+        model_task: Option<thread::ScopedJoinHandle<'_, Result<ProjectModel, String>>>,
     ) -> Result<PersistentPreviewCandidate, String> {
         self.require_lease_owner(lease)?;
         self.collect_retired(app);
@@ -238,8 +301,25 @@ impl PersistentZolaPreviewEngine {
         let preview_revision = next_preview_revision(lease.revision);
         let artifact_root =
             create_persistent_preview_artifact_root(app, &self.session_root, &preview_revision)?;
-        let result =
-            self.render_zola_generation(app, &update, &artifact_root, lease, &preview_revision);
+        let built_model = match model_task {
+            Some(task) => Some(
+                task.join()
+                    .map_err(|_| "ProjectModel Preview task a eșuat irecuperabil.".to_string())??,
+            ),
+            None => None,
+        };
+        let project_model = project_model
+            .cloned()
+            .or(built_model)
+            .ok_or_else(|| "Preview-ul nu a putut rezolva ProjectModel-ul exact.".to_string())?;
+        let result = self.render_zola_generation(
+            app,
+            &update,
+            &artifact_root,
+            lease,
+            &preview_revision,
+            &project_model,
+        );
         let generation = match result {
             Ok(generation) => generation,
             Err(error) => {
@@ -259,6 +339,7 @@ impl PersistentZolaPreviewEngine {
 
         Ok(PersistentPreviewCandidate {
             generation: Arc::new(generation),
+            project_model,
             projected_paths: update.projected_paths,
         })
     }
@@ -331,6 +412,7 @@ impl PersistentZolaPreviewEngine {
         artifact_root: &Path,
         lease: &WorkspaceProjectionLease,
         preview_revision: &str,
+        project_model: &ProjectModel,
     ) -> Result<ActivePreviewGeneration, String> {
         let base_url = self.url()?;
         let impact =
@@ -397,27 +479,8 @@ impl PersistentZolaPreviewEngine {
             }
         };
         self.raw_content = rendered.clone();
-        let model =
-            build_project_model_from_workspace_projection(Path::new(&lease.project_root), lease)?;
-        let mut content = HashMap::with_capacity(rendered.len());
-        for (path, body) in rendered {
-            let extension = Path::new(&path)
-                .extension()
-                .and_then(|value| value.to_str());
-            let prepared_body = if matches!(extension, Some("xml" | "json" | "txt")) {
-                body
-            } else {
-                CanvasGraph::annotate_rendered_document(
-                    &model,
-                    &canvas_route_for_content_key(&path),
-                    &body,
-                )?
-            };
-            content.insert(
-                path.clone(),
-                prepare_rendered_content(extension, &prepared_body, preview_revision)?,
-            );
-        }
+        let model = project_model;
+        let content = prepare_generation_content(&model, rendered, preview_revision)?;
 
         let rendered_documents = content
             .iter()
@@ -425,6 +488,10 @@ impl PersistentZolaPreviewEngine {
                 RenderedPreviewContent::Html(html) => Some((
                     canvas_route_for_content_key(content_key),
                     html.editor.as_str(),
+                )),
+                RenderedPreviewContent::InitialHtml(html) => Some((
+                    canvas_route_for_content_key(content_key),
+                    html.visitor.as_str(),
                 )),
                 RenderedPreviewContent::Text { .. } => None,
             })
@@ -449,11 +516,8 @@ impl PersistentZolaPreviewEngine {
             graph,
             resources,
         )?;
-        for rendered in content.values_mut() {
-            if let RenderedPreviewContent::Html(html) = rendered {
-                bind_canvas_identity_to_editor_html(html, &canvas_transaction.identity)?;
-            }
-        }
+        let content =
+            bind_canvas_identity_to_generation_content(content, &canvas_transaction.identity)?;
 
         Ok(ActivePreviewGeneration {
             project_root: self.owner.project_root.clone(),
@@ -507,6 +571,21 @@ fn render_template_workbench_document(
     model: &ProjectModel,
     plan: &TemplateWorkbenchPlan,
 ) -> Result<(String, String), String> {
+    if plan.render_mode == TemplateWorkbenchRenderMode::CanonicalRoute {
+        let route = plan
+            .selected_route
+            .as_ref()
+            .map(|context| context.url.as_str())
+            .ok_or_else(|| {
+                "Contextul canonic Workbench nu conține ruta verificată de ProjectModel."
+                    .to_string()
+            })?;
+        let document = canonical_document_for_route(canonical_content, route).ok_or_else(|| {
+            format!("Preview-ul canonic al reviziei curente nu conține ruta «{route}».")
+        })?;
+        return Ok((document.to_string(), route.to_string()));
+    }
+
     let (mut context, context_route) = template_workbench_context(site, plan)?;
     if !plan.render_context.canonical_truth {
         install_controlled_workbench_fixture(&mut context);
@@ -895,15 +974,15 @@ fn canonical_document_for_route<'a>(
     content: &'a HashMap<String, String>,
     route: &str,
 ) -> Option<&'a str> {
-    let route = route
+    let path = route
         .split_once('?')
         .map(|(path, _)| path)
         .unwrap_or(route)
         .trim();
-    let key = if route == "/" {
+    let key = if path == "/" {
         String::new()
     } else {
-        route.trim_start_matches('/').to_string()
+        path.trim_matches('/').to_string()
     };
     content.get(&key).map(String::as_str)
 }
@@ -1156,11 +1235,110 @@ fn prepare_rendered_content(
             body: body.as_bytes().to_vec(),
             content_type: content_type.to_string(),
         }),
-        None => Ok(RenderedPreviewContent::Html(prepare_design_safe_html(
-            body,
-            preview_revision,
-        )?)),
+        None => Ok(RenderedPreviewContent::InitialHtml(
+            prepare_initial_preview_html(body, preview_revision)?,
+        )),
     }
+}
+
+fn prepare_generation_content(
+    model: &ProjectModel,
+    rendered: HashMap<String, String>,
+    preview_revision: &str,
+) -> Result<HashMap<String, RenderedPreviewContent>, String> {
+    let mut entries = rendered.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let canvas_annotator = CanvasGraph::document_annotator(model);
+    parallel_preview_map(&entries, |path, body| {
+        let extension = Path::new(path).extension().and_then(|value| value.to_str());
+        let prepared_body = if matches!(extension, Some("xml" | "json" | "txt")) {
+            body.to_string()
+        } else {
+            canvas_annotator.annotate(&canvas_route_for_content_key(path), body)?
+        };
+        prepare_rendered_content(extension, &prepared_body, preview_revision)
+    })
+}
+
+fn bind_canvas_identity_to_generation_content(
+    content: HashMap<String, RenderedPreviewContent>,
+    identity: &crate::preview::CanvasProjectionIdentity,
+) -> Result<HashMap<String, RenderedPreviewContent>, String> {
+    let mut entries = content.into_iter().collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    parallel_preview_map(&entries, |_path, rendered| {
+        let mut rendered = rendered.clone();
+        match &mut rendered {
+            RenderedPreviewContent::Html(html) => {
+                bind_canvas_identity_to_editor_html(html, identity)?;
+            }
+            RenderedPreviewContent::InitialHtml(html) => {
+                bind_canvas_identity_to_initial_preview_html(html, identity)?;
+            }
+            RenderedPreviewContent::Text { .. } => {}
+        }
+        Ok(rendered)
+    })
+}
+
+fn parallel_preview_map<Input, Output>(
+    entries: &[(String, Input)],
+    operation: impl Fn(&str, &Input) -> Result<Output, String> + Sync,
+) -> Result<HashMap<String, Output>, String>
+where
+    Input: Sync,
+    Output: Send,
+{
+    if entries.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let worker_count = thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .div_ceil(2)
+        .clamp(1, 6)
+        .min(entries.len());
+    if worker_count == 1 {
+        return entries
+            .iter()
+            .map(|(path, input)| operation(path, input).map(|output| (path.clone(), output)))
+            .collect();
+    }
+
+    let next_index = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let operation = &operation;
+            let next_index = &next_index;
+            scope.spawn(move || loop {
+                let index = next_index.fetch_add(1, Ordering::Relaxed);
+                let Some((path, input)) = entries.get(index) else {
+                    break;
+                };
+                if sender.send((index, operation(path, input))).is_err() {
+                    break;
+                }
+            });
+        }
+        drop(sender);
+    });
+
+    let mut ordered = (0..entries.len())
+        .map(|_| None)
+        .collect::<Vec<Option<Result<Output, String>>>>();
+    for (index, result) in receiver {
+        ordered[index] = Some(result);
+    }
+    let mut output = HashMap::with_capacity(entries.len());
+    for ((path, _), result) in entries.iter().zip(ordered) {
+        let result = result.ok_or_else(|| {
+            format!("Procesarea paralelă Preview nu a publicat rezultatul pentru ruta `{path}`.")
+        })??;
+        output.insert(path.clone(), result);
+    }
+    Ok(output)
 }
 
 fn next_preview_revision(workspace_revision: u64) -> String {
@@ -1189,6 +1367,32 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn parallel_preview_map_preserves_every_route_and_propagates_errors() {
+        let entries = (0..24)
+            .map(|index| (format!("route-{index:02}"), index))
+            .collect::<Vec<_>>();
+        let mapped =
+            parallel_preview_map(&entries, |path, value| Ok(format!("{path}:{}", value * 2)))
+                .unwrap();
+
+        assert_eq!(mapped.len(), entries.len());
+        assert_eq!(
+            mapped.get("route-07").map(String::as_str),
+            Some("route-07:14")
+        );
+
+        let error = parallel_preview_map(&entries, |path, value| {
+            if *value == 11 {
+                Err(format!("failed:{path}"))
+            } else {
+                Ok(*value)
+            }
+        })
+        .unwrap_err();
+        assert_eq!(error, "failed:route-11");
+    }
 
     #[test]
     fn macro_scenario_calls_real_macro_with_controlled_required_arguments() {
@@ -1231,6 +1435,7 @@ mod tests {
             &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
                 template_path: "templates/index.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -1247,6 +1452,7 @@ mod tests {
                 &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
                     template_path: "templates/partials/wrapper.html".to_string(),
                     preferred_page_path: None,
+                    preferred_route: None,
                 },
             )
             .unwrap();
@@ -1268,6 +1474,7 @@ mod tests {
                 &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
                     template_path: "templates/orphan.html".to_string(),
                     preferred_page_path: None,
+                    preferred_route: None,
                 },
             )
             .unwrap();
@@ -1281,6 +1488,7 @@ mod tests {
             &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
                 template_path: "templates/macros/card.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -1288,6 +1496,67 @@ mod tests {
             render_template_workbench_document(&site, &canonical, &model, &macro_plan).unwrap();
         assert!(!macro_plan.render_context.canonical_truth);
         assert!(macro_html.contains("<strong class=\"macro-card\">Exemplu</strong>"));
+
+        drop(site);
+        drop(_render_guard);
+        fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn workbench_serves_the_exact_canonical_taxonomy_documents() {
+        let fixture = parity_fixture("template-workbench-taxonomy-routes");
+        let project = fixture.join("project");
+        let artifacts = fixture.join("artifacts");
+        create_taxonomy_workbench_project(&project);
+        let model = crate::project_model::build_project_model(&project, &HashMap::new()).unwrap();
+        let _render_guard = acquire_zola_engine_for_test();
+        let (site, canonical) = build_new_official_zola_site(
+            &project,
+            &artifacts,
+            "http://127.0.0.1:41889",
+            1,
+            DraftRenderPolicy::Include,
+        )
+        .unwrap();
+        let list_plan = crate::project_model::template_workbench::resolve_template_workbench_plan(
+            &model,
+            &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
+                template_path: "templates/tags/list.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/tags/".to_string()),
+            },
+        )
+        .unwrap();
+        let (list_html, list_route) =
+            render_template_workbench_document(&site, &canonical, &model, &list_plan).unwrap();
+        assert_eq!(list_route, "/tags/");
+        assert!(list_html.contains("class=\"taxonomy-list\""));
+        assert_eq!(
+            list_html,
+            canonical_document_for_route(&canonical, "/tags/")
+                .unwrap()
+                .to_string()
+        );
+
+        let term_plan = crate::project_model::template_workbench::resolve_template_workbench_plan(
+            &model,
+            &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
+                template_path: "templates/tags/single.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/tags/rust/".to_string()),
+            },
+        )
+        .unwrap();
+        let (term_html, term_route) =
+            render_template_workbench_document(&site, &canonical, &model, &term_plan).unwrap();
+        assert_eq!(term_route, "/tags/rust/");
+        assert!(term_html.contains("class=\"taxonomy-term\""));
+        assert_eq!(
+            term_html,
+            canonical_document_for_route(&canonical, "/tags/rust/")
+                .unwrap()
+                .to_string()
+        );
 
         drop(site);
         drop(_render_guard);
@@ -1392,7 +1661,7 @@ mod tests {
         assert!(matches!(
             prepare_rendered_content(None, "<!doctype html><html><body></body></html>", "r1")
                 .unwrap(),
-            RenderedPreviewContent::Html(_)
+            RenderedPreviewContent::InitialHtml(_)
         ));
     }
 
@@ -1695,6 +1964,7 @@ Conținut draft vizibil în editor.
                 &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
                     template_path: template_path.clone(),
                     preferred_page_path: None,
+                    preferred_route: None,
                 },
             )
             .unwrap();
@@ -1832,6 +2102,51 @@ template = "index.html"
         .unwrap();
         fs::write(root.join("static/site.css"), ".card { color: red; }\n").unwrap();
         fs::write(root.join("static/site.js"), "window.workbench = true;\n").unwrap();
+    }
+
+    fn create_taxonomy_workbench_project(root: &Path) {
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/tags")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            r#"base_url = "https://workbench.pana.invalid"
+title = "Taxonomii Workbench"
+compile_sass = false
+build_search_index = false
+taxonomies = [{ name = "tags" }]
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/article.md"),
+            "+++\ntitle = \"Articol\"\ntemplate = \"page.html\"\n[taxonomies]\ntags = [\"Rust\"]\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            "<!doctype html><html><body><main>Acasă</main></body></html>",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/page.html"),
+            "<!doctype html><html><body><article>{{ page.title }}</article></body></html>",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/tags/list.html"),
+            "<!doctype html><html><body><main class=\"taxonomy-list\">{{ taxonomy.name }}</main></body></html>",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/tags/single.html"),
+            "<!doctype html><html><body><main class=\"taxonomy-term\">{{ term.name }}</main></body></html>",
+        )
+        .unwrap();
     }
 
     fn create_parity_project(root: &Path) {

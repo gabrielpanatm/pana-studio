@@ -18,7 +18,7 @@ use crate::{
         insert_engine::plan_html_insert,
         model::ProjectModel,
         move_engine::{
-            html_identity_aliases, html_node_id_at_line, html_node_id_at_location, plan_html_move,
+            html_identity_aliases, html_node_id_at_line, html_node_id_at_location,
             ProjectSourceEditLocation,
         },
         tag_engine::plan_html_tag,
@@ -33,37 +33,28 @@ use super::super::model::{
     PreviewHtmlDuplicateExecutionReceipt, PreviewHtmlInsertDropExecutionInput,
     PreviewHtmlInsertDropExecutionReceipt, PreviewHtmlTagExecutionInput,
     PreviewHtmlTagExecutionReceipt, PreviewHtmlTextExecutionInput, PreviewHtmlTextExecutionReceipt,
-    PreviewLayerDropExecutionInput, PreviewLayerDropExecutionReceipt,
 };
 use super::{
     events::{
         append_html_attributes_event, append_html_delete_event, append_html_duplicate_event,
         append_html_insert_drop_event, append_html_tag_event, append_html_text_event,
-        append_layer_drop_event,
     },
     gate::require_preview_executor_intent,
     receipts::{
         blocked_html_attributes_receipt, blocked_html_delete_receipt,
         blocked_html_duplicate_receipt, blocked_html_insert_drop_receipt, blocked_html_tag_receipt,
-        blocked_html_text_receipt, blocked_layer_drop_receipt, committed_html_attributes_receipt,
+        blocked_html_text_receipt, committed_html_attributes_receipt,
         committed_html_delete_receipt, committed_html_duplicate_receipt,
         committed_html_insert_drop_receipt, committed_html_tag_receipt,
-        committed_html_text_receipt, committed_layer_drop_receipt,
+        committed_html_text_receipt,
     },
     runner::{run_preview_structural_plan, PreviewStructuralPlanCommitted},
     spec::{
         HTML_ATTRIBUTES_INTENT, HTML_ATTRIBUTES_PLAN, HTML_DELETE_INTENT, HTML_DELETE_PLAN,
         HTML_DUPLICATE_INTENT, HTML_DUPLICATE_PLAN, HTML_INSERT_DROP_INTENT, HTML_INSERT_DROP_PLAN,
-        HTML_TAG_INTENT, HTML_TAG_PLAN, HTML_TEXT_INTENT, HTML_TEXT_PLAN, LAYER_DROP_INTENT,
-        LAYER_DROP_PLAN,
+        HTML_TAG_INTENT, HTML_TAG_PLAN, HTML_TEXT_INTENT, HTML_TEXT_PLAN,
     },
 };
-
-pub struct PreviewLayerDropExecutionOutcome {
-    pub receipt: PreviewLayerDropExecutionReceipt,
-    pub after_model: Option<ProjectModel>,
-    pub alias_updates: HashMap<String, String>,
-}
 
 pub struct PreviewHtmlInsertDropExecutionOutcome {
     pub receipt: PreviewHtmlInsertDropExecutionReceipt,
@@ -101,103 +92,6 @@ pub struct PreviewHtmlDeleteExecutionOutcome {
     pub alias_updates: HashMap<String, String>,
 }
 
-pub fn execute_preview_layer_drop(
-    app: &AppHandle,
-    session: &ProjectSessionSnapshot,
-    project_root: &Path,
-    workspace: &mut ProjectWorkspace,
-    input: PreviewLayerDropExecutionInput,
-    aliases: &HashMap<String, String>,
-) -> Result<PreviewLayerDropExecutionOutcome, String> {
-    let intent_receipt =
-        match require_preview_executor_intent(input.intent.clone(), session, LAYER_DROP_INTENT) {
-            Ok(intent_receipt) => intent_receipt,
-            Err(blocked) => {
-                let receipt = blocked_layer_drop_receipt(
-                    blocked.intent_receipt,
-                    None,
-                    LAYER_DROP_INTENT.preflight_blocked_message,
-                    blocked.diagnostic,
-                );
-                append_layer_drop_event(app, session, &receipt, None);
-                return Ok(PreviewLayerDropExecutionOutcome {
-                    receipt,
-                    after_model: None,
-                    alias_updates: HashMap::new(),
-                });
-            }
-        };
-
-    let committed = match run_preview_structural_plan(
-        project_root,
-        workspace,
-        LAYER_DROP_PLAN,
-        |before_model| plan_html_move(before_model, &input.move_intent, aliases),
-    )? {
-        Ok(committed) => committed,
-        Err(blocked) => {
-            let receipt = blocked_layer_drop_receipt(
-                intent_receipt,
-                Some(blocked.model_revision),
-                LAYER_DROP_PLAN.blocked_message,
-                Some(blocked.diagnostic),
-            );
-            append_layer_drop_event(app, session, &receipt, None);
-            return Ok(PreviewLayerDropExecutionOutcome {
-                receipt,
-                after_model: None,
-                alias_updates: HashMap::new(),
-            });
-        }
-    };
-
-    let PreviewStructuralPlanCommitted {
-        before_model,
-        patch,
-        commit,
-    } = committed;
-    let alias_updates = layer_drop_alias_updates(&before_model, &commit.after_model, &patch);
-    let projected_source_id = layer_drop_projected_source_id(
-        &commit.after_model,
-        &patch.resolved_source_id,
-        &alias_updates,
-    );
-    let canvas_patch = issue_canvas_patch(
-        session,
-        &commit.workspace_mutation,
-        &patch.before_revision,
-        &patch.after_revision,
-        CanvasPatchOperation::Move {
-            source: CanvasPatchAnchor::source(
-                &patch.resolved_source_id,
-                input.move_intent.source_selector.as_deref(),
-                input.move_intent.source_tag.as_deref(),
-            ),
-            target: CanvasPatchAnchor::source(
-                &patch.resolved_target_id,
-                input.move_intent.target_selector.as_deref(),
-                input.move_intent.target_tag.as_deref(),
-            ),
-            position: input.move_intent.position,
-        },
-    )?;
-    let receipt = committed_layer_drop_receipt(
-        intent_receipt,
-        commit.after_model.revision.clone(),
-        projected_source_id,
-        patch,
-        canvas_patch,
-        commit.workspace_mutation,
-    );
-    append_layer_drop_event(app, session, &receipt, None);
-
-    Ok(PreviewLayerDropExecutionOutcome {
-        receipt,
-        after_model: Some(commit.after_model),
-        alias_updates,
-    })
-}
-
 pub fn execute_preview_html_insert_drop(
     app: &AppHandle,
     session: &ProjectSessionSnapshot,
@@ -213,12 +107,8 @@ pub fn execute_preview_html_insert_drop(
     ) {
         Ok(intent_receipt) => intent_receipt,
         Err(blocked) => {
-            let receipt = blocked_html_insert_drop_receipt(
-                blocked.intent_receipt,
-                None,
-                HTML_INSERT_DROP_INTENT.preflight_blocked_message,
-                blocked.diagnostic,
-            );
+            let receipt =
+                blocked_html_insert_drop_receipt(blocked.intent_receipt, None, blocked.diagnostic);
             append_html_insert_drop_event(app, session, &receipt, None);
             return Ok(PreviewHtmlInsertDropExecutionOutcome {
                 receipt,
@@ -239,7 +129,6 @@ pub fn execute_preview_html_insert_drop(
             let receipt = blocked_html_insert_drop_receipt(
                 intent_receipt,
                 Some(blocked.model_revision),
-                HTML_INSERT_DROP_PLAN.blocked_message,
                 Some(blocked.diagnostic),
             );
             append_html_insert_drop_event(app, session, &receipt, None);
@@ -303,12 +192,8 @@ pub fn execute_preview_html_attributes(
     ) {
         Ok(intent_receipt) => intent_receipt,
         Err(blocked) => {
-            let receipt = blocked_html_attributes_receipt(
-                blocked.intent_receipt,
-                None,
-                HTML_ATTRIBUTES_INTENT.preflight_blocked_message,
-                blocked.diagnostic,
-            );
+            let receipt =
+                blocked_html_attributes_receipt(blocked.intent_receipt, None, blocked.diagnostic);
             append_html_attributes_event(app, session, &receipt, None);
             return Ok(PreviewHtmlAttributesExecutionOutcome {
                 receipt,
@@ -329,7 +214,6 @@ pub fn execute_preview_html_attributes(
             let receipt = blocked_html_attributes_receipt(
                 intent_receipt,
                 Some(blocked.model_revision),
-                HTML_ATTRIBUTES_PLAN.blocked_message,
                 Some(blocked.diagnostic),
             );
             append_html_attributes_event(app, session, &receipt, None);
@@ -434,12 +318,8 @@ pub fn execute_preview_html_text(
         match require_preview_executor_intent(input.intent.clone(), session, HTML_TEXT_INTENT) {
             Ok(intent_receipt) => intent_receipt,
             Err(blocked) => {
-                let receipt = blocked_html_text_receipt(
-                    blocked.intent_receipt,
-                    None,
-                    HTML_TEXT_INTENT.preflight_blocked_message,
-                    blocked.diagnostic,
-                );
+                let receipt =
+                    blocked_html_text_receipt(blocked.intent_receipt, None, blocked.diagnostic);
                 append_html_text_event(app, session, &receipt, None);
                 return Ok(PreviewHtmlTextExecutionOutcome {
                     receipt,
@@ -461,7 +341,6 @@ pub fn execute_preview_html_text(
             let receipt = blocked_html_text_receipt(
                 intent_receipt,
                 Some(blocked.model_revision),
-                HTML_TEXT_PLAN.blocked_message,
                 Some(blocked.diagnostic),
             );
             append_html_text_event(app, session, &receipt, None);
@@ -531,12 +410,8 @@ pub fn execute_preview_html_tag(
         match require_preview_executor_intent(input.intent.clone(), session, HTML_TAG_INTENT) {
             Ok(intent_receipt) => intent_receipt,
             Err(blocked) => {
-                let receipt = blocked_html_tag_receipt(
-                    blocked.intent_receipt,
-                    None,
-                    HTML_TAG_INTENT.preflight_blocked_message,
-                    blocked.diagnostic,
-                );
+                let receipt =
+                    blocked_html_tag_receipt(blocked.intent_receipt, None, blocked.diagnostic);
                 append_html_tag_event(app, session, &receipt, None);
                 return Ok(PreviewHtmlTagExecutionOutcome {
                     receipt,
@@ -555,7 +430,6 @@ pub fn execute_preview_html_tag(
                 let receipt = blocked_html_tag_receipt(
                     intent_receipt,
                     Some(blocked.model_revision),
-                    HTML_TAG_PLAN.blocked_message,
                     Some(blocked.diagnostic),
                 );
                 append_html_tag_event(app, session, &receipt, None);
@@ -625,7 +499,6 @@ pub fn execute_preview_html_duplicate(
                 let receipt = blocked_html_duplicate_receipt(
                     blocked.intent_receipt,
                     None,
-                    HTML_DUPLICATE_INTENT.preflight_blocked_message,
                     blocked.diagnostic,
                 );
                 append_html_duplicate_event(app, session, &receipt, None);
@@ -648,7 +521,6 @@ pub fn execute_preview_html_duplicate(
             let receipt = blocked_html_duplicate_receipt(
                 intent_receipt,
                 Some(blocked.model_revision),
-                HTML_DUPLICATE_PLAN.blocked_message,
                 Some(blocked.diagnostic),
             );
             append_html_duplicate_event(app, session, &receipt, None);
@@ -712,12 +584,8 @@ pub fn execute_preview_html_delete(
         match require_preview_executor_intent(input.intent.clone(), session, HTML_DELETE_INTENT) {
             Ok(intent_receipt) => intent_receipt,
             Err(blocked) => {
-                let receipt = blocked_html_delete_receipt(
-                    blocked.intent_receipt,
-                    None,
-                    HTML_DELETE_INTENT.preflight_blocked_message,
-                    blocked.diagnostic,
-                );
+                let receipt =
+                    blocked_html_delete_receipt(blocked.intent_receipt, None, blocked.diagnostic);
                 append_html_delete_event(app, session, &receipt, None);
                 return Ok(PreviewHtmlDeleteExecutionOutcome {
                     receipt,
@@ -738,7 +606,6 @@ pub fn execute_preview_html_delete(
             let receipt = blocked_html_delete_receipt(
                 intent_receipt,
                 Some(blocked.model_revision),
-                HTML_DELETE_PLAN.blocked_message,
                 Some(blocked.diagnostic),
             );
             append_html_delete_event(app, session, &receipt, None);
@@ -785,7 +652,7 @@ pub fn execute_preview_html_delete(
     })
 }
 
-fn issue_canvas_patch(
+pub(super) fn issue_canvas_patch(
     session: &ProjectSessionSnapshot,
     workspace_mutation: &ProjectWorkspaceMutationReceipt,
     before_model_revision: &str,
@@ -831,7 +698,7 @@ fn html_target_alias_updates(
     updates
 }
 
-fn layer_drop_alias_updates(
+pub(super) fn html_move_alias_updates(
     before_model: &ProjectModel,
     after_model: &ProjectModel,
     patch: &crate::project_model::move_engine::ProjectHtmlMovePatch,
@@ -848,7 +715,7 @@ fn layer_drop_alias_updates(
     updates
 }
 
-fn layer_drop_projected_source_id(
+pub(super) fn html_move_projected_source_id(
     after_model: &ProjectModel,
     resolved_source_id: &str,
     alias_updates: &HashMap<String, String>,
@@ -891,8 +758,8 @@ mod tests {
     };
 
     use super::{
-        html_attribute_canvas_patch_allowed, html_target_alias_updates, layer_drop_alias_updates,
-        layer_drop_projected_source_id,
+        html_attribute_canvas_patch_allowed, html_move_alias_updates,
+        html_move_projected_source_id, html_target_alias_updates,
     };
 
     #[test]
@@ -1058,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn same_tag_sibling_move_receipt_identity_resolves_exact_moved_node() {
+    fn same_tag_sibling_editor_move_identity_resolves_exact_moved_node() {
         let root = unique_test_dir();
         fs::create_dir_all(root.join("templates")).unwrap();
         fs::create_dir_all(root.join("content")).unwrap();
@@ -1110,8 +977,8 @@ mod tests {
         let mut drafts = HashMap::new();
         drafts.insert(patch.file.clone(), patch.contents.clone());
         let after = build_project_model(&root, &drafts).unwrap();
-        let aliases = layer_drop_alias_updates(&before, &after, &patch);
-        let projected = layer_drop_projected_source_id(&after, &source_id, &aliases).unwrap();
+        let aliases = html_move_alias_updates(&before, &after, &patch);
+        let projected = html_move_projected_source_id(&after, &source_id, &aliases).unwrap();
         let after_siblings = html_ids(&after, "<section>");
         assert_eq!(after_siblings.len(), 2);
         let sibling = after_siblings[0].clone();

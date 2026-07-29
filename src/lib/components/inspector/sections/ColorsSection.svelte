@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ProjectFile, ScssVariable } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
   import { variablesForProperty } from "$lib/editor/controls";
@@ -72,11 +73,17 @@
     return "color";
   });
 
-  const BG_TYPE_OPTS = [
-    { value: "color",    label: "Color"    },
-    { value: "image",    label: "Image"    },
-    { value: "gradient", label: "Gradient" },
-  ];
+  const BG_TYPE_OPTS = $derived([
+    { value: "color", label: t("inspector-colors-type-color") },
+    { value: "image", label: t("inspector-colors-type-image") },
+    { value: "gradient", label: t("inspector-colors-gradient") },
+  ]);
+
+  function gradientTypeLabel(type: GradientType) {
+    if (type === "linear") return t("inspector-colors-gradient-linear");
+    if (type === "radial") return t("inspector-colors-gradient-radial");
+    return t("inspector-colors-gradient-conic");
+  }
 
   function setBgType(next: string) {
     if (next === "color") {
@@ -225,7 +232,7 @@
   const BG_CLIPS    = ["border-box","padding-box","content-box","text"];
   const BG_REPEATS  = ["repeat","no-repeat","repeat-x","repeat-y","space","round"];
   const BG_ATTACHES = ["scroll","fixed","local"];
-  const GRAD_TYPES  = ["linear","radial","conic"];
+  const GRAD_TYPES: GradientType[] = ["linear","radial","conic"];
 
   // BG image URL extraction / construction
   const bgImgUrl = $derived.by(() => {
@@ -240,11 +247,11 @@
   }
 </script>
 
-<InspectorSection title="Colors" {hasValues}>
+<InspectorSection title={t("inspector-colors-title")} {hasValues}>
   {#snippet icon()}<IconPalette size={13} stroke={1.7} />{/snippet}
 
   <!-- Text Color -->
-  <div class="row-label">Text Color</div>
+  <div class="row-label">{t("inspector-colors-text")}</div>
   <ColorInput
     property="color"
     value={getValue("color")}
@@ -253,7 +260,7 @@
   />
 
   <!-- Background Color -->
-  <div class="row-label">Background Color</div>
+  <div class="row-label">{t("inspector-colors-background")}</div>
   <ColorInput
     property="background-color"
     value={getValue("background-color")}
@@ -262,7 +269,7 @@
   />
 
   <!-- Background Type -->
-  <div class="row-label">Tip fundal</div>
+  <div class="row-label">{t("inspector-colors-background-type")}</div>
   <SegmentedControl
     options={BG_TYPE_OPTS}
     value={bgType}
@@ -272,7 +279,7 @@
 
   <!-- ── IMAGE ────────────────────────────────────────────────────────── -->
   {#if bgType === "image"}
-    <div class="row-label">Background Image</div>
+    <div class="row-label">{t("inspector-colors-background-image")}</div>
     <AssetPicker
       value={bgImgUrl}
       assets={imageAssets}
@@ -285,7 +292,7 @@
 
     <div class="row-2">
       <div class="col">
-        <div class="row-label">BG Size</div>
+        <div class="row-label">{t("inspector-colors-background-size")}</div>
         <TextWithOptions
           label="S"
           value={getValue("background-size")}
@@ -295,12 +302,12 @@
         />
       </div>
       <div class="col">
-        <div class="row-label">BG Repeat</div>
+        <div class="row-label">{t("inspector-colors-background-repeat")}</div>
         <SelectControl
           value={getValue("background-repeat")}
-          placeholder="repeat (implicit)"
+          placeholder={t("inspector-placeholder-repeat-default")}
           options={[{ value: "", label: "— implicit (repeat)" }, ...BG_REPEATS.map((value) => ({ value, label: value }))]}
-          ariaLabel="Background repeat"
+          ariaLabel={t("inspector-colors-background-repeat")}
           onchange={(value) => edit.commit("background-repeat", value)}
         />
       </div>
@@ -308,7 +315,7 @@
 
     <div class="row-2">
       <div class="col">
-        <div class="row-label">Poziție fundal</div>
+        <div class="row-label">{t("inspector-colors-background-position")}</div>
         <TextWithOptions
           label="P"
           value={getValue("background-position")}
@@ -324,12 +331,12 @@
         />
       </div>
       <div class="col">
-        <div class="row-label">BG Attach</div>
+        <div class="row-label">{t("inspector-colors-background-attachment")}</div>
         <SelectControl
           value={getValue("background-attachment")}
-          placeholder="scroll (implicit)"
+          placeholder={t("inspector-placeholder-scroll-default")}
           options={[{ value: "", label: "— implicit (scroll)" }, ...BG_ATTACHES.map((value) => ({ value, label: value }))]}
-          ariaLabel="Background attachment"
+          ariaLabel={t("inspector-colors-background-attachment")}
           onchange={(value) => edit.commit("background-attachment", value)}
         />
       </div>
@@ -338,13 +345,13 @@
 
   <!-- ── GRADIENT ─────────────────────────────────────────────────────── -->
   {#if bgType === "gradient"}
-    <div class="row-label">Gradient</div>
+    <div class="row-label">{t("inspector-colors-gradient")}</div>
     {#if gradientStructured}
     <div class="grad-header">
       <SelectControl
         value={gradientState.type}
-        options={GRAD_TYPES.map((type) => ({ value: type, label: type.charAt(0).toUpperCase() + type.slice(1) }))}
-        ariaLabel="Gradient type"
+        options={GRAD_TYPES.map((type) => ({ value: type, label: gradientTypeLabel(type) }))}
+        ariaLabel={t("inspector-colors-gradient-type")}
         onchange={(value) => patchGradient({ type: value as GradientType }, true)}
       />
       {#if gradientState.type === "linear" || gradientState.type === "conic"}
@@ -383,7 +390,7 @@
           class:active={activeStopId === stop.id}
           style="left: {stop.position}%; background: {stop.color}; opacity: {stop.opacity / 100};"
           onpointerdown={(e) => onStopPointerDown(e, stop.id)}
-          aria-label="Stop la {stop.position}%"
+          aria-label={t("inspector-colors-stop-at", { position: stop.position })}
         ></button>
       {/each}
     </div>
@@ -423,7 +430,7 @@
           <button
             type="button"
             class="stop-del"
-            title="Șterge stop"
+            title={t("inspector-colors-delete-stop")}
             onclick={() => removeStop(activeStop.id)}
           >
             <IconTrash size={11} stroke={1.8} />
@@ -431,7 +438,7 @@
         {/if}
       </div>
       <div class="stop-pos-row">
-        <span class="row-label" style="margin:0">Poziție</span>
+        <span class="row-label" style="margin:0">{t("inspector-colors-position")}</span>
         <div class="stop-pos-input">
           <input
             class="opacity-input"
@@ -454,7 +461,7 @@
       </div>
     {/if}
     {:else}
-      <p class="complex-value-note">Gradientul folosește o sintaxă care nu poate fi proiectată fără pierderi. Valoarea brută este păstrată.</p>
+      <p class="complex-value-note">{t("inspector-colors-complex-gradient")}</p>
       <TextWithOptions
         value={getValue("background-image")}
         placeholder="linear-gradient(...)"
@@ -468,22 +475,22 @@
   {#if bgType === "image" || bgType === "gradient"}
     <div class="row-2">
       <div class="col">
-        <div class="row-label">Mod de amestecare</div>
+        <div class="row-label">{t("inspector-colors-blend-mode")}</div>
         <SelectControl
           value={getValue("background-blend-mode")}
-          placeholder="normal (implicit)"
+          placeholder={t("inspector-placeholder-normal-default")}
           options={[{ value: "", label: "— implicit (normal)" }, ...BLEND_MODES.map((value) => ({ value, label: value }))]}
-          ariaLabel="Background blend mode"
+          ariaLabel={t("inspector-colors-background-blend-mode")}
           onchange={(value) => edit.commit("background-blend-mode", value)}
         />
       </div>
       <div class="col">
-        <div class="row-label">BG Clip</div>
+        <div class="row-label">{t("inspector-colors-background-clip")}</div>
         <SelectControl
           value={getValue("background-clip")}
-          placeholder="border-box (implicit)"
+          placeholder={t("inspector-placeholder-border-box-default")}
           options={[{ value: "", label: "— implicit (border-box)" }, ...BG_CLIPS.map((value) => ({ value, label: value }))]}
-          ariaLabel="Background clip"
+          ariaLabel={t("inspector-colors-background-clip")}
           onchange={(value) => edit.commit("background-clip", value)}
         />
       </div>

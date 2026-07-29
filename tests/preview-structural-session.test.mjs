@@ -4,6 +4,7 @@ import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   drainPreviewStructuralLanes,
+  previewStructuralCommandIdentity,
   previewStructuralLaneSnapshot,
   requirePreviewStructuralReceiptIdentity,
   runInPreviewStructuralLane,
@@ -15,7 +16,7 @@ import {
 } from "$lib/editor-runtime/context-menu";
 import {
   captureEditorCommand,
-  htmlTargetFromSelection,
+  htmlTargetFromCoordinatedSelection,
 } from "$lib/editor-runtime/commands";
 import { captureHtmlActionTarget } from "$lib/state/html-actions-controller";
 
@@ -48,30 +49,39 @@ async function nextTurn() {
 
 function selection(selector, sourceId, tag = "section") {
   return {
-    selector: `<${tag}>`,
-    cssSelector: `[data-test="${sourceId}"]`,
-    domPath: selector,
-    tag,
-    id: "",
-    href: "",
-    title: "",
-    alt: "",
-    classes: [sourceId],
-    text: sourceId,
-    rawText: sourceId,
-    hasChildElements: false,
-    rect: { width: "1px", height: "1px", top: "0px", left: "0px" },
-    styles: [],
-    variables: [],
-    matchedRules: [],
-    imageSrc: null,
-    attributes: { "data-test": sourceId },
-    parentNode: { selector: "main", label: "main", tag: "main" },
-    childNodes: [],
+    snapshot: {
+      selectionRevision: 1,
+      runtimeSessionId: "session:runtime-a",
+      anchor: { sourceNodeId: sourceId, renderInstanceId: `render:${sourceId}` },
+    },
+    documentEpoch: 1,
+    renderInstanceId: `render:${sourceId}`,
+    sourceNodeId: sourceId,
     sourceLocation: { file: "templates/index.html", line: sourceId === "source-a" ? 4 : 8, column: 3 },
-    sourceId,
-    templateSourceId: "template:index",
-    sessionId: `session:${sourceId}`,
+    observation: {
+      selector: `<${tag}>`,
+      cssSelector: `[data-test="${sourceId}"]`,
+      domPath: selector,
+      tag,
+      id: "",
+      href: "",
+      title: "",
+      alt: "",
+      classes: [sourceId],
+      text: sourceId,
+      rawText: sourceId,
+      hasChildElements: false,
+      rect: { width: "1px", height: "1px", top: "0px", left: "0px" },
+      styles: [],
+      variables: [],
+      matchedRules: [],
+      imageSrc: null,
+      zolaImage: null,
+      attributes: { "data-test": sourceId },
+      parentNode: { selector: "main", label: "main", tag: "main" },
+      childNodes: [],
+      blockContext: null,
+    },
   };
 }
 
@@ -113,6 +123,50 @@ test("structural lane serializes the complete commit-to-projection lifecycle", a
     "second:commit",
     "second:projection",
   ]);
+});
+
+test("selection-driven structural commands capture the Rust selection revision before queueing", async () => {
+  const activeHost = host({
+    selectionSnapshot: {
+      projectRoot: "/project",
+      runtimeSessionId: "session:runtime-a",
+      selectionRevision: 37,
+      resolution: "resolved",
+      anchor: {
+        editorNodeId: "editor_render:title",
+        sourceNodeId: "source:title",
+        renderInstanceId: "render-title",
+      },
+    },
+  });
+  const gate = deferred();
+  const first = runInPreviewStructuralLane(activeHost, async () => {
+    await gate.promise;
+  });
+  let capturedIdentity;
+  const queued = runInPreviewStructuralLane(activeHost, async (lease) => {
+    capturedIdentity = previewStructuralCommandIdentity(lease, true);
+  });
+
+  await nextTurn();
+  activeHost.selectionSnapshot = {
+    ...activeHost.selectionSnapshot,
+    selectionRevision: 38,
+    anchor: {
+      editorNodeId: "editor_render:subtitle",
+      sourceNodeId: "source:subtitle",
+      renderInstanceId: "render-subtitle",
+    },
+  };
+  gate.resolve();
+  await Promise.all([first, queued]);
+
+  assert.deepEqual(capturedIdentity.expectedSelection, {
+    selectionRevision: 37,
+    editorNodeId: "editor_render:title",
+    sourceNodeId: "source:title",
+    renderInstanceId: "render-title",
+  });
 });
 
 test("structural lane drains the disk monitor before commit and resumes it after projection", async () => {
@@ -213,27 +267,29 @@ test("a queued request from a replaced runtime session performs no callback", as
   assert.equal(staleCallbackCount, 0);
 });
 
-test("Files use the exact-session structural lane while Save owns the single disk barrier", () => {
+test("File Explorer uses exact Rust plan/commit while Save owns the single disk barrier", () => {
   const read = (relativePath) => readFileSync(fileURLToPath(new URL(
     `../${relativePath}`,
     import.meta.url,
   )), "utf8");
-  const files = read("src/lib/state/files-controller.ts");
-  const drag = read("src/lib/state/files-drag-controller.ts");
-  const session = read("src/lib/state/app-session-controller.ts");
-  const project = read("src/lib/state/project-controller.ts");
+  const explorer = read("src-tauri/src/kernel/file_explorer.rs");
+  const commands = read("src-tauri/src/commands/file_explorer.rs");
+  const productionCommands = commands.slice(0, commands.indexOf("#[cfg(test)]"));
+  const files = read("src/lib/components/project/ProjectFilesTab.svelte");
   const save = read("src/lib/state/save-controller.ts");
   const app = read("src/lib/state/app.svelte.ts");
 
-  for (const source of [files, drag, session, project]) {
-    assert.match(source, /runInPreviewStructuralLane/);
-    assert.match(source, /previewStructuralCommandIdentity/);
-    assert.match(source, /requireCurrentPreviewStructuralSession/);
-    assert.doesNotMatch(source, /acknowledgeInternalDiskWrite|completeInternalDiskProjection/);
-  }
+  assert.match(explorer, /workspace_revision/);
+  assert.match(explorer, /accepted_disk_generation/);
+  assert.match(explorer, /commit_token/);
+  assert.match(commands, /consume_plan/);
+  assert.match(commands, /stage_project_bundle_changes/);
+  assert.match(files, /planOperation/);
+  assert.match(files, /commitOperation\(resolvedPlan\)/);
   assert.match(save, /await saveProjectWorkspace\(/);
   assert.match(app, /await suspendAndDrainExternalDiskMonitoringFromController/);
   assert.match(app, /return await saveActiveDocument\(this\.saveControllerHost\(\)\)/);
+  assert.doesNotMatch(productionCommands, /fs::write|fs::remove|rename\(/);
   assert.doesNotMatch(save, /runInPreviewStructuralLane|acceptedDiskGeneration|InternalWriteEvidence/);
 });
 
@@ -305,21 +361,21 @@ test("receipt identity mismatch is rejected before acknowledgement or projection
       projectRoot: "/project",
       runtimeSessionId: "session:runtime-b",
     }, lease),
-    /altei instanțe ProjectSession/,
+    /another ProjectSession instance/,
   );
   assert.throws(
     () => requirePreviewStructuralReceiptIdentity({
       projectRoot: "/other",
       runtimeSessionId: "session:runtime-a",
     }, lease),
-    /altei instanțe ProjectSession/,
+    /another ProjectSession instance/,
   );
 });
 
 test("a late receipt cannot project local or Preview state into the active session", async () => {
   const calls = { project: 0 };
   const activeHost = host({
-    scannedProject: { isZola: true },
+    scannedProject: {},
     previewWorkspaceRevision: null,
     async refreshSourceGraph() {},
     async requestPreviewRefresh() { return true; },
@@ -354,7 +410,7 @@ test("a late receipt cannot project local or Preview state into the active sessi
         calls.project += 1;
       },
     ),
-    /altei instanțe ProjectSession/,
+    /another ProjectSession instance/,
   );
   assert.deepEqual(calls, { project: 0 });
 });
@@ -373,27 +429,28 @@ test("Project Transition raises its reservation before draining structural work"
   assert.ok(drainAt > closeMenuAt, "mutațiile structurale trebuie drenate după rezervare");
 });
 
-test("preview delete bridge sends the complete captured target before async preflight", () => {
-  const bridge = readFileSync(fileURLToPath(new URL(
-    "../src-tauri/src/preview/bridge/08_inspector_shell.js",
+test("preview Delete uses the Rust-resolved Canvas target instead of a legacy bridge selection", () => {
+  const agent = readFileSync(fileURLToPath(new URL(
+    "../src-tauri/src/preview/bridge/03_canvas_agent.js",
     import.meta.url,
   )), "utf8");
-  const projection = readFileSync(fileURLToPath(new URL(
-    "../src/lib/state/preview-projection-controller.ts",
+  const controller = readFileSync(fileURLToPath(new URL(
+    "../src/lib/state/canvas-interaction-controller.ts",
     import.meta.url,
   )), "utf8");
 
-  assert.match(bridge, /var target = createSelectionInfo\(current\)/);
-  assert.match(
-    bridge,
-    /post\("preview-delete-selected", \{[\s\S]*?selector: target\.domPath[\s\S]*?sourceId: target\.sourceId[\s\S]*?templateSourceId: target\.templateSourceId[\s\S]*?sessionId: target\.sessionId[\s\S]*?sourceSessionId: target\.sessionId[\s\S]*?sourceTag: target\.tag[\s\S]*?target: target/,
+  assert.match(agent, /emitCanvasAgentSelectionAction\("deleteSelection"\)/);
+  assert.doesNotMatch(agent, /post\("preview-delete-selected"/);
+  const authorityAt = controller.indexOf("function coordinatedActionTarget");
+  const revisionAt = controller.indexOf(
+    "selection.selectionRevision !== message.selectionRevision",
+    authorityAt,
   );
-  const captureAt = projection.indexOf("const htmlDeleteTarget =");
-  const preflightAt = projection.indexOf("await normalizePreviewProjectionIntent");
-  const dispatchAt = projection.indexOf("type: \"delete-html\"");
-  assert.ok(captureAt >= 0 && captureAt < preflightAt);
-  assert.ok(dispatchAt > preflightAt);
-  assert.match(projection, /target: htmlDeleteTarget \?\?/);
+  const dispatchAt = controller.indexOf("type: \"delete-html\"");
+  assert.ok(authorityAt >= 0 && revisionAt > authorityAt);
+  assert.ok(dispatchAt >= 0);
+  assert.doesNotMatch(controller, /selectedReceipt|selectedKey/);
+  assert.match(controller, /selection\.renderInstanceId !== target\.renderInstanceId/);
 });
 
 test("generated class and data-anim keep the captured target across identity collection", () => {
@@ -411,7 +468,7 @@ test("generated class and data-anim keep the captured target across identity col
   );
 
   for (const action of [classAction, dataAnimAction]) {
-    const captureAt = action.indexOf("captureHtmlActionTarget(host.selectedElement)");
+    const captureAt = action.indexOf("captureHtmlActionTarget(host.coordinatedElementSelection)");
     const collectAt = action.indexOf("await collectIdentitySourceTexts(host)");
     const sessionCheckAt = action.indexOf("previewStructuralSessionLeaseMatches(host, sessionLease)");
     assert.ok(captureAt >= 0 && captureAt < collectAt);
@@ -439,15 +496,17 @@ test("generated class and data-anim keep the captured target across identity col
 });
 
 test("A queued structural target stays A when selection changes to B before execution", async () => {
-  const activeHost = host({ selectedElement: selection("main > section:nth-of-type(1)", "source-a") });
+  const activeHost = host({
+    coordinatedElementSelection: selection("main > section:nth-of-type(1)", "source-a"),
+  });
   const releaseFirst = deferred();
   const first = runInPreviewStructuralLane(activeHost, async () => {
     await releaseFirst.promise;
   });
 
-  const originalSelectionA = activeHost.selectedElement;
+  const originalSelectionA = activeHost.coordinatedElementSelection;
   const capturedTargetA = captureHtmlActionTarget(
-    htmlTargetFromSelection(originalSelectionA),
+    htmlTargetFromCoordinatedSelection(originalSelectionA),
   );
   let executedTarget = null;
   const queued = runInPreviewStructuralLane(activeHost, async () => {
@@ -455,11 +514,11 @@ test("A queued structural target stays A when selection changes to B before exec
   });
 
   await nextTurn();
-  activeHost.selectedElement = selection("main > section:nth-of-type(2)", "source-b");
-  originalSelectionA.domPath = "main > section:nth-of-type(99)";
-  originalSelectionA.sourceId = "source-mutated";
-  originalSelectionA.classes[0] = "class-mutated";
-  originalSelectionA.attributes["data-test"] = "attribute-mutated";
+  activeHost.coordinatedElementSelection = selection("main > section:nth-of-type(2)", "source-b");
+  originalSelectionA.observation.domPath = "main > section:nth-of-type(99)";
+  originalSelectionA.sourceNodeId = "source-mutated";
+  originalSelectionA.observation.classes[0] = "class-mutated";
+  originalSelectionA.observation.attributes["data-test"] = "attribute-mutated";
   releaseFirst.resolve();
   await Promise.all([first, queued]);
 
@@ -510,7 +569,12 @@ test("Duplicate din meniul contextual așteaptă exact comanda structurală pent
     sourceId: "source-section-2",
     sessionId: "preview-node-2",
   };
-  const expectedTarget = { ...target, selection: null, section: null };
+  const expectedTarget = {
+    ...target,
+    sourceLocation: null,
+    observation: null,
+    section: null,
+  };
   const runtime = {
     canDispatch() {
       return { allowed: true, reason: "" };

@@ -7,7 +7,7 @@ use std::{
 use crate::{
     preview::preprocess::annotate::{
         paths::{is_template_relative_path, read_active_theme, zola_relative_path},
-        range::line_column,
+        range::LineIndex,
     },
     project_model::zola_image_engine::{inspect_zola_image_at, ZolaImagePresentation},
     source_graph::{
@@ -136,8 +136,14 @@ impl SourceIdIndex {
     pub(super) fn index_template_source(&mut self, source: &str, relative_path: &str) {
         let graph_file = relative_path.trim_start_matches('/').to_string();
         let mut identities = SourceIdentityAssigner::default();
-        let tera_scopes =
-            self.index_tera_source(source, relative_path, &graph_file, &mut identities);
+        let line_index = LineIndex::new(source);
+        let tera_scopes = self.index_tera_source(
+            source,
+            relative_path,
+            &graph_file,
+            &line_index,
+            &mut identities,
+        );
         let mixed = parse_mixed_cst(source, relative_path);
         debug_assert!(mixed.is_lossless());
         for element in &mixed.elements {
@@ -152,7 +158,7 @@ impl SourceIdIndex {
             }
             let raw = opening.full_text(source);
             let label = html_label(&tag.name, raw);
-            let (line, column) = line_column(source, opening.start);
+            let (line, column) = line_index.line_column(source, opening.start);
             let source_location = format!("{}:{}:{}", relative_path, line, column);
             let source_id = identities.next(&graph_file, &SourceNodeKind::Html, &label);
             self.by_source_location.insert(source_location, source_id);
@@ -178,6 +184,7 @@ impl SourceIdIndex {
         source: &str,
         relative_path: &str,
         graph_file: &str,
+        line_index: &LineIndex,
         identities: &mut SourceIdentityAssigner,
     ) -> Vec<TeraScopeAnchor> {
         let is_partial = is_partial_template_relative_path(relative_path);
@@ -202,7 +209,7 @@ impl SourceIdIndex {
                         continue;
                     }
                     let node_id = identities.next(graph_file, &kind, &item.label);
-                    let (line, column) = line_column(source, item.start);
+                    let (line, column) = line_index.line_column(source, item.start);
                     let source_location = format!("{}:{}:{}", relative_path, line, column);
                     self.by_template_source_location
                         .insert(source_location.clone(), node_id.clone());

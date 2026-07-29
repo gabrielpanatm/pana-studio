@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
   import { tick } from "svelte";
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
@@ -28,34 +29,34 @@
 
   // ── Presets & functions ──────────────────────────────────────────────────
 
-  const TRANSITION_PRESETS = [
-    { name: "Ease",        value: "all 0.3s ease" },
-    { name: "Ease In-Out", value: "all 0.3s ease-in-out" },
-    { name: "Linear",      value: "all 0.3s linear" },
-    { name: "Quick",       value: "all 0.15s ease" },
-    { name: "Smooth",      value: "all 0.5s cubic-bezier(0.4, 0, 0.2, 1)" },
-    { name: "Bouncy",      value: "all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)" },
-    { name: "Spring",      value: "all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275)" },
-    { name: "Snappy",      value: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)" },
-    { name: "Niciuna",        value: "none" },
-  ];
+  const TRANSITION_PRESETS = $derived([
+    { name: t("inspector-transition-ease"), value: "all 0.3s ease" },
+    { name: t("inspector-transition-ease-in-out"), value: "all 0.3s ease-in-out" },
+    { name: t("inspector-transition-linear"), value: "all 0.3s linear" },
+    { name: t("inspector-transition-quick"), value: "all 0.15s ease" },
+    { name: t("inspector-transition-smooth"), value: "all 0.5s cubic-bezier(0.4, 0, 0.2, 1)" },
+    { name: t("inspector-transition-bouncy"), value: "all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)" },
+    { name: t("inspector-transition-spring"), value: "all 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275)" },
+    { name: t("inspector-transition-snappy"), value: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)" },
+    { name: t("inspector-transition-none"), value: "none" },
+  ]);
 
-  const TRANSFORM_FUNCTIONS = [
-    { name: "Translate X",  fn: "translateX(0px)"     },
-    { name: "Translate Y",  fn: "translateY(0px)"     },
-    { name: "Translate Z",  fn: "translateZ(0px)"     },
-    { name: "Translate",    fn: "translate(0px, 0px)" },
-    { name: "Rotate",       fn: "rotate(0deg)"        },
-    { name: "Rotate X",     fn: "rotateX(0deg)"       },
-    { name: "Rotate Y",     fn: "rotateY(0deg)"       },
-    { name: "Rotate Z",     fn: "rotateZ(0deg)"       },
-    { name: "Scale",        fn: "scale(1)"            },
-    { name: "Scale X",      fn: "scaleX(1)"           },
-    { name: "Scale Y",      fn: "scaleY(1)"           },
-    { name: "Skew X",       fn: "skewX(0deg)"         },
-    { name: "Skew Y",       fn: "skewY(0deg)"         },
-    { name: "Perspective",  fn: "perspective(500px)"  },
-  ];
+  const TRANSFORM_FUNCTIONS = $derived([
+    { name: t("inspector-transform-translate-x"), fn: "translateX(0px)" },
+    { name: t("inspector-transform-translate-y"), fn: "translateY(0px)" },
+    { name: t("inspector-transform-translate-z"), fn: "translateZ(0px)" },
+    { name: t("inspector-transform-translate"), fn: "translate(0px, 0px)" },
+    { name: t("inspector-transform-rotate"), fn: "rotate(0deg)" },
+    { name: t("inspector-transform-rotate-x"), fn: "rotateX(0deg)" },
+    { name: t("inspector-transform-rotate-y"), fn: "rotateY(0deg)" },
+    { name: t("inspector-transform-rotate-z"), fn: "rotateZ(0deg)" },
+    { name: t("inspector-transform-scale"), fn: "scale(1)" },
+    { name: t("inspector-transform-scale-x"), fn: "scaleX(1)" },
+    { name: t("inspector-transform-scale-y"), fn: "scaleY(1)" },
+    { name: t("inspector-transform-skew-x"), fn: "skewX(0deg)" },
+    { name: t("inspector-transform-skew-y"), fn: "skewY(0deg)" },
+    { name: t("inspector-transform-perspective"), fn: "perspective(500px)" },
+  ]);
 
   const ORIGIN_OPTS = [
     "center","top","bottom","left","right",
@@ -170,19 +171,19 @@
   </div>
 {/if}
 
-<InspectorSection title="Transform" {hasValues}>
+<InspectorSection title={t("inspector-transform-title")} {hasValues}>
   {#snippet icon()}<IconTransform size={13} stroke={1.7} />{/snippet}
 
   <!-- TRANSITION -->
   <div class="sub-header">
-    <span class="sub-label" class:has-value={getValue("transition") !== ""}>TRANSITION</span>
+    <span class="sub-label" class:has-value={getValue("transition") !== ""}>{t("inspector-transform-transition")}</span>
     <button
       bind:this={trBtnRef}
       type="button"
       class="add-btn"
       class:active={showTr}
-      title="Preseturi tranziție"
-      aria-label="Deschide presetările pentru tranziție"
+      title={t("inspector-transform-transition-presets")}
+      aria-label={t("inspector-transform-open-transition-presets")}
       onclick={openTr}
     >
       <IconPlus size={13} stroke={1.9} />
@@ -196,21 +197,21 @@
 
   <!-- TRANSFORM -->
   <div class="sub-header" style="margin-top: 4px;">
-    <span class="sub-label" class:has-value={getValue("transform") !== ""}>TRANSFORM</span>
+    <span class="sub-label" class:has-value={getValue("transform") !== ""}>{t("inspector-transform-transform")}</span>
     <button
       bind:this={tfBtnRef}
       type="button"
       class="add-btn"
       class:active={showTf}
-      title="Adaugă funcție transform"
-      aria-label="Adaugă funcție transform"
+      title={t("inspector-transform-add-function")}
+      aria-label={t("inspector-transform-add-function")}
       onclick={openTf}
     >
       <IconPlus size={13} stroke={1.9} />
     </button>
   </div>
 
-  <div class="row-label">Transform</div>
+  <div class="row-label">{t("inspector-transform-title")}</div>
   <PropInput
     value={getValue("transform")}
     placeholder="none"
@@ -218,8 +219,8 @@
   />
 
   <div class="row-2 label-row">
-    <span class="row-label">Transform Origin</span>
-    <span class="row-label">Transform Style</span>
+    <span class="row-label">{t("inspector-transform-origin")}</span>
+    <span class="row-label">{t("inspector-transform-style")}</span>
   </div>
   <div class="row-2">
     <TextWithOptions
@@ -236,7 +237,7 @@
     />
   </div>
 
-  <div class="row-label">Backface Visibility</div>
+  <div class="row-label">{t("inspector-transform-backface")}</div>
   <TextWithOptions
     value={getValue("backface-visibility")}
     placeholder="none"

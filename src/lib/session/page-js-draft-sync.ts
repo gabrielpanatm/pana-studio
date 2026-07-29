@@ -6,6 +6,7 @@ import type {
   PageJsDraftStageInput,
   PageJsDraftStageReceipt,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 const PAGE_JS_DRAFT_SYNC_DELAY_MS = 180;
 
@@ -53,7 +54,7 @@ function requireValidTaskIdentity(identity: PageJsDraftSyncIdentity) {
     || !Number.isSafeInteger(identity.generation)
     || identity.generation < 1
   ) {
-    throw new Error("Page JS draft sync a refuzat o identitate de sesiune incompletă.");
+    throw new Error(t("page-js-draft-identity-invalid"));
   }
 }
 
@@ -66,7 +67,12 @@ function requireMatchingReceipt(
     || receipt.runtimeSessionId !== identity.expectedSessionId
   ) {
     throw new Error(
-      `Page JS draft sync a refuzat receipt-ul altei sesiuni: așteptat ${identity.expectedProjectRoot}/${identity.expectedSessionId}, primit ${receipt.projectRoot}/${receipt.runtimeSessionId}.`,
+      t("page-js-draft-receipt-session-mismatch", {
+        expectedRoot: identity.expectedProjectRoot,
+        expectedSession: identity.expectedSessionId,
+        actualRoot: receipt.projectRoot,
+        actualSession: receipt.runtimeSessionId,
+      }),
     );
   }
 }
@@ -113,7 +119,7 @@ function isActiveIdentity(identity: PageJsDraftSyncIdentity) {
 
 function requireActiveIdentity(): PageJsDraftSyncIdentity {
   if (!activeIdentity) {
-    throw new Error("Page JS draft sync nu are o ProjectSession runtime activă.");
+    throw new Error(t("page-js-draft-session-missing"));
   }
   return { ...activeIdentity };
 }

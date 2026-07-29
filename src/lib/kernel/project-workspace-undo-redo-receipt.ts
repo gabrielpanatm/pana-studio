@@ -4,6 +4,8 @@ import {
   type ProjectWorkspaceUndoRedoCommandReceipt,
   type WorkspaceHistoryDirection,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
+import { requireWorkbenchReceipt } from "$lib/workbench/io";
 
 export type ProjectWorkspaceUndoRedoReceiptExpectation = {
   projectRoot: string;
@@ -19,56 +21,79 @@ export function requireProjectWorkspaceUndoRedoCommandReceipt(
 ): ProjectWorkspaceUndoRedoCommandReceipt {
   if (receipt.schemaVersion !== PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION) {
     throw new Error(
-      `Receipt-ul Undo/Redo are schema comenzii ${receipt.schemaVersion}; era necesară ${PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION}.`,
+      t("history-receipt-command-schema", {
+        actual: receipt.schemaVersion,
+        expected: PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION,
+      }),
     );
   }
   if (receipt.workspace.schemaVersion !== PROJECT_WORKSPACE_SCHEMA_VERSION) {
     throw new Error(
-      `Snapshot-ul ProjectWorkspace din receipt-ul Undo/Redo are schema ${receipt.workspace.schemaVersion}; era necesară ${PROJECT_WORKSPACE_SCHEMA_VERSION}.`,
+      t("history-receipt-workspace-schema", {
+        actual: receipt.workspace.schemaVersion,
+        expected: PROJECT_WORKSPACE_SCHEMA_VERSION,
+      }),
     );
   }
   if (receipt.result.schemaVersion !== PROJECT_WORKSPACE_SCHEMA_VERSION) {
     throw new Error(
-      `Rezultatul Undo/Redo are schema ProjectWorkspace ${receipt.result.schemaVersion}; era necesară ${PROJECT_WORKSPACE_SCHEMA_VERSION}.`,
+      t("history-receipt-result-schema", {
+        actual: receipt.result.schemaVersion,
+        expected: PROJECT_WORKSPACE_SCHEMA_VERSION,
+      }),
     );
   }
   if (
     receipt.projectRoot !== expected.projectRoot
     || receipt.workspace.projectRoot !== expected.projectRoot
   ) {
-    throw new Error("Receipt-ul Undo/Redo aparține altui proiect decât cel rezervat.");
+    throw new Error(t("history-receipt-project-mismatch"));
   }
   if (
     receipt.runtimeSessionId !== expected.runtimeSessionId
     || receipt.workspace.runtimeSessionId !== expected.runtimeSessionId
   ) {
-    throw new Error("Receipt-ul Undo/Redo aparține altei instanțe ProjectSession.");
+    throw new Error(t("history-receipt-session-mismatch"));
   }
   if (receipt.result.direction !== expected.direction) {
     throw new Error(
-      `Receipt-ul Undo/Redo confirmă direcția ${receipt.result.direction}, nu ${expected.direction}.`,
+      t("history-receipt-direction-mismatch", {
+        actual: receipt.result.direction,
+        expected: expected.direction,
+      }),
     );
   }
   if (receipt.result.revisionBefore !== expected.revisionBefore) {
     throw new Error(
-      `Receipt-ul Undo/Redo pornește de la revizia ${receipt.result.revisionBefore}, nu de la revizia rezervată ${expected.revisionBefore}.`,
+      t("history-receipt-start-revision-mismatch", {
+        actual: receipt.result.revisionBefore,
+        expected: expected.revisionBefore,
+      }),
     );
   }
   if (receipt.result.revisionAfter !== expected.revisionBefore + 1) {
     throw new Error(
-      `Receipt-ul Undo/Redo a publicat revizia ${receipt.result.revisionAfter}; următoarea revizie trebuia să fie ${expected.revisionBefore + 1}.`,
+      t("history-receipt-next-revision-mismatch", {
+        actual: receipt.result.revisionAfter,
+        expected: expected.revisionBefore + 1,
+      }),
     );
   }
   if (receipt.workspace.revision !== receipt.result.revisionAfter) {
     throw new Error(
-      `Snapshot-ul Undo/Redo este la revizia ${receipt.workspace.revision}, dar rezultatul confirmă revizia ${receipt.result.revisionAfter}.`,
+      t("history-receipt-snapshot-revision-mismatch", {
+        actual: receipt.workspace.revision,
+        expected: receipt.result.revisionAfter,
+      }),
     );
   }
   const entry = receipt.result.entry;
   if (entry.transactionId !== expected.transactionId) {
     throw new Error(
-      `Receipt-ul Undo/Redo confirmă tranzacția ${entry.transactionId}, `
-        + `nu ținta rezervată ${expected.transactionId}.`,
+      t("history-receipt-transaction-mismatch", {
+        actual: entry.transactionId,
+        expected: expected.transactionId,
+      }),
     );
   }
   if (
@@ -77,16 +102,29 @@ export function requireProjectWorkspaceUndoRedoCommandReceipt(
     || !Array.isArray(entry.topologyPaths)
     || !entry.topologyPaths.every((path) => typeof path === "string" && path.length > 0)
   ) {
-    throw new Error("Receipt-ul Undo/Redo nu conține un manifest valid al topologiei tranzacției.");
+    throw new Error(t("history-receipt-topology-manifest-invalid"));
   }
   const documentPaths = new Set(entry.documentPaths);
   if (!entry.topologyPaths.every((path) => documentPaths.has(path))) {
     throw new Error(
-      "Receipt-ul Undo/Redo declară o schimbare de topologie în afara resurselor tranzacției.",
+      t("history-receipt-topology-outside-transaction"),
     );
   }
   if (!Array.isArray(receipt.result.documents)) {
-    throw new Error("Receipt-ul Undo/Redo nu conține proiecția documentelor tranzacției.");
+    throw new Error(t("history-receipt-documents-missing"));
+  }
+  if (receipt.workbench) {
+    if (
+      receipt.workbench.projectRoot !== expected.projectRoot
+      || receipt.workbench.runtimeSessionId !== expected.runtimeSessionId
+    ) {
+      throw new Error(t("workbench-invalid-receipt"));
+    }
+    requireWorkbenchReceipt(receipt.workbench, {
+      expectedProjectRoot: receipt.workbench.projectRoot,
+      expectedRuntimeSessionId: receipt.workbench.runtimeSessionId,
+      expectedRevision: receipt.workbench.revisionBefore,
+    });
   }
   const projectedPaths = new Set<string>();
   for (const projection of receipt.result.documents) {
@@ -97,7 +135,7 @@ export function requireProjectWorkspaceUndoRedoCommandReceipt(
       || projectedPaths.has(projection.relativePath)
       || !documentPaths.has(projection.relativePath)
     ) {
-      throw new Error("Receipt-ul Undo/Redo conține o proiecție de document invalidă sau duplicată.");
+      throw new Error(t("history-receipt-document-invalid"));
     }
     projectedPaths.add(projection.relativePath);
     const snapshot = projection.snapshot;
@@ -113,7 +151,9 @@ export function requireProjectWorkspaceUndoRedoCommandReceipt(
       || snapshot.revision < 0
     ) {
       throw new Error(
-        `Receipt-ul Undo/Redo conține un snapshot FileBuffer invalid pentru ${projection.relativePath}.`,
+        t("history-receipt-file-buffer-invalid", {
+          path: projection.relativePath,
+        }),
       );
     }
   }

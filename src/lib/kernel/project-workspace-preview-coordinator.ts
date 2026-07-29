@@ -6,26 +6,30 @@ import {
   type CanvasProjectionPlan,
   type ProjectWorkspacePreviewRequest,
 } from "$lib/project/io";
-import type { ProjectWorkspaceSnapshot, SaveState } from "$lib/types";
+import type { ProjectWorkspaceSnapshot } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import { errorMessage } from "$lib/util";
+import { t } from "$lib/i18n/runtime.svelte";
 
 const MUTATION_DEBOUNCE_MS = 120;
 
 type ProjectWorkspacePreviewIdentityHost = {
   sessionProjectRoot: string;
   kernelProjectSessionId: string;
-  scannedProject: { isZola: boolean } | null;
+  scannedProject: object | null;
   previewWorkspaceRevision: string | null;
   pendingCanvasProjection: CanvasProjectionPlan | null;
+  canvasSurfaceGeneration?: number;
   /**
    * A ProjectWorkspace revision remains authoritative even while the Design
    * Safe iframe is unmounted. In that state projection is deferred until a
    * mounted surface can emit the Canvas phase receipts.
    */
   canProjectWorkspacePreview?: () => boolean;
+  deferWorkspacePreviewProjection?: () => void;
   templateWorkbenchActive?: boolean;
   reprojectActiveTemplateWorkbench?: (minimumWorkspaceRevision: number) => Promise<boolean>;
-  setGlobalStatus?: (text: string, kind: SaveState) => void;
+  setGlobalStatus?: (text: string, kind: GlobalStatusKind) => void;
 };
 
 export type ProjectWorkspacePreviewHost<
@@ -45,6 +49,17 @@ export type ProjectWorkspacePreviewProjectionOptions<
   expectedWorkspaceRevision?: number;
   expectedWorkspaceTransactionId?: string;
   onCanvasPlanPrepared?: (plan: CanvasProjectionPlan) => void;
+};
+
+export type ProjectWorkspacePreviewProjectionStatus =
+  | "published"
+  | "already_current"
+  | "deferred"
+  | "superseded";
+
+export type ProjectWorkspacePreviewProjectionOutcome = {
+  status: ProjectWorkspacePreviewProjectionStatus;
+  workspaceRevision: number | null;
 };
 
 type ProjectionIdentity = {
@@ -73,7 +88,7 @@ function identityKey(projectRoot: string, sessionId: string) {
 function captureIdentity(host: ProjectWorkspacePreviewIdentityHost): ProjectionIdentity | null {
   const projectRoot = host.sessionProjectRoot.trim();
   const sessionId = host.kernelProjectSessionId.trim();
-  if (!projectRoot || !sessionId || !host.scannedProject?.isZola) return null;
+  if (!projectRoot || !sessionId || !host.scannedProject) return null;
   const key = identityKey(projectRoot, sessionId);
   if (activeKey !== key) {
     activeKey = key;
@@ -89,7 +104,7 @@ function identityIsCurrent(
 ) {
   return identity.generation === activeGeneration
     && identityKey(host.sessionProjectRoot, host.kernelProjectSessionId) === activeKey
-    && host.scannedProject?.isZola === true;
+    && host.scannedProject !== null;
 }
 
 function requireSnapshotIdentity(
@@ -102,7 +117,7 @@ function requireSnapshotIdentity(
     || snapshot.runtimeSessionId !== identity.sessionId
   ) {
     throw new Error(
-      "Coordonatorul previzualizării a refuzat un instantaneu al sesiunii altui proiect.",
+      t("workspace-preview-foreign-snapshot"),
     );
   }
   return snapshot;
@@ -118,17 +133,36 @@ function canvasProjectionSurfaceAvailable(host: ProjectWorkspacePreviewIdentityH
   return host.canProjectWorkspacePreview?.() !== false;
 }
 
+function deferredProjection(
+  host: ProjectWorkspacePreviewIdentityHost,
+  workspaceRevision: number | null,
+): ProjectWorkspacePreviewProjectionOutcome {
+  host.deferWorkspacePreviewProjection?.();
+  host.pendingCanvasProjection = null;
+  host.previewWorkspaceRevision = null;
+  return { status: "deferred", workspaceRevision };
+}
+
 async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReason>(
   host: ProjectWorkspacePreviewHost<TReason>,
   identity: ProjectionIdentity,
   options: ProjectWorkspacePreviewProjectionOptions<TReason>,
-): Promise<number | undefined> {
+): Promise<ProjectWorkspacePreviewProjectionOutcome> {
   const minimumRevision = options.minimumWorkspaceRevision;
   if (
     minimumRevision !== undefined
     && (!Number.isSafeInteger(minimumRevision) || minimumRevision < 0)
   ) {
-    throw new Error("Coordonatorul previzualizării a primit o revizie minimă invalidă.");
+    throw new Error(t("workspace-preview-minimum-revision-invalid"));
+  }
+  if (
+    options.expectedWorkspaceRevision !== undefined
+    && (
+      !Number.isSafeInteger(options.expectedWorkspaceRevision)
+      || options.expectedWorkspaceRevision < 0
+    )
+  ) {
+    throw new Error(t("workspace-preview-exact-revision-invalid"));
   }
 
   let attempts = 0;
@@ -136,11 +170,17 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
     // Do not materialize a Rust candidate that no mounted Canvas can confirm.
     // projectedEvidence intentionally stays behind, so the next request made
     // with a mounted surface will project the latest workspace revision.
-    if (!canvasProjectionSurfaceAvailable(host)) return;
+    if (!canvasProjectionSurfaceAvailable(host)) {
+      return deferredProjection(
+        host,
+        minimumRevision ?? projectedEvidence?.workspaceRevision ?? null,
+      );
+    }
+    const surfaceGeneration = host.canvasSurfaceGeneration;
     attempts += 1;
     if (attempts > 32) {
       throw new Error(
-        "Coordonatorul previzualizării nu a putut stabiliza sesiunea proiectului după 32 de revizii consecutive.",
+        t("workspace-preview-cannot-stabilize", { count: 32 }),
       );
     }
 
@@ -148,10 +188,32 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
       await readProjectWorkspaceState(),
       identity,
     );
-    if (!identityIsCurrent(host, identity)) return;
+    if (!identityIsCurrent(host, identity)) {
+      return { status: "superseded", workspaceRevision: snapshot.revision };
+    }
     if (minimumRevision !== undefined && snapshot.revision < minimumRevision) {
       throw new Error(
-        `ProjectWorkspace este la revizia ${snapshot.revision}, sub revizia minimă cerută ${minimumRevision}.`,
+        t("workspace-preview-below-minimum", {
+          actual: snapshot.revision,
+          minimum: minimumRevision,
+        }),
+      );
+    }
+    if (
+      options.expectedWorkspaceRevision !== undefined
+      && snapshot.revision > options.expectedWorkspaceRevision
+    ) {
+      return { status: "superseded", workspaceRevision: snapshot.revision };
+    }
+    if (
+      options.expectedWorkspaceRevision !== undefined
+      && snapshot.revision < options.expectedWorkspaceRevision
+    ) {
+      throw new Error(
+        t("workspace-preview-below-exact", {
+          actual: snapshot.revision,
+          expected: options.expectedWorkspaceRevision,
+        }),
       );
     }
     if (!options.force && projectedEvidence?.workspaceRevision === snapshot.revision) {
@@ -160,18 +222,21 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
         options.expectedWorkspaceRevision !== undefined
         && options.expectedWorkspaceRevision !== snapshot.revision
       ) {
-        throw new Error("Cache-ul previzualizării nu corespunde reviziei așteptate a sesiunii proiectului.");
+        throw new Error(t("workspace-preview-cache-revision-mismatch"));
       }
       if (
         options.expectedWorkspaceTransactionId !== undefined
         && cachedPlan?.workspaceTransactionId !== options.expectedWorkspaceTransactionId
       ) {
         throw new Error(
-          "Cache-ul previzualizării nu dovedește tranzacția așteptată a sesiunii proiectului.",
+          t("workspace-preview-cache-transaction-mismatch"),
         );
       }
       if (cachedPlan) options.onCanvasPlanPrepared?.(cachedPlan);
-      return snapshot.revision;
+      return {
+        status: "already_current",
+        workspaceRevision: snapshot.revision,
+      };
     }
 
     const input: ProjectWorkspacePreviewRequest = {
@@ -192,7 +257,7 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
         )
       ) {
         throw new Error(
-          "Proiecția Canvas nu corespunde reviziei fast patch-ului confirmat.",
+          t("workspace-preview-fast-patch-revision-mismatch"),
         );
       }
       if (
@@ -201,30 +266,46 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
           !== options.expectedWorkspaceTransactionId
       ) {
         throw new Error(
-          "Proiecția Canvas nu aparține tranzacției sesiunii proiectului pentru patch-ul rapid.",
+          t("workspace-preview-fast-patch-transaction-mismatch"),
         );
       }
       const confirmedPaths = new Set(receipt.requestedPaths);
       if (!input.requestedPaths.every((path) => confirmedPaths.has(path))) {
         throw new Error(
-          "Spațiul de previzualizare nu a confirmat toate resursele cerute pentru proiecție.",
+          t("workspace-preview-resources-unconfirmed"),
         );
       }
-      if (!identityIsCurrent(host, identity)) return;
+      if (!identityIsCurrent(host, identity)) {
+        return {
+          status: "superseded",
+          workspaceRevision: receipt.workspaceRevision,
+        };
+      }
       if (!receipt.previewRevision) {
         projectedEvidence = {
           workspaceRevision: receipt.workspaceRevision,
           canvasPlan: null,
         };
-        return receipt.workspaceRevision;
+        return {
+          status: "published",
+          workspaceRevision: receipt.workspaceRevision,
+        };
       }
       if (!receipt.canvasProjection) {
-        throw new Error("Spațiul de previzualizare a publicat o revizie fără plan Canvas.");
+        throw new Error(t("workspace-preview-canvas-plan-missing"));
       }
       // The surface may have been unmounted while Rust built the candidate.
       // Leave the revision unpublished in the UI and retry it on the next
       // mounted-surface request instead of starting a guaranteed timeout.
-      if (!canvasProjectionSurfaceAvailable(host)) return;
+      if (!canvasProjectionSurfaceAvailable(host)) {
+        return deferredProjection(host, receipt.workspaceRevision);
+      }
+      if (
+        surfaceGeneration !== undefined
+        && host.canvasSurfaceGeneration !== surfaceGeneration
+      ) {
+        return deferredProjection(host, receipt.workspaceRevision);
+      }
       options.onCanvasPlanPrepared?.(receipt.canvasProjection);
       host.previewWorkspaceRevision = receipt.previewRevision;
       host.pendingCanvasProjection = receipt.canvasProjection;
@@ -233,25 +314,59 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
         : await (host.requestWorkspaceProjectionPreviewRefresh
             ? host.requestWorkspaceProjectionPreviewRefresh(options.reason)
             : host.requestPreviewRefresh(options.reason));
-      if (!identityIsCurrent(host, identity)) return;
+      if (!identityIsCurrent(host, identity)) {
+        return {
+          status: "superseded",
+          workspaceRevision: receipt.workspaceRevision,
+        };
+      }
+      if (
+        !canvasProjectionSurfaceAvailable(host)
+        || (
+          surfaceGeneration !== undefined
+          && host.canvasSurfaceGeneration !== surfaceGeneration
+        )
+      ) {
+        return deferredProjection(host, receipt.workspaceRevision);
+      }
       if (!refreshed) {
         host.pendingCanvasProjection = null;
         throw new Error(
-          "Previzualizarea nu a confirmat generația sesiunii proiectului publicată de Rust.",
+          t("workspace-preview-generation-unconfirmed"),
         );
       }
       projectedEvidence = {
         workspaceRevision: receipt.workspaceRevision,
         canvasPlan: receipt.canvasProjection,
       };
-      return receipt.workspaceRevision;
+      return {
+        status: "published",
+        workspaceRevision: receipt.workspaceRevision,
+      };
     } catch (error) {
-      if (!identityIsCurrent(host, identity)) return;
+      if (!identityIsCurrent(host, identity)) {
+        return { status: "superseded", workspaceRevision: null };
+      }
+      if (
+        !canvasProjectionSurfaceAvailable(host)
+        || (
+          surfaceGeneration !== undefined
+          && host.canvasSurfaceGeneration !== surfaceGeneration
+        )
+      ) {
+        return deferredProjection(host, null);
+      }
       const latest = requireSnapshotIdentity(
         await readProjectWorkspaceState(),
         identity,
       );
       if (latest.revision !== snapshot.revision) {
+        if (
+          options.expectedWorkspaceRevision !== undefined
+          && latest.revision > options.expectedWorkspaceRevision
+        ) {
+          return { status: "superseded", workspaceRevision: latest.revision };
+        }
         // Mutația a fost depășită în timpul materializării. Proiectăm direct
         // ultima revizie; generația candidată veche este eliminată în Rust.
         continue;
@@ -259,14 +374,17 @@ async function projectLatestWorkspaceRevision<TReason extends PreviewRefreshReas
       throw error;
     }
   }
+  return { status: "superseded", workspaceRevision: null };
 }
 
 export function projectLatestProjectWorkspacePreview<TReason extends PreviewRefreshReason>(
   host: ProjectWorkspacePreviewHost<TReason>,
   options: ProjectWorkspacePreviewProjectionOptions<TReason>,
-): Promise<void> {
+): Promise<ProjectWorkspacePreviewProjectionOutcome> {
   const identity = captureIdentity(host);
-  if (!identity) return Promise.resolve();
+  if (!identity) {
+    return Promise.resolve({ status: "superseded", workspaceRevision: null });
+  }
   if (
     scheduledHost === host
     && (
@@ -283,7 +401,7 @@ export function projectLatestProjectWorkspacePreview<TReason extends PreviewRefr
     .catch(() => undefined)
     .then(() => projectLatestWorkspaceRevision(host, identity, options));
   projectionTail = canonicalTask.then(() => undefined).catch(() => undefined);
-  return canonicalTask.then(() => undefined);
+  return canonicalTask;
 }
 
 function projectLatestActiveTemplateWorkbench(
@@ -315,7 +433,7 @@ export function scheduleProjectWorkspaceDerivedPreviewProjection(
     minimumWorkspaceRevision !== undefined
     && (!Number.isSafeInteger(minimumWorkspaceRevision) || minimumWorkspaceRevision < 0)
   ) {
-    throw new Error("Coordonatorul previzualizării a primit o revizie minimă invalidă.");
+    throw new Error(t("workspace-preview-minimum-revision-invalid"));
   }
   scheduledHost = host;
   scheduledReason = reason;
@@ -340,7 +458,9 @@ export function scheduleProjectWorkspaceDerivedPreviewProjection(
       .catch((error) => {
         if (!identityIsCurrent(target, identity)) return;
         target.setGlobalStatus?.(
-          `Proiecția Preview/Context de template a ProjectWorkspace a eșuat: ${errorMessage(error)}`,
+          t("workspace-preview-projection-failed", {
+            message: errorMessage(error),
+          }),
           "error",
         );
       });
@@ -360,6 +480,15 @@ export function markProjectWorkspacePreviewPublished(
     activeGeneration += 1;
   }
   projectedEvidence = { workspaceRevision, canvasPlan };
+}
+
+export function projectWorkspacePreviewRevisionIsPublished(
+  projectRoot: string,
+  sessionId: string,
+  workspaceRevision: number,
+) {
+  return activeKey === identityKey(projectRoot, sessionId)
+    && (projectedEvidence?.workspaceRevision ?? -1) >= workspaceRevision;
 }
 
 export function resetProjectWorkspacePreviewCoordinator() {

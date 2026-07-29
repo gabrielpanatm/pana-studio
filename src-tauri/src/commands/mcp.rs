@@ -117,6 +117,12 @@ fn build_context_publication(
     ) =
         workspace_guard.as_ref()
     {
+        if !projection.project.is_open {
+            return Err(
+                "UiContextProjection declară proiectul închis, dar Rust deține un ProjectWorkspace."
+                    .to_string(),
+            );
+        }
         let snapshot = workspace.snapshot();
         if projection.expected_project_session_id.as_deref()
             != Some(snapshot.runtime_session_id.as_str())
@@ -138,8 +144,6 @@ fn build_context_publication(
                 root: Some(snapshot.project_root),
                 session_id: project_session_id.clone(),
                 is_open: true,
-                is_zola: projection.project.is_zola,
-                is_empty: projection.project.is_empty,
                 project_revision: Some(snapshot.revision),
                 disk_generation: Some(snapshot.disk_generation),
                 preview_base_url: projection.project.preview_base_url.clone(),
@@ -151,7 +155,8 @@ fn build_context_publication(
             project_session_id,
         )
     } else {
-        if projection.expected_project_session_id.is_some()
+        if projection.project.is_open
+            || projection.expected_project_session_id.is_some()
             || projection.expected_project_revision.is_some()
         {
             return Err(
@@ -164,8 +169,6 @@ fn build_context_publication(
                 root: None,
                 session_id: None,
                 is_open: false,
-                is_zola: false,
-                is_empty: true,
                 project_revision: None,
                 disk_generation: None,
                 preview_base_url: None,

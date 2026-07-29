@@ -1,6 +1,7 @@
 mod classes;
 mod model;
 mod theme_styles;
+mod tokens;
 
 pub(crate) use classes::validate_class_name;
 pub use classes::{build_design_class_inventory, plan_design_class_rename};
@@ -10,4 +11,8 @@ pub use theme_styles::{
     plan_theme_style_update, resolve_theme_style_source, ThemeStyleCatalogSnapshot,
     ThemeStyleDraftPreview, ThemeStylePropertyInput, ThemeStyleTargetSnapshot,
     THEME_STYLE_CATALOG_SCHEMA_VERSION,
+};
+pub use tokens::{
+    build_design_token_catalog, DesignTokenCatalogSnapshot, DesignTokenCategorySnapshot,
+    DesignTokenSnapshot, DesignTokenVisualKind, DESIGN_TOKEN_CATALOG_SCHEMA_VERSION,
 };

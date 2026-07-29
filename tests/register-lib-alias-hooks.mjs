@@ -3,6 +3,13 @@ import { registerHooks } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+// Node strips TypeScript but does not compile Svelte runes. Controller tests
+// only need the localization singleton's plain state semantics; production
+// still receives the real reactive rune from the Svelte compiler.
+if (typeof globalThis.$state !== "function") {
+  globalThis.$state = (value) => value;
+}
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const srcLib = resolve(root, "src/lib");
 

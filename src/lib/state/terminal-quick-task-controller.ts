@@ -1,6 +1,7 @@
 import { zolaBuild } from "$lib/project/io";
+import { t } from "$lib/i18n/runtime.svelte";
 import type { TerminalQuickTask, TerminalTab } from "$lib/terminal/runtime";
-import type { SaveState } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import { errorMessage } from "$lib/util";
 
 type TerminalTaskController = {
@@ -14,12 +15,12 @@ export type TerminalQuickTaskHost = {
   terminalController: TerminalTaskController;
   runZolaValidation: (reason: "manual") => Promise<boolean>;
   openCurrentProjectInBrowser: (route?: string | null) => Promise<void>;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 export async function runTerminalQuickTask(host: TerminalQuickTaskHost, task: TerminalQuickTask) {
   if (!host.currentProjectPath) {
-    host.setGlobalStatus("Deschide un proiect înainte de a rula o operație Zola.", "error");
+    host.setGlobalStatus(t("workbench-terminal-project-required"), "error");
     return;
   }
 
@@ -29,14 +30,17 @@ export async function runTerminalQuickTask(host: TerminalQuickTaskHost, task: Te
       return;
     }
     if (task.kind === "embedded-build") {
-      host.setGlobalStatus("Se construiește proiectul cu motorul Zola embedded...", "saving");
+      host.setGlobalStatus(t("workbench-terminal-building"), "saving");
       const log = await zolaBuild();
-      host.setGlobalStatus(log.split("\n")[0] || "Build Zola embedded finalizat.", "saved");
+      host.setGlobalStatus(log.split("\n")[0] || t("workbench-terminal-build-complete"), "saved");
       return;
     }
     await host.openCurrentProjectInBrowser();
   } catch (error) {
-    host.setGlobalStatus(`Operația Zola embedded a eșuat: ${errorMessage(error)}`, "error");
+    host.setGlobalStatus(
+      t("workbench-terminal-operation-failed", { error: errorMessage(error) }),
+      "error",
+    );
   }
 }
 
@@ -47,6 +51,6 @@ export async function clearActiveTerminal(host: TerminalQuickTaskHost) {
   await host.terminalController.ensureSession(tab, host.currentProjectPath);
   const commandWritten = host.terminalController.writeCommand(tab.id, "clear");
   if (!commandWritten) {
-    host.setGlobalStatus("Terminalul nu este pregătit încă.", "error");
+    host.setGlobalStatus(t("workbench-terminal-not-ready"), "error");
   }
 }

@@ -16,11 +16,12 @@ use percent_encoding::percent_decode_str;
 use relative_path::RelativePathBuf;
 
 use crate::preview::inject::{
-    build_prepared_design_safe_response, PreparedDesignSafeHtml, PreviewHtmlSurface,
+    build_prepared_design_safe_response, PreparedDesignSafeHtml, PreparedInitialPreviewHtml,
+    PreviewHtmlSurface,
 };
 use crate::preview::{
-    CanvasProjectionIdentity, CanvasProjectionPhase, CanvasProjectionPlan,
-    CanvasProjectionTransaction, PreviewPhaseReceipt,
+    alternate_zola_directory_content_key, CanvasProjectionIdentity, CanvasProjectionPhase,
+    CanvasProjectionPlan, CanvasProjectionTransaction, PreviewPhaseReceipt,
 };
 
 const MAX_CONCURRENT_CONNECTIONS: usize = 8;
@@ -33,7 +34,14 @@ const MAX_RETIRED_GENERATIONS: usize = 4;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RenderedPreviewContent {
     Html(PreparedDesignSafeHtml),
+    InitialHtml(PreparedInitialPreviewHtml),
     Text { body: Vec<u8>, content_type: String },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TemplateWorkbenchProjection {
+    pub content: RenderedPreviewContent,
+    pub graph: crate::preview::canvas::CanvasGraph,
 }
 
 #[derive(Clone, Debug)]
@@ -47,7 +55,7 @@ pub(crate) struct ActivePreviewGeneration {
     /// Vizualizările individuale de template aparțin strict acestei generații.
     /// Registrul este separat de site-ul canonic: publicarea unui Workbench nu
     /// poate înlocui sau falsifica ruta unei pagini Zola.
-    pub workbench_content: Arc<RwLock<HashMap<String, RenderedPreviewContent>>>,
+    pub workbench_content: Arc<RwLock<HashMap<String, TemplateWorkbenchProjection>>>,
     pub assets_root: PathBuf,
 }
 
@@ -316,6 +324,16 @@ impl PersistentPreviewServer {
             })
     }
 
+    pub(crate) fn generation_for_canvas_identity(
+        &self,
+        identity: &CanvasProjectionIdentity,
+    ) -> Result<Option<Arc<ActivePreviewGeneration>>, String> {
+        self.active
+            .read()
+            .map_err(|_| "Snapshot-ul Preview persistent este indisponibil.".to_string())
+            .map(|registry| registry.resolve_identity(identity))
+    }
+
     pub fn stage(
         &self,
         candidate: Arc<ActivePreviewGeneration>,
@@ -465,7 +483,10 @@ fn serve_request(
             head_only,
         ));
     };
-    if surface == PreviewHtmlSurface::Interactive {
+    if matches!(
+        surface,
+        PreviewHtmlSurface::Motion | PreviewHtmlSurface::Interactive
+    ) {
         let requested_transaction = requested_canvas_transaction(&request_target)?;
         if requested_transaction.as_deref()
             != Some(
@@ -492,8 +513,14 @@ fn serve_request(
             .workbench_content
             .read()
             .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?;
-        if let Some(content) = workbench.get(decoded.as_ref()) {
-            return render_content(content, "HTTP/1.1 200 OK", surface, port, head_only);
+        if let Some(projection) = workbench.get(decoded.as_ref()) {
+            return render_content(
+                &projection.content,
+                "HTTP/1.1 200 OK",
+                surface,
+                port,
+                head_only,
+            );
         }
         return Ok(plain_response(
             "HTTP/1.1 404 Not Found",
@@ -503,7 +530,19 @@ fn serve_request(
         ));
     }
 
-    if let Some(content) = generation.content.get(&content_key) {
+    let alternate_content_key = alternate_zola_directory_content_key(&content_key);
+    let content = generation.content.get(&content_key).or_else(|| {
+        alternate_content_key
+            .as_deref()
+            .and_then(|candidate| generation.content.get(candidate))
+            .filter(|content| {
+                matches!(
+                    content,
+                    RenderedPreviewContent::Html(_) | RenderedPreviewContent::InitialHtml(_)
+                )
+            })
+    });
+    if let Some(content) = content {
         return render_content(content, "HTTP/1.1 200 OK", surface, port, head_only);
     }
 
@@ -596,11 +635,22 @@ fn render_content(
             match surface {
                 PreviewHtmlSurface::Editor => &html.editor,
                 PreviewHtmlSurface::Visitor => &html.visitor,
+                PreviewHtmlSurface::Motion => &html.motion,
                 PreviewHtmlSurface::Interactive => &html.interactive,
             },
             surface,
             port,
         )?,
+        RenderedPreviewContent::InitialHtml(html) => {
+            let surface_html = html.surface(surface)?;
+            build_prepared_design_safe_response(
+                status,
+                "text/html; charset=utf-8",
+                surface_html.as_ref(),
+                surface,
+                port,
+            )?
+        }
         RenderedPreviewContent::Text { body, content_type } => {
             plain_response(status, content_type, body, false)
         }
@@ -685,7 +735,9 @@ fn zola_content_key(decoded_path: &str) -> Result<String, String> {
 
 fn request_surface(target: &str) -> PreviewHtmlSurface {
     let query = target.split_once('?').map(|(_, query)| query).unwrap_or("");
-    if query.split('&').any(is_interactive_query) {
+    if query.split('&').any(is_motion_query) {
+        PreviewHtmlSurface::Motion
+    } else if query.split('&').any(is_interactive_query) {
         PreviewHtmlSurface::Interactive
     } else if query.split('&').any(is_visitor_query) {
         PreviewHtmlSurface::Visitor
@@ -724,8 +776,19 @@ fn is_interactive_query(part: &str) -> bool {
     )
 }
 
+fn is_motion_query(part: &str) -> bool {
+    matches!(
+        part,
+        "__pana_motion" | "__pana_motion=1" | "__pana_view=motion"
+    )
+}
+
 fn is_internal_query(part: &&str) -> bool {
-    if is_visitor_query(part) || is_interactive_query(part) || *part == "__pana_view=design-safe" {
+    if is_visitor_query(part)
+        || is_motion_query(part)
+        || is_interactive_query(part)
+        || *part == "__pana_view=design-safe"
+    {
         return true;
     }
     matches!(
@@ -734,6 +797,7 @@ fn is_internal_query(part: &&str) -> bool {
             | "__pana_canvas_transaction"
             | "__pana_reload"
             | "__pana_interactive_restart"
+            | "__pana_motion_mode"
     )
 }
 
@@ -871,6 +935,46 @@ mod tests {
         assert_eq!(zola_content_key("/").unwrap(), "");
         assert_eq!(zola_content_key("/despre/").unwrap(), "despre/");
         assert_eq!(zola_content_key("/atom.xml").unwrap(), "atom.xml");
+        assert_eq!(
+            alternate_zola_directory_content_key("blog/").as_deref(),
+            Some("blog")
+        );
+        assert_eq!(
+            alternate_zola_directory_content_key("blog").as_deref(),
+            Some("blog/")
+        );
+    }
+
+    #[test]
+    fn section_route_accepts_zola_memory_index_without_trailing_slash() {
+        let active: ActivePreviewStore =
+            Arc::new(RwLock::new(PreviewGenerationRegistry::default()));
+        let transaction = CanvasProjectionTransaction::test_fixture(12, "preview-12");
+        let prepared = crate::preview::inject::prepare_design_safe_html(
+            "<!doctype html><html><body><main>Blog</main></body></html>",
+            "preview-12",
+        )
+        .unwrap();
+        active
+            .write()
+            .unwrap()
+            .stage(Arc::new(ActivePreviewGeneration {
+                project_root: "/project".to_string(),
+                runtime_session_id: "runtime".to_string(),
+                workspace_revision: 12,
+                preview_revision: "preview-12".to_string(),
+                canvas_transaction: transaction,
+                content: HashMap::from([(
+                    "blog".to_string(),
+                    RenderedPreviewContent::Html(prepared),
+                )]),
+                workbench_content: Arc::new(RwLock::new(HashMap::new())),
+                assets_root: std::env::temp_dir(),
+            }));
+
+        let response = request_preview(&active, "/blog/?__pana_preview_revision=preview-12");
+        assert!(response.starts_with("HTTP/1.1 200 OK"));
+        assert!(response.contains("<main>Blog</main>"));
     }
 
     #[test]
@@ -888,6 +992,14 @@ mod tests {
         assert_eq!(
             request_surface("/?__pana_view=interactive"),
             PreviewHtmlSurface::Interactive
+        );
+        assert_eq!(
+            request_surface("/?__pana_view=motion&__pana_motion_mode=preview"),
+            PreviewHtmlSurface::Motion
+        );
+        assert_eq!(
+            public_request_target("/?article=1&__pana_view=motion&__pana_motion_mode=preview"),
+            "/?article=1"
         );
         assert_eq!(
             requested_canvas_transaction(
@@ -955,6 +1067,7 @@ mod tests {
             Arc::new(RwLock::new(PreviewGenerationRegistry::default()));
         let transaction = CanvasProjectionTransaction::test_fixture(17, "preview-17");
         let expected_transaction = transaction.identity.transaction_id.clone();
+        let workbench_graph = transaction.graph.clone();
         let prepared = crate::preview::inject::prepare_design_safe_html(
             concat!(
                 "<!doctype html><html><head>",
@@ -970,7 +1083,10 @@ mod tests {
         let route = "/__pana_workbench/source-partial/".to_string();
         let workbench_content = Arc::new(RwLock::new(HashMap::from([(
             route.clone(),
-            RenderedPreviewContent::Html(prepared),
+            TemplateWorkbenchProjection {
+                content: RenderedPreviewContent::Html(prepared),
+                graph: workbench_graph,
+            },
         )])));
         active
             .write()

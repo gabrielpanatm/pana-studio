@@ -12,11 +12,13 @@ import {
   zolaRelativePath,
 } from "$lib/project/files";
 import { applyPageAssetContract } from "$lib/project/io";
-import type { SaveState, SourceEditLocation } from "$lib/types";
+import type { SourceEditLocation } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import { pageScssRelativePath } from "$lib/page-assets/paths";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PageAssetContractHost = PageContractProjectionHost & {
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 export async function reconcilePageAssetContracts(
@@ -42,7 +44,7 @@ export async function reconcilePageAssetContracts(
     });
     projectPageContractReceipt(host, projectionLease, templateRelativePath, fallbackScssPath, receipt);
     if (receipt.plan.template.changed) {
-      host.setGlobalStatus("Contractul CSS a fost actualizat în sesiunea proiectului.", "unsaved");
+      host.setGlobalStatus(t("page-contract-css-updated"), "unsaved");
     }
     return receipt;
   });
@@ -53,6 +55,6 @@ function requireCurrentSession(
   lease: ReturnType<typeof capturePageContractSessionLease>,
 ) {
   if (!pageContractSessionLeaseMatches(host, lease)) {
-    throw new Error("Page Asset contract a fost anulat deoarece ProjectSession s-a schimbat.");
+    throw new Error(t("page-contract-asset-session-changed"));
   }
 }

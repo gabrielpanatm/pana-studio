@@ -1,8 +1,7 @@
-mod step_timing;
+mod mutation;
 
-pub use step_timing::{
-    apply_motion_timeline_step_timing, redo_motion_graph_transaction,
-    undo_motion_graph_transaction, MotionGraphTransaction, MotionTimelineStepTimingInput,
-    MotionTimelineStepTimingPatch, MotionTimelineStepTimingReceipt,
-    MOTION_TIMELINE_STEP_TIMING_COMMAND,
+pub use mutation::{
+    apply_motion_mutation, redo_motion_mutation, undo_motion_mutation, MotionMutation,
+    MotionMutationInput, MotionMutationReceipt, MotionMutationTransaction,
+    MOTION_MUTATION_SCHEMA_VERSION,
 };

@@ -1,6 +1,7 @@
 <script lang="ts">
   import ProjectPane from "$lib/components/ProjectPane.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
 
   let { app }: { app: AppState } = $props();
@@ -18,44 +19,34 @@
       projectRoot={app.scannedProject?.root ?? ""}
       runtimeSessionId={app.kernelProjectSessionId}
       allProjectFiles={app.scannedProject?.files ?? []}
-      scannedPages={app.scannedPages}
-      scannedStyles={app.scannedStyles}
-      scannedTemplates={app.scannedTemplates}
-      scannedScripts={app.scannedScripts}
-      scannedAssets={app.scannedAssets}
       activeScannedPath={app.activeScannedPath}
-      pageSections={app.pageSections}
-      selectedElement={app.selectedElement}
-      previewSelection={app.previewSelection}
+      fileExplorerSnapshot={app.fileExplorerSnapshot}
+      fileExplorerLoading={app.fileExplorerLoading}
+      fileExplorerError={app.fileExplorerError}
+      coordinatedSelectionTag={app.selectionSnapshot?.subject?.tag ?? null}
       sourceGraph={app.sourceGraph}
-      activeRenderedTemplatePath={app.activeRenderedTemplatePath}
-      templateHtmlEditSourceId={app.templateHtmlEditSourceId}
-      templateWorkbenchPlan={app.templateWorkbenchPlan}
-      fileMoveBlockedReason={app.immediateDiskOperationBlockedReason}
+      editorNavigationSnapshot={app.editorNavigationSnapshot}
+      editorNavigationLoading={app.editorNavigationLoading}
+      editorNavigationError={app.editorNavigationError}
+      coordinatedSelectionNodeId={app.selectionSnapshot?.projections.layers.editorNodeId ?? null}
+      hoveredEditorNavigationNodeId={app.hoverSnapshot?.editorNodeId ?? null}
+      editorEditScopeId={app.editorEditScopeId}
+      selectFileExplorerEntry={(entryId) => app.selectFileExplorerEntry(entryId)}
+      planFileExplorerOperation={(operation) => app.planFileExplorerOperation(operation)}
+      commitFileExplorerOperation={(plan) => app.commitFileExplorerOperation(plan)}
       openScannedFile={(file) => app.loadScannedProjectFile(file)}
-      createProjectFile={(path, content) => app.createProjectFile(path, content)}
-      moveProjectFile={(request) => app.moveProjectFile(request)}
-      renameProjectFile={(request) => app.renameProjectFile(request)}
-      deleteProjectFile={(request) => app.deleteProjectFile(request)}
-      selectPageSection={(section) => app.selectLayerSection(section)}
-      selectTeraSource={(section, sourceId) => app.selectTeraLayerSource(section, sourceId)}
-      hoverPageSection={(section) => app.hoverLayerSection(section)}
-      hoverTeraSource={(section, sourceId) => app.hoverTeraLayerSource(section, sourceId)}
       startElementPaletteDrag={(element, event) => app.startElementPaletteDrag(element, event)}
       startTeraPaletteDrag={(item, event) => app.startTeraPaletteDrag(item, event)}
-      moveLayerElement={(request) => app.moveLayerElement(request)}
-      moveTeraNode={async (request) => {
-        await app.moveTeraNodeAtTarget(request);
-      }}
-      deleteLayerElement={async (selector) => {
-        await app.deleteHtmlElement(selector);
-      }}
-      openLayerContextMenu={(request) => app.openLayerContextMenu(request)}
-      editSelectedTeraLayer={() => app.editSelectedTeraLayer()}
-      deleteSelectedTeraNode={async () => {
-        await app.deleteSelectedTeraNode();
-      }}
-      openSelectedTeraSource={() => app.openSelectedTeraSource()}
+      selectEditorNavigationNode={(node) => app.selectEditorNavigationNode(node)}
+      hoverEditorNavigationNode={(node) => app.hoverEditorNavigationNode(node)}
+      enterEditorNavigationScope={(scopeId) => app.enterEditorNavigationScope(scopeId)}
+      exitEditorNavigationScope={() => app.exitEditorNavigationScope()}
+      previewEditorNavigationMove={(sourceNodeId, targetNodeId, position) =>
+        app.previewEditorNavigationMove(sourceNodeId, targetNodeId, position)}
+      moveEditorNavigationNode={(sourceNodeId, targetNodeId, position) =>
+        app.moveEditorNavigationNode(sourceNodeId, targetNodeId, position)}
+      deleteEditorNavigationNode={(node) =>
+        app.deleteEditorNavigationNode(node)}
     />
   </div>
 {/if}
@@ -64,7 +55,7 @@
   <WorkspaceResizeHandle
     kind="left"
     active={app.activeResizeKind === "left"}
-    ariaLabel="Redimensioneaza panoul din stanga"
+    ariaLabel={t("workbench-resize-left-panel")}
     onDrag={(event) => app.startResizeDrag("left", event)}
     onReset={() => app.resetResize("left")}
   />

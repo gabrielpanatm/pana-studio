@@ -2,48 +2,57 @@
   import { tick } from "svelte";
   import {
     IconFiles,
-    IconHierarchy2,
     IconPlus,
+    IconStack2,
     IconX,
   } from "@tabler/icons-svelte";
   import type {
-    PageSection,
-    PreviewSelectionState,
+    EditorMovePlan,
+    EditorNavigationNode,
+    EditorNavigationSnapshot,
+    FileExplorerOperationPlan,
+    FileExplorerOperationRequest,
+    FileExplorerSnapshot,
+    ProjectMovePosition,
     ProjectFile,
     ProjectPaneTab,
-    SelectionInfo,
     SourceGraph,
-    TemplateWorkbenchPlan,
   } from "$lib/types";
-  import type { EditorLayerContextMenuRequest } from "$lib/editor-runtime/commands";
-  import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
-  import type { LayerMoveRequest } from "$lib/project/layers-drag";
-  import type { FileMoveRequest } from "$lib/project/files-drag";
-  import type { FileRenameRequest } from "$lib/project/files-rename";
   import type { HtmlPaletteElement } from "$lib/project/html-palette";
-  import type { TeraMoveRequest, TeraPaletteItem } from "$lib/tera/model";
+  import type { TeraPaletteItem } from "$lib/tera/model";
   import ProjectFilesTab from "$lib/components/project/ProjectFilesTab.svelte";
-  import ProjectLayersTab from "$lib/components/project/ProjectLayersTab.svelte";
+  import EditorNavigationTree from "$lib/components/project/EditorNavigationTree.svelte";
   import ProjectStructureTab from "$lib/components/project/ProjectStructureTab.svelte";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
 
   export let scannedProject = false;
   export let projectRoot = "";
   export let runtimeSessionId = "";
   export let allProjectFiles: ProjectFile[] = [];
-  export let scannedPages: ProjectFile[] = [];
-  export let scannedStyles: ProjectFile[] = [];
-  export let scannedTemplates: ProjectFile[] = [];
-  export let scannedScripts: ProjectFile[] = [];
-  export let scannedAssets: ProjectFile[] = [];
   export let activeScannedPath: string | null = null;
-  export let pageSections: PageSection[] = [];
-  export let selectedElement: SelectionInfo | null = null;
-  export let previewSelection: PreviewSelectionState = { kind: "none" };
+  export let fileExplorerSnapshot: FileExplorerSnapshot | null = null;
+  export let fileExplorerLoading = false;
+  export let fileExplorerError = "";
+  export let coordinatedSelectionTag: string | null = null;
   export let sourceGraph: SourceGraph | null = null;
-  export let activeRenderedTemplatePath: string | null = null;
-  export let templateHtmlEditSourceId: string | null = null;
-  export let templateWorkbenchPlan: TemplateWorkbenchPlan | null = null;
-  export let fileMoveBlockedReason = "";
+  export let editorNavigationSnapshot: EditorNavigationSnapshot | null = null;
+  export let editorNavigationLoading = false;
+  export let editorNavigationError = "";
+  export let coordinatedSelectionNodeId: string | null = null;
+  export let hoveredEditorNavigationNodeId: string | null = null;
+  export let editorEditScopeId: string | null = null;
+  export let selectFileExplorerEntry: (entryId: string) => void | Promise<void>;
+  export let planFileExplorerOperation: (
+    operation: FileExplorerOperationRequest,
+  ) => Promise<FileExplorerOperationPlan>;
+  export let commitFileExplorerOperation: (
+    plan: FileExplorerOperationPlan,
+  ) => Promise<unknown>;
 
   let projectPaneTab: ProjectPaneTab = "layers";
   let elementPaletteOpen = false;
@@ -52,7 +61,8 @@
   let elementPaletteDialog: HTMLElement;
   let fileCollapsedDirs = new Set<string>();
   let fileKnownDirPaths = new Set<string>();
-  let fileTreeMemoryProjectRoot: string | null = null;
+  let fileTreeMemorySessionKey: string | null = null;
+  let editorNavigationCallers: Array<{ caller: string; target: string }> = [];
 
   async function setElementPaletteOpen(open: boolean, restoreFocus = true) {
     elementPaletteOpen = open;
@@ -109,85 +119,143 @@
     void focusProjectPaneTab(projectPaneTabs[nextIndex]);
   }
 
-  $: if (fileTreeMemoryProjectRoot !== projectRoot) {
+  $: if (fileTreeMemorySessionKey !== `${projectRoot}::${runtimeSessionId}`) {
     fileCollapsedDirs = new Set<string>();
     fileKnownDirPaths = new Set<string>();
-    fileTreeMemoryProjectRoot = projectRoot;
+    fileTreeMemorySessionKey = `${projectRoot}::${runtimeSessionId}`;
   }
 
-  export let openScannedFile: (file: ProjectFile) => void;
-  export let createProjectFile: (relativePath: string, content: string) => Promise<void>;
-  export let moveProjectFile: (request: FileMoveRequest) => void | Promise<void>;
-  export let renameProjectFile: (request: FileRenameRequest & { type: "file" | "dir" }) => boolean | void | Promise<boolean | void>;
-  export let deleteProjectFile: (request: { path: string; type: "file" | "dir" }) => void | Promise<void>;
-  export let selectPageSection: (section: PageSection) => void;
-  export let selectTeraSource: (section: PageSection, sourceId: string) => void;
-  export let hoverPageSection: (section: PageSection | null) => void;
-  export let hoverTeraSource: (section: PageSection, sourceId: string) => void;
+  $: {
+    const caller = editorNavigationCallers.at(-1);
+    if (
+      caller
+      && activeScannedPath !== caller.target
+      && activeScannedPath !== caller.caller
+    ) {
+      editorNavigationCallers = [];
+    }
+  }
+
+  export let openScannedFile: (file: ProjectFile) => void | Promise<void>;
   export let startElementPaletteDrag: (element: HtmlPaletteElement, event: PointerEvent) => void;
   export let startTeraPaletteDrag: (item: TeraPaletteItem, event: PointerEvent) => void;
-  export let moveLayerElement: (request: LayerMoveRequest) => Promise<EditorActionOutcome>;
-  export let moveTeraNode: (request: TeraMoveRequest) => void | Promise<void>;
-  export let deleteLayerElement: (selector: string) => void | Promise<void>;
-  export let openLayerContextMenu: (request: EditorLayerContextMenuRequest) => void;
-  export let editSelectedTeraLayer: () => void | Promise<void>;
-  export let deleteSelectedTeraNode: () => void | Promise<void>;
-  export let openSelectedTeraSource: () => void | Promise<void>;
+  export let selectEditorNavigationNode: (node: EditorNavigationNode) => void;
+  export let hoverEditorNavigationNode: (node: EditorNavigationNode | null) => void;
+  export let enterEditorNavigationScope: (scopeId: string) => void | Promise<unknown>;
+  export let exitEditorNavigationScope: () => void;
+  export let previewEditorNavigationMove: (
+    sourceNodeId: string,
+    targetNodeId: string,
+    position: ProjectMovePosition,
+  ) => Promise<EditorMovePlan>;
+  export let moveEditorNavigationNode: (
+    sourceNodeId: string,
+    targetNodeId: string,
+    position: ProjectMovePosition,
+  ) => void | Promise<unknown>;
+  export let deleteEditorNavigationNode: (
+    node: EditorNavigationNode,
+  ) => void | Promise<unknown>;
+
+  async function openEditorNavigationDocument(
+    documentPath: string,
+    rememberCaller = false,
+  ) {
+    const file = allProjectFiles.find(
+      (candidate) => candidate.relativePath === documentPath,
+    );
+    if (!file) return;
+    const callerFrame = (
+      rememberCaller
+      && activeScannedPath
+      && activeScannedPath !== documentPath
+    )
+      ? { caller: activeScannedPath, target: documentPath }
+      : null;
+    if (callerFrame) {
+      editorNavigationCallers = [
+        ...editorNavigationCallers,
+        callerFrame,
+      ];
+    }
+    try {
+      await openScannedFile(file);
+    } catch (error) {
+      if (
+        callerFrame
+        && editorNavigationCallers.at(-1) === callerFrame
+      ) {
+        editorNavigationCallers = editorNavigationCallers.slice(0, -1);
+      }
+      throw error;
+    }
+  }
+
+  async function returnFromEditorNavigationDocument() {
+    const caller = editorNavigationCallers.at(-1);
+    if (!caller) return;
+    await openEditorNavigationDocument(caller.caller);
+    if (
+      activeScannedPath === caller.caller
+      && editorNavigationCallers.at(-1) === caller
+    ) {
+      editorNavigationCallers = editorNavigationCallers.slice(0, -1);
+    }
+  }
 
 </script>
 
-<aside class="project-pane" aria-label="Navigator proiect">
+<aside class="project-pane" aria-label={t("project-pane-navigator")}>
   <button
     bind:this={elementPaletteTrigger}
     class="ui-button primary pane-add-element-btn"
     class:active={elementPaletteOpen}
     type="button"
-    title="Deschide panoul Adaugă element"
+    title={t("project-pane-open-add-element")}
     aria-haspopup="dialog"
     aria-expanded={elementPaletteOpen}
     aria-controls="element-palette-dialog"
     onclick={() => { void setElementPaletteOpen(!elementPaletteOpen); }}
   >
     <IconPlus size={15} stroke={2} />
-    <span>Adaugă element</span>
+    <span>{t("project-pane-add-element")}</span>
   </button>
 
-  <div class="ui-tabs pane-tabs" role="tablist" aria-label="Zonele panoului de proiect">
-    <button id="project-pane-tab-layers" class="ui-tab tab-btn" class:active={projectPaneTab === "layers"} type="button" role="tab" title="Straturi"
+  <div class="ui-tabs pane-tabs" role="tablist" aria-label={t("project-pane-areas")}>
+    <button id="project-pane-tab-layers" class="ui-tab tab-btn" class:active={projectPaneTab === "layers"} type="button" role="tab" title={t("project-pane-layers")}
       aria-selected={projectPaneTab === "layers"} aria-controls="project-pane-panel-layers" tabindex={projectPaneTab === "layers" ? 0 : -1}
       onclick={() => selectProjectPaneTab("layers")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "layers")}>
-      <IconHierarchy2 size={14} stroke={1.8} /><span>Straturi</span>
+      <IconStack2 size={15} stroke={1.8} /><span>{t("project-pane-layers")}</span>
     </button>
-    <button id="project-pane-tab-files" class="ui-tab tab-btn" class:active={projectPaneTab === "files"} type="button" role="tab" title="Fișiere"
+    <button id="project-pane-tab-files" class="ui-tab tab-btn" class:active={projectPaneTab === "files"} type="button" role="tab" title={t("project-pane-files")}
       aria-selected={projectPaneTab === "files"} aria-controls="project-pane-panel-files" tabindex={projectPaneTab === "files" ? 0 : -1}
       onclick={() => selectProjectPaneTab("files")} onkeydown={(event) => handleProjectPaneTabKeydown(event, "files")}>
-      <IconFiles size={14} stroke={1.8} /><span>Fișiere</span>
+      <IconFiles size={14} stroke={1.8} /><span>{t("project-pane-files")}</span>
     </button>
   </div>
 
   <!-- ── LAYERS TAB ── -->
   {#if projectPaneTab === "layers"}
     <div class="pane-tab-panel" id="project-pane-panel-layers" role="tabpanel" aria-labelledby="project-pane-tab-layers">
-    <ProjectLayersTab
-      {pageSections}
-      {selectedElement}
-      {previewSelection}
-      {sourceGraph}
-      {activeScannedPath}
-      {activeRenderedTemplatePath}
-      {templateHtmlEditSourceId}
-      {templateWorkbenchPlan}
-      {selectPageSection}
-      {selectTeraSource}
-      {hoverPageSection}
-      {hoverTeraSource}
-      {moveLayerElement}
-      {moveTeraNode}
-      {deleteLayerElement}
-      {openLayerContextMenu}
-      {editSelectedTeraLayer}
-      {deleteSelectedTeraNode}
-      {openSelectedTeraSource}
+    <EditorNavigationTree
+      snapshot={editorNavigationSnapshot}
+      loading={editorNavigationLoading}
+      error={editorNavigationError}
+      selectedNodeId={coordinatedSelectionNodeId}
+      hoveredNodeId={hoveredEditorNavigationNodeId}
+      openScopeId={editorEditScopeId}
+      selectNode={selectEditorNavigationNode}
+      hoverNode={hoverEditorNavigationNode}
+      enterScope={enterEditorNavigationScope}
+      exitScope={exitEditorNavigationScope}
+      previewMove={previewEditorNavigationMove}
+      moveNode={moveEditorNavigationNode}
+      deleteNode={deleteEditorNavigationNode}
+      openDocument={openEditorNavigationDocument}
+      activeDocumentPath={activeScannedPath}
+      callerDocumentPath={editorNavigationCallers.at(-1)?.caller ?? null}
+      callerTargetDocumentPath={editorNavigationCallers.at(-1)?.target ?? null}
+      returnToCaller={returnFromEditorNavigationDocument}
     />
     </div>
   {/if}
@@ -199,21 +267,14 @@
       {scannedProject}
       {projectRoot}
       {runtimeSessionId}
-      {allProjectFiles}
-      {scannedPages}
-      {scannedStyles}
-      {scannedTemplates}
-      {scannedScripts}
-      {scannedAssets}
-      {activeScannedPath}
-      {fileMoveBlockedReason}
+      snapshot={fileExplorerSnapshot}
+      loading={fileExplorerLoading}
+      error={fileExplorerError}
       bind:collapsedDirs={fileCollapsedDirs}
       bind:knownDirPaths={fileKnownDirPaths}
-      {openScannedFile}
-      {createProjectFile}
-      {moveProjectFile}
-      {renameProjectFile}
-      {deleteProjectFile}
+      selectEntry={selectFileExplorerEntry}
+      planOperation={planFileExplorerOperation}
+      commitOperation={commitFileExplorerOperation}
     />
     </div>
   {/if}
@@ -232,15 +293,15 @@
     >
       <header class="element-palette-header">
         <div>
-          <h2 id="element-palette-title">Adaugă element</h2>
-          <p id="element-palette-description">Trage un element HTML, o componentă sau o structură Tera în suprafața vizuală.</p>
+          <h2 id="element-palette-title">{t("project-pane-add-element")}</h2>
+          <p id="element-palette-description">{t("project-pane-add-element-description")}</p>
         </div>
         <button
           bind:this={elementPaletteClose}
           type="button"
-          class="ui-icon-button pane-action-btn"
-          title="Închide panoul Adaugă element"
-          aria-label="Închide panoul Adaugă element"
+          class="ui-icon-button ui-close-button pane-action-btn"
+          title={t("project-pane-close-add-element")}
+          aria-label={t("project-pane-close-add-element")}
           onclick={() => { void setElementPaletteOpen(false); }}
         >
           <IconX size={16} stroke={1.9} />
@@ -248,7 +309,7 @@
       </header>
       <div class="element-palette-body">
         <ProjectStructureTab
-          {selectedElement}
+          {coordinatedSelectionTag}
           {sourceGraph}
           {startElementPaletteDrag}
           {startTeraPaletteDrag}
@@ -261,22 +322,39 @@
 
 <style>
   .project-pane {
+    --project-pane-padding: 10px;
     position: relative;
     display: flex;
     flex-direction: column;
     gap: 8px;
     min-height: 0;
-    padding: 10px;
+    padding: var(--project-pane-padding);
     border: 1px solid var(--border);
     border-radius: var(--radius-panel);
-    overflow: auto;
-    overscroll-behavior: contain;
-    background: var(--surface);
+    overflow: hidden;
+    background: var(--material-panel);
+    box-shadow: var(--shadow-panel);
   }
 
-  .pane-add-element-btn { flex: 0 0 auto; width: 100%; }
+  .pane-add-element-btn {
+    flex: 0 0 auto;
+    width: 100%;
+    min-height: 34px;
+    border-radius: calc(var(--radius-control) + 1px);
+    letter-spacing: 0.005em;
+  }
   .pane-add-element-btn :global(svg) { display: block; flex: 0 0 auto; }
-  .pane-tab-panel { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+  .pane-tab-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    margin-right: calc(-1 * var(--project-pane-padding));
+    padding-right: var(--project-pane-padding);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
   .pane-action-btn {
     display: inline-flex; align-items: center; justify-content: center;
     width: 32px; height: 32px; padding: 0;
@@ -293,21 +371,22 @@
     position: relative;
     z-index: 2;
     flex: 0 0 auto;
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0; padding: 0; border: 0; border-bottom: 1px solid var(--border-subtle);
-    border-radius: 0; background: transparent;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
   .tab-btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-    width: 100%; min-height: 32px; padding: 0 5px;
-    border: 0; border-bottom: 2px solid transparent; border-radius: 0;
-    color: var(--text-muted); font-size: 12px; font-weight: 600;
-    background: transparent; cursor: pointer;
-    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+    width: 100%;
   }
-  .tab-btn :global(svg) { display: block; flex: 0 0 auto; }
-  .tab-btn.active { border-bottom-color: var(--brand); color: var(--brand-strong); background: transparent; }
-  .tab-btn:hover:not(.active) { color: var(--text-strong); background: var(--control-hover); }
+
+  .tab-btn :global(svg) {
+    display: block;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    color: currentColor;
+    transition: color 120ms ease;
+  }
 
   .element-palette-dialog {
     position: absolute;
@@ -319,7 +398,7 @@
     min-height: 0;
     border-radius: inherit;
     overflow: hidden;
-    background: var(--surface);
+    background: var(--material-panel);
     box-shadow: var(--shadow-float);
   }
 
@@ -330,7 +409,8 @@
     gap: 10px;
     padding: 12px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface-2);
+    background: var(--material-panel);
+    box-shadow: inset 0 -1px 0 var(--skeuo-edge-highlight);
   }
 
   .element-palette-header > div { display: grid; gap: 4px; min-width: 0; }

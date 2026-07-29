@@ -39,8 +39,9 @@ use crate::{
         },
         project_workspace::{
             clear_project_open_recovery_decision, clear_project_workspace_recovery,
-            commit_project_workspace_session_mutation, inspect_project_workspace_recovery_for_open,
-            persist_project_open_recovery_abandonment, persist_project_workspace_recovery,
+            commit_project_workspace_session_mutation, emit_project_workspace_mutated,
+            inspect_project_workspace_recovery_for_open, persist_project_open_recovery_abandonment,
+            persist_project_workspace_recovery,
             recover_project_workspace_save_hot_journal as apply_project_workspace_save_recovery,
             require_project_open_recovery_assessment_unchanged, resolve_project_open_recovery,
             restore_project_workspace_recovery, ProjectOpenRecoveryAssessment,
@@ -54,6 +55,9 @@ use crate::{
         recovery_coordinator::{
             scan_recovery_coordinator, RecoveryCoordinatorScan, RecoveryCoordinatorStatus,
         },
+        workbench::{
+            persist_workbench, WorkbenchCommandReceipt, WorkbenchIntent, WorkbenchProjectEntryRemap,
+        },
         write_authority::WriteAuthorityRuntime,
     },
     preview::{
@@ -61,7 +65,7 @@ use crate::{
         BrowserPreviewRequestIdentity,
     },
     project::{
-        init_project_with_starter, read_project_disk_manifest, scan_project_root,
+        read_project_disk_manifest, require_valid_zola_candidate, scan_project_root,
         scan_project_workspace_projection, AcceptedProjectDiskManifest,
     },
     state::AppState,
@@ -430,6 +434,11 @@ pub fn save_project_workspace(
             ),
         )
     })?;
+    emit_project_workspace_mutated(
+        &app,
+        workspace,
+        crate::kernel::project_workspace::ProjectWorkspacePreviewProjection::Required,
+    );
     Ok(receipt)
 }
 
@@ -443,6 +452,7 @@ pub struct ProjectWorkspaceUndoRedoCommandReceipt {
     pub runtime_session_id: String,
     pub result: WorkspaceUndoRedoReceipt,
     pub workspace: ProjectWorkspaceSnapshot,
+    pub workbench: Option<WorkbenchCommandReceipt>,
 }
 
 #[tauri::command]
@@ -492,12 +502,59 @@ fn apply_project_workspace_history(
             }
         }
     })?;
+    let workspace_snapshot = workspace.snapshot();
+    let session = workspace.session.clone();
+    let runtime_session_id = workspace.runtime_session_id();
+    let project_root = workspace.session.project_root.clone();
+    drop(slot);
+
+    let reconciliation = state.file_explorer.history_reconciliation(
+        &runtime_session_id,
+        &result.entry.transaction_id,
+        matches!(direction, WorkspaceHistoryDirection::Undo),
+    )?;
+    let workbench = if let Some(reconciliation) = reconciliation {
+        if let Some((from, to)) = reconciliation.remap.as_ref() {
+            state
+                .file_explorer
+                .remap_entry_prefix(&runtime_session_id, from, to)?;
+        }
+        let remaps = reconciliation
+            .remap
+            .into_iter()
+            .map(
+                |(source_prefix, destination_prefix)| WorkbenchProjectEntryRemap {
+                    source_prefix,
+                    destination_prefix,
+                },
+            )
+            .collect();
+        let deleted_prefixes = reconciliation.deleted_prefix.into_iter().collect();
+        let (receipt, persistence_warning) = state.workbench.apply_latest_after_primary_commit(
+            &session,
+            WorkbenchIntent::ReconcileProjectEntries {
+                remaps,
+                deleted_prefixes,
+                selection_override: reconciliation.selection_override,
+            },
+            |snapshot| persist_workbench(&app, &session, snapshot),
+        )?;
+        if let Some(warning) = persistence_warning {
+            eprintln!(
+                "[Pană Studio] Undo/Redo a comis ProjectWorkspace, dar persistența Workbench necesită reîncercare: {warning}"
+            );
+        }
+        Some(receipt)
+    } else {
+        None
+    };
     Ok(ProjectWorkspaceUndoRedoCommandReceipt {
         schema_version: PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION,
-        project_root: workspace.session.project_root.clone(),
-        runtime_session_id: workspace.runtime_session_id(),
+        project_root,
+        runtime_session_id,
         result,
-        workspace: workspace.snapshot(),
+        workspace: workspace_snapshot,
+        workbench,
     })
 }
 
@@ -1024,7 +1081,11 @@ fn with_bound_file_buffer<T>(
     with_bound_project_workspace(state, identity, |workspace| {
         let session = workspace.session.clone();
         let payload = operation(&session, &mut workspace.documents)?;
-        Ok(FileBufferCommandReceipt::new(&session, payload))
+        Ok(FileBufferCommandReceipt::new(
+            &session,
+            workspace.revision,
+            payload,
+        ))
     })
 }
 
@@ -1113,7 +1174,11 @@ fn set_file_buffer_draft_impl(
                 .next()
                 .ok_or_else(|| "ProjectWorkspace nu a returnat documentul editat.".to_string())
         })?;
-        Ok(FileBufferCommandReceipt::new(&workspace.session, file))
+        Ok(FileBufferCommandReceipt::new(
+            &workspace.session,
+            workspace.revision,
+            file,
+        ))
     })
 }
 
@@ -1152,7 +1217,11 @@ fn apply_file_buffer_changeset_impl(
                 file_buffer_now_ms(),
             )
         })?;
-        Ok(FileBufferCommandReceipt::new(&workspace.session, result))
+        Ok(FileBufferCommandReceipt::new(
+            &workspace.session,
+            workspace.revision,
+            result,
+        ))
     })
 }
 
@@ -1204,7 +1273,11 @@ fn clear_file_buffer_draft_impl(
                 .next()
                 .ok_or_else(|| "ProjectWorkspace nu a returnat documentul curățat.".to_string())
         })?;
-        Ok(FileBufferCommandReceipt::new(&workspace.session, file))
+        Ok(FileBufferCommandReceipt::new(
+            &workspace.session,
+            workspace.revision,
+            file,
+        ))
     })
 }
 
@@ -1260,11 +1333,15 @@ pub fn scan_project(
 }
 
 #[tauri::command]
-pub fn read_current_project_disk_manifest(
-    state: State<AppState>,
+pub async fn read_current_project_disk_manifest(
+    state: State<'_, AppState>,
 ) -> Result<crate::project::ProjectDiskManifest, String> {
     let root = require_current_project_root(&state)?;
-    read_project_disk_manifest(&root)
+    tauri::async_runtime::spawn_blocking(move || read_project_disk_manifest(&root))
+        .await
+        .map_err(|error| {
+            format!("Monitorizarea discului proiectului s-a oprit neașteptat: {error}")
+        })?
 }
 
 #[tauri::command]
@@ -1276,8 +1353,10 @@ pub fn close_project(
     let Some(root) = current_project_root(&state) else {
         let transition_lease = capture_project_transition_runtime_lease(&state)?;
         clear_project_runtime_state(&app, &state, Some(&transition_lease))?;
+        state.selection_coordinator.revoke_all();
         stop_source_browser(&app, state.inner());
         stop_project_preview(&app, state.inner());
+        state.startup_flow.reset()?;
         return Ok(());
     };
 
@@ -1293,12 +1372,14 @@ pub fn close_project(
     let session = current_project_session(&state)?;
 
     clear_project_runtime_state(&app, &state, Some(&transition_lease))?;
+    state.selection_coordinator.revoke_all();
     stop_source_browser(&app, state.inner());
     stop_project_preview(&app, state.inner());
 
     if let Some(session) = session {
         record_project_session_closed(&app, &session);
     }
+    state.startup_flow.reset()?;
 
     Ok(())
 }
@@ -1330,6 +1411,7 @@ pub fn open_project(
     let root = PathBuf::from(path)
         .canonicalize()
         .map_err(|error| format!("Nu am putut rezolva folderul: {}", error))?;
+    require_valid_zola_candidate(&root)?;
     let action = project_transition_action_for_open_target(&state, &root)?;
     let reset_session_history = action == KernelProjectTransitionAction::ReloadProject;
     require_project_transition_for_action(
@@ -1342,13 +1424,10 @@ pub fn open_project(
     let transition_runtime_lease = capture_project_transition_runtime_lease(&state)?;
     let bootstrap_manifest = read_project_disk_manifest(&root)?;
 
-    // Scan the folder regardless — user can init Zola via Deploy pane if needed.
     let mut scan = scan_project_root(&root)?;
     println!(
-        "[Pană Studio] open_project scanned: {} files, zola={}, empty={}",
-        scan.files.len(),
-        scan.is_zola,
-        scan.is_empty
+        "[Pană Studio] open_project scanned: {} files from validated Zola root",
+        scan.files.len()
     );
 
     let session = prepare_project_session(&app, &root, &scan)?;
@@ -1534,6 +1613,7 @@ pub fn open_project(
             }
         }
     }
+    state.selection_coordinator.revoke_all();
     record_project_session_opened(&app, &opened_session_for_event);
     stop_source_browser(&app, state.inner());
     stop_project_preview(&app, state.inner());
@@ -1543,15 +1623,6 @@ pub fn open_project(
     );
 
     Ok(authoritative_scan)
-}
-
-#[tauri::command]
-pub async fn zola_init(path: String, theme_id: String, app: AppHandle) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        init_project_with_starter(&app, &PathBuf::from(path), &theme_id)
-    })
-    .await
-    .map_err(|error| format!("Inițializarea proiectului a căzut în task-ul de fundal: {error}"))?
 }
 
 #[tauri::command]

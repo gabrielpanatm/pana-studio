@@ -1,11 +1,14 @@
 import type { PageJsConfig } from "$lib/types";
-import { emptyMotionConfig, isMotionConfigEmpty, normalizeMotionConfig } from "$lib/js/motion-config";
+import {
+  isMotionDocumentEmpty,
+  normalizeMotionDocument,
+} from "$lib/js/motion-v2";
 
 export function emptyPageJsConfig(): PageJsConfig {
   return {
-    version: 1,
+    version: 2,
     blocks: [],
-    motion: emptyMotionConfig(),
+    motion: undefined,
   };
 }
 
@@ -20,11 +23,11 @@ export function normalizePageJsConfig(config: LegacyPageJsConfig | null | undefi
       ? config.components
       : [];
   return {
-    version: 1,
+    version: 2,
     blocks: rawBlocks
       .map((block) => ({ id: String(block.id || "").trim() }))
       .filter((block) => block.id.length > 0),
-    motion: normalizeMotionConfig(config?.motion),
+    motion: config?.motion ? normalizeMotionDocument(config.motion) : undefined,
   };
 }
 
@@ -34,5 +37,5 @@ export function clonePageJsConfig(config: LegacyPageJsConfig | null | undefined)
 
 export function isPageJsConfigEmpty(config: LegacyPageJsConfig | null | undefined): boolean {
   const normalized = normalizePageJsConfig(config);
-  return normalized.blocks.length === 0 && isMotionConfigEmpty(normalized.motion);
+  return normalized.blocks.length === 0 && isMotionDocumentEmpty(normalized.motion);
 }

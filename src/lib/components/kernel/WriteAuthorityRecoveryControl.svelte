@@ -1,5 +1,6 @@
 <script lang="ts">
   import { IconAlertTriangle, IconCircleCheck, IconRefresh, IconRestore, IconShieldLock } from "@tabler/icons-svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readWriteAuthorityRecoveryScan, resolveWriteAuthorityRecovery } from "$lib/project/io";
   import type {
     WriteAuthorityRecoveryClassification,
@@ -37,7 +38,7 @@
       scan = await readWriteAuthorityRecoveryScan();
     } catch (error) {
       loadError = errorMessage(error);
-      onStatusUpdate?.(`WriteAuthority WAL scan eșuat: ${loadError}`, "error");
+      onStatusUpdate?.(t("wal-scan-failed", { error: loadError }), "error");
     } finally {
       loading = false;
     }
@@ -48,16 +49,27 @@
   }
 
   function classificationLabel(value: WriteAuthorityRecoveryClassification): string {
-    return value.replaceAll("_", " ");
+    switch (value) {
+      case "no_effect": return t("wal-class-no-effect");
+      case "staged_only": return t("wal-class-staged-only");
+      case "effect_committed": return t("wal-class-effect-committed");
+      case "rollback_completed": return t("wal-class-rollback-completed");
+      case "cleanup_required": return t("wal-class-cleanup-required");
+      case "partial_append": return t("wal-class-partial-append");
+      case "partial_namespace_creation": return t("wal-class-partial-namespace-creation");
+      case "partial_tree_removal": return t("wal-class-partial-tree-removal");
+      case "conflict": return t("wal-class-conflict");
+      case "unreadable_or_corrupt": return t("wal-class-unreadable");
+    }
   }
 
   function resolutionLabel(action: WriteAuthorityRecoveryResolutionAction): string {
     const labels: Record<WriteAuthorityRecoveryResolutionAction, string> = {
-      restore_original: "Restaurează arborele intact",
-      accept_restored_state: "Acceptă starea restaurată",
-      accept_current_state: "Acceptă starea curentă verificată",
-      continue_tree_removal: "Continuă ștergerea arborelui",
-      restore_remaining_tree: "Restaurează ce a rămas",
+      restore_original: t("wal-resolution-restore-original"),
+      accept_restored_state: t("wal-resolution-accept-restored"),
+      accept_current_state: t("wal-resolution-accept-current"),
+      continue_tree_removal: t("wal-resolution-continue-removal"),
+      restore_remaining_tree: t("wal-resolution-restore-remaining"),
     };
     return labels[action];
   }
@@ -72,9 +84,9 @@
         action === "continue_tree_removal") &&
       !window.confirm(
         action === "accept_current_state"
-          ? "Confirmi acceptarea stării filesystem curente verificate? Nucleul va reverifica tipul, lifetime-ul, starea și contractul specific operației, o va sincroniza fără mutații de conținut și va închide recordul WAL numai dacă tokenul scanării este încă exact."
+          ? t("wal-confirm-current")
           : action === "continue_tree_removal"
-            ? "Confirmi ștergerea definitivă a tuturor descendenților rămași în quarantine? Acțiunea nu poate fi anulată."
+            ? t("wal-confirm-removal")
             : "",
       )
     ) {
@@ -90,13 +102,24 @@
         action,
       });
       scan = receipt.recoveryScan;
-      onStatusUpdate?.(receipt.diagnostic, "restored");
+      onStatusUpdate?.(t("wal-resolution-completed"), "restored");
     } catch (error) {
       loadError = errorMessage(error);
-      onStatusUpdate?.(`Rezoluția WriteAuthority WAL a eșuat: ${loadError}`, "error");
+      onStatusUpdate?.(t("wal-resolution-failed", { error: loadError }), "error");
       await refresh();
     } finally {
       resolvingOperationId = null;
+    }
+  }
+
+  function phaseLabel(phase: WriteAuthorityRecoveryItem["phase"]) {
+    switch (phase) {
+      case "preparing": return t("wal-phase-preparing");
+      case "prepared": return t("wal-phase-prepared");
+      case "auxiliary_durable": return t("wal-phase-auxiliary-durable");
+      case "effect_visible": return t("wal-phase-effect-visible");
+      case "target_durable": return t("wal-phase-target-durable");
+      default: return t("wal-phase-unknown");
     }
   }
 </script>
@@ -106,13 +129,13 @@
     <div class="wal-title">
       <IconShieldLock size={18} stroke={1.9} />
       <div>
-        <h2 id="write-authority-wal-title">Jurnal WAL al autorității de scriere</h2>
-        <p>Recuperare globală, înainte de jurnalul tranzacțiilor și înainte de deschiderea proiectului.</p>
+        <h2 id="write-authority-wal-title">{t("wal-title")}</h2>
+        <p>{t("wal-description")}</p>
       </div>
     </div>
     <button type="button" onclick={() => void refresh()} disabled={loading}>
       <span class:spinning={loading}><IconRefresh size={15} stroke={1.9} /></span>
-      <span>{loading ? "Scaneză..." : "Recitește"}</span>
+      <span>{loading ? t("wal-scanning") : t("wal-refresh")}</span>
     </button>
   </div>
 
@@ -126,8 +149,11 @@
         <IconCircleCheck size={18} stroke={1.9} />
       {/if}
       <div>
-        <strong>{scan.blocked ? "Mutațiile sunt blocate" : "WAL curat"}</strong>
-        <span>{scan.recordCount} recorduri · {scan.totalBytes} bytes</span>
+        <strong>{scan.blocked ? t("wal-blocked") : t("wal-clean")}</strong>
+        <span>{t("wal-summary", {
+          records: l10n.formatNumber(scan.recordCount),
+          bytes: l10n.formatNumber(scan.totalBytes),
+        })}</span>
       </div>
     </div>
 
@@ -139,10 +165,10 @@
               <strong>{item.operationId ?? item.fileName}</strong>
               <span>{classificationLabel(item.classification)}</span>
             </div>
-            <p>{item.diagnostic}</p>
+            <p>{t("wal-item-diagnostic")}</p>
             <small>
-              fază {item.phase ?? "necunoscută"} ·
-              {item.automaticRecoveryAvailable ? "recuperare automată disponibilă" : "revizuire manuală"}
+              {t("wal-phase", { phase: phaseLabel(item.phase) })} ·
+              {item.automaticRecoveryAvailable ? t("wal-auto-recovery") : t("wal-manual-review")}
             </small>
             {#if item.availableResolutionActions.length}
               <div class="wal-actions">
@@ -161,7 +187,7 @@
                     {:else}
                       <IconCircleCheck size={14} stroke={1.9} />
                     {/if}
-                    <span>{resolvingOperationId === item.operationId ? "Se verifică..." : resolutionLabel(action)}</span>
+                    <span>{resolvingOperationId === item.operationId ? t("wal-checking") : resolutionLabel(action)}</span>
                   </button>
                 {/each}
               </div>
@@ -171,7 +197,7 @@
       </div>
     {/if}
   {:else}
-    <p class="wal-message">Se citește scanarea WAL...</p>
+    <p class="wal-message">{t("wal-reading")}</p>
   {/if}
 </section>
 

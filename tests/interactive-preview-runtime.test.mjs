@@ -84,5 +84,5 @@ test("Interactive realm has no Tauri/file bridge and never uses allow-same-origi
   assert.match(blockRuntime, /dispose/);
   assert.match(surface, /sandbox="allow-scripts"/);
   assert.doesNotMatch(surface, /allow-same-origin|allow-forms|allow-popups|allow-top-navigation/);
-  assert.match(surface, /ultima revizie interactivă validă rămâne activă/);
+  assert.match(surface, /t\("workbench-interactive-revision-failed"\)/);
 });

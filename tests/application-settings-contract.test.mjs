@@ -11,6 +11,8 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
   const rustWorkbench = source("../src-tauri/src/kernel/workbench/model.rs");
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const rail = source("../src/lib/components/workbench/ActivityRail.svelte");
+  const route = source("../src/routes/+page.svelte");
+  const startup = source("../src/lib/components/startup/StartupView.svelte");
 
   assert.match(types, /ApplicationSurface = "workbench" \| "settings"/);
   assert.doesNotMatch(
@@ -21,10 +23,9 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
     rustWorkbench.slice(rustWorkbench.indexOf("pub enum WorkbenchActivity"), rustWorkbench.indexOf("pub enum WorkbenchSurface")),
     /Settings/,
   );
-  assert.ok(
-    center.indexOf('app.applicationSurface === "settings"') < center.indexOf("!app.scannedProject"),
-    "pagina Setări trebuie să fie disponibilă înaintea condiției de proiect deschis",
-  );
+  assert.match(center, /\{#if app\.applicationSurface === "settings"\}[\s\S]*<SettingsWorkspace/);
+  assert.match(route, /\{#if app\.scannedProject \|\| app\.applicationSurface === "settings"\}/);
+  assert.match(startup, /app\.openApplicationSettings\(\)/);
   assert.match(rail, /settingsActive/);
   assert.match(rail, /aria-current=\{settingsActive \? "page"/);
   assert.doesNotMatch(rail, /settingsOpen|toggleSettings/);
@@ -37,8 +38,13 @@ test("vechiul panou suprapus este eliminat, iar pagina nu conține configurări 
 
   assert.equal(existsSync(legacyPanel), false);
   assert.doesNotMatch(chrome, /SettingsPanel/);
-  assert.match(workspace, /Setări Pană Studio/);
-  assert.match(workspace, /Nicio opțiune de aici nu modifică site-ul deschis/);
+  assert.match(workspace, /t\("settings-title"\)/);
+  assert.match(workspace, /t\("settings-description"\)/);
+  assert.match(workspace, /class="ui-tabs settings-navigation"[\s\S]*role="tablist"/);
+  assert.match(workspace, /class="ui-tab"[\s\S]*role="tab"[\s\S]*aria-selected/);
+  assert.match(workspace, /id="settings-tab-panel"[\s\S]*role="tabpanel"/);
+  assert.match(workspace, /handleSettingsTabKeydown/);
+  assert.doesNotMatch(workspace, /\.settings-navigation button\.active::after/);
   assert.doesNotMatch(workspace, /PublishWorkspace|openPublishCenter|Configurație Zola|Construire și publicare/);
 });
 
@@ -49,11 +55,21 @@ test("preferințele aplicației au contract Rust cu revizie și CAS", () => {
   const appState = source("../src/lib/state/app.svelte.ts");
 
   assert.match(model, /pub struct ApplicationSettingsSnapshot/);
+  assert.match(model, /pub brand_accent: String/);
+  assert.match(model, /enum ApplicationLanguagePreference[\s\S]*System[\s\S]*Fixed/);
+  assert.match(model, /enum ApplicationThemePreference[\s\S]*System[\s\S]*Fixed/);
+  assert.match(model, /enum ApplicationAccentPreference[\s\S]*System[\s\S]*Brand[\s\S]*Fixed/);
   assert.match(model, /pub expected_revision: u64/);
+  assert.match(model, /pub patch: ApplicationSettingsPatch/);
   assert.match(model, /pub block_properties_height: u16/);
   assert.match(model, /pub block_properties_collapsed: bool/);
   assert.match(implementation, /input\.expected_revision != config\.revision/);
+  assert.match(implementation, /LocalizedDiagnostic::new\("diagnostic-application-settings-stale"\)/);
   assert.match(implementation, /WriteCategory::InternalAppWrite/);
+  assert.match(
+    implementation,
+    /brand_accent: DEFAULT_APPLICATION_ACCENT\.to_string\(\)/,
+  );
   assert.match(registry, /read_application_settings/);
   assert.match(registry, /save_application_settings/);
   assert.match(appState, /applicationSettingsSaveTail/);

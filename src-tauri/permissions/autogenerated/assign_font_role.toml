@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assign-font-role"
+description = "Enables the assign_font_role command without any pre-configured scope."
+commands.allow = ["assign_font_role"]
+
+[[permission]]
+identifier = "deny-assign-font-role"
+description = "Denies the assign_font_role command without any pre-configured scope."
+commands.deny = ["assign_font_role"]

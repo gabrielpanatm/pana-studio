@@ -1,5 +1,6 @@
 use crate::source_graph::model::{
-    SourceDataFormat, SourceDataNode, SourceGraphInclude, SourceNodeKind, SourceOrigin,
+    SourceCapabilities, SourceDataFormat, SourceDataLocation, SourceDataNode, SourceGraphInclude,
+    SourceNodeKind, SourceOrigin,
 };
 use crate::source_graph::tera_semantics::TeraSemanticDocument;
 
@@ -54,9 +55,12 @@ pub(super) struct DataFileSummary {
     pub(super) origin: SourceOrigin,
     pub(super) theme_name: Option<String>,
     pub(super) logical_path: String,
+    pub(super) load_paths: Vec<String>,
+    pub(super) location: SourceDataLocation,
     pub(super) format: SourceDataFormat,
     pub(super) parse_error: Option<String>,
     pub(super) nodes: Vec<SourceDataNode>,
+    pub(super) capabilities: SourceCapabilities,
 }
 
 #[derive(Clone)]

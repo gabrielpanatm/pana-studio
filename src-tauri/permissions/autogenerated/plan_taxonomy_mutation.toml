@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-taxonomy-mutation"
+description = "Enables the plan_taxonomy_mutation command without any pre-configured scope."
+commands.allow = ["plan_taxonomy_mutation"]
+
+[[permission]]
+identifier = "deny-plan-taxonomy-mutation"
+description = "Denies the plan_taxonomy_mutation command without any pre-configured scope."
+commands.deny = ["plan_taxonomy_mutation"]

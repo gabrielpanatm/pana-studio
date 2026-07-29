@@ -5,6 +5,13 @@
   import DocumentBar from "$lib/components/workbench/DocumentBar.svelte";
   import ResponsiveCanvasToolbar from "$lib/components/workbench/ResponsiveCanvasToolbar.svelte";
   import WorkbenchSplitHandle from "$lib/components/workbench/WorkbenchSplitHandle.svelte";
+  import { SOURCE_LOADING_SENTINEL } from "$lib/editor-runtime/source-state";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
   import { resetPreviewFrameDocumentAccess } from "$lib/preview/frame-origin";
   import type {
     SourceLanguage,
@@ -18,6 +25,11 @@
     WorkbenchSurface,
   } from "$lib/types";
   import type { InteractivePreviewDomNode } from "$lib/preview/interactive";
+  import type {
+    MotionPreviewMode,
+    MotionPreviewRequest,
+    MotionPreviewStatus,
+  } from "$lib/state/motion-workspace.svelte";
 
   type CenterView = "preview" | "code" | "markdown" | "kernel";
 
@@ -32,6 +44,8 @@
   export let previewSrc = "";
   export let interactivePreviewEnabled = false;
   export let interactivePreviewUrl = "";
+  export let motionPreviewMode: MotionPreviewMode = "design";
+  export let motionPreviewRequest: MotionPreviewRequest | null = null;
   export let refreshToken = 0;
   export let currentSourcePath = "";
   export let source = "";
@@ -59,15 +73,19 @@
   export let resetPreviewZoom: () => void = () => {};
   export let onMarkdownChange: (nextSource: string, path: string) => void = () => {};
   export let attachPreviewInspector: () => void;
-  export let setInteractivePreviewEnabled: (enabled: boolean) => void = () => {};
+  export let mountPreviewSurface: (frame: HTMLIFrameElement) => void = () => {};
+  export let unmountPreviewSurface: (frame: HTMLIFrameElement) => void = () => {};
+  export let previewSurfaceLoaded: (frame: HTMLIFrameElement) => void = () => {};
+  export let setPreviewExecutionMode: (mode: MotionPreviewMode) => void = () => {};
   export let onInteractiveLifecycleError: (message: string) => void = () => {};
   export let onInteractiveDomSnapshot: (nodes: InteractivePreviewDomNode[]) => void = () => {};
   export let onInteractiveRealmRestarted: (previewRevision: string, durationMs: number) => void = () => {};
   export let onInteractiveRealmFailed: (previewRevision: string, durationMs: number, diagnostic: string) => void = () => {};
+  export let onMotionPreviewStatus: (status: MotionPreviewStatus) => void = () => {};
   export let previewFrame: HTMLIFrameElement | undefined = undefined;
   export let codeEditorHost: HTMLDivElement | undefined = undefined;
 
-  $: sourceIsLoading = source === "Se incarca fisierul...";
+  $: sourceIsLoading = source === SOURCE_LOADING_SENTINEL;
   $: workbenchSplit = workbenchSnapshot?.split ?? "none";
   $: splitActive = workbenchSplit !== "none";
   $: splitRatioBasisPoints = workbenchSnapshot?.splitRatioBasisPoints ?? 5_000;
@@ -89,6 +107,17 @@
     zoomPercent: previewZoom,
     showRulers: previewRulers,
   } satisfies WorkbenchCanvasViewportSnapshot;
+  $: executionPreviewUrl = (() => {
+    if (!interactivePreviewUrl || motionPreviewMode !== "motion") return interactivePreviewUrl;
+    try {
+      const url = new URL(interactivePreviewUrl);
+      url.searchParams.set("__pana_view", "motion");
+      url.searchParams.set("__pana_motion_mode", "preview");
+      return url.toString();
+    } catch {
+      return interactivePreviewUrl;
+    }
+  })();
 
   let viewportResizing = false;
   let draftPreviewWidthPx = previewWidthPx;
@@ -98,6 +127,16 @@
   function handlePreviewLoad() {
     if (previewFrame) resetPreviewFrameDocumentAccess(previewFrame);
     attachPreviewInspector();
+    if (previewFrame) previewSurfaceLoaded(previewFrame);
+  }
+
+  function registerPreviewSurface(frame: HTMLIFrameElement) {
+    mountPreviewSurface(frame);
+    return {
+      destroy() {
+        unmountPreviewSurface(frame);
+      },
+    };
   }
 
   function stopViewportResize(commit: boolean) {
@@ -159,7 +198,7 @@
   onDestroy(() => stopViewportResize(false));
 </script>
 
-<section class="editor-shell" aria-label="Previzualizare și cod sursă">
+<section class="editor-shell" aria-label={t("workbench-editor-shell-aria")}>
   <DocumentBar
     snapshot={workbenchSnapshot}
     dirtyPaths={dirtyWorkbenchPaths}
@@ -175,7 +214,7 @@
     class="editor-stage-grid"
     style={`--wb-split-ratio: ${splitRatioBasisPoints / 100}%;`}
   >
-  <div class:hidden-stage={!showPreview} class="preview-shell" aria-label="Suprafață vizuală">
+  <div class:hidden-stage={!showPreview} class="preview-shell" aria-label={t("workbench-visual-surface")}>
     <div
       class:canvas-fit={previewCanvasMode === "fit"}
       class:canvas-fixed={previewCanvasMode === "fixed"}
@@ -195,25 +234,26 @@
           <button
             type="button"
             class="viewport-resize-handle left"
-            aria-label="Redimensionează canvas-ul din stânga"
-            title="Trage pentru lățime liberă · săgeți ±10px · Shift ±50px"
+            aria-label={t("workbench-resize-canvas-left")}
+            title={t("workbench-resize-canvas-help")}
             onpointerdown={(event) => { startViewportResize(event, "left"); }}
             onkeydown={resizeViewportFromKeyboard}
           ></button>
           <button
             type="button"
             class="viewport-resize-handle right"
-            aria-label="Redimensionează canvas-ul din dreapta"
-            title="Trage pentru lățime liberă · săgeți ±10px · Shift ±50px"
+            aria-label={t("workbench-resize-canvas-right")}
+            title={t("workbench-resize-canvas-help")}
             onpointerdown={(event) => { startViewportResize(event, "right"); }}
             onkeydown={resizeViewportFromKeyboard}
           ></button>
         {/if}
         <iframe
+          use:registerPreviewSurface
           bind:this={previewFrame}
           class:interactive-background={interactivePreviewEnabled}
           class="preview-page"
-          title="Previzualizare HTML și CSS pentru site-ul de test"
+          title={t("workbench-preview-frame-title")}
           src={previewDocumentMarkup ? undefined : previewSrc}
           srcdoc={previewDocumentMarkup ?? undefined}
           sandbox={previewDocumentMarkup ? "" : "allow-scripts"}
@@ -221,7 +261,9 @@
         ></iframe>
         {#if interactivePreviewEnabled}
           <InteractivePreviewSurface
-            desiredUrl={interactivePreviewUrl}
+            desiredUrl={executionPreviewUrl}
+            executionMode={motionPreviewMode}
+            motionRequest={motionPreviewRequest}
             canvasMode={previewCanvasMode}
             canvasWidthPx={draftPreviewWidthPx}
             {previewZoom}
@@ -229,6 +271,7 @@
             onLifecycleError={onInteractiveLifecycleError}
             onRealmRestarted={onInteractiveRealmRestarted}
             onRealmFailed={onInteractiveRealmFailed}
+            onMotionStatus={onMotionPreviewStatus}
           />
         {/if}
       </div>
@@ -240,9 +283,9 @@
       {setPreviewZoom}
       {commitPreviewZoom}
       {resetPreviewZoom}
-      {interactivePreviewEnabled}
       {interactivePreviewUrl}
-      {setInteractivePreviewEnabled}
+      previewExecutionMode={motionPreviewMode}
+      {setPreviewExecutionMode}
     />
   </div>
 
@@ -258,7 +301,7 @@
     class:hidden-stage={!showSource}
     class="source-panel source-stage"
     id="source"
-    aria-label="Cod sursa"
+    aria-label={t("workbench-source-code")}
   >
     {#if sourceSurface === "markdown" && sourceLanguage === "markdown" && !sourceIsLoading}
       {#key currentSourcePath}
@@ -271,15 +314,17 @@
         />
       {/key}
     {:else if sourceSurface === "markdown" && sourceLanguage === "markdown"}
-      <div class="markdown-loading-stage" aria-label="Se încarcă fișierul Markdown"></div>
+      <div class="markdown-loading-stage" aria-label={t("workbench-markdown-loading")}></div>
     {:else}
       <div class="code-source-layout">
         <div class="source-header">
           <h2 title={currentSourcePath}>
-            <strong>Cod</strong>
-            <span>{currentSourcePath || "Niciun fișier deschis"}</span>
+            <strong>{t("workbench-code")}</strong>
+            <span>{currentSourcePath || t("workbench-no-file-open")}</span>
           </h2>
-          <span class="source-meta">{sourceLanguage.toUpperCase()} • {sourceLength} chars</span>
+          <span class="source-meta">{sourceLanguage.toUpperCase()} • {t("workbench-character-count", {
+            count: sourceLength,
+          })}</span>
         </div>
         <div bind:this={codeEditorHost} class="code-editor-host" data-language={sourceLanguage}></div>
       </div>
@@ -299,7 +344,8 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-panel);
     overflow: hidden;
-    background: var(--surface);
+    background: var(--material-panel);
+    box-shadow: var(--shadow-panel);
   }
 
   .preview-shell {
@@ -379,7 +425,8 @@
     padding: 0;
     overflow: auto;
     overscroll-behavior: contain;
-    background: var(--wb-canvas-pasteboard, color-mix(in srgb, var(--surface-3) 88%, #8da39a));
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
   }
 
   .preview-stage.canvas-fixed {

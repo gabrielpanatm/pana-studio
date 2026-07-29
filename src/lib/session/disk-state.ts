@@ -1,4 +1,5 @@
 import type { ProjectScan } from "$lib/types";
+import { l10n, t } from "$lib/i18n/runtime.svelte";
 
 export type DiskMutationKind = "scan" | "save" | "delete" | "move" | "rename" | "discard";
 
@@ -57,16 +58,33 @@ export function markDiskMutation(
 export function diskRuntimeSummary(state: DiskState) {
   return {
     revision: state.revision,
-    files: `${state.fileCount} fișiere / ${state.directoryCount} dosare`,
+    files: t("disk-state-counts", {
+      files: state.fileCount,
+      directories: state.directoryCount,
+    }),
     scannedAt: state.scannedAt
-      ? new Intl.DateTimeFormat("ro-RO", {
+      ? l10n.formatDate(state.scannedAt, {
           hour: "2-digit",
           minute: "2-digit",
           second: "2-digit",
-        }).format(new Date(state.scannedAt))
-      : "nescanat",
+        })
+      : t("disk-state-not-scanned"),
     lastMutation: state.lastMutation
-      ? `${state.lastMutation.kind}${state.lastMutation.path ? `: ${state.lastMutation.path}` : ""}`
-      : "fără mutații",
+      ? t("disk-state-last-mutation", {
+        kind: diskMutationKindLabel(state.lastMutation.kind),
+        path: state.lastMutation.path ? `: ${state.lastMutation.path}` : "",
+      })
+      : t("disk-state-no-mutations"),
   };
+}
+
+function diskMutationKindLabel(kind: DiskMutationKind) {
+  switch (kind) {
+    case "scan": return t("disk-state-mutation-scan");
+    case "save": return t("disk-state-mutation-save");
+    case "delete": return t("disk-state-mutation-delete");
+    case "move": return t("disk-state-mutation-move");
+    case "rename": return t("disk-state-mutation-rename");
+    case "discard": return t("disk-state-mutation-discard");
+  }
 }

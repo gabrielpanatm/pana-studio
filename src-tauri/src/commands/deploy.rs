@@ -83,6 +83,7 @@ pub async fn zola_check(app: AppHandle, state: State<'_, AppState>) -> Result<St
 /// validates only canonical bytes saved on disk.
 #[tauri::command]
 pub fn zola_check_workspace(state: State<'_, AppState>) -> Result<String, String> {
+    const PREVIEW_PENDING: &str = "PANA_WORKSPACE_PREVIEW_PENDING:";
     let (project_root, runtime_session_id, revision) = {
         let workspace = state
             .project_workspace
@@ -102,7 +103,9 @@ pub fn zola_check_workspace(state: State<'_, AppState>) -> Result<String, String
         .lock()
         .map_err(|_| "Motorul Preview embedded este indisponibil pentru validare.".to_string())?;
     let engine = engine.as_ref().ok_or_else(|| {
-        "Nu există o generație Preview embedded pentru ProjectWorkspace curent.".to_string()
+        format!(
+            "{PREVIEW_PENDING} Nu există încă o generație Preview embedded pentru ProjectWorkspace curent."
+        )
     })?;
     if !engine.owner_matches(&crate::preview::PersistentPreviewOwner::new(
         &project_root,
@@ -110,7 +113,7 @@ pub fn zola_check_workspace(state: State<'_, AppState>) -> Result<String, String
     )) || !engine.active_matches_revision(revision)?
     {
         return Err(format!(
-            "Generația Preview nu confirmă revizia ProjectWorkspace {revision}; reîmprospătează Preview-ul."
+            "{PREVIEW_PENDING} Generația Preview nu confirmă încă revizia ProjectWorkspace {revision}; validarea va continua după reîmprospătarea Preview-ului."
         ));
     }
     Ok(format!(

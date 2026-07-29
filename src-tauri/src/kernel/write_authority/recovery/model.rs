@@ -626,7 +626,7 @@ impl WalRecordBody {
                             WalCopyDestinationPolicy::CreateNew => {
                                 self.owner != "project_initializer"
                                     || self.category != "project_source_write"
-                                    || !self.authority.scope.starts_with("project_bootstrap:")
+                                    || !self.authority.scope.starts_with("project_creation:")
                             }
                             WalCopyDestinationPolicy::Replace => {
                                 self.owner != "preview"
@@ -748,7 +748,7 @@ impl WalRecordBody {
                         let project_initializer = self.owner == "project_initializer"
                             && self.category == "project_source_write"
                             && self.recovery_policy == "logged_atomic_file"
-                            && self.authority.scope.starts_with("project_bootstrap:");
+                            && self.authority.scope.starts_with("project_creation:");
                         let preview = self.owner == "preview"
                             && self.category == "preview_workspace_write"
                             && self.recovery_policy == "ephemeral_rebuildable"

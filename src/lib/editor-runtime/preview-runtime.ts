@@ -1,9 +1,10 @@
-import type { SaveState } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import type {
   CanvasProjectionIdentity,
   PreviewPhaseReceipt,
 } from "$lib/project/io";
 import type { CanvasPatch } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PreviewOperationPayload = Record<string, unknown> & {
   type: string;
@@ -44,7 +45,7 @@ export type PreviewOperationAck = {
 
 export type PreviewRuntimeHost = {
   postPreviewMessage: (payload: Record<string, unknown>) => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 type PreviewRuntimeTimer = ReturnType<typeof globalThis.setTimeout>;
@@ -195,7 +196,7 @@ export class PreviewRuntime {
     if (!this.incomingOverflowReported) {
       this.incomingOverflowReported = true;
       this.host.setGlobalStatus(
-        "Previzualizarea a depășit bugetul de mesaje; surplusul a fost refuzat fără reîncercare.",
+        t("preview-runtime-message-budget-exceeded"),
         "error",
       );
     }
@@ -216,7 +217,7 @@ export class PreviewRuntime {
       if (typeof oldestRevision !== "number") break;
       this.failPending(
         oldestRevision,
-        "Previzualizarea a depășit limita operațiilor neconfirmate; operația cea mai veche a fost invalidată.",
+        t("preview-runtime-pending-capacity-exceeded"),
         "capacity",
       );
     }
@@ -229,7 +230,10 @@ export class PreviewRuntime {
     const timeout = this.scheduleTimeout(() => {
       this.failPending(
         revision,
-        `Preview nu a confirmat operația ${payload.type} în ${this.ackTimeoutMs} ms.`,
+        t("preview-runtime-ack-timeout", {
+          operation: payload.type,
+          timeout: this.ackTimeoutMs,
+        }),
         "ack_timeout",
       );
     }, this.ackTimeoutMs);
@@ -292,7 +296,7 @@ export class PreviewRuntime {
     // canonic și decide dacă eșecul final trebuie afișat; ACK-ul provizoriu nu
     // trebuie să sperie utilizatorul înainte ca proiecția Rust să fie încercată.
     if (!ok && error && operationType !== "apply-canvas-patch") {
-      this.host.setGlobalStatus(`Preview update eșuat: ${error}`, "error");
+      this.host.setGlobalStatus(t("preview-runtime-update-failed", { message: error }), "error");
     }
     return ack;
   }
@@ -315,7 +319,7 @@ export class PreviewRuntime {
       || !Number.isSafeInteger(patch.issuedAtMs)
       || patch.issuedAtMs <= 0
     ) {
-      throw new Error(ack.error || "Previzualizarea nu a confirmat exact CanvasPatch-ul.");
+      throw new Error(ack.error || t("preview-runtime-canvas-patch-unconfirmed"));
     }
     const roundTripDurationMs = Math.max(0, this.now() - roundTripStartedAt);
     const receiptToCommitDurationMs = Math.max(0, Date.now() - patch.issuedAtMs);
@@ -343,7 +347,7 @@ export class PreviewRuntime {
       || receipt.workspaceRevision !== patch.baseWorkspaceRevision
       || receipt.workspaceTransactionId !== patch.workspaceTransactionId
     ) {
-      throw new Error(ack.error || "Previzualizarea nu a confirmat exact revenirea CanvasPatch-ului.");
+      throw new Error(ack.error || t("preview-runtime-canvas-rollback-unconfirmed"));
     }
     return receipt;
   }
@@ -376,7 +380,7 @@ export class PreviewRuntime {
     for (const waiter of this.waiters.values()) {
       waiter.reject(new PreviewRuntimeTransportError(
         "runtime_reset",
-        "Execuția previzualizării a fost resetată înainte de confirmare.",
+        t("preview-runtime-reset-before-ack"),
       ));
     }
     this.waiters.clear();
@@ -415,7 +419,9 @@ export class PreviewRuntime {
     this.lastOperation = pending.operation;
     // Operațiile await-ed au un apelant care decide fallback-ul și mesajul
     // final. Doar mesajele fire-and-forget își publică direct timeout-ul.
-    if (!waiter) this.host.setGlobalStatus(`Preview update eșuat: ${error}`, "error");
+    if (!waiter) {
+      this.host.setGlobalStatus(t("preview-runtime-update-failed", { message: error }), "error");
+    }
   }
 }
 

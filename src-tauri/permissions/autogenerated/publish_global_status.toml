@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-publish-global-status"
+description = "Enables the publish_global_status command without any pre-configured scope."
+commands.allow = ["publish_global_status"]
+
+[[permission]]
+identifier = "deny-publish-global-status"
+description = "Denies the publish_global_status command without any pre-configured scope."
+commands.deny = ["publish_global_status"]

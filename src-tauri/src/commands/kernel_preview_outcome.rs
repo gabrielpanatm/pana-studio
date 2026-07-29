@@ -1,22 +1,23 @@
 use std::collections::HashMap;
 
 use crate::{
-    kernel::preview_projection::{
-        CanvasPatch, PreviewHtmlAttributesExecutionOutcome, PreviewHtmlAttributesExecutionReceipt,
-        PreviewHtmlAttributesExecutionStatus, PreviewHtmlDeleteExecutionOutcome,
-        PreviewHtmlDeleteExecutionReceipt, PreviewHtmlDeleteExecutionStatus,
-        PreviewHtmlDuplicateExecutionOutcome, PreviewHtmlDuplicateExecutionReceipt,
-        PreviewHtmlDuplicateExecutionStatus, PreviewHtmlInsertDropExecutionOutcome,
-        PreviewHtmlInsertDropExecutionReceipt, PreviewHtmlInsertDropExecutionStatus,
-        PreviewHtmlTagExecutionOutcome, PreviewHtmlTagExecutionReceipt,
-        PreviewHtmlTagExecutionStatus, PreviewHtmlTextExecutionOutcome,
-        PreviewHtmlTextExecutionReceipt, PreviewHtmlTextExecutionStatus,
-        PreviewLayerDropExecutionOutcome, PreviewLayerDropExecutionReceipt,
-        PreviewLayerDropExecutionStatus, PreviewTeraDeleteExecutionOutcome,
-        PreviewTeraDeleteExecutionReceipt, PreviewTeraDeleteExecutionStatus,
-        PreviewTeraInsertDropExecutionOutcome, PreviewTeraInsertDropExecutionReceipt,
-        PreviewTeraInsertDropExecutionStatus, PreviewTeraMoveDropExecutionOutcome,
-        PreviewTeraMoveDropExecutionReceipt, PreviewTeraMoveDropExecutionStatus,
+    kernel::{
+        editor_navigation::{EditorMoveExecutionReceipt, EditorMoveExecutionStatus},
+        preview_projection::{
+            CanvasPatch, EditorMoveExecutionOutcome, PreviewHtmlAttributesExecutionOutcome,
+            PreviewHtmlAttributesExecutionReceipt, PreviewHtmlAttributesExecutionStatus,
+            PreviewHtmlDeleteExecutionOutcome, PreviewHtmlDeleteExecutionReceipt,
+            PreviewHtmlDeleteExecutionStatus, PreviewHtmlDuplicateExecutionOutcome,
+            PreviewHtmlDuplicateExecutionReceipt, PreviewHtmlDuplicateExecutionStatus,
+            PreviewHtmlInsertDropExecutionOutcome, PreviewHtmlInsertDropExecutionReceipt,
+            PreviewHtmlInsertDropExecutionStatus, PreviewHtmlTagExecutionOutcome,
+            PreviewHtmlTagExecutionReceipt, PreviewHtmlTagExecutionStatus,
+            PreviewHtmlTextExecutionOutcome, PreviewHtmlTextExecutionReceipt,
+            PreviewHtmlTextExecutionStatus, PreviewTeraDeleteExecutionOutcome,
+            PreviewTeraDeleteExecutionReceipt, PreviewTeraDeleteExecutionStatus,
+            PreviewTeraInsertDropExecutionOutcome, PreviewTeraInsertDropExecutionReceipt,
+            PreviewTeraInsertDropExecutionStatus,
+        },
     },
     project_model::model::ProjectModel,
 };
@@ -49,11 +50,11 @@ where
     })
 }
 
-impl PreviewStructuralCommandOutcome for PreviewLayerDropExecutionOutcome {
-    type Receipt = PreviewLayerDropExecutionReceipt;
+impl PreviewStructuralCommandOutcome for EditorMoveExecutionOutcome {
+    type Receipt = EditorMoveExecutionReceipt;
 
     fn command_succeeded(&self) -> bool {
-        self.receipt.status == PreviewLayerDropExecutionStatus::Committed
+        self.receipt.status == EditorMoveExecutionStatus::Committed
     }
 
     fn after_model_mut(&mut self) -> &mut Option<ProjectModel> {
@@ -159,11 +160,6 @@ preview_structural_outcome!(
     PreviewTeraInsertDropExecutionOutcome,
     PreviewTeraInsertDropExecutionReceipt,
     PreviewTeraInsertDropExecutionStatus
-);
-preview_structural_outcome!(
-    PreviewTeraMoveDropExecutionOutcome,
-    PreviewTeraMoveDropExecutionReceipt,
-    PreviewTeraMoveDropExecutionStatus
 );
 preview_structural_outcome!(
     PreviewTeraDeleteExecutionOutcome,

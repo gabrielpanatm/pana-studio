@@ -16,11 +16,11 @@ use crate::{
     js::PageJsDraftStageReceipt,
     kernel::file_buffer_store::FileBufferRequestIdentity,
     kernel::project_workspace::ProjectWorkspaceMutationReceipt,
+    localization::LocalizedDiagnostic,
     project::strip_zola_root_prefix,
     project_model::move_engine::{parse_html_tag_at, ProjectSourceEditLocation},
     source_graph::model::{
-        BlockDefinition, BlockDiagnostic, BlockResolutionStatus, RenderedBlockInstance,
-        SourceNodeKind,
+        BlockDefinition, BlockResolutionStatus, RenderedBlockInstance, SourceNodeKind,
     },
     state::AppState,
 };
@@ -124,7 +124,7 @@ pub struct BlockRuntimeSnapshot {
     pub preview_revision: Option<String>,
     pub available: bool,
     pub instances: Vec<crate::source_graph::model::RenderedBlockInstance>,
-    pub diagnostics: Vec<String>,
+    pub diagnostics: Vec<LocalizedDiagnostic>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -140,7 +140,7 @@ pub struct UiBlockSourceInstance {
     pub status: BlockResolutionStatus,
     pub marker_kind: Option<NativeBlockMarkerKind>,
     pub editable: bool,
-    pub diagnostic: Option<String>,
+    pub diagnostic: Option<LocalizedDiagnostic>,
     pub options: Vec<NativeBlockOptionState>,
 }
 
@@ -157,7 +157,7 @@ pub struct UiBlockGraphSnapshot {
     pub definitions: Vec<BlockDefinition>,
     pub source_instances: Vec<UiBlockSourceInstance>,
     pub rendered_instances: Vec<RenderedBlockInstance>,
-    pub diagnostics: Vec<String>,
+    pub diagnostics: Vec<LocalizedDiagnostic>,
 }
 
 #[tauri::command]
@@ -218,16 +218,29 @@ pub fn read_ui_block_graph(
                 Ok(Some(inspection)) => (
                     Some(inspection.marker_kind),
                     inspection.editable,
-                    inspection.diagnostic,
+                    inspection.diagnostic.map(|details| {
+                        LocalizedDiagnostic::new("blocks-diagnostic-contract-invalid")
+                            .with_argument("details", details)
+                    }),
                     inspection.options,
                 ),
                 Ok(None) => (
                     None,
                     false,
-                    Some("Rădăcina blocului nu mai poate fi localizată în sursă.".to_string()),
+                    Some(LocalizedDiagnostic::new(
+                        "blocks-diagnostic-source-root-missing",
+                    )),
                     Vec::new(),
                 ),
-                Err(error) => (None, false, Some(error), Vec::new()),
+                Err(details) => (
+                    None,
+                    false,
+                    Some(
+                        LocalizedDiagnostic::new("blocks-diagnostic-inspection-failed")
+                            .with_argument("details", details),
+                    ),
+                    Vec::new(),
+                ),
             };
             if root_node.is_some_and(|node| !node.capabilities.can_edit_attributes) {
                 editable = false;
@@ -263,12 +276,12 @@ pub fn read_ui_block_graph(
         .block_graph
         .diagnostics
         .iter()
-        .map(block_diagnostic_message)
+        .map(|diagnostic| diagnostic.diagnostic.clone())
         .collect::<Vec<_>>();
     diagnostics.extend(runtime.diagnostics.iter().cloned());
 
     Ok(UiBlockGraphSnapshot {
-        schema_version: 1,
+        schema_version: 2,
         project_root,
         runtime_session_id,
         workspace_revision,
@@ -315,7 +328,7 @@ fn block_runtime_snapshot(
             runtime_session_id,
             workspace_revision,
             None,
-            "Preview-ul nu are încă o generație randată.",
+            LocalizedDiagnostic::new("blocks-runtime-not-rendered"),
         ));
     };
     let Some(generation) = engine.active_generation()? else {
@@ -324,7 +337,7 @@ fn block_runtime_snapshot(
             runtime_session_id,
             workspace_revision,
             None,
-            "Preview-ul nu are încă o generație activă.",
+            LocalizedDiagnostic::new("blocks-runtime-no-active-generation"),
         ));
     };
     if !generation.owner_matches(&project_root, &runtime_session_id)
@@ -335,14 +348,13 @@ fn block_runtime_snapshot(
             runtime_session_id,
             workspace_revision,
             Some(generation.preview_revision.clone()),
-            &format!(
-                "CanvasGraph aparține reviziei {}, nu reviziei ProjectWorkspace {}.",
-                generation.workspace_revision, workspace_revision
-            ),
+            LocalizedDiagnostic::new("blocks-runtime-workspace-revision-mismatch")
+                .with_argument("canvasRevision", generation.workspace_revision)
+                .with_argument("workspaceRevision", workspace_revision),
         ));
     }
     Ok(BlockRuntimeSnapshot {
-        schema_version: 1,
+        schema_version: 2,
         project_root,
         runtime_session_id,
         workspace_revision,
@@ -354,16 +366,13 @@ fn block_runtime_snapshot(
             .graph
             .diagnostics
             .iter()
-            .map(|diagnostic| diagnostic.message.clone())
+            .map(|diagnostic| {
+                LocalizedDiagnostic::new("blocks-canvas-diagnostic")
+                    .with_argument("code", diagnostic.code.clone())
+                    .with_argument("details", diagnostic.message.clone())
+            })
             .collect(),
     })
-}
-
-fn block_diagnostic_message(diagnostic: &BlockDiagnostic) -> String {
-    match diagnostic.file.as_deref() {
-        Some(file) => format!("{file}: {}", diagnostic.message),
-        None => diagnostic.message.clone(),
-    }
 }
 
 fn unavailable_runtime_snapshot(
@@ -371,16 +380,16 @@ fn unavailable_runtime_snapshot(
     runtime_session_id: String,
     workspace_revision: u64,
     preview_revision: Option<String>,
-    diagnostic: &str,
+    diagnostic: LocalizedDiagnostic,
 ) -> BlockRuntimeSnapshot {
     BlockRuntimeSnapshot {
-        schema_version: 1,
+        schema_version: 2,
         project_root,
         runtime_session_id,
         workspace_revision,
         preview_revision,
         available: false,
         instances: Vec::new(),
-        diagnostics: vec![diagnostic.to_string()],
+        diagnostics: vec![diagnostic],
     }
 }

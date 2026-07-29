@@ -12,6 +12,7 @@
     projectTransitionRetentionStateLabel,
     shortHash,
   } from "$lib/kernel/recovery-control";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
 
   let {
     journal,
@@ -50,24 +51,49 @@
   const noteId = $derived(`project-transition-retention-note-${journal.retentionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
   const candidateIdsLabel = $derived(projectTransitionDecisionRetentionCandidateIdsLabel(journal));
   const hashLabel = $derived(
-    `înainte ${shortHash(journal.beforeJournalHash)} · după ${shortHash(journal.afterJournalHash)} · arhivă ${shortHash(journal.archiveHash)}`,
+    t("project-recovery-retention-hashes", {
+      before: shortHash(journal.beforeJournalHash),
+      after: shortHash(journal.afterJournalHash),
+      archive: shortHash(journal.archiveHash),
+    }),
   );
 
   function actionButtonLabel(action: KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction): string {
-    if (action === "restore_before_journal") return "Restaurează starea anterioară";
-    if (action === "manual_review_conflict") return "Revizuire manuală";
-    return "Curăță jurnalul";
+    if (action === "restore_before_journal") return t("project-recovery-retention-restore-state");
+    if (action === "manual_review_conflict") return t("project-recovery-retention-manual-review");
+    return t("project-recovery-retention-clear-journal");
+  }
+
+  function recoveryChecks(
+    action: KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
+  ) {
+    if (action === "restore_before_journal") {
+      return [
+        t("project-recovery-retention-check-before-hash"),
+        t("project-recovery-retention-check-archive"),
+      ];
+    }
+    if (action === "manual_review_conflict") {
+      return [
+        t("project-recovery-retention-check-conflict"),
+        t("project-recovery-retention-check-no-automatic"),
+      ];
+    }
+    return [
+      t("project-recovery-retention-check-journal"),
+      t("project-recovery-retention-check-archive"),
+    ];
   }
 </script>
 
 <article
   class={`project-transition-retention-journal ${journal.diskState}`}
   class:kernel-context-focus={highlighted}
-  aria-label="Jurnal activ pentru retenția deciziilor de tranziție"
+  aria-label={t("project-recovery-retention-journal-aria")}
 >
   <header class="retention-journal-header">
     <div>
-      <span class="journal-kind">retenția deciziei de tranziție</span>
+      <span class="journal-kind">{t("project-recovery-family-transition-retention")}</span>
       <h3>{journal.retentionId}</h3>
     </div>
     <span class="journal-time">
@@ -76,24 +102,26 @@
     </span>
   </header>
 
-  <p class="journal-detail">{journal.recoveryPlan.summary}</p>
+  <p class="journal-detail">{t("project-recovery-retention-plan-summary", {
+    state: projectTransitionRetentionStateLabel(journal.diskState),
+  })}</p>
 
   <dl class="journal-facts">
     <div>
-      <dt>Stare disc</dt>
+      <dt>{t("project-recovery-retention-disk-state")}</dt>
       <dd>{projectTransitionRetentionStateLabel(journal.diskState)}</dd>
     </div>
     <div>
-      <dt>Acțiune</dt>
+      <dt>{t("project-recovery-retention-action")}</dt>
       <dd>{projectTransitionRetentionActionLabel(journal.recoveryPlan.action)}</dd>
     </div>
     <div>
-      <dt>Candidați</dt>
-      <dd title={candidateIdsLabel}>{journal.candidateCount}</dd>
+      <dt>{t("project-recovery-retention-candidates")}</dt>
+      <dd title={candidateIdsLabel}>{l10n.formatNumber(journal.candidateCount)}</dd>
     </div>
     <div>
-      <dt>Păstrate</dt>
-      <dd>{journal.keptRecordCount}</dd>
+      <dt>{t("project-recovery-retention-kept")}</dt>
+      <dd>{l10n.formatNumber(journal.keptRecordCount)}</dd>
     </div>
   </dl>
 
@@ -107,32 +135,34 @@
     <span>{compactKernelPath(journal.archivePath)}</span>
   </div>
 
-  <section class="journal-plan" aria-label="Plan de recuperare a retenției deciziei">
-    <strong>{journal.recoveryPlan.title}</strong>
-    <p>{journal.recoveryPlan.summary}</p>
+  <section class="journal-plan" aria-label={t("project-recovery-retention-plan-aria")}>
+    <strong>{actionButtonLabel(journal.recoveryPlan.action)}</strong>
+    <p>{t("project-recovery-retention-plan-summary", {
+      state: projectTransitionRetentionStateLabel(journal.diskState),
+    })}</p>
     <ul>
-      {#each journal.recoveryPlan.requiredChecks as check}
+      {#each recoveryChecks(journal.recoveryPlan.action) as check}
         <li>{check}</li>
       {/each}
     </ul>
   </section>
 
-  <section class="journal-integrity" aria-label="Integritatea jurnalului activ de retenție">
+  <section class="journal-integrity" aria-label={t("project-recovery-retention-integrity")}>
     <strong title={hashLabel}>{hashLabel}</strong>
     <span title={candidateIdsLabel}>{candidateIdsLabel}</span>
     {#if journal.diagnostics.length}
       <ul>
         {#each journal.diagnostics as diagnostic}
-          <li>{diagnostic}</li>
+          <li>{t("project-recovery-retention-integrity-diagnostic")}</li>
         {/each}
       </ul>
     {/if}
   </section>
 
   {#if journal.recoveryPlan.canClearJournal || journal.recoveryPlan.canRestoreBeforeJournal}
-    <section class="journal-action" aria-label="Acțiune de recuperare a retenției deciziei">
+    <section class="journal-action" aria-label={t("project-recovery-retention-recovery-action")}>
       <label class="journal-note-field" for={noteId}>
-        <span>Diagnostic operator pentru recuperare</span>
+        <span>{t("project-recovery-operator-diagnostic")}</span>
         <textarea
           id={noteId}
           rows="2"
@@ -152,7 +182,7 @@
         onclick={() => onRecover?.(journal, journal.recoveryPlan.action)}
       >
         <IconRefresh size={14} stroke={1.9} />
-        <span>{busy ? "Se execută..." : actionButtonLabel(journal.recoveryPlan.action)}</span>
+        <span>{busy ? t("project-recovery-running") : actionButtonLabel(journal.recoveryPlan.action)}</span>
       </button>
     </section>
   {/if}

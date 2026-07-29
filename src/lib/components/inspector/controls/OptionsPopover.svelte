@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
     anchor,
@@ -78,7 +79,7 @@
 
 <svelte:window onresize={updatePlacement} onscroll={updatePlacement} />
 
-<div class="options-popover" role="listbox" aria-label="Opțiuni" style={popoverStyle}>
+<div class="options-popover" role="listbox" aria-label={t("inspector-options")} style={popoverStyle}>
   {#each options as opt}
     <button
       type="button"

@@ -5,10 +5,13 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::source_graph::{
-    model::SourceDiagnosticSeverity,
-    scan::builder::SourceGraphBuilder,
-    zola::{normalize_zola_template_reference, zola_template_name_for_path},
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        model::SourceDiagnosticSeverity,
+        scan::builder::SourceGraphBuilder,
+        zola::{normalize_zola_template_reference, zola_template_name_for_path},
+    },
 };
 
 pub(super) fn collect_files_with_extension(
@@ -222,7 +225,8 @@ pub(super) fn read_source(
         Err(error) => {
             builder.add_diagnostic(
                 SourceDiagnosticSeverity::Error,
-                format!("Nu am putut citi fișierul: {}", error),
+                LocalizedDiagnostic::new("source-graph-file-read-failed")
+                    .with_argument("details", error.to_string()),
                 Some(file.to_string()),
                 None,
             );

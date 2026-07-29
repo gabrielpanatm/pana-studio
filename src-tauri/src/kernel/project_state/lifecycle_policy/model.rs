@@ -1,10 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::kernel::project_state::model::{
-    KernelProjectStateReason, KernelProjectStateSnapshot, KernelProjectStateStatus,
+use crate::{
+    kernel::project_state::model::{
+        KernelProjectStateReason, KernelProjectStateSnapshot, KernelProjectStateStatus,
+    },
+    localization::LocalizedDiagnostic,
 };
 
-pub const KERNEL_PROJECT_TRANSITION_POLICY_SCHEMA_VERSION: u32 = 3;
+pub const KERNEL_PROJECT_TRANSITION_POLICY_SCHEMA_VERSION: u32 = 4;
 pub const KERNEL_PROJECT_TRANSITION_POLICY_MATRIX_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -48,10 +51,6 @@ pub struct KernelProjectTransitionPolicy {
     pub session_id: Option<String>,
     pub requires_operator_confirmation: bool,
     pub blocks_transition: bool,
-    pub title: String,
-    pub message: String,
-    pub evidence: String,
-    pub recommended_action: String,
     pub workspace_dirty_resource_count: usize,
     pub workspace_revision: Option<u64>,
     pub workspace_undo_count: usize,
@@ -75,9 +74,12 @@ impl KernelProjectTransitionPolicy {
     }
 
     pub fn guard_error(&self) -> String {
-        format!(
-            "{}: {} Evidență: {} Recomandare: {}",
-            self.title, self.message, self.evidence, self.recommended_action
-        )
+        let code = match self.decision {
+            KernelProjectTransitionDecision::Confirm => "project-transition-confirmation-required",
+            KernelProjectTransitionDecision::Block => "project-transition-blocked",
+            KernelProjectTransitionDecision::Allow => "project-transition-allowed",
+        };
+        serde_json::to_string(&LocalizedDiagnostic::new(code))
+            .unwrap_or_else(|_| format!(r#"{{"schemaVersion":1,"code":"{code}"}}"#))
     }
 }

@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { AppState } from "$lib/state/app.svelte";
 import { errorMessage } from "$lib/util";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export const NATIVE_WINDOW_CLOSE_REQUESTED_EVENT = "pana-native-window-close-requested";
 
@@ -34,7 +35,10 @@ export async function handleNativeWindowCloseRequest(
       && app.scannedProject.root !== requestedProjectRoot
     ) {
       throw new Error(
-        `Cererea nativă de închidere aparține proiectului ${requestedProjectRoot}, nu ${app.scannedProject.root}.`,
+        t("native-close-project-mismatch", {
+          requested: requestedProjectRoot,
+          current: app.scannedProject.root,
+        }),
       );
     }
     const closed = await app.closeCurrentProject(app.scannedProject ? null : requestedProjectRoot);
@@ -49,7 +53,9 @@ export async function handleNativeWindowCloseRequest(
     // ProjectSession alive. The originating controller already exposes the
     // detailed surface status; this prevents an unhandled event rejection.
     app.nativeWindowClosePending = false;
-    app.setGlobalStatus(`Închiderea aplicației a fost oprită: ${errorMessage(error)}`, "error");
+    app.setGlobalStatus(t("native-close-stopped", {
+      message: errorMessage(error),
+    }), "error");
   } finally {
     app.nativeWindowCloseInProgress = false;
   }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-editor-edit-scope"
+description = "Enables the request_editor_edit_scope command without any pre-configured scope."
+commands.allow = ["request_editor_edit_scope"]
+
+[[permission]]
+identifier = "deny-request-editor-edit-scope"
+description = "Denies the request_editor_edit_scope command without any pre-configured scope."
+commands.deny = ["request_editor_edit_scope"]

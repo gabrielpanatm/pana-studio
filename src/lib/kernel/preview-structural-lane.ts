@@ -1,7 +1,10 @@
 import type {
   PreviewProjectionIntentReceipt,
+  PreviewStructuralSelectionIdentity,
   PreviewStructuralCommandIdentity,
+  SelectionSnapshot,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 const MAX_PENDING_STRUCTURAL_OPERATIONS_PER_SESSION = 32;
 
@@ -12,6 +15,7 @@ export type PreviewStructuralSessionHost = {
   projectTransitionFrontendLeaseActive?: boolean;
   kernelUndoRedoFrontendLeaseActive?: boolean;
   aiEditLeaseFrontendLockActive?: boolean;
+  selectionSnapshot?: SelectionSnapshot | null;
   beginPreviewStructuralWriteBoundary: () => Promise<void>;
   endPreviewStructuralWriteBoundary: () => void;
 };
@@ -20,6 +24,7 @@ export type PreviewStructuralSessionLease = {
   projectRoot: string;
   sessionId: string;
   projectSessionEpoch: number;
+  selection: PreviewStructuralSelectionIdentity | null;
 };
 
 type StructuralLane = {
@@ -53,29 +58,61 @@ export function capturePreviewStructuralSessionLease(
   const sessionId = host.kernelProjectSessionId.trim();
   if (!projectRoot || !sessionId) {
     throw new PreviewStructuralCancellationError(
-      "Mutația structurală cere un ProjectSession activ și identificabil.",
+      t("structural-lane-session-missing"),
     );
   }
   if (host.projectTransitionFrontendLeaseActive) {
     throw new PreviewStructuralCancellationError(
-      "Mutația structurală este blocată cât timp tranziția proiectului rezervă sesiunea.",
+      t("structural-lane-project-transition-blocked"),
     );
   }
   if (host.kernelUndoRedoFrontendLeaseActive) {
     throw new PreviewStructuralCancellationError(
-      "Mutația structurală este blocată cât timp Undo/Redo rezervă sesiunea.",
+      t("structural-lane-history-blocked"),
     );
   }
   if (host.aiEditLeaseFrontendLockActive) {
     throw new PreviewStructuralCancellationError(
-      "Mutația structurală este blocată cât timp AI deține autoritatea de editare.",
+      t("structural-lane-ai-blocked"),
     );
   }
   return {
     projectRoot,
     sessionId,
     projectSessionEpoch: host.projectSessionEpoch,
+    selection: captureStructuralSelectionIdentity(
+      host.selectionSnapshot,
+      projectRoot,
+      sessionId,
+    ),
   };
+}
+
+function captureStructuralSelectionIdentity(
+  snapshot: SelectionSnapshot | null | undefined,
+  projectRoot: string,
+  sessionId: string,
+): PreviewStructuralSelectionIdentity | null {
+  const anchor = snapshot?.anchor;
+  if (
+    !snapshot
+    || !anchor
+    || snapshot.resolution !== "resolved"
+    || snapshot.projectRoot !== projectRoot
+    || snapshot.runtimeSessionId !== sessionId
+    || !Number.isSafeInteger(snapshot.selectionRevision)
+    || snapshot.selectionRevision <= 0
+  ) return null;
+  const editorNodeId = anchor.editorNodeId?.trim() || null;
+  const sourceNodeId = anchor.sourceNodeId?.trim() || null;
+  const renderInstanceId = anchor.renderInstanceId?.trim() || null;
+  if (!editorNodeId && !sourceNodeId && !renderInstanceId) return null;
+  return Object.freeze({
+    selectionRevision: snapshot.selectionRevision,
+    editorNodeId,
+    sourceNodeId,
+    renderInstanceId,
+  });
 }
 
 export function previewStructuralSessionLeaseMatches(
@@ -93,17 +130,26 @@ export function requireCurrentPreviewStructuralSession(
 ) {
   if (!previewStructuralSessionLeaseMatches(host, lease)) {
     throw new PreviewStructuralCancellationError(
-      "Mutația structurală a fost anulată deoarece ProjectSession s-a schimbat.",
+      t("structural-lane-session-changed"),
     );
   }
 }
 
 export function previewStructuralCommandIdentity(
   lease: PreviewStructuralSessionLease,
+  requireCapturedSelection = false,
 ): PreviewStructuralCommandIdentity {
+  if (requireCapturedSelection && !lease.selection) {
+    throw new PreviewStructuralCancellationError(
+      "Comanda cere o selecție semantică Rust rezolvată.",
+    );
+  }
   return {
     expectedProjectRoot: lease.projectRoot,
     expectedSessionId: lease.sessionId,
+    ...(requireCapturedSelection
+      ? { expectedSelection: lease.selection }
+      : {}),
   };
 }
 
@@ -118,7 +164,7 @@ export function requirePreviewStructuralReceiptIdentity(
     receipt.projectRoot !== lease.projectRoot
     || receipt.runtimeSessionId !== lease.sessionId
   ) {
-    throw new Error("Receipt-ul mutației structurale aparține altei instanțe ProjectSession.");
+    throw new Error(t("structural-lane-receipt-session-mismatch"));
   }
 }
 
@@ -148,7 +194,9 @@ export async function runInPreviewStructuralLane<T>(
     && existing.pendingCount >= MAX_PENDING_STRUCTURAL_OPERATIONS_PER_SESSION
   ) {
     throw new Error(
-      `Coada mutațiilor structurale a atins limita de ${MAX_PENDING_STRUCTURAL_OPERATIONS_PER_SESSION} operații.`,
+      t("structural-lane-capacity", {
+        count: MAX_PENDING_STRUCTURAL_OPERATIONS_PER_SESSION,
+      }),
     );
   }
 

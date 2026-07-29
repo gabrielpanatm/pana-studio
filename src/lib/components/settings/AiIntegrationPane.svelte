@@ -5,6 +5,7 @@
     readAiContextStatus,
     readCodexMcpStatus,
   } from "$lib/project/io";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { AiContextStatus, CodexMcpStatus } from "$lib/types";
   import { errorMessage, isRecoveryRequiredError } from "$lib/util";
 
@@ -40,7 +41,7 @@
       localStatus = aiStatus;
       codexStatus = codex;
     } catch (error) {
-      onStatusUpdate?.(`Nu am putut citi statusul AI/MCP: ${errorMessage(error)}`, "error");
+      onStatusUpdate?.(t("settings-ai-read-failed", { error: errorMessage(error) }), "error");
     }
     loading = false;
   }
@@ -49,9 +50,9 @@
     if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
-      onStatusUpdate?.(`${label} copiat.`, "saved");
+      onStatusUpdate?.(t("settings-directory-copy-success", { label }), "saved");
     } catch {
-      onStatusUpdate?.(`Nu am putut copia ${label}.`, "error");
+      onStatusUpdate?.(t("settings-directory-copy-failure", { label }), "error");
     }
   }
 
@@ -60,10 +61,10 @@
     try {
       codexStatus = await configureCodexMcp();
       codexRecoveryBlocked = false;
-      onStatusUpdate?.("Codex CLI a fost configurat pentru Pană Studio MCP.", "saved");
+      onStatusUpdate?.(t("settings-ai-codex-configured-status"), "saved");
     } catch (error) {
       codexRecoveryBlocked = isRecoveryRequiredError(error);
-      onStatusUpdate?.(`Nu am putut configura Codex MCP: ${errorMessage(error)}`, "error");
+      onStatusUpdate?.(t("settings-ai-configure-failed", { error: errorMessage(error) }), "error");
     }
     codexLoading = false;
   }
@@ -75,27 +76,34 @@
       <IconCpu size={18} stroke={1.9} />
     </div>
     <div>
-      <h4>Context AI read-only</h4>
-      <p>
-        Pană Studio publică în RAM contextul canonic pentru agenții CLI. AI-ul
-        îl citește prin MCP autentificat și editează direct fișierele sursă.
-      </p>
+      <h4>{t("settings-ai-summary-title")}</h4>
+      <p>{t("settings-ai-summary-description")}</p>
     </div>
   </div>
 
   <div class="status-row">
     <span class:active={localStatus?.contextExists && localStatus?.serverRunning} class="status-dot"></span>
-    <span>{loading ? "Se verifică..." : localStatus?.serverRunning ? "Context și server MCP active" : localStatus?.contextExists ? "Context disponibil, server MCP indisponibil" : "Contextul va apărea după primul snapshot"}</span>
+    <span>{loading
+      ? t("settings-ai-checking")
+      : localStatus?.serverRunning
+        ? t("settings-ai-active")
+        : localStatus?.contextExists
+          ? t("settings-ai-context-only")
+          : t("settings-ai-context-pending")}</span>
   </div>
 
   <div class="field-list">
     <div class="field-card">
       <div class="field-label">
         <IconDatabase size={14} stroke={1.8} />
-        <span>Descriptor lifecycle</span>
+        <span>{t("settings-ai-lifecycle-descriptor")}</span>
       </div>
       <code>{localStatus?.contextPath ?? "..."}</code>
-      <button type="button" title="Copiază path" onclick={() => copyValue(localStatus?.contextPath ?? "", "Path context JSON")}>
+      <button
+        type="button"
+        title={t("settings-directory-copy-title", { label: t("settings-ai-context-json-path") })}
+        onclick={() => copyValue(localStatus?.contextPath ?? "", t("settings-ai-context-json-path"))}
+      >
         <IconClipboard size={14} stroke={1.9} />
       </button>
     </div>
@@ -103,10 +111,14 @@
     <div class="field-card">
       <div class="field-label">
         <IconPlugConnected size={14} stroke={1.8} />
-        <span>Discovery</span>
+        <span>{t("settings-ai-discovery")}</span>
       </div>
       <code>{localStatus?.discoveryPath ?? "..."}</code>
-      <button type="button" title="Copiază path" onclick={() => copyValue(localStatus?.discoveryPath ?? "", "Path discovery MCP")}>
+      <button
+        type="button"
+        title={t("settings-directory-copy-title", { label: t("settings-ai-discovery-path") })}
+        onclick={() => copyValue(localStatus?.discoveryPath ?? "", t("settings-ai-discovery-path"))}
+      >
         <IconClipboard size={14} stroke={1.9} />
       </button>
     </div>
@@ -117,29 +129,29 @@
         <span>MCP HTTP</span>
       </div>
       <code>{localStatus?.endpoint ?? "http://127.0.0.1:48731/mcp"}</code>
-      <button type="button" title="Copiază endpoint" onclick={() => copyValue(localStatus?.endpoint ?? "", "Endpoint MCP")}>
+      <button
+        type="button"
+        title={t("settings-directory-copy-title", { label: t("settings-ai-endpoint") })}
+        onclick={() => copyValue(localStatus?.endpoint ?? "", t("settings-ai-endpoint"))}
+      >
         <IconClipboard size={14} stroke={1.9} />
       </button>
     </div>
   </div>
 
-  <p class="note">
-    Datele și fișierele sunt read-only prin MCP; numai lease-ul de coordonare
-    modifică stare volatilă în RAM. Fișierele locale sunt doar diagnostic și nu
-    păstrează contextul UI complet după închiderea aplicației.
-  </p>
+  <p class="note">{t("settings-ai-note")}</p>
 
   <div class="host-card">
     <div>
       <h4>Codex CLI</h4>
       <p>
         {codexStatus?.configured
-          ? "Codex este configurat și autentificat pentru Pană Studio."
+          ? t("settings-ai-codex-ready")
           : codexStatus?.configExists && !codexStatus.securePermissions
-            ? "Configul Codex este accesibil altor utilizatori; setează permisiunile la 0600 înainte de instalarea tokenului."
+            ? t("settings-ai-codex-permissions")
           : codexStatus?.authenticated
-            ? "Tokenul este instalat, dar configurația endpointului nu este completă."
-            : "Adaugă endpointul și tokenul MCP în configul activ Codex."}
+            ? t("settings-ai-codex-token-only")
+            : t("settings-ai-codex-not-configured")}
       </p>
       <code>{codexStatus?.configPath ?? "~/.codex/config.toml"}</code>
     </div>
@@ -150,14 +162,14 @@
       onclick={configureCodex}
     >
       {codexLoading
-        ? "Se configurează..."
+        ? t("settings-ai-configuring")
         : codexRecoveryBlocked
-          ? "Recuperare necesară"
+          ? t("settings-ai-recovery-required")
           : codexStatus?.configExists && !codexStatus.securePermissions
-            ? "Necesită 0600"
+            ? t("settings-ai-requires-0600")
           : codexStatus?.configured
-            ? "Configurat"
-            : "Configurează"}
+            ? t("settings-ai-configured")
+            : t("settings-ai-configure")}
     </button>
   </div>
 </div>

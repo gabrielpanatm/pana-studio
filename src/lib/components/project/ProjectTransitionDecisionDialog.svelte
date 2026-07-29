@@ -7,10 +7,12 @@
   } from "@tabler/icons-svelte";
   import {
     projectTransitionDecisionMetrics,
+    localizedTransitionPolicyCopy,
     transitionActionLabel,
     transitionReasonLabel,
     type ProjectTransitionDecisionRequest,
   } from "$lib/project/transition-decision";
+  import { t } from "$lib/i18n/runtime.svelte";
   import { errorMessage } from "$lib/util";
 
   let {
@@ -29,6 +31,7 @@
   let error = $state<string | null>(null);
 
   const metrics = $derived(request ? projectTransitionDecisionMetrics(request.policy) : []);
+  const policyCopy = $derived(request ? localizedTransitionPolicyCopy(request.policy) : null);
   const canSubmit = $derived(Boolean(request) && diagnostic.trim().length >= 12 && !submitting);
 
   $effect(() => {
@@ -87,21 +90,21 @@
         </span>
         <div>
           <p>{transitionActionLabel(request.action)}</p>
-          <h2 id="project-transition-title">{request.policy.title}</h2>
+          <h2 id="project-transition-title">{policyCopy?.title}</h2>
         </div>
       </div>
-      <button type="button" class="icon-button" title="Anulează tranziția" disabled={submitting} onclick={close}>
+      <button type="button" class="ui-icon-button ui-close-button icon-button" title={t("project-transition-cancel")} disabled={submitting} onclick={close}>
         <IconX size={16} stroke={1.9} />
       </button>
     </header>
 
     <div class="policy-summary">
       <span class="reason-pill">{transitionReasonLabel(request.policy.reason)}</span>
-      <p id="project-transition-message">{request.policy.message}</p>
+      <p id="project-transition-message">{policyCopy?.message}</p>
       <p class="target-path">{request.targetRoot}</p>
     </div>
 
-    <div class="metric-list" aria-label="Evidență stare proiect">
+    <div class="metric-list" aria-label={t("project-transition-state-evidence")}>
       {#each metrics as metric}
         <div class="metric-row" class:warning={metric.tone === "warning"} class:danger={metric.tone === "danger"}>
           <span>{metric.label}</span>
@@ -110,22 +113,22 @@
       {/each}
     </div>
 
-    <section class="evidence-block" aria-label="Evidență nucleu Rust">
+    <section class="evidence-block" aria-label={t("project-transition-rust-evidence")}>
       <div class="section-heading">
         <IconAlertTriangle size={15} stroke={1.8} />
-        <h3>Evidență nucleu Rust</h3>
+        <h3>{t("project-transition-rust-evidence")}</h3>
       </div>
-      <p>{request.policy.evidence}</p>
-      <p class="recommendation">{request.policy.recommendedAction}</p>
+      <p>{policyCopy?.evidence}</p>
+      <p class="recommendation">{policyCopy?.recommendedAction}</p>
     </section>
 
     <label class="diagnostic-field">
-      <span>Diagnostic operator</span>
+      <span>{t("project-transition-operator-diagnostic")}</span>
       <textarea
         bind:value={diagnostic}
         rows="4"
         disabled={submitting}
-        placeholder="Ex.: Confirm tranziția după revizuirea ciornelor locale și accept pierderea sesiunii curente."
+        placeholder={t("project-transition-operator-placeholder")}
       ></textarea>
     </label>
 
@@ -134,13 +137,13 @@
     {/if}
 
     <footer class="dialog-actions">
-      <button type="button" class="secondary-button" disabled={submitting} onclick={close}>Anulează</button>
+      <button type="button" class="secondary-button" disabled={submitting} onclick={close}>{t("project-transition-cancel-short")}</button>
       <button type="button" class="primary-button" disabled={!canSubmit} onclick={() => void submit()}>
         {#if submitting}
-          Se înregistrează...
+          {t("project-transition-recording")}
         {:else}
           <IconArrowRight size={15} stroke={1.9} />
-          Înregistrează și continuă
+          {t("project-transition-record-continue")}
         {/if}
       </button>
     </footer>

@@ -478,8 +478,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 0,
                 directory_count: 0,
@@ -509,7 +507,7 @@ mod tests {
             current_config: dirty_config(id),
             cachebust_assets: false,
             source: Some("test".to_string()),
-            coalesce_key: Some("motion.timeline.stepTiming".to_string()),
+            coalesce_key: Some("motion.v2.timing.hero.fade".to_string()),
             transaction_id: Some("tx-1".to_string()),
         }
     }
@@ -529,7 +527,7 @@ mod tests {
         assert_eq!(snapshot.drafts[0].template_path, "templates/index.html");
         assert_eq!(
             snapshot.drafts[0].coalesce_key.as_deref(),
-            Some("motion.timeline.stepTiming")
+            Some("motion.v2.timing.hero.fade")
         );
         let serialized = serde_json::to_value(snapshot).unwrap();
         assert!(serialized["drafts"][0].get("plan").is_none());

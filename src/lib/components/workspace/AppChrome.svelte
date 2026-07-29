@@ -5,6 +5,7 @@
   import Topbar from "$lib/components/Topbar.svelte";
   import CommandCenter from "$lib/components/workbench/CommandCenter.svelte";
   import { contextMenu } from "$lib/context-menu/store.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type { CommandCenterAction } from "$lib/types";
   import type { Snippet } from "svelte";
@@ -15,10 +16,6 @@
     topbarCanRedo = false,
     undoAction,
     redoAction,
-    statusSourceLabel = "",
-    statusSourceValue = "",
-    statusSourceOpenable = false,
-    openStatusSource,
     commandCenterOpen = false,
     openCommandCenter = () => {},
     closeCommandCenter = () => {},
@@ -30,10 +27,6 @@
     topbarCanRedo?: boolean;
     undoAction: () => void | Promise<void>;
     redoAction: () => void | Promise<void>;
-    statusSourceLabel?: string;
-    statusSourceValue?: string;
-    statusSourceOpenable?: boolean;
-    openStatusSource: () => void | Promise<void>;
     commandCenterOpen?: boolean;
     openCommandCenter?: () => void;
     closeCommandCenter?: () => void;
@@ -50,12 +43,28 @@
         await app.flushInteractiveEditorDrafts("template-switch");
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        app.setGlobalStatus(`Restrângerea Inspectorului a fost blocată: ${message}`, "error");
+        app.setGlobalStatus(t("workbench-inspector-collapse-blocked", { message }), "error");
         return;
       }
     }
     app.rightPaneCollapsed = !app.rightPaneCollapsed;
   }
+
+  async function openWorkbenchSource() {
+    const source = app.workbenchSourceStatus;
+    if (!source?.openable) return;
+    if (source.role === "css" && source.selector) {
+      await app.openCssCodeRevealTarget({
+        selector: source.selector,
+        file: source.file,
+      });
+      return;
+    }
+    await app.openSourceLocation(source.location);
+    await app.setCenterView("code");
+    app.requestCodeSelectionReveal();
+  }
+
 </script>
 
 <div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
@@ -72,7 +81,7 @@
   sidebarsAvailable={app.applicationSurface === "workbench" && activeWorkbenchActivity === "editor"}
   openProjectFolder={() => app.openProjectFolder()}
   openCurrentProjectInBrowser={() => app.openCurrentProjectInBrowser()}
-  canOpenInBrowser={app.scannedProject?.isZola ?? false}
+  canOpenInBrowser={Boolean(app.scannedProject)}
   saveActiveFile={() => app.saveActiveFile()}
   undoAction={undoAction}
   redoAction={redoAction}
@@ -92,17 +101,9 @@
 
 <div class="chrome-inert-layer" inert={commandCenterOpen ? true : undefined}>
 <StatusBar
-  saveState={app.saveState}
-  saveStatus={app.saveStatus}
-  controlledPreview={app.controlledPreview}
-  canvasPatchPerformance={app.canvasPatchPerformance}
-  sourceLabel={statusSourceLabel}
-  sourceValue={statusSourceValue}
-  sourceOpenable={statusSourceOpenable}
-  openSource={openStatusSource}
-  aiCoordinationSnapshot={app.aiCoordinationSnapshot}
-  externalReconciling={app.externalDiskState.reconciling}
-  projectionRecoveryRequired={app.externalDiskState.workspaceProjectionRecoveryRequired}
+  globalStatus={app.currentGlobalStatus}
+  sourceStatus={app.workbenchSourceStatus}
+  openSource={openWorkbenchSource}
 />
 </div>
 

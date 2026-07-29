@@ -15,6 +15,12 @@
     type MarkdownToolbarState,
   } from "$lib/components/markdown/MarkdownToolbar.svelte";
   import { registerEditFlushHandler } from "$lib/session/edit-flush-registry";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
 
   export let markdown = "";
   export let onChange: (nextMarkdown: string) => void = () => {};
@@ -261,7 +267,7 @@
         break;
       case "createLink": {
         const currentHref = editor.getAttributes("link").href ?? "";
-        const enteredHref = window.prompt("Link", currentHref);
+        const enteredHref = window.prompt(t("markdown-link-address"), currentHref);
         if (enteredHref === null) break;
 
         const href = normalizeUrl(enteredHref);
@@ -273,10 +279,10 @@
         break;
       }
       case "insertImage": {
-        const src = window.prompt("Adresă imagine");
+        const src = window.prompt(t("markdown-image-address"));
         if (!src) break;
 
-        const alt = window.prompt("Text alternativ", "") ?? "";
+        const alt = window.prompt(t("markdown-image-alt"), "") ?? "";
         editor.chain().focus().setImage({ src: src.trim(), alt }).run();
         break;
       }
@@ -393,7 +399,7 @@
   }
 </script>
 
-<section class="tiptap-markdown-editor" aria-label="Document Markdown">
+<section class="tiptap-markdown-editor" aria-label={t("markdown-document-label")}>
   <MarkdownToolbar command={runCommand} {active} disabled={readOnly} />
   <div bind:this={host} class="editor-host" role="presentation"></div>
 </section>

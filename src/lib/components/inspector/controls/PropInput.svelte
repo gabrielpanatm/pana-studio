@@ -4,9 +4,10 @@
 
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import type { ScssVariable } from "$lib/types";
+  import type { CssPropertySuggestion } from "$lib/types";
   import { IconBolt } from "@tabler/icons-svelte";
   import VariablePopover from "./VariablePopover.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
     label = "",
@@ -23,7 +24,7 @@
     value?: string;
     placeholder?: string;
     type?: string;
-    suggestions?: ScssVariable[];
+    suggestions?: CssPropertySuggestion[];
     prefix?: Snippet;
     oninput?: (value: string) => void;
     oncommit?: (value: string) => void;
@@ -56,8 +57,8 @@
     }
   });
 
-  function selectSuggestion(variable: ScssVariable) {
-    const nextValue = `$${variable.name}`;
+  function selectSuggestion(variable: CssPropertySuggestion) {
+    const nextValue = variable.insertValue ?? `$${variable.name}`;
     draftValue = nextValue;
     oninput?.(nextValue);
     oncommit?.(nextValue);
@@ -99,7 +100,7 @@
     <button
       type="button"
       class="var-btn"
-      title="Inserează variabilă SCSS"
+      title={t("inspector-insert-scss-variable")}
       onclick={() => {
         showSuggestions = !showSuggestions;
         document.getElementById(inputId)?.focus();

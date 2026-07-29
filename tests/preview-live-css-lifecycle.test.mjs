@@ -76,7 +76,6 @@ test("proiecția canonică elimină numai generația CSS live pe care a confirma
     type: "set-live-style-css",
     id: INSPECTOR_LIVE_STYLE_ID,
     css: "",
-    refreshSelection: false,
   });
 });
 
@@ -94,6 +93,5 @@ test("un override invalidat nu mai este reaplicat după reload-ul Preview", () =
     type: "set-live-style-css",
     id: "pana-animation-preview",
     css: ".pulse { opacity: .5; }",
-    refreshSelection: false,
   }]);
 });

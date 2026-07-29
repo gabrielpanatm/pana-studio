@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import type { ScssVariable } from "$lib/types";
+  import type { CssPropertySuggestion } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
     anchor,
@@ -8,8 +9,8 @@
     onselect,
   }: {
     anchor: HTMLElement | null;
-    suggestions?: ScssVariable[];
-    onselect: (variable: ScssVariable) => void;
+    suggestions?: CssPropertySuggestion[];
+    onselect: (variable: CssPropertySuggestion) => void;
   } = $props();
 
   const VIEWPORT_MARGIN = 8;
@@ -86,7 +87,7 @@
 
 <svelte:window onresize={updatePlacement} onscroll={updatePlacement} />
 
-<div class="suggestion-popover" role="listbox" aria-label="Variabile SCSS" style={popoverStyle}>
+<div class="suggestion-popover" role="listbox" aria-label={t("inspector-scss-variables")} style={popoverStyle}>
   {#each suggestions as variable}
     <button
       type="button"
@@ -94,7 +95,7 @@
       onmousedown={(event) => event.preventDefault()}
       onclick={() => onselect(variable)}
     >
-      <span class="suggestion-name">${variable.name}</span>
+      <span class="suggestion-name">{variable.directValue ? variable.name : `$${variable.name}`}</span>
       <span class="suggestion-value">{variable.value}</span>
     </button>
   {/each}

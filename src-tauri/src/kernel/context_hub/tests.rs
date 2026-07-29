@@ -3,6 +3,9 @@ use super::{
     ContextHubPublication, ContextHubRuntime, UiCenterView, UiCssContext, UiExternalDiskContext,
     UiPreviewDevice, UiSelectionContext, UiSourceLanguage, UiWorkspaceContext,
 };
+use crate::kernel::ai_coordination::{
+    AiCoordinationSnapshot, EditAuthority, AI_COORDINATION_SCHEMA_VERSION,
+};
 
 fn core(active_file: Option<&str>) -> AiContextCore {
     AiContextCore {
@@ -14,8 +17,6 @@ fn core(active_file: Option<&str>) -> AiContextCore {
             root: Some("/tmp/project".to_string()),
             session_id: Some("project-1".to_string()),
             is_open: true,
-            is_zola: true,
-            is_empty: false,
             project_revision: Some(7),
             disk_generation: Some(2),
             preview_base_url: Some("http://127.0.0.1:1111".to_string()),
@@ -120,6 +121,34 @@ fn semantic_change_advances_context_revision() {
     assert!(second.changed);
     assert_eq!(second.context_revision, first.context_revision + 1);
     assert_eq!(second.updated_at_ms, 200);
+}
+
+#[test]
+fn disk_poll_heartbeat_refreshes_memory_without_advancing_context_revision() {
+    let runtime = ContextHubRuntime::default();
+    let first = runtime.publish(publication(1, None), 100).unwrap();
+    let mut heartbeat = publication(2, None);
+    heartbeat.core.external_disk.last_checked_at = Some(175);
+    heartbeat.core.external_disk.checking = true;
+    let second = runtime.publish(heartbeat, 200).unwrap();
+
+    assert!(!second.changed);
+    assert_eq!(second.context_revision, first.context_revision);
+    assert_eq!(second.ui_revision_seen, 2);
+    assert_eq!(second.updated_at_ms, 100);
+
+    let snapshot = runtime
+        .snapshot(AiCoordinationSnapshot {
+            schema_version: AI_COORDINATION_SCHEMA_VERSION,
+            coordination_revision: 0,
+            project_session_id: None,
+            authority: EditAuthority::UserActive,
+            clients: Vec::new(),
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.core.external_disk.last_checked_at, Some(175));
+    assert!(snapshot.core.external_disk.checking);
 }
 
 #[test]

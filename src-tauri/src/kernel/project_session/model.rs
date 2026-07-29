@@ -37,8 +37,6 @@ pub struct ProjectRootFingerprint {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSessionScanSummary {
-    pub is_zola: bool,
-    pub is_empty: bool,
     pub active_theme: Option<String>,
     pub file_count: usize,
     pub directory_count: usize,

@@ -2,6 +2,8 @@ export type AppNotificationLevel = "info" | "warning" | "error";
 
 export type AppNotification = {
   id: string;
+  statusEventId?: string | null;
+  statusResolutionKey?: string | null;
   level: AppNotificationLevel;
   title: string;
   message: string;

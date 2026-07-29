@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::preview::preprocess::annotate::index::SourceIdIndex;
+use crate::preview::preprocess::annotate::range::LineIndex;
 use crate::project_model::zola_image_engine::encode_preview_presentation;
 use crate::source_graph::{
     mixed_cst::{parse_mixed_cst, MixedCstKind},
@@ -29,12 +30,14 @@ pub fn preprocess_template_with_revision(
 ) -> String {
     let document = parse_mixed_cst(source, relative_path);
     debug_assert!(document.is_lossless());
+    let line_index = LineIndex::new(source);
     let mut insertions = BTreeMap::<usize, String>::new();
     project_tera_provenance_insertions(
         source,
         relative_path,
         source_ids,
         &document,
+        &line_index,
         &mut insertions,
     );
     project_html_provenance_insertions(
@@ -43,17 +46,22 @@ pub fn preprocess_template_with_revision(
         source_ids,
         preview_revision,
         &document,
+        &line_index,
         &mut insertions,
     );
 
     let mut result =
         String::with_capacity(source.len() + insertions.values().map(String::len).sum::<usize>());
-    result.push_str(source);
-    for (position, insertion) in insertions.into_iter().rev() {
-        if position <= result.len() && result.is_char_boundary(position) {
-            result.insert_str(position, &insertion);
+    let mut cursor = 0;
+    for (position, insertion) in insertions {
+        if position < cursor || position > source.len() || !source.is_char_boundary(position) {
+            continue;
         }
+        result.push_str(&source[cursor..position]);
+        result.push_str(&insertion);
+        cursor = position;
     }
+    result.push_str(&source[cursor..]);
     inject_empty_tera_slot_placeholders(&result, preview_revision)
 }
 
@@ -62,6 +70,7 @@ fn project_tera_provenance_insertions(
     relative_path: &str,
     source_ids: Option<&SourceIdIndex>,
     document: &crate::source_graph::mixed_cst::MixedCstDocument,
+    line_index: &LineIndex,
     insertions: &mut BTreeMap<usize, String>,
 ) {
     let root_tera_nodes = document
@@ -75,8 +84,7 @@ fn project_tera_provenance_insertions(
     let mut scope_stack = Vec::<Option<String>>::new();
 
     for (index, node) in document.tera.nodes.iter().enumerate() {
-        let (line, column) =
-            crate::preview::preprocess::annotate::range::line_column(source, node.start);
+        let (line, column) = line_index.line_column(source, node.start);
         let source_location = format!("{relative_path}:{line}:{column}");
 
         if let Some(template_source_id) =
@@ -199,6 +207,7 @@ fn project_html_provenance_insertions(
     source_ids: Option<&SourceIdIndex>,
     preview_revision: Option<&str>,
     document: &crate::source_graph::mixed_cst::MixedCstDocument,
+    line_index: &LineIndex,
     insertions: &mut BTreeMap<usize, String>,
 ) {
     for element in &document.elements {
@@ -216,8 +225,7 @@ fn project_html_provenance_insertions(
         {
             continue;
         }
-        let (line, column) =
-            crate::preview::preprocess::annotate::range::line_column(source, opening.start);
+        let (line, column) = line_index.line_column(source, opening.start);
         let source_location = format!("{relative_path}:{line}:{column}");
         let mut attributes = String::new();
         let mut has_source_marker = false;

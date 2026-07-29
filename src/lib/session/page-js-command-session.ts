@@ -2,6 +2,7 @@ import type {
   PageJsCommandReceipt,
   PageJsRequestIdentity,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export function createPageJsRequestIdentity(
   projectRoot: string,
@@ -10,7 +11,7 @@ export function createPageJsRequestIdentity(
   const expectedProjectRoot = projectRoot.trim();
   const expectedSessionId = runtimeSessionId.trim();
   if (!expectedProjectRoot || !expectedSessionId) {
-    throw new Error("Page JS cere ProjectRoot și runtimeSessionId active.");
+    throw new Error(t("page-js-command-session-missing"));
   }
   return { expectedProjectRoot, expectedSessionId };
 }
@@ -34,7 +35,7 @@ export function pageJsCommandPayload<T>(
     || receipt.runtimeSessionId !== identity.expectedSessionId
   ) {
     throw new Error(
-      `${operation} a refuzat receipt-ul Page JS al altei sesiuni runtime.`,
+      t("page-js-command-receipt-session-mismatch", { operation }),
     );
   }
   return receipt.payload;

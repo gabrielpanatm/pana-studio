@@ -1,34 +1,39 @@
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 
-use crate::source_graph::{
-    model::{
-        SourceCapabilities, SourceDataNode, SourceDataNodeKind, SourceDataPathSegment,
-        SourceNodeKind, SourceOrigin,
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        model::{
+            SourceCapabilities, SourceCapabilityReason, SourceDataNode, SourceDataNodeKind,
+            SourceDataPathSegment, SourceNodeKind, SourceOrigin,
+        },
+        scan::{
+            builder::SourceGraphBuilder, files::read_source, ranges::source_range,
+            summary::DataFileSummary,
+        },
+        structured_data::{data_format_for_file, parse_lossless_toml, parse_zola_data_adapter},
+        zola::ResolvedZolaDataFile,
     },
-    scan::{
-        builder::SourceGraphBuilder,
-        files::{read_source, relative_project_path},
-        ranges::source_range,
-        summary::DataFileSummary,
-    },
-    structured_data::{data_format_for_file, parse_lossless_toml, parse_zola_data_adapter},
-    zola::zola_data_file_logical_path,
 };
 
 pub(super) const ZOLA_DATA_FILE_EXTENSIONS: &[&str] =
     &["toml", "json", "yaml", "yml", "csv", "bib", "bibtex", "xml"];
 
 pub(super) fn scan_data_file(
-    project_root: &Path,
-    zola_root: &Path,
-    path: &Path,
-    origin: SourceOrigin,
-    theme_name: Option<String>,
+    candidate: ResolvedZolaDataFile,
     draft_sources: &HashMap<String, String>,
     builder: &mut SourceGraphBuilder,
 ) -> DataFileSummary {
-    let file = relative_project_path(project_root, path);
-    let logical_path = zola_data_file_logical_path(zola_root, path).unwrap_or_else(|| file.clone());
+    let ResolvedZolaDataFile {
+        path,
+        file,
+        logical_path,
+        load_paths,
+        location,
+        origin,
+        theme_name,
+        capabilities,
+    } = candidate;
     let node_id = builder.add_node(
         SourceNodeKind::DataFile,
         file.clone(),
@@ -37,9 +42,9 @@ pub(super) fn scan_data_file(
         logical_path.clone(),
         None,
         None,
-        SourceCapabilities::code_only("Fișier de date local Zola."),
+        capabilities.clone(),
     );
-    let source = read_source(path, &file, draft_sources, builder);
+    let source = read_source(&path, &file, draft_sources, builder);
     let format = data_format_for_file(&file);
     let (mut nodes, parse_error) =
         if matches!(format, crate::source_graph::model::SourceDataFormat::Toml) {
@@ -48,7 +53,8 @@ pub(super) fn scan_data_file(
                 Err(error) => {
                     builder.add_diagnostic(
                         crate::source_graph::model::SourceDiagnosticSeverity::Error,
-                        format!("Document TOML invalid: {error}"),
+                        LocalizedDiagnostic::new("source-graph-data-toml-invalid")
+                            .with_argument("details", error.clone()),
                         Some(file.clone()),
                         None,
                     );
@@ -66,7 +72,9 @@ pub(super) fn scan_data_file(
                 Err(error) => {
                     builder.add_diagnostic(
                         crate::source_graph::model::SourceDiagnosticSeverity::Error,
-                        format!("Document de date {:?} invalid: {error}", format),
+                        LocalizedDiagnostic::new("source-graph-data-format-invalid")
+                            .with_argument("format", format!("{format:?}"))
+                            .with_argument("details", error.clone()),
                         Some(file.clone()),
                         None,
                     );
@@ -88,9 +96,12 @@ pub(super) fn scan_data_file(
         origin,
         theme_name,
         logical_path,
+        load_paths,
+        location,
         format,
         parse_error,
         nodes,
+        capabilities,
     }
 }
 
@@ -137,9 +148,7 @@ pub(super) fn project_data_nodes_into_source_graph(
             data_node_label(node),
             node.range.clone(),
             Some(parent),
-            SourceCapabilities::code_only(
-                "Nod de date structurat; editarea este planificată lossless în Rust.",
-            ),
+            SourceCapabilities::code_only(SourceCapabilityReason::StructuredDataNode),
         );
         graph_ids.insert(node.id.clone(), graph_id);
     }

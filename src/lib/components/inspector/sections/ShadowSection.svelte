@@ -3,6 +3,7 @@
 </script>
 
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
@@ -122,22 +123,22 @@
   const colorSuggestions = $derived(variablesForProperty("color", scssVariables));
 </script>
 
-<InspectorSection title="Shadow" {hasValues}>
+<InspectorSection title={t("inspector-shadow-title")} {hasValues}>
   {#snippet icon()}<IconShadow size={13} stroke={1.7} />{/snippet}
 
   <!-- ── BOX SHADOW ────────────────────────────────────────────────────── -->
   <div class="sh-subheader">
-    <span class="sh-label">Box Shadow</span>
-    <button type="button" class="sh-add" title="Adaugă box shadow" aria-label="Adaugă box shadow" disabled={!boxStructured} onclick={addBox}>
+    <span class="sh-label">{t("inspector-shadow-box")}</span>
+    <button type="button" class="sh-add" title={t("inspector-shadow-add-box")} aria-label={t("inspector-shadow-add-box")} disabled={!boxStructured} onclick={addBox}>
       <IconPlus size={13} stroke={1.9} />
     </button>
   </div>
 
   {#if !boxStructured}
-    <p class="sh-empty">Valoare complexă păstrată integral; editeaz-o în modul brut.</p>
+    <p class="sh-empty">{t("inspector-shadow-complex")}</p>
     <PropInput value={getValue("box-shadow")} placeholder="box-shadow" {...edit.continuous("box-shadow")} />
   {:else if boxShadows.length === 0}
-    <p class="sh-empty">No box shadow set</p>
+    <p class="sh-empty">{t("inspector-shadow-no-box")}</p>
   {:else}
     {#each boxShadows as s (s.id)}
       <div class="sh-card">
@@ -156,10 +157,10 @@
             type="button"
             class="sh-inset"
             class:active={s.inset}
-            title="Inset shadow"
+            title={t("inspector-shadow-inset")}
             onclick={() => patchBox(s.id, { inset: !s.inset }, true)}
-          >INSET</button>
-          <button type="button" class="sh-del" title="Șterge" onclick={() => removeBox(s.id)}>
+          >{t("inspector-shadow-inset-short")}</button>
+          <button type="button" class="sh-del" title={t("inspector-delete")} onclick={() => removeBox(s.id)}>
             <IconTrash size={11} stroke={1.8} />
           </button>
         </div>
@@ -177,17 +178,17 @@
 
   <!-- ── TEXT SHADOW ───────────────────────────────────────────────────── -->
   <div class="sh-subheader" style="margin-top: 4px;">
-    <span class="sh-label">Text Shadow</span>
-    <button type="button" class="sh-add" title="Adaugă text shadow" aria-label="Adaugă text shadow" disabled={!textStructured} onclick={addText}>
+    <span class="sh-label">{t("inspector-shadow-text")}</span>
+    <button type="button" class="sh-add" title={t("inspector-shadow-add-text")} aria-label={t("inspector-shadow-add-text")} disabled={!textStructured} onclick={addText}>
       <IconPlus size={13} stroke={1.9} />
     </button>
   </div>
 
   {#if !textStructured}
-    <p class="sh-empty">Valoare complexă păstrată integral; editeaz-o în modul brut.</p>
+    <p class="sh-empty">{t("inspector-shadow-complex")}</p>
     <PropInput value={getValue("text-shadow")} placeholder="text-shadow" {...edit.continuous("text-shadow")} />
   {:else if textShadows.length === 0}
-    <p class="sh-empty">No text shadow set</p>
+    <p class="sh-empty">{t("inspector-shadow-no-text")}</p>
   {:else}
     {#each textShadows as s (s.id)}
       <div class="sh-card">
@@ -202,7 +203,7 @@
               oncancel={() => edit.cancel("text-shadow")}
             />
           </div>
-          <button type="button" class="sh-del" title="Șterge" onclick={() => removeText(s.id)}>
+          <button type="button" class="sh-del" title={t("inspector-delete")} onclick={() => removeText(s.id)}>
             <IconTrash size={11} stroke={1.8} />
           </button>
         </div>

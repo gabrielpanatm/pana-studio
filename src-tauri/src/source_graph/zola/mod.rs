@@ -1,4 +1,5 @@
 mod content;
+mod data_files;
 mod paths;
 mod runtime;
 mod template_references;
@@ -13,12 +14,16 @@ pub(crate) use content::{
     zola_content_reference_for_relation, zola_content_url, zola_frontmatter_range,
     zola_frontmatter_template_for_key,
 };
+pub(crate) use data_files::{
+    conventional_zola_data_file, editable_local_toml_path, resolve_zola_load_data_file,
+    resolve_zola_output_root, ResolvedZolaDataFile, ZolaDataResolutionContext,
+};
 pub(crate) use paths::{
     data_file_reference_keys, internal_content_path, local_static_asset_project_file_reference,
     local_zola_data_project_file_reference, normalize_static_asset_reference,
     normalize_zola_data_file_reference, rewrite_zola_data_file_reference,
     rewrite_zola_static_asset_reference, static_asset_logical_path, static_asset_reference,
-    static_asset_reference_keys, zola_data_file_logical_path, zola_data_file_reference_for_rewrite,
+    static_asset_reference_keys, zola_data_file_reference_for_rewrite,
     zola_static_asset_reference_for_rewrite,
 };
 pub(crate) use runtime::{
@@ -31,5 +36,6 @@ pub(crate) use templates::{
     rewrite_zola_template_reference, zola_template_name_for_path, zola_template_reference_keys,
 };
 pub(crate) use tera_calls::{
-    parse_zola_path_calls, zola_path_function_for_relation, TeraZolaPathFunction,
+    count_dynamic_zola_load_data_paths, parse_zola_path_calls, zola_path_function_for_relation,
+    TeraZolaPathFunction,
 };

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-commit-file-explorer-operation"
+description = "Enables the commit_file_explorer_operation command without any pre-configured scope."
+commands.allow = ["commit_file_explorer_operation"]
+
+[[permission]]
+identifier = "deny-commit-file-explorer-operation"
+description = "Denies the commit_file_explorer_operation command without any pre-configured scope."
+commands.deny = ["commit_file_explorer_operation"]

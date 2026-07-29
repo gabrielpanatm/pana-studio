@@ -242,7 +242,7 @@
     };
   }
 
-  function replaceDocument(html, selector, liveCss, canvasIdentity) {
+  function replaceDocument(html, liveCss, canvasIdentity) {
     var startedAt = performance.now();
     var phaseTimings = {};
     var phaseReceipts = [];
@@ -269,12 +269,13 @@
       reconcileHead(nextDocument, preparedStyles);
       reconcileChildren(document.body, nextDocument.body, true);
       sanitizeDesignSafeTree(document);
+      restoreApplicationAppearance();
       applyTemplateSourceIdsFromMarkers();
       ensureElementSessionIds();
       refreshEmptyEditableZones();
-      clearSelectedElement();
+      clearCanvasAgentOverlays();
       ensureInspectorStyles();
-      setLiveOverridesCss(liveCss || "", false);
+      setLiveOverridesCss(liveCss || "");
       reapplyLiveTextDraft();
       reapplyLiveAttributeDraft();
       syncStructure();
@@ -284,8 +285,6 @@
         var focusTarget = document.querySelector("[" + SESSION_ID_ATTR + '=\"' + cssEscapeValue(active) + '\"],[' + SOURCE_ID_ATTR + '=\"' + cssEscapeValue(active) + '\"]');
         if (focusTarget && typeof focusTarget.focus === "function") focusTarget.focus({ preventScroll: true });
       }
-      var nextSelected = selector ? document.querySelector(selector) : null;
-      if (nextSelected) selectElement(nextSelected);
       var committedAt = performance.now();
       phaseTimings.committed = Math.max(0, Math.round(committedAt - startedAt));
       phaseReceipts.push(canvasPhaseReceipt(

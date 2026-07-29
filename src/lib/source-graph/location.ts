@@ -1,7 +1,6 @@
 import { isZolaTemplatePath, zolaRelativePath } from "$lib/project/files";
 import type {
   PageSection,
-  SelectionInfo,
   SourceEditLocation,
   SourceEditTarget,
   SourceGraph,
@@ -113,17 +112,6 @@ export function formatSourceEditTarget(target: SourceEditTarget) {
 
 export function sourceLocationForEditTarget(target: SourceEditTarget): SourceEditLocation {
   return target.location;
-}
-
-export function hydrateSelectionSource(
-  selection: SelectionInfo,
-  graph: SourceGraph | null,
-): SelectionInfo {
-  const resolved =
-    resolveSourceEditLocationForSourceId(graph, selection.sourceId) ??
-    selection.sourceLocation ??
-    null;
-  return resolved === selection.sourceLocation ? selection : { ...selection, sourceLocation: resolved };
 }
 
 export function hydratePageSectionSources(

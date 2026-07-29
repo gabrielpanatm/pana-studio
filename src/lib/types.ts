@@ -29,7 +29,14 @@ export type CssSelectorOption = {
   selector: string;
   label: string;
   source: "class" | "compound" | "id" | "tag" | "matched";
-  detail: string;
+  detailKind:
+    | "matched_rule"
+    | "all_element_classes"
+    | "element_class"
+    | "element_id"
+    | "generated_without_class_or_id"
+    | "tag_fallback";
+  detailSource?: string;
 };
 
 export type PageSection = {
@@ -59,7 +66,20 @@ export type BlockSelectionContext = {
   rootSessionId: string | null;
 };
 
-export type SelectionInfo = {
+export type CanvasBlockObservation = {
+  providerId: string;
+  markerKind: "canonical" | "legacy";
+  rootSelector: string;
+  rootTag: string;
+};
+
+/**
+ * Bounded facts read from the currently rendered DOM element.
+ *
+ * This object is never selection authority. It intentionally contains no
+ * project/session/source identity; those fields live in SelectionSnapshot.
+ */
+export type CanvasElementObservation = {
   selector: string;
   cssSelector: string;
   domPath: string;
@@ -86,11 +106,38 @@ export type SelectionInfo = {
   attributes: Record<string, string>;
   parentNode: DomNodeLink | null;
   childNodes: DomNodeLink[];
+  blockContext: CanvasBlockObservation | null;
+};
+
+export type AcceptedCanvasElementObservation = {
+  selectionRevision: number;
+  canvasIdentity: EditorNavigationIdentity;
+  documentEpoch: number;
+  renderInstanceId: string;
+  observation: CanvasElementObservation;
+};
+
+export type CoordinatedElementSelection = {
+  snapshot: SelectionSnapshot;
+  documentEpoch: number;
+  renderInstanceId: string;
+  sourceNodeId: string | null;
   sourceLocation: SourceEditLocation | null;
-  sourceId: string | null;
-  templateSourceId: string | null;
-  sessionId: string | null;
-  blockContext: BlockSelectionContext | null;
+  observation: CanvasElementObservation;
+};
+
+export type InspectorHtmlPhysicalFacts = {
+  selectionRevision: number;
+  renderInstanceId: string;
+  rect: {
+    width: string;
+    height: string;
+    top: string;
+    left: string;
+  };
+  hasChildElements: boolean;
+  childElementCount: number;
+  zolaImage: ZolaImagePresentation | null;
 };
 
 export type ZolaImageOperation = "fit_width" | "fit" | "fill";
@@ -105,28 +152,6 @@ export type ZolaImagePresentation = {
   format: ZolaImageFormat;
   quality: number;
 };
-
-export type PreviewSelectionState =
-  | { kind: "none" }
-  | {
-      kind: "html";
-      selector: string | null;
-      sourceId: string | null;
-      templateSourceId: string | null;
-      sessionId: string | null;
-      selection: SelectionInfo;
-      editable: boolean;
-    }
-  | {
-      kind: "tera";
-      selector: string | null;
-      sourceId: string;
-      templateSourceId: string | null;
-      origin: SourceOrigin | "current" | "unknown" | null;
-      themeName: string | null;
-      canSelectHtml?: boolean;
-      editable: boolean;
-    };
 
 export type EditableStyles = {
   color: string;
@@ -146,8 +171,6 @@ export type EditableStyles = {
 
 export type EditableAttributes = Record<string, string>;
 
-export type SaveState = "idle" | "unsaved" | "saving" | "saved" | "restored" | "error";
-
 export type InspectorPendingArea = "html" | "css" | "js";
 export type HtmlPendingArea = "tag" | "attributes" | "text" | "image" | "classes" | "structure";
 
@@ -155,6 +178,11 @@ export type ScssVariable = {
   name: string;
   value: string;
   file: string;
+};
+
+export type CssPropertySuggestion = ScssVariable & {
+  insertValue?: string;
+  directValue?: boolean;
 };
 
 export type FontOrigin = "local" | "theme";
@@ -172,15 +200,50 @@ export type LocalFontFile = {
   sizeBytes: number;
   extension: string;
   format: string;
+  textOptimized: boolean;
+  internalFamily: string | null;
+  subfamily: string | null;
   weight: number | null;
   weightRange: FontWeightRange | null;
   style: string | null;
+  axes: FontVariationAxis[];
+  license: FontLicenseMetadata;
   unicodeRange: string | null;
+  preload: FontPreloadRegistration;
+};
+
+export type FontPreloadRegistration = {
+  preloaded: boolean;
+  managed: boolean;
+  templates: string[];
+};
+
+export type FontVariationAxis = {
+  tag: string;
+  min: number;
+  default: number;
+  max: number;
+};
+
+export type InstalledFontVariationAxis = FontVariationAxis & {
+  family: string;
+};
+
+export type FontLicenseMetadata = {
+  description: string | null;
+  url: string | null;
 };
 
 export type FontWeightRange = {
   start: number;
   end: number;
+};
+
+export type FontCssRegistration = {
+  registered: boolean;
+  managed: boolean;
+  stylesheets: string[];
+  displayModes: string[];
 };
 
 export type LocalFontFamily = {
@@ -189,6 +252,8 @@ export type LocalFontFamily = {
   origin: FontOrigin;
   themeName: string | null;
   files: LocalFontFile[];
+  license: FontLicenseMetadata;
+  registration: FontCssRegistration;
 };
 
 export type FontInventory = {
@@ -196,11 +261,132 @@ export type FontInventory = {
   families: LocalFontFamily[];
 };
 
+export type FontRoleId = "text" | "titles" | "ui" | "mono";
+
+export type FontRoleAssignment = {
+  id: FontRoleId;
+  label: string;
+  variableName: string;
+  value: string | null;
+  family: string | null;
+  sourcePath: string | null;
+  installed: boolean;
+  assignable: boolean;
+  diagnostic: string | null;
+};
+
+export type FontManagerSnapshot = {
+  schemaVersion: number;
+  inventory: FontInventory;
+  roles: FontRoleAssignment[];
+  diagnostics: FontDeliveryDiagnostic[];
+};
+
+export type FontDeliveryDiagnosticSeverity = "info" | "warning" | "error";
+
+export type FontDeliveryDiagnostic = {
+  severity: FontDeliveryDiagnosticSeverity;
+  code: string;
+  messageDiagnostic: LocalizedDiagnostic;
+  family: string | null;
+  file: string | null;
+};
+
+export type FontRoleAssignmentReceipt = {
+  role: FontRoleAssignment;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
+  manager: FontManagerSnapshot;
+};
+
+export type FontDeliveryMutationReceipt = {
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
+  manager: FontManagerSnapshot;
+};
+
+export type FontFamilyRemovalPlan = {
+  schemaVersion: number;
+  planToken: string;
+  family: string;
+  directory: string;
+  files: string[];
+  stylesheetPaths: string[];
+  licenseFiles: string[];
+  retainedResources: string[];
+  blockedReasons: string[];
+  warnings: string[];
+  changed: boolean;
+};
+
+export type FontFamilyRemovalReceipt = {
+  plan: FontFamilyRemovalPlan;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
+  manager: FontManagerSnapshot;
+};
+
+export type FontPreviewAsset = {
+  file: string;
+  format: string;
+  dataUrl: string;
+  contentHash: string;
+};
+
 export type GoogleFontDownloadResult = {
   family: LocalFontFamily;
   fontFaceCss: string;
   cssUrl: string;
+  licenseFile: string;
+  licenseSourceUrl: string;
   variable: boolean;
+  textOptimized: boolean;
+  optimizedCharacterCount: number;
+};
+
+export type GoogleFontInstallReceipt = {
+  result: GoogleFontDownloadResult;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
+};
+
+export type LocalFontImportFilePlan = {
+  sourcePath: string;
+  destinationPath: string;
+  family: string;
+  subfamily: string | null;
+  sizeBytes: number;
+  extension: string;
+  format: string;
+  weight: number | null;
+  weightRange: FontWeightRange | null;
+  style: string;
+  axes: FontVariationAxis[];
+};
+
+export type LocalFontImportFamilyPlan = {
+  family: string;
+  directory: string;
+  fileCount: number;
+  variable: boolean;
+  license: FontLicenseMetadata;
+};
+
+export type LocalFontImportPlan = {
+  schemaVersion: number;
+  planToken: string;
+  stylesheetPath: string;
+  families: LocalFontImportFamilyPlan[];
+  files: LocalFontImportFilePlan[];
+  warnings: string[];
+  conflicts: string[];
+  changed: boolean;
+};
+
+export type LocalFontImportReceipt = {
+  plan: LocalFontImportPlan;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
 };
 
 export type GoogleFontAxis = {
@@ -244,6 +430,26 @@ export type PageCssTarget = {
   templatePath: string | null;
   pageOwned: boolean;
   reason: string;
+};
+
+export const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION = 1;
+
+export type CssInspectorContextState = "existing" | "creation" | "ambiguous";
+
+export type CssInspectorSourceCandidate = {
+  file: string;
+  ruleContext: CssRuleContext;
+};
+
+export type CssInspectorContextResolution = {
+  schemaVersion: typeof CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION;
+  selectionRevision: number;
+  selector: string;
+  viewport: "desktop" | "tablet" | "mobile";
+  state: CssInspectorContextState;
+  target: PageCssTarget | null;
+  ruleContext: CssRuleContext | null;
+  candidates: CssInspectorSourceCandidate[];
 };
 
 export type WrittenProjectFile = {
@@ -392,13 +598,94 @@ export type SourceLanguage = "html" | "css" | "scss" | "js" | "markdown" | "plai
 export type CenterView = "preview" | "code" | "markdown" | "kernel";
 export type ApplicationSurface = "workbench" | "settings";
 export type ApplicationTheme = "light" | "dark";
-export type ApplicationSettingsSnapshot = {
-  schemaVersion: 2;
-  revision: number;
-  initialized: boolean;
+export type ApplicationLanguagePreference =
+  | { mode: "system" }
+  | { mode: "fixed"; value: string };
+export type ApplicationThemePreference =
+  | { mode: "system" }
+  | { mode: "fixed"; value: ApplicationTheme };
+export type ApplicationAccentPreference =
+  | { mode: "system" }
+  | { mode: "brand" }
+  | { mode: "fixed"; value: string };
+export type ApplicationPreferenceSelections = {
+  language: ApplicationLanguagePreference;
+  theme: ApplicationThemePreference;
+  accent: ApplicationAccentPreference;
+};
+export type SystemPreferenceSource =
+  | "xdg_portal"
+  | "tauri_window"
+  | "posix_locale"
+  | "fallback"
+  | "unavailable";
+export type ApplicationPreferenceResolutionSource =
+  | "fixed"
+  | "xdg_portal"
+  | "tauri_window"
+  | "posix_locale"
+  | "fallback";
+export type SystemAccentColor = {
+  red: number;
+  green: number;
+  blue: number;
+};
+export type SystemPreferencesSnapshot = {
+  schemaVersion: 1;
+  generation: number;
+  localeCandidates: string[];
+  localeSource: SystemPreferenceSource;
+  colorScheme: ApplicationTheme | null;
+  colorSchemeSource: SystemPreferenceSource;
+  accent: SystemAccentColor | null;
+  accentSource: SystemPreferenceSource;
+  contrast: "normal" | "high" | null;
+  contrastSource: SystemPreferenceSource;
+  reducedMotion: boolean | null;
+  reducedMotionSource: SystemPreferenceSource;
+  portalAvailable: boolean;
+};
+export type EffectiveApplicationPreferences = {
+  locale: string;
+  direction: "ltr" | "rtl";
   theme: ApplicationTheme;
+  accent: string;
+  languageSource: ApplicationPreferenceResolutionSource;
+  themeSource: ApplicationPreferenceResolutionSource;
+  accentSource: ApplicationPreferenceResolutionSource;
+};
+export type ApplicationBootProjection = {
+  schemaVersion: 1;
+  authority: "rust_application_settings";
+  settingsSchemaVersion: 3;
+  settingsRevision: number;
+  systemGeneration: number;
+  locale: string;
+  direction: "ltr" | "rtl";
+  theme: ApplicationTheme;
+  accent: string;
+  contrast: "normal" | "high" | null;
+  reducedMotion: boolean | null;
+  loadingLabel: string;
+  loadingSubtitle: string;
+};
+export type ApplicationSettingsSnapshot = {
+  schemaVersion: 3;
+  revision: number;
+  brandAccent: string;
+  preferences: ApplicationPreferenceSelections;
+  effective: EffectiveApplicationPreferences;
+  system: SystemPreferencesSnapshot;
+  boot: ApplicationBootProjection;
   blockPropertiesHeight: number;
   blockPropertiesCollapsed: boolean;
+};
+export type ApplicationSettingsPatch = {
+  language?: ApplicationLanguagePreference;
+  theme?: ApplicationThemePreference;
+  accent?: ApplicationAccentPreference;
+  blockPropertiesHeight?: number;
+  blockPropertiesCollapsed?: boolean;
 };
 export type AppHomeSnapshot = {
   schemaVersion: 1;
@@ -549,7 +836,7 @@ export type VersionNetworkProgressEvent = {
   operationId: string;
   kind: VersionNetworkOperationKind;
   status: VersionNetworkOperationStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
 };
 
 export type VersionNetworkReceipt = {
@@ -817,11 +1104,103 @@ export type ProjectScan = {
   previewWarning: string | null;
   activeTheme: string | null;
   files: ProjectFile[];
-  isZola: boolean;
-  isEmpty: boolean;
   kernelSessionId?: string;
+  workspaceRevision?: number;
   acceptedDiskGeneration?: number;
   acceptedDiskManifest?: ProjectDiskManifest;
+};
+
+export type StartupStage =
+  | "idle"
+  | "inspecting"
+  | "ready"
+  | "planning"
+  | "creating"
+  | "error";
+
+export type StartupCandidateKind =
+  | "valid_project"
+  | "empty_directory"
+  | "unrecognized_directory"
+  | "invalid_zola_project"
+  | "inaccessible";
+
+export type StartupDiagnostic = {
+  code: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  detail: string | null;
+};
+
+export type StartupCandidateSnapshot = {
+  root: string;
+  displayName: string;
+  kind: StartupCandidateKind;
+  snapshotToken: string;
+  entryCount: number;
+  truncated: boolean;
+  diagnostics: StartupDiagnostic[];
+};
+
+export type StartupFlowSnapshot = {
+  schemaVersion: 1;
+  revision: number;
+  stage: StartupStage;
+  candidate: StartupCandidateSnapshot | null;
+  diagnostics: StartupDiagnostic[];
+};
+
+export type StartupCreationKind = "minimal" | "starter" | "project_template";
+
+export type StartupCreationOption = {
+  id: string;
+  kind: StartupCreationKind;
+  name: string;
+  description: string;
+  previewDataUrl: string | null;
+  compatibilityLabel: string;
+  capabilities: string[];
+};
+
+export type StartupCreationCatalog = {
+  schemaVersion: 1;
+  registryVersion: string;
+  embeddedZolaVersion: string;
+  expectedSnapshotToken: string;
+  options: StartupCreationOption[];
+};
+
+export type StartupCreationPlanRequest = {
+  expectedSnapshotToken: string;
+  optionId: string;
+};
+
+export type StartupCreationPlan = {
+  schemaVersion: 1;
+  expectedSnapshotToken: string;
+  planToken: string;
+  projectRoot: string;
+  optionId: string;
+  optionKind: StartupCreationKind;
+  optionName: string;
+  affectedFiles: string[];
+  totalBytes: number;
+  diagnostics: StartupDiagnostic[];
+};
+
+export type StartupCreationApplyRequest = {
+  expectedSnapshotToken: string;
+  expectedPlanToken: string;
+};
+
+export type StartupCreationReceipt = {
+  schemaVersion: 1;
+  projectRoot: string;
+  optionId: string;
+  planToken: string;
+  publishedFiles: string[];
+  validation: string;
+  startup: StartupFlowSnapshot;
 };
 
 export type ProjectOpenRecoveryStatus =
@@ -869,8 +1248,6 @@ export type ProjectRootFingerprint = {
 };
 
 export type ProjectSessionScanSummary = {
-  isZola: boolean;
-  isEmpty: boolean;
   activeTheme: string | null;
   fileCount: number;
   directoryCount: number;
@@ -980,7 +1357,7 @@ export type ThemeCatalogSnapshot = {
 
 export type ThemeImpactItem = {
   code: string;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   relativePath: string | null;
   blocking: boolean;
 };
@@ -1055,6 +1432,7 @@ export type FileBufferMutationExpectation = {
 export type FileBufferCommandReceipt<T> = {
   projectRoot: string;
   runtimeSessionId: string;
+  workspaceRevision: number;
   payload: T;
 };
 
@@ -1086,7 +1464,7 @@ export type FileBufferDiagnostic = {
   severity: FileBufferDiagnosticSeverity;
   code: string;
   relativePath: string | null;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
 };
 
 export type FileBufferFileSnapshot = {
@@ -1164,6 +1542,7 @@ export type ProjectWorkspaceMutationReceipt = {
   dirty: boolean;
   transactionId: string | null;
   touchedFiles: string[];
+  documents: WorkspaceDocumentProjection[];
   entry: WorkspaceHistoryEntrySnapshot | null;
   files: FileBufferFileSnapshot[];
   pageJs: PageJsDraftStageReceipt | null;
@@ -1221,15 +1600,30 @@ export type WorkbenchActivity =
   | "design_system"
   | "assets"
   | "content"
+  | "taxonomies"
   | "data"
   | "versioning"
   | "audit"
   | "publish";
 
 export type WorkbenchSurface = "visual" | "code" | "markdown";
+export type WorkbenchProjectEntryKind = "directory" | "text" | "binary";
+export type WorkbenchProjectEntrySelection = {
+  relativePath: string;
+  kind: WorkbenchProjectEntryKind;
+};
+export type WorkbenchProjectEntryRemap = {
+  sourcePrefix: string;
+  destinationPrefix: string;
+};
+export type WorkspaceSourceOpenOptions = {
+  surface?: WorkbenchSurface;
+  templateContextPagePath?: string | null;
+  templateContextUrl?: string | null;
+};
 export type WorkbenchSplit = "none" | "vertical" | "horizontal";
 export type WorkbenchGroupId = "primary" | "secondary";
-export type WorkbenchBottomPanelView = "problems" | "output" | "terminal" | "timeline";
+export type WorkbenchBottomPanelView = "problems" | "output" | "terminal";
 export type WorkbenchCanvasMode = "fit" | "fixed";
 export type WorkbenchCanvasPreset = "desktop" | "tablet" | "mobile" | "custom";
 
@@ -1279,6 +1673,7 @@ export type WorkbenchSnapshot = {
   canvasViewport: WorkbenchCanvasViewportSnapshot;
   groups: WorkbenchGroupSnapshot[];
   bottomPanel: WorkbenchBottomPanelSnapshot;
+  selectedProjectEntry: WorkbenchProjectEntrySelection | null;
 };
 
 export type WorkbenchIntent =
@@ -1288,6 +1683,18 @@ export type WorkbenchIntent =
       groupId?: WorkbenchGroupId;
       surface?: WorkbenchSurface;
       pinned?: boolean;
+    }
+  | {
+      kind: "select_project_entry";
+      relativePath: string;
+      entryKind: WorkbenchProjectEntryKind;
+      openSurface?: WorkbenchSurface | null;
+    }
+  | {
+      kind: "reconcile_project_entries";
+      remaps?: WorkbenchProjectEntryRemap[];
+      deletedPrefixes?: string[];
+      selectionOverride?: WorkbenchProjectEntrySelection | null;
     }
   | { kind: "activate_document"; documentId: string; groupId: WorkbenchGroupId }
   | { kind: "close_document"; documentId: string; groupId: WorkbenchGroupId }
@@ -1330,7 +1737,129 @@ export type WorkbenchCommandReceipt = {
   snapshot: WorkbenchSnapshot;
 };
 
-export const COMMAND_CENTER_SCHEMA_VERSION = 1 as const;
+export const FILE_EXPLORER_SCHEMA_VERSION = 1 as const;
+
+export type FileExplorerEntryKind = "directory" | "text" | "binary";
+export type FileExplorerRole = "page" | "template" | "style" | "script" | "asset";
+export type FileExplorerCapabilityReason =
+  | "not_document"
+  | "binary_editor_unavailable"
+  | "binary_mutation_unavailable"
+  | "directory_mutation_unavailable"
+  | "root_entry"
+  | "edit_authority_unavailable";
+
+export type FileExplorerCapability = {
+  allowed: boolean;
+  reason: FileExplorerCapabilityReason | null;
+};
+
+export type FileExplorerCapabilities = {
+  open: FileExplorerCapability;
+  createChild: FileExplorerCapability;
+  rename: FileExplorerCapability;
+  moveEntry: FileExplorerCapability;
+  delete: FileExplorerCapability;
+};
+
+export type FileExplorerEntry = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  relativePath: string;
+  depth: number;
+  kind: FileExplorerEntryKind;
+  role: FileExplorerRole;
+  previewPath: string | null;
+  openSurface: WorkbenchSurface | null;
+  capabilities: FileExplorerCapabilities;
+};
+
+export type FileExplorerSelection = {
+  entryId: string;
+  relativePath: string;
+  kind: FileExplorerEntryKind;
+};
+
+export type FileExplorerSnapshot = {
+  schemaVersion: typeof FILE_EXPLORER_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  acceptedDiskGeneration: number;
+  workbenchRevision: number;
+  selectionRevision: number;
+  selectedEntry: FileExplorerSelection | null;
+  activeDocumentPath: string | null;
+  entries: FileExplorerEntry[];
+  rootCapabilities: FileExplorerCapabilities;
+  truncated: boolean;
+  maxEntries: number;
+  diagnostics: string[];
+};
+
+export type FileExplorerSelectionReceipt = {
+  schemaVersion: typeof FILE_EXPLORER_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  workbench: WorkbenchCommandReceipt;
+  snapshot: FileExplorerSnapshot;
+};
+
+export type FileExplorerOperationReason =
+  | "invalid_name"
+  | "missing_source"
+  | "missing_target"
+  | "target_not_directory"
+  | "same_parent"
+  | "descendant_target"
+  | "destination_conflict"
+  | "protected_path"
+  | "unsupported_entry_kind"
+  | "truncated_snapshot"
+  | "edit_authority_unavailable";
+
+export type FileExplorerOperationRequest =
+  | {
+      kind: "create";
+      parentEntryId: string | null;
+      entryKind: FileExplorerEntryKind;
+      name: string;
+    }
+  | { kind: "rename"; entryId: string; newName: string }
+  | {
+      kind: "move";
+      entryId: string;
+      targetDirectoryEntryId: string | null;
+    }
+  | { kind: "delete"; entryId: string };
+
+export type FileExplorerOperationPlan = {
+  schemaVersion: typeof FILE_EXPLORER_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  acceptedDiskGeneration: number;
+  allowed: boolean;
+  reason: FileExplorerOperationReason | null;
+  diagnostic: string | null;
+  commitToken: string | null;
+  destinationPath: string | null;
+  affectedEntryIds: string[];
+  affectedPaths: string[];
+};
+
+export type FileExplorerCommitReceipt = {
+  schemaVersion: typeof FILE_EXPLORER_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  mutation: WorkspaceEntryMutationReceipt;
+  workbench: WorkbenchCommandReceipt;
+  snapshot: FileExplorerSnapshot;
+};
+
+export const COMMAND_CENTER_SCHEMA_VERSION = 3 as const;
 
 export type CommandCenterScope = "all" | "commands" | "files" | "symbols";
 
@@ -1382,11 +1911,13 @@ export type CommandCenterAction =
 export type CommandCenterItem = {
   id: string;
   kind: CommandCenterItemKind;
-  title: string;
-  subtitle: string;
+  title: string | null;
+  titleDiagnostic: LocalizedDiagnostic | null;
+  subtitle: string | null;
+  subtitleDiagnostic: LocalizedDiagnostic | null;
   shortcut: string | null;
   enabled: boolean;
-  disabledReason: string | null;
+  disabledDiagnostic: LocalizedDiagnostic | null;
   score: number;
   action: CommandCenterAction;
 };
@@ -1453,6 +1984,7 @@ export type ProjectWorkspaceUndoRedoCommandReceipt = {
   runtimeSessionId: string;
   result: WorkspaceUndoRedoReceipt;
   workspace: ProjectWorkspaceSnapshot;
+  workbench: WorkbenchCommandReceipt | null;
 };
 
 export type KernelDiskConflictStatus = "clean" | "info" | "warning" | "error";
@@ -1469,9 +2001,15 @@ export type KernelDiskConflictKind =
   | "unreadable"
   | "invalid_path";
 
+export type LocalizedDiagnostic = {
+  schemaVersion: number;
+  code: string;
+  arguments?: Record<string, string | number>;
+};
+
 export type KernelDiskConflictSummary = {
   status: KernelDiskConflictStatus;
-  verdictReason: string;
+  verdictDiagnostic: LocalizedDiagnostic;
   trackedFileCount: number;
   cleanCount: number;
   dirtyOnlyCount: number;
@@ -1494,7 +2032,7 @@ export type KernelDiskConflictFileSnapshot = {
   role: TextBufferRole;
   status: KernelDiskConflictStatus;
   kind: KernelDiskConflictKind;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   baseline: FileBufferBaseline;
   disk: FileBufferBaseline | null;
   hasDraft: boolean;
@@ -1550,7 +2088,7 @@ export type KernelExternalDiskReconcileItemReceipt = {
 export type KernelExternalDiskReconcileDiagnostic = {
   code: string;
   relativePath: string | null;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   blocking: boolean;
 };
 
@@ -1687,7 +2225,7 @@ export type RecoveryCoordinatorDiagnostic = {
   severity: RecoveryCoordinatorDiagnosticSeverity;
   code: string;
   transactionId: string | null;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
 };
 
 export type RecoveryJournalFamily =
@@ -1985,10 +2523,6 @@ export type KernelProjectTransitionPolicy = {
   sessionId: string | null;
   requiresOperatorConfirmation: boolean;
   blocksTransition: boolean;
-  title: string;
-  message: string;
-  evidence: string;
-  recommendedAction: string;
   workspaceDirtyResourceCount: number;
   workspaceRevision: number | null;
   workspaceUndoCount: number;
@@ -2580,6 +3114,47 @@ export type SourceRange = {
   endColumn: number;
 };
 
+export type SourceCapabilityReason =
+  | "structuredConfig"
+  | "structuredDataNode"
+  | "styleFile"
+  | "teraTemplateFile"
+  | "teraExtends"
+  | "teraBlock"
+  | "teraInclude"
+  | "teraImport"
+  | "teraMacro"
+  | "teraFor"
+  | "teraIf"
+  | "teraElif"
+  | "teraElse"
+  | "teraSet"
+  | "teraSetGlobal"
+  | "teraFilter"
+  | "teraBreak"
+  | "teraContinue"
+  | "teraSuper"
+  | "teraVariable"
+  | "teraMacroCall"
+  | "teraFunctionCall"
+  | "zolaShortcode"
+  | "nativeBlockMarker"
+  | "teraComment"
+  | "teraRaw"
+  | "teraSyntax"
+  | "htmlInTeraLoop"
+  | "htmlInTeraCondition"
+  | "htmlInTeraMacro"
+  | "htmlInTeraLocalScope"
+  | "htmlInTeraRaw"
+  | "markdownPage"
+  | "markdownShortcode"
+  | "staticJavaScript"
+  | "staticAsset"
+  | "dataOutputReadOnly"
+  | "dataThemeReadOnly"
+  | "dataFormatVisualUnsupported";
+
 export type SourceCapabilities = {
   canOpenInCode: boolean;
   canEditVisual: boolean;
@@ -2587,7 +3162,679 @@ export type SourceCapabilities = {
   canEditAttributes: boolean;
   canMove: boolean;
   canExtractPartial: boolean;
+  reasonCode: SourceCapabilityReason | null;
+};
+
+export const EDITOR_NAVIGATION_SCHEMA_VERSION = 3 as const;
+
+export type EditorNavigationIdentity = {
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  transactionId: string;
+  previewRevision: string;
+};
+
+export type EditorNavigationSurface =
+  | "canonicalPreview"
+  | "templateWorkbench";
+
+export type EditorNavigationNodeKind =
+  | "htmlElement"
+  | "teraBoundary"
+  | "runtimeElement";
+
+export type EditorNavigationViewNodeKind =
+  | "htmlElement"
+  | "boundary"
+  | "relation"
+  | "slot"
+  | "source";
+
+export type EditorNavigationRelationKind =
+  | "extends"
+  | "include"
+  | "import"
+  | "blockOverride";
+
+export type EditorNavigationOrigin =
+  | "project"
+  | "theme"
+  | "tera"
+  | "panaRuntime"
+  | "arbitraryRuntime";
+
+export type EditorNavigationEffectScope =
+  | "singleSource"
+  | "sharedDefinition"
+  | "allRenderedInstances";
+
+export type EditorSourceResolution =
+  | "direct"
+  | "resolved"
+  | "fallbackResolved"
+  | "ambiguous"
+  | "dynamic"
+  | "external"
+  | "unresolved";
+
+export type EditorSourceReference = {
+  sourceNodeId: string | null;
+  sourceKind: SourceNodeKind | null;
+  file: string;
+  range: SourceRange | null;
+  label: string;
+  origin: EditorNavigationOrigin;
+  themeName: string | null;
+  canOpenInCode: boolean;
+};
+
+export type EditorSourceProvenance = {
+  definition: EditorSourceReference | null;
+  composition: EditorSourceReference | null;
+  resolution: EditorSourceResolution;
+};
+
+export type EditorNavigationCapabilities = {
+  canSelect: boolean;
+  canInspect: boolean;
+  canOpenInCode: boolean;
+  canEnterBoundary: boolean;
+  canMoveAtomic: boolean;
+  canMove: boolean;
+  canEditText: boolean;
+  canEditAttributes: boolean;
+  readOnly: boolean;
+  requiresEditScopeId: string | null;
+  reasonCode: SourceCapabilityReason | null;
+};
+
+export type EditorNavigationBoundary = {
+  boundaryInstanceId: string;
+  sourceNodeId: string;
+  rootRenderInstanceIds: string[];
+  atomicWhenClosed: boolean;
+  effectScope: EditorNavigationEffectScope;
+  renderedInstanceCount: number;
+  target: string | null;
+  empty: boolean;
+};
+
+export type EditorNavigationNode = {
+  id: string;
+  parentId: string | null;
+  children: string[];
+  order: number;
+  kind: EditorNavigationNodeKind;
+  label: string;
+  tag: string | null;
+  sourceNodeId: string | null;
+  renderInstanceId: string | null;
+  renderInstanceIds: string[];
+  sourceKind: SourceNodeKind | null;
+  file: string | null;
+  range: SourceRange | null;
+  origin: EditorNavigationOrigin;
+  themeName: string | null;
+  sourceProvenance: EditorSourceProvenance;
+  provenanceStack: string[];
+  componentDefinitionIds: string[];
+  componentInvocationIds: string[];
+  blockDefinitionIds: string[];
+  blockSourceInstanceIds: string[];
+  bindingKey: string | null;
+  bindingPath: string | null;
+  boundary: EditorNavigationBoundary | null;
+  capabilities: EditorNavigationCapabilities;
+};
+
+export type EditorNavigationRelation = {
+  kind: EditorNavigationRelationKind;
+  targetDocumentPath: string | null;
+  targetSourceNodeId: string | null;
+  targetTemplateName: string | null;
+};
+
+export type EditorNavigationViewNode = {
+  id: string;
+  editorNodeId: string | null;
+  parentId: string | null;
+  children: string[];
+  order: number;
+  kind: EditorNavigationViewNodeKind;
+  label: string;
+  tag: string | null;
+  sourceNodeId: string | null;
+  sourceKind: SourceNodeKind | null;
+  file: string;
+  origin: EditorNavigationOrigin;
+  themeName: string | null;
+  renderInstanceIds: string[];
+  boundary: EditorNavigationBoundary | null;
+  relation: EditorNavigationRelation | null;
+  capabilities: EditorNavigationCapabilities;
+};
+
+export type EditorNavigationBreadcrumb = {
+  documentPath: string;
+  templateName: string;
+  sourceNodeId: string;
+  origin: EditorNavigationOrigin;
+  themeName: string | null;
+  current: boolean;
+};
+
+export type EditorNavigationView = {
+  activeDocumentPath: string;
+  activeTemplateName: string;
+  activeSourceNodeId: string;
+  breadcrumbs: EditorNavigationBreadcrumb[];
+  rootNodeIds: string[];
+  nodes: EditorNavigationViewNode[];
+  previewContextRenderInstanceId: string | null;
+};
+
+export type EditorNavigationDiagnostic = {
+  code: string;
+  message: string;
+  sourceNodeId: string | null;
+};
+
+export type EditorNavigationSnapshot = {
+  schemaVersion: typeof EDITOR_NAVIGATION_SCHEMA_VERSION;
+  identity: EditorNavigationIdentity;
+  modelRevision: string;
+  route: string;
+  surface: EditorNavigationSurface;
+  rootNodeIds: string[];
+  nodes: EditorNavigationNode[];
+  focusedView: EditorNavigationView | null;
+  diagnostics: EditorNavigationDiagnostic[];
+};
+
+export const CANVAS_INTERACTION_SCHEMA_VERSION = 2 as const;
+
+export type CanvasInteractionIdentity = {
+  canvas: EditorNavigationIdentity;
+  route: string;
+  documentEpoch: number;
+  agentInstanceId: string;
+};
+
+export type CanvasInteractionGesture =
+  | "pointerMove"
+  | "pointerDown"
+  | "click"
+  | "contextMenu"
+  | "dragStart"
+  | "dragOver"
+  | "drop";
+
+export type CanvasPointerButton =
+  | "none"
+  | "primary"
+  | "auxiliary"
+  | "secondary"
+  | "back"
+  | "forward";
+
+export type CanvasPointerModifiers = {
+  alt: boolean;
+  control: boolean;
+  meta: boolean;
+  shift: boolean;
+};
+
+export type CanvasPointerSample = {
+  clientX: number;
+  clientY: number;
+  button: CanvasPointerButton;
+  buttons: number;
+  modifiers: CanvasPointerModifiers;
+};
+
+export type CanvasHitCandidateKind =
+  | "renderInstance"
+  | "boundaryInstance";
+
+export type CanvasHitCandidate = {
+  kind: CanvasHitCandidateKind;
+  id: string;
+};
+
+export type CanvasDragPosition = "before" | "after" | "inside";
+
+export type CanvasDragSample = {
+  sessionId: string;
+  position: CanvasDragPosition | null;
+};
+
+export type CanvasInteractionRequest = {
+  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  identity: CanvasInteractionIdentity;
+  gestureSequence: number;
+  gesture: CanvasInteractionGesture;
+  pointer: CanvasPointerSample;
+  hitPath: CanvasHitCandidate[];
+  drag: CanvasDragSample | null;
+};
+
+export type CanvasInteractionStatus =
+  | "resolved"
+  | "noTarget"
+  | "stale"
+  | "rejected";
+
+export type CanvasInteractionTargetKind =
+  | "htmlElement"
+  | "teraBoundary"
+  | "runtimeElement";
+
+export type CanvasInteractionScopeState =
+  | "unscoped"
+  | "locked"
+  | "authorized";
+
+export type CanvasInteractionActions = {
+  canSelect: boolean;
+  canInspect: boolean;
+  canOpenInCode: boolean;
+  canEnterBoundary: boolean;
+  canMoveAtomic: boolean;
+  canMove: boolean;
+  canEditText: boolean;
+  canEditAttributes: boolean;
+  readOnly: boolean;
+  reasonCode: SourceCapabilityReason | null;
+};
+
+export type CanvasInteractionTarget = {
+  editorNodeId: string;
+  kind: CanvasInteractionTargetKind;
+  label: string;
+  tag: string | null;
+  sourceNodeId: string | null;
+  file: string | null;
+  range: SourceRange | null;
+  renderInstanceId: string | null;
+  boundaryInstanceId: string | null;
+  origin: EditorNavigationOrigin;
+  themeName: string | null;
+  sourceProvenance: EditorSourceProvenance;
+  requiredEditScopeId: string | null;
+  scopeState: CanvasInteractionScopeState;
+  effectScope: EditorNavigationEffectScope;
+  renderedInstanceCount: number;
+  actions: CanvasInteractionActions;
+};
+
+export type CanvasOverlayProjection = {
+  primaryRenderInstanceId: string | null;
+  renderInstanceIds: string[];
+  boundaryInstanceId: string | null;
+};
+
+export type CanvasInteractionDiagnosticCode =
+  | "protocol_version_mismatch"
+  | "snapshot_binding_mismatch"
+  | "canvas_identity_mismatch"
+  | "route_mismatch"
+  | "document_epoch_mismatch"
+  | "agent_instance_mismatch"
+  | "agent_binding_missing"
+  | "gesture_sequence_stale"
+  | "invalid_pointer"
+  | "invalid_identity"
+  | "hit_path_too_large"
+  | "invalid_hit_candidate"
+  | "duplicate_hit_candidate"
+  | "invalid_drag_sample"
+  | "unknown_hit_candidate"
+  | "candidate_not_selectable";
+
+export type CanvasInteractionDiagnostic = {
+  code: CanvasInteractionDiagnosticCode;
+  message: string;
+  candidateId: string | null;
+};
+
+export type CanvasInteractionReceipt = {
+  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  identity: CanvasInteractionIdentity;
+  gestureSequence: number;
+  gesture: CanvasInteractionGesture;
+  status: CanvasInteractionStatus;
+  target: CanvasInteractionTarget | null;
+  overlay: CanvasOverlayProjection | null;
+  dragPosition: CanvasDragPosition | null;
+  diagnostics: CanvasInteractionDiagnostic[];
+};
+
+export type CanvasInteractionBindingReceipt = {
+  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  identity: CanvasInteractionIdentity;
+  lastAcceptedSequence: number;
+  activeDocumentPath: string | null;
+};
+
+export type CanvasInteractionResolveInput = {
+  request: CanvasInteractionRequest;
+  editScopeGrant: EditScopeGrant | null;
+};
+
+export const SELECTION_COORDINATOR_SCHEMA_VERSION = 1 as const;
+
+export type SelectionSubjectKind =
+  | "htmlElement"
+  | "teraBoundary"
+  | "runtimeElement";
+
+export type SelectionSubject = {
+  kind: SelectionSubjectKind;
+  tag: string | null;
+  label: string;
+};
+
+export type SelectionFocus =
+  | { kind: "element" }
+  | {
+      kind: "cssRule";
+      file: string;
+      selector: string;
+      viewport: string | null;
+      range?: SourceRange | null;
+    }
+  | {
+      kind: "cssProperty";
+      file: string;
+      selector: string;
+      property: string;
+      viewport: string | null;
+      range?: SourceRange | null;
+    }
+  | {
+      kind: "jsBehavior";
+      file: string;
+      behaviorId: string | null;
+    };
+
+export type SelectionResolution =
+  | "cleared"
+  | "resolved"
+  | "notRendered"
+  | "ambiguous";
+
+export type SelectionAnchor = {
+  editorNodeId: string | null;
+  sourceNodeId: string | null;
+  renderInstanceId: string | null;
+  renderInstanceIds: string[];
+  boundaryInstanceId: string | null;
+  file: string | null;
+  range: SourceRange | null;
+  provenanceStack: string[];
+  componentInvocationIds: string[];
+  blockSourceInstanceIds: string[];
+  bindingKey: string | null;
+  bindingPath: string | null;
+};
+
+export type SelectionPreviewProjection = {
+  editorNodeId: string | null;
+  targetKind: SelectionSubjectKind | null;
+  primaryRenderInstanceId: string | null;
+  renderInstanceIds: string[];
+  boundaryInstanceId: string | null;
+};
+
+export type SelectionUiProjections = {
+  preview: SelectionPreviewProjection;
+  layers: {
+    editorNodeId: string | null;
+  };
+  code: {
+    file: string | null;
+    range: SourceRange | null;
+    focus: SelectionFocus;
+  };
+  inspector: {
+    editorNodeId: string | null;
+    subjectKind: SelectionSubjectKind | null;
+    canInspect: boolean;
+  };
+  status: {
+    provenance: EditorSourceProvenance | null;
+    focus: SelectionFocus;
+  };
+};
+
+export type SelectionSnapshot = {
+  schemaVersion: typeof SELECTION_COORDINATOR_SCHEMA_VERSION;
+  selectionRevision: number;
+  projectRoot: string;
+  runtimeSessionId: string;
+  canvasIdentity: EditorNavigationIdentity;
+  route: string;
+  activeDocumentPath: string | null;
+  resolution: SelectionResolution;
+  subject: SelectionSubject | null;
+  focus: SelectionFocus;
+  anchor: SelectionAnchor | null;
+  provenance: EditorSourceProvenance | null;
+  capabilities: EditorNavigationCapabilities | null;
+  projections: SelectionUiProjections;
+  diagnostics: string[];
+};
+
+export type HoverSnapshot = {
+  schemaVersion: typeof SELECTION_COORDINATOR_SCHEMA_VERSION;
+  hoverRevision: number;
+  canvasIdentity: EditorNavigationIdentity;
+  route: string;
+  documentEpoch: number;
+  editorNodeId: string;
+  subjectKind: SelectionSubjectKind;
+  primaryRenderInstanceId: string | null;
+  renderInstanceIds: string[];
+  boundaryInstanceId: string | null;
+};
+
+export type SelectionCoordinatorSnapshot = {
+  schemaVersion: typeof SELECTION_COORDINATOR_SCHEMA_VERSION;
+  selection: SelectionSnapshot;
+  hover: HoverSnapshot | null;
+  inspectorSummary: InspectorSelectionSummarySnapshot;
+};
+
+export type SelectionIntent =
+  | { kind: "selectEditorNode"; editorNodeId: string }
+  | {
+      kind: "selectSourcePosition";
+      file: string;
+      offset: number;
+      viewport?: string | null;
+    }
+  | {
+      kind: "setFocus";
+      focus: SelectionFocus;
+      expectedSelectionRevision?: number | null;
+    }
+  | { kind: "clearSelection" }
+  | { kind: "rebase" }
+  | { kind: "setHover"; editorNodeId: string; documentEpoch: number }
+  | { kind: "clearHover"; documentEpoch: number };
+
+export type SelectionObservationInput = {
+  schemaVersion: typeof SELECTION_COORDINATOR_SCHEMA_VERSION;
+  selectionRevision: number;
+  canvasIdentity: EditorNavigationIdentity;
+  documentEpoch: number;
+  renderInstanceId: string;
+  inspectorFacts: InspectorSelectionPhysicalFacts;
+};
+
+export type InspectorSelectionSummaryState =
+  | "empty"
+  | "resolving"
+  | "resolved"
+  | "notRendered"
+  | "ambiguous"
+  | "uninspectable";
+
+export type InspectorSelectionSummaryReason =
+  | "noSelection"
+  | "awaitingPhysicalFacts"
+  | "selectionNotRendered"
+  | "selectionAmbiguous"
+  | "inspectionDisabled"
+  | "missingRenderInstance";
+
+export type InspectorSelectionBlockContext = {
+  providerId: string;
+  markerKind: "canonical" | "legacy";
+  rootTag: string;
+};
+
+export type InspectorSelectionPhysicalFacts = {
+  observedTag: string;
+  elementId: string;
+  classes: string[];
+  blockContext: InspectorSelectionBlockContext | null;
+};
+
+export type InspectorSelectionSummaryDiagnostic = {
+  code: InspectorSelectionSummaryReason;
+  message: string;
+};
+
+export type InspectorSelectionSummarySnapshot = {
+  schemaVersion: typeof SELECTION_COORDINATOR_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  selectionRevision: number;
+  canvasIdentity: EditorNavigationIdentity;
+  documentEpoch: number | null;
+  renderInstanceId: string | null;
+  state: InspectorSelectionSummaryState;
+  subjectKind: SelectionSubjectKind | null;
+  tag: string | null;
+  label: string | null;
+  selector: string | null;
+  elementId: string | null;
+  classes: string[];
+  blockContext: InspectorSelectionBlockContext | null;
+  activeCssClass: string | null;
+  canInspect: boolean;
+  reason: InspectorSelectionSummaryReason | null;
+  diagnostics: InspectorSelectionSummaryDiagnostic[];
+};
+
+export type SelectionObservationReceipt = {
+  schemaVersion: typeof SELECTION_COORDINATOR_SCHEMA_VERSION;
+  selectionRevision: number;
+  canvasIdentity: EditorNavigationIdentity;
+  documentEpoch: number;
+  renderInstanceId: string;
+  inspectorSummary: InspectorSelectionSummarySnapshot;
+};
+
+export const EDIT_SCOPE_GRANT_SCHEMA_VERSION = 2 as const;
+
+export type EditScopeOperation =
+  | "moveHtmlInside"
+  | "editTextInside"
+  | "editAttributesInside"
+  | "inspectSharedDefinition";
+
+export type EditScopeGrant = {
+  schemaVersion: typeof EDIT_SCOPE_GRANT_SCHEMA_VERSION;
+  token: string;
+  scopeId: string;
+  boundaryInstanceId: string;
+  sourceNodeId: string;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  modelRevision: string;
+  previewRevision: string;
+  canvasTransactionId: string;
+  route: string;
+  activeDocumentPath: string;
+  operations: EditScopeOperation[];
+  issuedAtMs: number;
+};
+
+export const EDITOR_MOVE_PLAN_SCHEMA_VERSION = 2 as const;
+export const EDITOR_MOVE_EXECUTION_SCHEMA_VERSION = 1 as const;
+
+export type EditorMoveOperation =
+  | "htmlSourceMove"
+  | "atomicTeraMove"
+  | "componentMove"
+  | "blockMove";
+
+export type EditorMoveImpact = {
+  files: string[];
+  editScopeId: string | null;
+  effectScope: EditorNavigationEffectScope;
+  renderedInstanceCount: number;
+  affectsAllRenderedInstances: boolean;
+  requiresPreviewReprojection: boolean;
+};
+
+export type EditorMovePlan = {
+  schemaVersion: typeof EDITOR_MOVE_PLAN_SCHEMA_VERSION;
+  token: string | null;
+  allowed: boolean;
+  reasonCode: string | null;
   reason: string | null;
+  operation: EditorMoveOperation | null;
+  identity: EditorNavigationIdentity;
+  modelRevision: string;
+  route: string;
+  activeDocumentPath: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  position: ProjectMovePosition;
+  impact: EditorMoveImpact;
+  issuedAtMs: number;
+};
+
+export type EditorMovePlanInput = {
+  identity: EditorNavigationIdentity;
+  route: string;
+  activeDocumentPath: string;
+  previewContextRenderInstanceId?: string | null;
+  sourceNodeId: string;
+  targetNodeId: string;
+  position: ProjectMovePosition;
+  editScopeGrant?: EditScopeGrant | null;
+};
+
+export type EditorMoveCommitInput = {
+  identity: EditorNavigationIdentity;
+  route: string;
+  activeDocumentPath: string;
+  previewContextRenderInstanceId?: string | null;
+  planToken: string;
+  editScopeGrant?: EditScopeGrant | null;
+};
+
+export type EditorMoveExecutionStatus = "committed" | "blocked";
+
+export type EditorMoveExecutionReceipt = {
+  schemaVersion: typeof EDITOR_MOVE_EXECUTION_SCHEMA_VERSION;
+  planToken: string;
+  projectRoot: string;
+  runtimeSessionId: string;
+  status: EditorMoveExecutionStatus;
+  operation: EditorMoveOperation;
+  modelRevision: string | null;
+  projectedSourceId: string | null;
+  canvasPatch: CanvasPatch | null;
+  workspaceMutation: ProjectWorkspaceMutationReceipt | null;
+  touchedFiles: string[];
+  diagnostic: string | null;
 };
 
 export type SourceEditLocation = {
@@ -2629,7 +3876,7 @@ export type SourceGraphRelation = {
 
 export type SourceGraphDiagnostic = {
   severity: SourceDiagnosticSeverity;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   file: string | null;
   range: SourceRange | null;
 };
@@ -2649,6 +3896,7 @@ export type SourceGraphPage = {
   frontmatterFormat: SourceDataFormat | null;
   frontmatterParseError: string | null;
   frontmatterNodes: SourceDataNode[];
+  taxonomies: Record<string, string[]>;
   shortcodeParseError: string | null;
   shortcodes: ZolaShortcodeInvocation[];
 };
@@ -2865,12 +4113,12 @@ export type ComponentCapabilities = {
   canRename: boolean;
   canExtract: boolean;
   canDelete: boolean;
-  reason: string | null;
+  reasonDiagnostic: LocalizedDiagnostic | null;
 };
 
 export type ComponentDiagnostic = {
   code: string;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   severity: SourceDiagnosticSeverity;
   file: string | null;
   sourceNodeId: string | null;
@@ -3005,7 +4253,7 @@ export type BlockDefinition = {
 
 export type BlockDiagnostic = {
   code: string;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   severity: SourceDiagnosticSeverity;
   file: string | null;
   sourceNodeId: string | null;
@@ -3059,12 +4307,12 @@ export type UiBlockSourceInstance = {
   status: BlockResolutionStatus;
   markerKind: NativeBlockMarkerKind | null;
   editable: boolean;
-  diagnostic: string | null;
+  diagnostic: LocalizedDiagnostic | null;
   options: NativeBlockOptionState[];
 };
 
 export type UiBlockGraphSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   projectRoot: string;
   runtimeSessionId: string;
   workspaceRevision: number;
@@ -3074,7 +4322,7 @@ export type UiBlockGraphSnapshot = {
   definitions: BlockDefinition[];
   sourceInstances: UiBlockSourceInstance[];
   renderedInstances: RenderedBlockInstance[];
-  diagnostics: string[];
+  diagnostics: LocalizedDiagnostic[];
 };
 
 export type ComponentMutationOperation =
@@ -3126,13 +4374,12 @@ export type ComponentPlannedWrite = {
 };
 
 export type ComponentMutationDiagnostic = {
-  code: string;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   relativePath: string | null;
 };
 
 export type ComponentMutationPlan = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   operation: ComponentMutationOperation;
   definitionId: string | null;
   sourceRelativePath: string | null;
@@ -3199,14 +4446,14 @@ export type DataNodeEditorSnapshot = {
 };
 
 export type BlockRuntimeSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   projectRoot: string;
   runtimeSessionId: string;
   workspaceRevision: number;
   previewRevision: string | null;
   available: boolean;
   instances: RenderedBlockInstance[];
-  diagnostics: string[];
+  diagnostics: LocalizedDiagnostic[];
 };
 
 export type SourceGraphAsset = {
@@ -3233,11 +4480,22 @@ export type SourceGraphDataFile = {
   origin: SourceOrigin;
   themeName: string | null;
   logicalPath: string;
+  loadPaths: string[];
+  location: SourceDataLocation;
   nodeId: string;
   format: SourceDataFormat;
   parseError: string | null;
   nodes: SourceDataNode[];
+  capabilities: SourceCapabilities;
 };
+
+export type SourceDataLocation =
+  | "date"
+  | "project"
+  | "static"
+  | "content"
+  | "output"
+  | "theme";
 
 export type SourceStructuredDocumentKind = "zolaConfig" | "themeConfig";
 
@@ -3321,7 +4579,49 @@ export type SourceGraph = {
   diagnostics: SourceGraphDiagnostic[];
 };
 
-export type TemplateCatalogRole = "page" | "layout" | "partial" | "macro_library";
+export type SourceGraphProjectionReceipt = {
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  graph: SourceGraph;
+};
+
+export type WorkspaceCatalogProjectionReceipt<T> = {
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  catalog: T;
+};
+
+export type TemplateCatalogRole = "page" | "layout" | "partial" | "macro_library" | "shortcode";
+export type TemplateSemanticCategory =
+  | "layout"
+  | "page"
+  | "archive"
+  | "element"
+  | "taxonomy"
+  | "system";
+export type TemplateSemanticRole =
+  | "layout"
+  | "homepage"
+  | "default_page"
+  | "specific_page"
+  | "section_archive"
+  | "section_element"
+  | "taxonomy_list"
+  | "taxonomy_term"
+  | "not_found"
+  | "custom";
+export type TemplateSemanticTargetKind =
+  | "resource"
+  | "site"
+  | "page"
+  | "section"
+  | "taxonomy"
+  | "system"
+  | "custom";
+export type TemplateCatalogContext = "page" | "section" | "system";
+export type TemplateAssignmentSource = "explicit" | "inherited" | "default" | "convention";
 export type TemplateCatalogReferenceKind = "extends" | "includes" | "imports";
 
 export type TemplateCatalogTemplateUsage = {
@@ -3336,7 +4636,14 @@ export type TemplateCatalogPageUsage = {
   url: string;
 };
 
-export type TemplateCatalogEntry = {
+export type TemplateCatalogAssignment = TemplateCatalogPageUsage & {
+  context: TemplateCatalogContext;
+  source: TemplateAssignmentSource;
+  declaredIn: string | null;
+  frontmatterKey: string | null;
+};
+
+export type TemplateResource = {
   id: string;
   file: string;
   name: string;
@@ -3354,23 +4661,232 @@ export type TemplateCatalogEntry = {
   usedByTemplates: TemplateCatalogTemplateUsage[];
   affectedPages: TemplateCatalogPageUsage[];
   canDelete: boolean;
-  deleteBlockedReason: string | null;
+  deleteBlockedDiagnostic: LocalizedDiagnostic | null;
   nodeId: string;
+};
+
+export type TemplateSemanticTarget = {
+  id: string;
+  kind: TemplateSemanticTargetKind;
+  label: string | null;
+  labelDiagnostic: LocalizedDiagnostic | null;
+  file: string | null;
+  url: string | null;
+};
+
+export type TemplateAssignment = {
+  key: string | null;
+  source: TemplateAssignmentSource;
+  declaredIn: string | null;
+  resourceId: string | null;
+  resourceName: string;
+  fallbackName: string | null;
+};
+
+export type TemplatePreviewContext = {
+  kind: TemplateCatalogContext;
+  pageFile: string | null;
+  title: string | null;
+  titleDiagnostic: LocalizedDiagnostic | null;
+  url: string;
+  exact: boolean;
+  available: boolean;
+  unavailableDiagnostic: LocalizedDiagnostic | null;
+};
+
+export type TemplateSemanticEntry = {
+  id: string;
+  category: TemplateSemanticCategory;
+  role: TemplateSemanticRole;
+  label: string | null;
+  labelDiagnostic: LocalizedDiagnostic | null;
+  target: TemplateSemanticTarget;
+  assignment: TemplateAssignment;
+  previewContext: TemplatePreviewContext | null;
+  affectedPages: TemplateCatalogPageUsage[];
 };
 
 export type TemplateCatalogSnapshot = {
   schemaVersion: number;
   activeTheme: string | null;
-  entries: TemplateCatalogEntry[];
+  resources: TemplateResource[];
+  semanticEntries: TemplateSemanticEntry[];
 };
 
-export const TEMPLATE_CATALOG_SCHEMA_VERSION = 1 as const;
+export const TEMPLATE_CATALOG_SCHEMA_VERSION = 5 as const;
 
-export type TemplateDraftRole = TemplateCatalogRole;
+export type TemplateDraftRole = "page" | "layout" | "partial" | "macro_library";
+
+export type TaxonomyCatalogDiagnosticSeverity = "warning" | "error";
+
+export type TaxonomyCatalogDiagnostic = {
+  code: string;
+  severity: TaxonomyCatalogDiagnosticSeverity;
+  diagnostic: LocalizedDiagnostic;
+  file: string | null;
+  taxonomyName: string | null;
+  term: string | null;
+};
+
+export type TaxonomyCatalogPageUsage = {
+  file: string;
+  title: string;
+  url: string;
+};
+
+export type TaxonomyCatalogTemplate = {
+  logicalName: string;
+  file: string | null;
+  origin: SourceOrigin | null;
+  themeName: string | null;
+  fallback: boolean;
+  missing: boolean;
+};
+
+export type TaxonomyCatalogTerm = {
+  id: string;
+  name: string;
+  aliases: string[];
+  slug: string;
+  path: string;
+  permalink: string;
+  pages: TaxonomyCatalogPageUsage[];
+};
+
+export type TaxonomyCatalogCapabilities = {
+  canEditDefinition: boolean;
+  canDeleteDefinition: boolean;
+  canAssignTerms: boolean;
+};
+
+export type TaxonomyCatalogEntry = {
+  id: string;
+  name: string;
+  slug: string;
+  language: string;
+  declared: boolean;
+  render: boolean;
+  feed: boolean;
+  paginateBy: number | null;
+  paginatePath: string | null;
+  path: string;
+  permalink: string;
+  terms: TaxonomyCatalogTerm[];
+  pages: TaxonomyCatalogPageUsage[];
+  listTemplate: TaxonomyCatalogTemplate;
+  termTemplate: TaxonomyCatalogTemplate;
+  capabilities: TaxonomyCatalogCapabilities;
+};
+
+export type TaxonomyCatalogSnapshot = {
+  schemaVersion: number;
+  configPath: string;
+  taxonomyRoot: string | null;
+  defaultLanguage: string;
+  slugifyStrategy: string;
+  entries: TaxonomyCatalogEntry[];
+  diagnostics: TaxonomyCatalogDiagnostic[];
+};
+
+export const TAXONOMY_CATALOG_SCHEMA_VERSION = 2 as const;
+
+export type TaxonomyDefinitionInput = {
+  name: string;
+  language: string;
+  render: boolean;
+  feed: boolean;
+  paginateBy: number | null;
+  paginatePath: string | null;
+};
+
+export type TaxonomyMutationOperation =
+  | { kind: "set_taxonomy_root"; taxonomyRoot: string | null }
+  | {
+      kind: "upsert_definition";
+      originalName: string | null;
+      originalLanguage: string | null;
+      definition: TaxonomyDefinitionInput;
+    }
+  | {
+      kind: "set_page_terms";
+      pageFile: string;
+      taxonomyName: string;
+      terms: string[];
+    }
+  | {
+      kind: "rename_term";
+      taxonomyName: string;
+      language: string;
+      oldTerm: string;
+      newTerm: string;
+    }
+  | {
+      kind: "remove_definition";
+      name: string;
+      language: string;
+      removeAssignments: boolean;
+      expectedUsageCount: number;
+    };
+
+export type TaxonomyMutationInput = {
+  operation: TaxonomyMutationOperation;
+};
+
+export type TaxonomyMutationPlan = {
+  schemaVersion: number;
+  planId: string;
+  operation: string;
+  label: string;
+  configPath: string;
+  touchedFiles: string[];
+  affectedPages: string[];
+  usageCount: number;
+  warnings: string[];
+};
+
+export type TaxonomyMutationApplyReceipt = {
+  plan: TaxonomyMutationPlan;
+  workspace: WorkspaceEntryMutationReceipt;
+};
+
+export const TAXONOMY_MUTATION_SCHEMA_VERSION = 1 as const;
 
 export type CreateTemplateInput = {
   name: string;
   role: TemplateDraftRole;
+  parentTemplateName?: string | null;
+};
+
+export type TemplateSemanticCreateRole = TemplateSemanticRole;
+
+export type CreateSemanticTemplateInput = {
+  role: TemplateSemanticCreateRole;
+  name: string;
+  targetId?: string | null;
+  parentTemplateName?: string | null;
+  includePageContent: boolean;
+};
+
+export type CreateTemplateCollectionInput = {
+  title: string;
+  slug: string;
+  listTemplateName: string;
+  itemTemplateName: string;
+  parentTemplateName?: string | null;
+  includePageContent: boolean;
+};
+
+export type SetTemplateParentInput = {
+  relativePath: string;
+  parentTemplateName?: string | null;
+};
+
+export type TemplateAssignmentKey = "template" | "page_template";
+
+export type SetTemplateAssignmentInput = {
+  contentRelativePath: string;
+  key: TemplateAssignmentKey;
+  templateName?: string | null;
 };
 
 export type DuplicateTemplateInput = {
@@ -3413,7 +4929,7 @@ export type ProjectModelDiagnosticSeverity = "warning" | "error";
 
 export type ProjectModelDiagnostic = {
   severity: ProjectModelDiagnosticSeverity;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   file: string | null;
   range: SourceRange | null;
 };
@@ -3478,7 +4994,7 @@ export type ProjectModelSnapshot = {
   diagnostics: ProjectModelDiagnostic[];
 };
 
-export const PROJECT_AUDIT_SCHEMA_VERSION = 1 as const;
+export const PROJECT_AUDIT_SCHEMA_VERSION = 2 as const;
 
 export type AuditSeverity = "info" | "warning" | "error";
 
@@ -3495,8 +5011,8 @@ export type AuditDiagnostic = {
   severity: AuditSeverity;
   category: AuditCategory;
   code: string;
-  title: string;
-  message: string;
+  titleDiagnostic: LocalizedDiagnostic;
+  messageDiagnostic: LocalizedDiagnostic;
   file: string | null;
   range: SourceRange | null;
 };
@@ -3554,6 +5070,55 @@ export type DesignClassRenameReceipt = {
   changedFiles: string[];
   replacementCount: number;
   workspace: WorkspaceEntryMutationReceipt;
+};
+
+export const DESIGN_TOKEN_CATALOG_SCHEMA_VERSION = 1;
+
+export type DesignTokenVisualKind =
+  | "color"
+  | "font_family"
+  | "font_size"
+  | "font_weight"
+  | "line_height"
+  | "letter_spacing"
+  | "spacing"
+  | "radius"
+  | "shadow"
+  | "transition"
+  | "breakpoint"
+  | "layout"
+  | "layer"
+  | "other";
+
+export type DesignTokenSnapshot = {
+  id: string;
+  name: string;
+  categoryId: string;
+  groupLabel: string;
+  visualKind: DesignTokenVisualKind;
+  rawValue: string;
+  resolvedValue: string | null;
+  dependencies: string[];
+  sourcePath: string;
+  sourceLine: number;
+  editable: boolean;
+  diagnostic: string | null;
+};
+
+export type DesignTokenCategorySnapshot = {
+  id: string;
+  label: string;
+  tokenCount: number;
+};
+
+export type DesignTokenCatalogSnapshot = {
+  schemaVersion: typeof DESIGN_TOKEN_CATALOG_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  categories: DesignTokenCategorySnapshot[];
+  tokens: DesignTokenSnapshot[];
+  warnings: string[];
 };
 
 export const THEME_STYLE_CATALOG_SCHEMA_VERSION = 1;
@@ -3680,14 +5245,22 @@ export type TemplateWorkbenchNavigatorEntry = {
 export type TemplateWorkbenchRenderMode =
   | "page"
   | "includedTemplate"
+  | "canonicalRoute"
   | "macroScenario"
   | "orphanTemplate";
 
 export type TemplateWorkbenchRenderContextKind =
   | "realZolaPage"
   | "realZolaConsumer"
+  | "realZolaRoute"
   | "controlledMacroScenario"
   | "controlledTemplateFixture";
+
+export type TemplateWorkbenchRouteContext = {
+  kind: "taxonomy_list" | "taxonomy_term" | "not_found";
+  label: string;
+  url: string;
+};
 
 export type TemplateWorkbenchRenderContext = {
   kind: TemplateWorkbenchRenderContextKind;
@@ -3697,31 +5270,20 @@ export type TemplateWorkbenchRenderContext = {
 };
 
 export type TemplateWorkbenchPlan = {
-  schemaVersion: 2;
+  schemaVersion: 4;
   projectModelRevision: string;
   activeTemplate: TemplateWorkbenchTemplate;
   directParent: TemplateWorkbenchTemplate | null;
   navigator: TemplateWorkbenchNavigatorEntry[];
   consumers: TemplateWorkbenchConsumer[];
   selectedContext: TemplateWorkbenchConsumer | null;
+  selectedRoute: TemplateWorkbenchRouteContext | null;
   renderMode: TemplateWorkbenchRenderMode;
   renderContext: TemplateWorkbenchRenderContext;
-  diagnostics: Array<{ code: string; message: string }>;
+  diagnostics: Array<{ code: string; messageDiagnostic: LocalizedDiagnostic }>;
 };
 
 export type ProjectMovePosition = "before" | "after" | "inside";
-
-export type ProjectHtmlMoveIntent = {
-  sourceSourceId: string | null;
-  targetSourceId: string | null;
-  sourceLocation?: ProjectSourceEditLocation | null;
-  targetLocation?: ProjectSourceEditLocation | null;
-  sourceTag?: string | null;
-  targetTag?: string | null;
-  sourceSelector?: string | null;
-  targetSelector?: string | null;
-  position: ProjectMovePosition;
-};
 
 export type ProjectHtmlInsertElement = {
   kind?: "html" | "block" | null;
@@ -3828,36 +5390,6 @@ export type ProjectTeraInsertIntent = {
   item: ProjectTeraInsertItem;
 };
 
-export type ProjectTeraMoveIntent = {
-  sourceSourceId: string | null;
-  targetSourceId: string | null;
-  sourceLocation?: ProjectSourceEditLocation | null;
-  targetLocation?: ProjectSourceEditLocation | null;
-  sourceKind?: string | null;
-  targetKind?: string | null;
-  sourceLabel?: string | null;
-  targetTag?: string | null;
-  targetSelector?: string | null;
-  position: ProjectMovePosition;
-};
-
-export type ProjectTemplateEditPermissionIntent = {
-  targetSourceId: string | null;
-  targetSelector?: string | null;
-};
-
-export type TemplateEditPermissionScope = "template" | "partial" | "tera_scope";
-
-export type ProjectTemplateEditPermissionGrant = {
-  file: string;
-  resolvedTargetId: string;
-  targetKind: string;
-  targetLabel: string;
-  targetLocation: ProjectSourceEditLocation | null;
-  selector: string;
-  scope: TemplateEditPermissionScope;
-};
-
 export type ProjectSourceEditLocation = {
   file: string;
   line: number;
@@ -3865,24 +5397,20 @@ export type ProjectSourceEditLocation = {
 };
 
 export type PreviewProjectionIntentKind =
-  | "layer_drop"
   | "html_insert_drop"
   | "html_attributes"
   | "html_text"
   | "html_tag"
   | "html_duplicate"
   | "tera_insert_drop"
-  | "tera_move_drop"
   | "html_delete"
   | "template_delete"
-  | "template_edit"
   | "unsupported";
 
 export type PreviewProjectionIntentStatus = "accepted" | "blocked" | "unsupported";
 
 export type PreviewProjectionEffect =
   | "kernel_mutation_preflight"
-  | "template_permission_preflight"
   | "unsupported";
 
 export type PreviewProjectionDiagnosticSeverity = "info" | "warning" | "error";
@@ -3890,7 +5418,7 @@ export type PreviewProjectionDiagnosticSeverity = "info" | "warning" | "error";
 export type PreviewProjectionDiagnostic = {
   code: string;
   severity: PreviewProjectionDiagnosticSeverity;
-  message: string;
+  diagnostic: LocalizedDiagnostic;
   blocking: boolean;
 };
 
@@ -3926,14 +5454,24 @@ export type PreviewProjectionIntentReceipt = {
   projectRoot: string | null;
   runtimeSessionId: string | null;
   previewRevision: number | null;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   diagnostics: PreviewProjectionDiagnostic[];
 };
 
 export type PreviewStructuralCommandIdentity = {
   expectedProjectRoot: string;
   expectedSessionId: string;
+  expectedSelection?: PreviewStructuralSelectionIdentity | null;
 };
+
+export type SelectionMutationIdentity = {
+  selectionRevision: number;
+  editorNodeId?: string | null;
+  sourceNodeId?: string | null;
+  renderInstanceId?: string | null;
+};
+
+export type PreviewStructuralSelectionIdentity = SelectionMutationIdentity;
 
 export type ProjectHtmlInsertPatch = {
   file: string;
@@ -4139,7 +5677,7 @@ export type PreviewHtmlInsertDropExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewHtmlInsertDropExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectHtmlInsertPatch | null;
   canvasPatch: CanvasPatch | null;
@@ -4173,7 +5711,7 @@ export type PreviewHtmlAttributesExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewHtmlAttributesExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectHtmlAttributePatch | null;
   canvasPatch: CanvasPatch | null;
@@ -4209,7 +5747,7 @@ export type PreviewHtmlTextExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewHtmlTextExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectHtmlTextPatch | null;
   canvasPatch: CanvasPatch | null;
@@ -4243,7 +5781,7 @@ export type PreviewHtmlTagExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewHtmlTagExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectHtmlTagPatch | null;
   canvasPatch: CanvasPatch | null;
@@ -4285,7 +5823,7 @@ export type PreviewHtmlDuplicateExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewHtmlDuplicateExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectHtmlDuplicatePatch | null;
   canvasPatch: CanvasPatch | null;
@@ -4319,7 +5857,7 @@ export type PreviewHtmlDeleteExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewHtmlDeleteExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectHtmlDeletePatch | null;
   canvasPatch: CanvasPatch | null;
@@ -4354,7 +5892,7 @@ export type PreviewTeraDeleteExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewTeraDeleteExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectTeraDeletePatch | null;
   canvasPatch: null;
@@ -4390,109 +5928,13 @@ export type PreviewTeraInsertDropExecutionReceipt = {
   schemaVersion: number;
   intent: PreviewProjectionIntentReceipt;
   status: PreviewTeraInsertDropExecutionStatus;
-  message: string;
+  messageDiagnostic: LocalizedDiagnostic;
   modelRevision: string | null;
   patch: ProjectTeraInsertPatch | null;
   canvasPatch: null;
   workspaceMutation: ProjectWorkspaceMutationReceipt | null;
   touchedFiles: string[];
   diagnostics: PreviewProjectionDiagnostic[];
-};
-
-export type ProjectTeraMovePatch = {
-  file: string;
-  resolvedSourceId: string;
-  resolvedTargetId: string;
-  movedLabel: string;
-  movedKind: string;
-  beforeRevision: string;
-  afterRevision: string;
-  contents: string;
-  sourceLocation: ProjectSourceEditLocation;
-  targetLocation: ProjectSourceEditLocation;
-  sourceStartLine: number;
-  sourceEndLine: number;
-  newStartLine: number;
-};
-
-export type PreviewTeraMoveDropExecutionStatus = "committed" | "blocked";
-
-export type PreviewTeraMoveDropExecutionInput = {
-  intent: PreviewProjectionIntentInput;
-  moveIntent: ProjectTeraMoveIntent;
-};
-
-export type PreviewTeraMoveDropExecutionReceipt = {
-  schemaVersion: number;
-  intent: PreviewProjectionIntentReceipt;
-  status: PreviewTeraMoveDropExecutionStatus;
-  message: string;
-  modelRevision: string | null;
-  patch: ProjectTeraMovePatch | null;
-  canvasPatch: null;
-  workspaceMutation: ProjectWorkspaceMutationReceipt | null;
-  touchedFiles: string[];
-  diagnostics: PreviewProjectionDiagnostic[];
-};
-
-export type PreviewTemplateEditPermissionStatus = "granted" | "blocked";
-
-export type PreviewTemplateEditPermissionInput = {
-  intent: PreviewProjectionIntentInput;
-  editIntent: ProjectTemplateEditPermissionIntent;
-};
-
-export type PreviewTemplateEditPermissionReceipt = {
-  schemaVersion: number;
-  intent: PreviewProjectionIntentReceipt;
-  status: PreviewTemplateEditPermissionStatus;
-  message: string;
-  modelRevision: string | null;
-  grant: ProjectTemplateEditPermissionGrant | null;
-  diagnostics: PreviewProjectionDiagnostic[];
-};
-
-export type PreviewLayerDropExecutionInput = {
-  intent: PreviewProjectionIntentInput;
-  moveIntent: ProjectHtmlMoveIntent;
-};
-
-export type PreviewLayerDropExecutionStatus = "committed" | "blocked";
-
-export type PreviewLayerDropExecutionReceipt = {
-  schemaVersion: number;
-  intent: PreviewProjectionIntentReceipt;
-  status: PreviewLayerDropExecutionStatus;
-  message: string;
-  modelRevision: string | null;
-  projectedSourceId: string | null;
-  patch: ProjectHtmlMovePatch | null;
-  canvasPatch: CanvasPatch | null;
-  workspaceMutation: ProjectWorkspaceMutationReceipt | null;
-  touchedFiles: string[];
-  diagnostics: PreviewProjectionDiagnostic[];
-};
-
-export type ProjectHtmlMovePatch = {
-  file: string;
-  resolvedSourceId: string;
-  resolvedTargetId: string;
-  sourceLabel: string;
-  beforeRevision: string;
-  afterRevision: string;
-  contents: string;
-  sourceLocation: ProjectSourceEditLocation;
-  targetLocation: ProjectSourceEditLocation;
-  sourceStartLine: number;
-  sourceEndLine: number;
-  newStartLine: number;
-};
-
-export type ProjectHtmlMovePlan = {
-  allowed: boolean;
-  diagnostic: string | null;
-  modelRevision: string;
-  patch: ProjectHtmlMovePatch | null;
 };
 
 export type ProjectDiskManifestEntry = {
@@ -4674,13 +6116,12 @@ export type CodexMcpStatus = {
 };
 
 export type UiContextProjection = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   uiRevision: number;
   expectedProjectSessionId: string | null;
   expectedProjectRevision: number | null;
   project: {
-    isZola: boolean;
-    isEmpty: boolean;
+    isOpen: boolean;
     previewBaseUrl: string | null;
     previewWarning: string | null;
   };
@@ -4704,7 +6145,7 @@ export type UiContextProjection = {
     sourceId: string | null;
     templateSourceId: string | null;
     sessionId: string | null;
-    rect: SelectionInfo["rect"] | null;
+    rect: CanvasElementObservation["rect"] | null;
   };
   css: {
     activeSelector: string | null;
@@ -4752,433 +6193,287 @@ export type NativeBlockRuntimeEntry = {
   id: string;
 };
 
-export type PanaMotionFamily =
-  | "animation"
-  | "timeline"
-  | "timer"
-  | "animatable"
-  | "draggable"
-  | "layout"
-  | "scope"
-  | "scroll"
-  | "svg"
-  | "text"
-  | "utilities"
-  | "easing"
-  | "waapi"
-  | "engine"
-  | "interaction"
-  | "custom";
+export type MotionTargetKind = "element" | "selector" | "trigger" | "relative" | "viewport" | "document";
+export type MotionTargetRelation =
+  | "selfElement"
+  | "children"
+  | "descendants"
+  | "parent"
+  | "ancestors"
+  | "siblings"
+  | "nextSibling"
+  | "previousSibling";
+export type MotionTargetScope = "all" | "each" | "first";
 
-export type PanaMotionTargetMode =
-  | "selected"
-  | "dataAnim"
-  | "selector"
-  | "dom"
-  | "array"
-  | "object"
-  | "scope"
-  | "expression";
-
-export type PanaMotionValueMode =
-  | "literal"
-  | "fromTo"
-  | "relative"
-  | "cssVariable"
-  | "color"
-  | "function"
-  | "random"
-  | "expression";
-
-export type PanaMotionExpression = {
-  enabled: boolean;
-  label: string;
-  code: string;
-};
-
-export type PanaMotionTween = {
-  delay: number;
-  duration: number;
-  ease: string;
-};
-
-export type PanaMotionTarget = {
-  mode: PanaMotionTargetMode;
-  selector: string;
+export type MotionTarget = {
+  kind: MotionTargetKind;
   dataAnim: string;
-  expression: string;
+  selector: string;
+  relation: MotionTargetRelation;
+  scope: MotionTargetScope;
 };
 
-export type PanaMotionValue = {
-  mode: PanaMotionValueMode;
-  value: string;
-  from: string;
-  to: string;
-  unit: string;
-  expression: string;
+export type MotionTriggerCommand = "restart" | "play" | "pause" | "reverse" | "toggle" | "reset" | "none";
+export type MotionTrigger =
+  | { type: "load"; phase: "domReady" | "windowLoad" }
+  | { type: "inView"; threshold: number; once: boolean }
+  | {
+      type: "click";
+      firstClick: MotionTriggerCommand;
+      secondClick: MotionTriggerCommand;
+      preventDefault: boolean;
+    }
+  | { type: "hover"; enter: MotionTriggerCommand; leave: MotionTriggerCommand }
+  | {
+      type: "scroll";
+      mode: "trigger" | "scrub";
+      start: string;
+      end: string;
+      smoothMs: number;
+      once: boolean;
+    }
+  | { type: "pointer"; axis: "x" | "y" | "both"; smoothMs: number; rest: number }
+  | { type: "custom"; event: string; preventDefault: boolean };
+
+export type MotionConditions = {
+  mediaQueries: Array<{ id: string; query: string; enabled: boolean }>;
+  reducedMotion: "reduce" | "skipToEnd" | "disable";
 };
 
-export type PanaMotionProperty = {
-  id: string;
-  property: string;
-  category: "css" | "transform" | "cssVariable" | "object" | "htmlAttribute" | "svgAttribute" | "utility";
-  value: PanaMotionValue;
-  modifier: PanaMotionExpression;
-  composition: string;
-  tween: PanaMotionTween;
-};
-
-export type PanaMotionKeyframe = {
-  id: string;
-  label: string;
-  at: string;
-  duration: number;
-  ease: string;
-  properties: PanaMotionProperty[];
-  advanced: PanaMotionExpression[];
-};
-
-export type PanaMotionPlayback = {
-  autoplay: boolean;
-  delay: number;
-  duration: number;
-  loop: number;
-  loopDelay: number;
+export type MotionPlayback = {
+  delayMs: number;
+  repeat: number;
+  infinite: boolean;
+  loopDelayMs: number;
   alternate: boolean;
   reversed: boolean;
-  frameRate: number;
   playbackRate: number;
   playbackEase: string;
-  persist: boolean;
 };
 
-export type PanaMotionStagger = {
-  enabled: boolean;
-  each: number;
-  start: number;
+export type MotionValue = {
+  kind: "number" | "text" | "color" | "cssVariable" | "relative";
+  value: string;
+  unit: string;
+};
+
+export type MotionProperty = {
+  id: string;
+  name: string;
+  category: "transform" | "style" | "cssVariable" | "htmlAttribute" | "svgAttribute" | "object";
+  from?: MotionValue | null;
+  to: MotionValue;
+};
+
+export type MotionKeyframe = {
+  id: string;
+  offset: number;
+  ease: string;
+  properties: MotionProperty[];
+};
+
+export type MotionStagger = {
+  amount: number;
+  mode: "each" | "total";
   from: string;
   reversed: boolean;
   ease: string;
-  grid: string;
-  axis: string;
-  use: string;
-  total: number;
-  modifier: PanaMotionExpression;
 };
 
-export type PanaMotionBaseItem = {
+export type MotionActionRepeat = {
+  count: number;
+  infinite: boolean;
+  alternate: boolean;
+  delayMs: number;
+};
+
+export type MotionSpecialization =
+  | { type: "splitText"; mode: "lines" | "words" | "chars" }
+  | { type: "svgPath"; path: string; autoRotate: boolean }
+  | { type: "svgMorph"; source: string; precision: number }
+  | { type: "svgDraw" };
+
+export type MotionAnimateAction = {
+  type: "animate";
   id: string;
-  type: PanaMotionFamily;
   name: string;
   enabled: boolean;
-  target: PanaMotionTarget;
-  scopeId: string;
-  advanced: PanaMotionExpression[];
-};
-
-export type PanaMotionAnimationItem = PanaMotionBaseItem & {
-  type: "animation";
-  properties: PanaMotionProperty[];
-  keyframes: PanaMotionKeyframe[];
-  playback: PanaMotionPlayback;
-  stagger: PanaMotionStagger;
-  callbacks: Record<string, PanaMotionExpression>;
-  trigger?: "load" | "scroll" | "click" | "hover";
-  scrollRepeat?: boolean;
-  scrollScrub?: boolean;
-  textEffect?: string;
-  targetSelector?: string;
-};
-
-export type PanaMotionTimelineStepType = "animation" | "timer" | "callback" | "set" | "sync" | "label";
-
-export type PanaMotionTimelineStep = {
-  id: string;
-  type: PanaMotionTimelineStepType;
-  label: string;
-  position: string;
+  target: MotionTarget;
+  start: number;
   duration: number;
-  lane: string;
-  targetItemId: string;
-  callback: PanaMotionExpression;
+  mode: "from" | "to" | "fromTo";
+  ease: string;
+  properties: MotionProperty[];
+  keyframes: MotionKeyframe[];
+  stagger?: MotionStagger | null;
+  repeat: MotionActionRepeat;
+  specialization?: MotionSpecialization | null;
 };
 
-export type PanaMotionTimelineTrack = {
+export type MotionSetValue =
+  | { type: "property"; name: string; value: MotionValue }
+  | { type: "attribute"; name: string; value: string }
+  | { type: "addClass"; name: string }
+  | { type: "removeClass"; name: string }
+  | { type: "toggleClass"; name: string };
+
+export type MotionSetAction = {
+  type: "set";
   id: string;
   name: string;
-  collapsed: boolean;
-  height: number;
-  color: string;
+  enabled: boolean;
+  target: MotionTarget;
+  start: number;
+  values: MotionSetValue[];
 };
 
-export type PanaMotionTimelineItem = PanaMotionBaseItem & {
-  type: "timeline";
-  duration: number;
-  tracks: PanaMotionTimelineTrack[];
-  labels: Array<{ id: string; name: string; position: string }>;
-  steps: PanaMotionTimelineStep[];
-  playback: PanaMotionPlayback;
+export type MotionMediaAction = {
+  type: "media";
+  id: string;
+  name: string;
+  enabled: boolean;
+  target: MotionTarget;
+  start: number;
+  command: "play" | "pause" | "toggle" | "reset";
 };
 
-export type PanaMotionTimerItem = PanaMotionBaseItem & {
-  type: "timer";
-  playback: PanaMotionPlayback;
-  callbacks: Record<string, PanaMotionExpression>;
-};
-
-export type PanaMotionAnimatableItem = PanaMotionBaseItem & {
-  type: "animatable";
-  properties: PanaMotionProperty[];
-  mode: "setters" | "getters" | "both";
-  duration: number;
-  ease: string;
-  unit: string;
-  liveSource: "none" | "pointer" | "scroll" | "expression";
-  setterExpression: PanaMotionExpression;
-};
-
-export type PanaMotionDraggableItem = PanaMotionBaseItem & {
-  type: "draggable";
-  axes: "x" | "y" | "both";
-  container: string;
-  trigger: string;
-  snap: string;
-  snapX: string;
-  snapY: string;
-  mapTo: string;
-  modifier: PanaMotionExpression;
-  containerPadding: number;
-  friction: number;
-  releaseContainerFriction: number;
-  velocity: number;
-  minVelocity: number;
-  maxVelocity: number;
-  releaseEase: string;
-  dragSpeed: number;
-  dragThreshold: number;
-  scrollThreshold: number;
-  scrollSpeed: number;
-  cursor: boolean;
-  release: {
-    spring: boolean;
-    mass: number;
-    stiffness: number;
-    damping: number;
-  };
-  callbacks: Record<string, PanaMotionExpression>;
-};
-
-export type PanaMotionLayoutItem = PanaMotionBaseItem & {
-  type: "layout";
-  mode: "record" | "animate" | "update" | "revert";
-  children: string;
-  properties: string;
-  enterFrom: string;
-  leaveTo: string;
-  swapAt: string;
-  includeDisplay: boolean;
-  includeGrid: boolean;
-  includeFlex: boolean;
-  includeOrder: boolean;
-  enterExit: boolean;
-  swapParent: boolean;
-  playback: PanaMotionPlayback;
-  callbacks: Record<string, PanaMotionExpression>;
-};
-
-export type PanaMotionScopeItem = PanaMotionBaseItem & {
-  type: "scope";
-  root: string;
-  defaults: Record<string, string>;
-  mediaQueries: Array<{ id: string; query: string; enabled: boolean }>;
-  reducedMotion: "respect" | "ignore" | "disable";
-  keepTime: boolean;
-};
-
-export type PanaMotionScrollItem = PanaMotionBaseItem & {
-  type: "scroll";
-  container: string;
-  axis: "x" | "y";
-  repeat: boolean;
-  debug: boolean;
-  enter: string;
-  leave: string;
-  threshold: string;
-  sync: "play" | "pause" | "restart" | "reverse" | "progress" | "smooth" | "eased";
-  syncMode: "methods" | "progress" | "smooth" | "eased";
-  syncMethods: string;
-  syncEase: string;
-  smooth: number;
-  callbacks: Record<string, PanaMotionExpression>;
-};
-
-export type PanaMotionSvgItem = PanaMotionBaseItem & {
-  type: "svg";
-  mode: "morphTo" | "createDrawable" | "createMotionPath";
-  attribute: "d" | "points";
-  source: string;
-  path: string;
-  precision: number;
-  offset: number;
-  draw: string;
-  playback: PanaMotionPlayback;
-  callbacks: Record<string, PanaMotionExpression>;
-};
-
-export type PanaMotionTextItem = PanaMotionBaseItem & {
-  type: "text";
-  mode: "splitText" | "scrambleText";
-  split: {
-    lines: boolean;
-    words: boolean;
-    chars: boolean;
-    debug: boolean;
-    includeSpaces: boolean;
-    accessible: boolean;
-    className: string;
-    wrap: string;
-    clone: boolean;
-  };
-  scramble: {
-    text: string;
-    chars: string;
-    override: boolean;
-    ease: string;
-    cursor: string;
-    revealRate: number;
-    revealDelay: number;
-    settleRate: number;
-    settleDuration: number;
-    delay: number;
-    duration: number;
-    from: "auto" | "left" | "center" | "right" | "random" | string;
-    reversed: boolean;
-    perturbation: number;
-    seed: number;
-  };
-  callbacks: Record<string, PanaMotionExpression>;
-};
-
-export type PanaMotionUtilitiesItem = PanaMotionBaseItem & {
-  type: "utilities";
-  utility: string;
-  args: string;
-  stagger: PanaMotionStagger;
-  expression: PanaMotionExpression;
-};
-
-export type PanaMotionEasingItem = PanaMotionBaseItem & {
-  type: "easing";
-  mode: "builtIn" | "cubicBezier" | "linear" | "steps" | "irregular" | "spring" | "custom";
-  value: string;
-  previewDuration: number;
-};
-
-export type PanaMotionWaapiItem = PanaMotionBaseItem & {
-  type: "waapi";
-  properties: PanaMotionProperty[];
-  playback: PanaMotionPlayback;
-  iterations: number;
-  direction: string;
-  easing: string;
-  autoplay: boolean;
-  hardwareAcceleration: boolean;
-  convertEase: boolean;
-  finished: PanaMotionExpression;
-};
-
-export type PanaMotionEngineItem = PanaMotionBaseItem & {
-  type: "engine";
-  timeUnit: "ms" | "s";
-  speed: number;
-  fps: number;
-  precision: number;
-  pauseOnDocumentHidden: boolean;
-  priority: number;
-};
-
-export type PanaMotionInteractionItem = PanaMotionBaseItem & {
-  type: "interaction";
-  event: string;
-  action: string;
-  targetSelector: string;
-  value: string;
-};
-
-export type PanaMotionCustomItem = PanaMotionBaseItem & {
-  type: "custom";
+export type MotionCallAction = {
+  type: "call";
+  id: string;
+  name: string;
+  enabled: boolean;
+  start: number;
   code: string;
 };
 
-export type PanaMotionItem =
-  | PanaMotionAnimationItem
-  | PanaMotionTimelineItem
-  | PanaMotionTimerItem
-  | PanaMotionAnimatableItem
-  | PanaMotionDraggableItem
-  | PanaMotionLayoutItem
-  | PanaMotionScopeItem
-  | PanaMotionScrollItem
-  | PanaMotionSvgItem
-  | PanaMotionTextItem
-  | PanaMotionUtilitiesItem
-  | PanaMotionEasingItem
-  | PanaMotionWaapiItem
-  | PanaMotionEngineItem
-  | PanaMotionInteractionItem
-  | PanaMotionCustomItem;
+export type MotionNestedAction = {
+  type: "nested";
+  id: string;
+  name: string;
+  enabled: boolean;
+  start: number;
+  duration: number;
+  interactionId: string;
+};
 
-export type PanaMotionConfig = {
-  schemaVersion: 1;
-  animeVersion: string;
-  activeItemId: string | null;
-  items: PanaMotionItem[];
+export type MotionAction =
+  | MotionAnimateAction
+  | MotionSetAction
+  | MotionMediaAction
+  | MotionCallAction
+  | MotionNestedAction;
+
+export type MotionInteraction = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: MotionTrigger;
+  triggerTarget: MotionTarget;
+  conditions: MotionConditions;
+  playback: MotionPlayback;
+  domain: "time" | "progress";
+  actions: MotionAction[];
+  markers: Array<{ id: string; name: string; at: number }>;
+};
+
+export type MotionBehavior =
+  | {
+      type: "draggable";
+      id: string;
+      name: string;
+      enabled: boolean;
+      target: MotionTarget;
+      axis: "x" | "y" | "both";
+      container: string;
+      snap: number;
+      friction: number;
+      cursor: boolean;
+    }
+  | {
+      type: "layout";
+      id: string;
+      name: string;
+      enabled: boolean;
+      target: MotionTarget;
+      childrenSelector: string;
+      properties: string[];
+      durationMs: number;
+      ease: string;
+    };
+
+export type MotionCustomCode = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  code: string;
+};
+
+export type MotionDocument = {
+  schemaVersion: 2;
+  animeVersion: "4.4.1";
+  interactions: MotionInteraction[];
+  behaviors: MotionBehavior[];
+  customCode: MotionCustomCode[];
 };
 
 export type PageJsConfig = {
-  version?: 1;
+  version?: 2;
   blocks: NativeBlockRuntimeEntry[];
-  motion?: PanaMotionConfig;
+  motion?: MotionDocument | null;
 };
 
-export type MotionTimelineStepTimingPatch = {
-  position?: string;
-  duration?: number;
-};
+export type MotionMutation =
+  | { command: "createInteraction"; interaction: MotionInteraction }
+  | { command: "updateInteraction"; interaction: MotionInteraction }
+  | { command: "deleteInteraction"; interactionId: string }
+  | { command: "insertAction"; interactionId: string; index: number; action: MotionAction }
+  | { command: "updateAction"; interactionId: string; action: MotionAction }
+  | { command: "deleteAction"; interactionId: string; actionId: string }
+  | { command: "setActionTiming"; interactionId: string; actionId: string; start?: number; duration?: number }
+  | { command: "reorderAction"; interactionId: string; actionId: string; index: number }
+  | { command: "upsertBehavior"; behavior: MotionBehavior }
+  | { command: "deleteBehavior"; behaviorId: string }
+  | { command: "upsertCustomCode"; customCode: MotionCustomCode }
+  | { command: "deleteCustomCode"; customCodeId: string }
+  | { command: "replaceDocument"; document: MotionDocument };
 
-export type MotionTimelineStepTimingInput = {
-  config: PageJsConfig;
-  timelineId?: string | null;
-  stepId?: string | null;
-  stepIndex?: number | null;
-  patch: MotionTimelineStepTimingPatch;
-};
-
-export type MotionGraphTransaction = {
-  schemaVersion: 1;
+export type MotionMutationTransaction = {
+  schemaVersion: 3;
   id: string;
-  command: "motion.timeline.stepTiming";
-  target: string;
-  timelineId: string;
-  stepId: string;
-  forwardPatch: MotionTimelineStepTimingPatch;
-  reversePatch: MotionTimelineStepTimingPatch;
+  command: string;
   beforeConfigHash: string;
   afterConfigHash: string;
+  forward: MotionMutation;
+  inverse: MotionMutation;
 };
 
-export type MotionTimelineStepTimingReceipt = {
-  schemaVersion: 1;
-  command: "motion.timeline.stepTiming";
+export type MotionDiagnostic = {
+  severity: "error" | "warning";
+  path: string;
+  diagnostic: LocalizedDiagnostic;
+};
+
+export type MotionMutationReceipt = {
+  schemaVersion: 3;
+  command: string;
   changed: boolean;
-  timelineId: string;
-  stepId: string;
-  stepIndex: number;
-  beforeStep: Record<string, unknown>;
-  afterStep: Record<string, unknown>;
-  afterConfig: PageJsConfig;
-  transaction: MotionGraphTransaction | null;
-  diagnostics: string[];
+  config: PageJsConfig;
+  diagnostics: MotionDiagnostic[];
+  transaction: MotionMutationTransaction | null;
+};
+
+export type MotionPageMutationInput = {
+  templatePath: string;
+  expectedProjectRoot: string;
+  expectedSessionId: string;
+  expectedEntryRevision: number | null;
+  mutation: MotionMutation;
+};
+
+export type MotionPageMutationReceipt = {
+  mutation: MotionMutationReceipt;
+  pageJs: PageJsDraftStageReceipt;
+  workspaceRevision: number;
 };
 
 export type PageJsDraftEntry = {

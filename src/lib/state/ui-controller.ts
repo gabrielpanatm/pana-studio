@@ -1,4 +1,4 @@
-import { loadStoredUiPreferences, saveUiTheme } from "$lib/ui/preferences";
+import { loadStoredUiPreferences } from "$lib/ui/preferences";
 import {
   beginResizeDrag,
   clampResizeValue,
@@ -23,24 +23,21 @@ export type UiControllerHost = {
 
 export function initUiFromStorage(host: UiControllerHost, storage: Storage) {
   const prefs = loadStoredUiPreferences(storage);
-  if (prefs.theme) host.uiTheme = prefs.theme;
   syncDocumentTheme(host.uiTheme);
   if (prefs.leftPaneWidth !== null) host.leftPaneWidth = clampResizeValue("left", prefs.leftPaneWidth);
   if (prefs.rightPaneWidth !== null) host.rightPaneWidth = clampResizeValue("right", prefs.rightPaneWidth);
   if (prefs.terminalPaneHeight !== null) host.terminalPaneHeight = clampResizeValue("terminal", prefs.terminalPaneHeight);
 }
 
-export function toggleUiTheme(host: UiControllerHost, storage: Storage = window.localStorage) {
-  setUiTheme(host, host.uiTheme === "dark" ? "light" : "dark", storage);
+export function toggleUiTheme(host: UiControllerHost) {
+  setUiTheme(host, host.uiTheme === "dark" ? "light" : "dark");
 }
 
 export function setUiTheme(
   host: UiControllerHost,
   theme: "dark" | "light",
-  storage: Storage = window.localStorage,
 ) {
   host.uiTheme = theme;
-  saveUiTheme(storage, theme);
   syncDocumentTheme(theme);
 }
 

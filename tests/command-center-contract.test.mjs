@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 
-import { appShortcutIntent } from "../src/lib/ui/app-shortcuts.ts";
+import {
+  appShortcutIntent,
+  deleteShortcutIntent,
+} from "../src/lib/ui/app-shortcuts.ts";
 import { commandCenterQuery } from "../src/lib/workbench/command-center.ts";
 
 test("Ctrl+K deschide Command Center înaintea shortcut-urilor editorului", () => {
@@ -38,22 +41,93 @@ test("shortcut-urile shell-ului folosesc convențiile IDE", () => {
   }), "showProblems");
 });
 
+function deleteEvent(key = "Delete") {
+  return {
+    key,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    target: null,
+  };
+}
+
+function selectionSnapshot(kind, focus = { kind: "element" }, resolution = "resolved") {
+  return {
+    resolution,
+    subject: kind ? { kind, tag: kind === "htmlElement" ? "h1" : null, label: kind } : null,
+    focus,
+  };
+}
+
+function deleteState(selectionSnapshot) {
+  return {
+    activeWorkbenchActivity: "editor",
+    applicationSurface: "workbench",
+    centerView: "visual",
+    selectionSnapshot,
+  };
+}
+
+test("Delete este rutat exclusiv de selecția semantică Rust", () => {
+  assert.equal(
+    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot("htmlElement"))),
+    "deleteSelectedHtml",
+  );
+  assert.equal(
+    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot(
+      "htmlElement",
+      { kind: "cssRule", file: "sass/index.scss", selector: ".hero", viewport: null },
+    ))),
+    "deleteSelectedHtml",
+    "focusul CSS păstrează elementul HTML drept țintă principală",
+  );
+  assert.equal(
+    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot("teraBoundary"))),
+    "deleteSelectedTera",
+  );
+  assert.equal(
+    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot("runtimeElement"))),
+    "none",
+  );
+  assert.equal(
+    deleteShortcutIntent(deleteEvent(), deleteState(selectionSnapshot(
+      "htmlElement",
+      { kind: "element" },
+      "notRendered",
+    ))),
+    "none",
+  );
+  assert.equal(deleteShortcutIntent(deleteEvent(), deleteState(null)), "none");
+});
+
 test("prefixele Command Center selectează scope-ul fără a ajunge în query", () => {
   assert.deepEqual(commandCenterQuery("> validare"), {
     query: "validare",
     scope: "commands",
-    scopeLabel: "Comenzi",
   });
   assert.deepEqual(commandCenterQuery("# index.html"), {
     query: "index.html",
     scope: "files",
-    scopeLabel: "Fișiere",
   });
   assert.deepEqual(commandCenterQuery("@ macro card"), {
     query: "macro card",
     scope: "symbols",
-    scopeLabel: "Simboluri",
   });
+});
+
+test("rezultatele Command Center folosesc contractul vizual al entităților selectabile", () => {
+  const commandCenter = readFileSync(
+    new URL("../src/lib/components/workbench/CommandCenter.svelte", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(commandCenter, /class="ui-entity-selectable"/);
+  assert.match(commandCenter, /data-ui-selected=\{selectedIndex === index && hoveredIndex === null/);
+  assert.match(commandCenter, /aria-selected=\{selectedIndex === index/);
+  assert.match(commandCenter, /onmouseenter=\{\(\) => \{ hoveredIndex = index; selectedIndex = index; \}\}/);
+  assert.match(commandCenter, /onmouseleave=\{\(\) => \{ if \(hoveredIndex === index\) hoveredIndex = null; \}\}/);
+  assert.doesNotMatch(commandCenter, /\.results button\.selected/);
 });
 
 test("panoul History nu mai este expus, dar Undo și Redo rămân disponibile", () => {

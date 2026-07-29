@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use crate::localization::LocalizedDiagnostic;
 use crate::source_graph::tera_semantics::{TeraSemanticDocument, TeraSemanticExpression};
 use crate::source_graph::zola_shortcode::ZolaShortcodeInvocation;
 
@@ -40,11 +43,12 @@ pub struct SourceGraphPage {
     pub frontmatter_format: Option<SourceDataFormat>,
     pub frontmatter_parse_error: Option<String>,
     pub frontmatter_nodes: Vec<SourceDataNode>,
+    pub taxonomies: BTreeMap<String, Vec<String>>,
     pub shortcode_parse_error: Option<String>,
     pub shortcodes: Vec<ZolaShortcodeInvocation>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SourcePageKind {
     Page,
@@ -253,7 +257,7 @@ pub struct RenderedBlockInstance {
 #[serde(rename_all = "camelCase")]
 pub struct BlockDiagnostic {
     pub code: String,
-    pub message: String,
+    pub diagnostic: LocalizedDiagnostic,
     pub severity: SourceDiagnosticSeverity,
     pub file: Option<String>,
     pub source_node_id: Option<String>,
@@ -416,14 +420,14 @@ pub struct ComponentCapabilities {
     pub can_rename: bool,
     pub can_extract: bool,
     pub can_delete: bool,
-    pub reason: Option<String>,
+    pub reason_diagnostic: Option<LocalizedDiagnostic>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComponentDiagnostic {
     pub code: String,
-    pub message: String,
+    pub diagnostic: LocalizedDiagnostic,
     pub severity: SourceDiagnosticSeverity,
     pub file: Option<String>,
     pub source_node_id: Option<String>,
@@ -477,10 +481,24 @@ pub struct SourceGraphDataFile {
     pub origin: SourceOrigin,
     pub theme_name: Option<String>,
     pub logical_path: String,
+    pub load_paths: Vec<String>,
+    pub location: SourceDataLocation,
     pub node_id: String,
     pub format: SourceDataFormat,
     pub parse_error: Option<String>,
     pub nodes: Vec<SourceDataNode>,
+    pub capabilities: SourceCapabilities,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceDataLocation {
+    Date,
+    Project,
+    Static,
+    Content,
+    Output,
+    Theme,
 }
 
 #[derive(Clone, Serialize)]
@@ -638,7 +656,7 @@ pub enum SourceNodeKind {
     Tera,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceRange {
     pub start: usize,
@@ -647,6 +665,116 @@ pub struct SourceRange {
     pub column: usize,
     pub end_line: usize,
     pub end_column: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceCapabilityReason {
+    StructuredConfig,
+    StructuredDataNode,
+    StyleFile,
+    TeraTemplateFile,
+    TeraExtends,
+    TeraBlock,
+    TeraInclude,
+    TeraImport,
+    TeraMacro,
+    TeraFor,
+    TeraIf,
+    TeraElif,
+    TeraElse,
+    TeraSet,
+    TeraSetGlobal,
+    TeraFilter,
+    TeraBreak,
+    TeraContinue,
+    TeraSuper,
+    TeraVariable,
+    TeraMacroCall,
+    TeraFunctionCall,
+    ZolaShortcode,
+    NativeBlockMarker,
+    TeraComment,
+    TeraRaw,
+    TeraSyntax,
+    HtmlInTeraLoop,
+    HtmlInTeraCondition,
+    HtmlInTeraMacro,
+    HtmlInTeraLocalScope,
+    HtmlInTeraRaw,
+    MarkdownPage,
+    MarkdownShortcode,
+    StaticJavaScript,
+    StaticAsset,
+    DataOutputReadOnly,
+    DataThemeReadOnly,
+    DataFormatVisualUnsupported,
+}
+
+impl SourceCapabilityReason {
+    pub fn technical_message(self) -> &'static str {
+        match self {
+            Self::StructuredConfig => {
+                "Lossless structured Zola configuration is mutated and validated by Rust."
+            }
+            Self::StructuredDataNode => {
+                "Structured data node mutations are planned losslessly by Rust."
+            }
+            Self::StyleFile => "Style file.",
+            Self::TeraTemplateFile => "Tera template file.",
+            Self::TeraExtends => "Tera inheritance directive.",
+            Self::TeraBlock => "Tera block.",
+            Self::TeraInclude => "Tera include.",
+            Self::TeraImport => "Tera import.",
+            Self::TeraMacro => "Tera macro.",
+            Self::TeraFor => "Tera loop.",
+            Self::TeraIf => "Tera condition.",
+            Self::TeraElif => "Tera elif branch.",
+            Self::TeraElse => "Tera else branch.",
+            Self::TeraSet => "Tera assignment.",
+            Self::TeraSetGlobal => "Tera global assignment.",
+            Self::TeraFilter => "Tera filter block.",
+            Self::TeraBreak => "Tera break.",
+            Self::TeraContinue => "Tera continue.",
+            Self::TeraSuper => "Tera super() call.",
+            Self::TeraVariable => "Tera variable.",
+            Self::TeraMacroCall => "Tera macro call.",
+            Self::TeraFunctionCall => "Tera or Zola function call.",
+            Self::ZolaShortcode => "Zola shortcode invocation.",
+            Self::NativeBlockMarker => "Marker supplied by a native Rust block provider.",
+            Self::TeraComment => "Tera comment.",
+            Self::TeraRaw => "Tera raw block.",
+            Self::TeraSyntax => "Tera syntax.",
+            Self::HtmlInTeraLoop => {
+                "The element is rendered in a Tera loop; direct visual editing is unsafe."
+            }
+            Self::HtmlInTeraCondition => {
+                "The element is rendered conditionally by Tera; direct visual editing is unsafe."
+            }
+            Self::HtmlInTeraMacro => {
+                "The element is defined in a Tera macro; changing it may affect multiple uses."
+            }
+            Self::HtmlInTeraLocalScope => {
+                "The element is in a local Tera scope and must be edited in code."
+            }
+            Self::HtmlInTeraRaw => {
+                "The element is in a Tera raw block; visual editing is disabled."
+            }
+            Self::MarkdownPage => "Zola Markdown page.",
+            Self::MarkdownShortcode => "Zola shortcode invocation in Markdown content.",
+            Self::StaticJavaScript => "Static Zola JavaScript file.",
+            Self::StaticAsset => "Static Zola asset.",
+            Self::DataOutputReadOnly => {
+                "The file is generated in Zola's output directory and is read-only."
+            }
+            Self::DataThemeReadOnly => {
+                "The file is supplied by the active theme and is read-only."
+            }
+            Self::DataFormatVisualUnsupported => {
+                "The format is indexed semantically, but lossless editing currently supports TOML only."
+            }
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -658,11 +786,11 @@ pub struct SourceCapabilities {
     pub can_edit_attributes: bool,
     pub can_move: bool,
     pub can_extract_partial: bool,
-    pub reason: Option<String>,
+    pub reason_code: Option<SourceCapabilityReason>,
 }
 
 impl SourceCapabilities {
-    pub fn code_only(reason: impl Into<String>) -> Self {
+    pub fn code_only(reason_code: SourceCapabilityReason) -> Self {
         Self {
             can_open_in_code: true,
             can_edit_visual: false,
@@ -670,7 +798,7 @@ impl SourceCapabilities {
             can_edit_attributes: false,
             can_move: false,
             can_extract_partial: false,
-            reason: Some(reason.into()),
+            reason_code: Some(reason_code),
         }
     }
 
@@ -682,8 +810,13 @@ impl SourceCapabilities {
             can_edit_attributes: true,
             can_move: true,
             can_extract_partial: true,
-            reason: None,
+            reason_code: None,
         }
+    }
+
+    pub fn technical_reason(&self) -> Option<&'static str> {
+        self.reason_code
+            .map(SourceCapabilityReason::technical_message)
     }
 }
 
@@ -725,7 +858,7 @@ pub enum SourceRelationKind {
 #[serde(rename_all = "camelCase")]
 pub struct SourceGraphDiagnostic {
     pub severity: SourceDiagnosticSeverity,
-    pub message: String,
+    pub diagnostic: LocalizedDiagnostic,
     pub file: Option<String>,
     pub range: Option<SourceRange>,
 }
@@ -735,4 +868,32 @@ pub struct SourceGraphDiagnostic {
 pub enum SourceDiagnosticSeverity {
     Warning,
     Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SourceCapabilities, SourceCapabilityReason};
+
+    #[test]
+    fn source_capabilities_serialize_semantic_reason_codes_without_user_prose() {
+        let value = serde_json::to_value(SourceCapabilities::code_only(
+            SourceCapabilityReason::HtmlInTeraLoop,
+        ))
+        .expect("source capabilities should serialize");
+
+        assert_eq!(value["reasonCode"], "htmlInTeraLoop");
+        assert!(value.get("reason").is_none());
+        assert_eq!(value["canOpenInCode"], true);
+        assert_eq!(value["canEditVisual"], false);
+    }
+
+    #[test]
+    fn visual_html_capabilities_have_no_restriction_reason() {
+        let capabilities = SourceCapabilities::visual_html();
+        let value =
+            serde_json::to_value(&capabilities).expect("source capabilities should serialize");
+
+        assert_eq!(value["reasonCode"], serde_json::Value::Null);
+        assert!(capabilities.technical_reason().is_none());
+    }
 }

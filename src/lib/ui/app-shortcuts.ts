@@ -1,3 +1,5 @@
+import type { SelectionSnapshot } from "$lib/types";
+
 export type AppShortcutIntent =
   | "none"
   | "preventNativeZoom"
@@ -9,13 +11,16 @@ export type AppShortcutIntent =
   | "save"
   | "undo"
   | "redo";
-export type DeleteShortcutIntent = "none" | "deleteSelectedHtml";
+export type DeleteShortcutIntent =
+  | "none"
+  | "deleteSelectedHtml"
+  | "deleteSelectedTera";
 
 type DeleteShortcutState = {
   activeWorkbenchActivity: string;
   applicationSurface: string;
   centerView: string;
-  selectedElement: unknown;
+  selectionSnapshot: SelectionSnapshot | null;
 };
 
 export function isAppTextEditingTarget(target: EventTarget | null) {
@@ -65,6 +70,8 @@ export function deleteShortcutIntent(event: KeyboardEvent, state: DeleteShortcut
   if (state.activeWorkbenchActivity !== "editor") return "none";
   if (state.centerView === "kernel") return "none";
   if (isAppTextEditingTarget(event.target)) return "none";
-  if (!state.selectedElement) return "none";
-  return "deleteSelectedHtml";
+  if (state.selectionSnapshot?.resolution !== "resolved") return "none";
+  if (state.selectionSnapshot.subject?.kind === "htmlElement") return "deleteSelectedHtml";
+  if (state.selectionSnapshot.subject?.kind === "teraBoundary") return "deleteSelectedTera";
+  return "none";
 }

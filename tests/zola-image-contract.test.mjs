@@ -63,7 +63,7 @@ test("refuză surse externe, dinamice, nesuportate și ambigue", () => {
   assert.equal(resolveZolaImageSource("/images/logo.svg", assets).eligible, false);
   const ambiguous = resolveZolaImageSource("/images/hero.jpg", assets);
   assert.equal(ambiguous.eligible, false);
-  assert.match(ambiguous.reason, /ambiguu/);
+  assert.equal(ambiguous.code, "asset_ambiguous");
 });
 
 test("decodează metadata preview base64url și refuză payload invalid", () => {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-global-status"
+description = "Enables the resolve_global_status command without any pre-configured scope."
+commands.allow = ["resolve_global_status"]
+
+[[permission]]
+identifier = "deny-resolve-global-status"
+description = "Denies the resolve_global_status command without any pre-configured scope."
+commands.deny = ["resolve_global_status"]

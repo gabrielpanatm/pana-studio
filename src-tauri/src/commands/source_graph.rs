@@ -24,7 +24,10 @@ use crate::{
         SiteSingleStructureInput, SiteTemplateWriteOrigin,
     },
     project_model::model::ProjectModel,
-    source_graph::{build_template_catalog, SourceGraph, TemplateCatalogSnapshot},
+    source_graph::{
+        build_taxonomy_catalog, build_template_catalog_with_taxonomies, SourceGraph,
+        TaxonomyCatalogSnapshot, TemplateCatalogSnapshot,
+    },
     state::AppState,
 };
 
@@ -123,6 +126,33 @@ pub struct SitePartialIncludeCommandReceipt {
     pub authority: SiteStructureAuthorityReceipt,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceGraphProjectionReceipt {
+    pub project_root: String,
+    pub runtime_session_id: String,
+    pub workspace_revision: u64,
+    pub graph: SourceGraph,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateCatalogProjectionReceipt {
+    pub project_root: String,
+    pub runtime_session_id: String,
+    pub workspace_revision: u64,
+    pub catalog: TemplateCatalogSnapshot,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaxonomyCatalogProjectionReceipt {
+    pub project_root: String,
+    pub runtime_session_id: String,
+    pub workspace_revision: u64,
+    pub catalog: TaxonomyCatalogSnapshot,
+}
+
 #[derive(Clone, Debug)]
 struct SiteStructureTextChange {
     relative_path: String,
@@ -133,7 +163,7 @@ struct SiteStructureTextChange {
 pub fn read_source_graph(
     identity: PreviewStructuralCommandIdentity,
     state: State<AppState>,
-) -> Result<SourceGraph, String> {
+) -> Result<SourceGraphProjectionReceipt, String> {
     read_source_graph_from_accepted_project(&identity, &state)
 }
 
@@ -141,28 +171,115 @@ pub fn read_source_graph(
 pub fn read_template_catalog(
     identity: PreviewStructuralCommandIdentity,
     state: State<AppState>,
-) -> Result<TemplateCatalogSnapshot, String> {
-    read_source_graph_from_accepted_project(&identity, &state)
-        .map(|graph| build_template_catalog(&graph))
+) -> Result<TemplateCatalogProjectionReceipt, String> {
+    use crate::project_model::cache::{
+        capture_project_model_build_lease, publish_project_model_if_current,
+    };
+
+    let (root, session, lease) = capture_project_model_build_lease(&state)?;
+    require_preview_command_identity(&session, &identity)?;
+    let model = crate::project_model::build_project_model_from_workspace_projection(
+        &root,
+        lease.projection(),
+    )?;
+    let graph = model.source_graph.clone();
+    let taxonomy_catalog = ["zola.toml", "config.toml"].iter().find_map(|path| {
+        lease
+            .projection()
+            .source_texts
+            .get(*path)
+            .map(|source| build_taxonomy_catalog(&graph, path, source))
+    });
+    let catalog = build_template_catalog_with_taxonomies(&graph, taxonomy_catalog.as_ref());
+    publish_project_model_if_current(&state, &lease, model)?;
+    Ok(TemplateCatalogProjectionReceipt {
+        project_root: lease.projection().project_root.clone(),
+        runtime_session_id: lease.projection().runtime_session_id.clone(),
+        workspace_revision: lease.projection().revision,
+        catalog,
+    })
+}
+
+#[tauri::command(async)]
+pub fn read_taxonomy_catalog(
+    identity: PreviewStructuralCommandIdentity,
+    state: State<AppState>,
+) -> Result<TaxonomyCatalogProjectionReceipt, String> {
+    use crate::project_model::cache::{
+        capture_project_model_build_lease, publish_project_model_if_current,
+    };
+
+    let (root, session, lease) = capture_project_model_build_lease(&state)?;
+    require_preview_command_identity(&session, &identity)?;
+    let model = crate::project_model::build_project_model_from_workspace_projection(
+        &root,
+        lease.projection(),
+    )?;
+    let graph = model.source_graph.clone();
+    let (config_path, config_source) = ["zola.toml", "config.toml"]
+        .iter()
+        .find_map(|path| {
+            lease
+                .projection()
+                .source_texts
+                .get(*path)
+                .map(|source| ((*path).to_string(), source.as_str()))
+        })
+        .ok_or_else(|| {
+            "Catalogul taxonomiilor cere un zola.toml sau config.toml urmărit de ProjectWorkspace."
+                .to_string()
+        })?;
+    let catalog = build_taxonomy_catalog(&graph, &config_path, config_source);
+    publish_project_model_if_current(&state, &lease, model)?;
+    Ok(TaxonomyCatalogProjectionReceipt {
+        project_root: lease.projection().project_root.clone(),
+        runtime_session_id: lease.projection().runtime_session_id.clone(),
+        workspace_revision: lease.projection().revision,
+        catalog,
+    })
 }
 
 pub(crate) fn read_source_graph_from_accepted_project(
     identity: &PreviewStructuralCommandIdentity,
     state: &State<AppState>,
-) -> Result<SourceGraph, String> {
+) -> Result<SourceGraphProjectionReceipt, String> {
     use crate::project_model::cache::{
         capture_project_model_build_lease, publish_project_model_if_current,
     };
 
     let (root, session, lease) = capture_project_model_build_lease(state)?;
     require_preview_command_identity(&session, identity)?;
-    let model = crate::project_model::build_project_model_from_workspace_projection(
-        &root,
-        lease.projection(),
-    )?;
+    let cached_model = {
+        let workspace = state.project_workspace.lock().map_err(|_| {
+            "Nu am putut citi cache-ul ProjectModel pentru SourceGraph.".to_string()
+        })?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace lipsește pentru SourceGraph.".to_string())?;
+        if workspace.project_model_source_revision == Some(lease.projection().revision) {
+            workspace.project_model.clone()
+        } else {
+            None
+        }
+    };
+    let built_model = cached_model.is_none();
+    let model = match cached_model {
+        Some(model) => model,
+        None => crate::project_model::build_project_model_from_workspace_projection(
+            &root,
+            lease.projection(),
+        )?,
+    };
     let graph = model.source_graph.clone();
-    publish_project_model_if_current(state, &lease, model)?;
-    Ok(graph)
+    if built_model {
+        publish_project_model_if_current(state, &lease, model)?;
+    }
+    Ok(SourceGraphProjectionReceipt {
+        project_root: lease.projection().project_root.clone(),
+        runtime_session_id: lease.projection().runtime_session_id.clone(),
+        workspace_revision: lease.projection().revision,
+        graph,
+    })
 }
 
 #[tauri::command(async)]

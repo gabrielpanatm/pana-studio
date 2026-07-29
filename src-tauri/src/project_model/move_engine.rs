@@ -112,7 +112,30 @@ pub fn plan_html_move(
     intent: &ProjectHtmlMoveIntent,
     aliases: &HashMap<String, String>,
 ) -> ProjectHtmlMovePlan {
-    match plan_html_move_inner(model, intent, aliases) {
+    plan_html_move_with_authority(model, intent, aliases, false)
+}
+
+/// Plans an HTML move after the caller has validated a Rust-issued
+/// `EditScopeGrant` for the exact Tera boundary containing both anchors.
+///
+/// The unscoped planner keeps the conservative SourceGraph capability gate,
+/// while an exact Rust-issued grant may authorize only the otherwise-safe
+/// HTML-in-Tera reasons below.
+pub fn plan_html_move_in_edit_scope(
+    model: &ProjectModel,
+    intent: &ProjectHtmlMoveIntent,
+    aliases: &HashMap<String, String>,
+) -> ProjectHtmlMovePlan {
+    plan_html_move_with_authority(model, intent, aliases, true)
+}
+
+fn plan_html_move_with_authority(
+    model: &ProjectModel,
+    intent: &ProjectHtmlMoveIntent,
+    aliases: &HashMap<String, String>,
+    edit_scope_authorized: bool,
+) -> ProjectHtmlMovePlan {
+    match plan_html_move_inner(model, intent, aliases, edit_scope_authorized) {
         Ok(patch) => ProjectHtmlMovePlan {
             allowed: true,
             diagnostic: None,
@@ -191,6 +214,7 @@ fn plan_html_move_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlMoveIntent,
     aliases: &HashMap<String, String>,
+    edit_scope_authorized: bool,
 ) -> Result<ProjectHtmlMovePatch, String> {
     let source_node = resolve_html_node_for_anchor(
         model,
@@ -232,18 +256,18 @@ fn plan_html_move_inner(
                 .to_string(),
         );
     }
-    if !source_node.capabilities.can_move {
+    if !html_move_capability_allowed(source_node, edit_scope_authorized) {
         return Err(source_node
             .capabilities
-            .reason
-            .clone()
+            .technical_reason()
+            .map(str::to_string)
             .unwrap_or_else(|| "Elementul sursă nu este mutabil vizual.".to_string()));
     }
-    if !target_node.capabilities.can_move {
+    if !html_move_capability_allowed(target_node, edit_scope_authorized) {
         return Err(target_node
             .capabilities
-            .reason
-            .clone()
+            .technical_reason()
+            .map(str::to_string)
             .unwrap_or_else(|| "Destinația nu este mutabilă vizual.".to_string()));
     }
 
@@ -319,6 +343,21 @@ fn plan_html_move_inner(
         source_end_line: applied.source_end_line,
         new_start_line: applied.new_start_line,
     })
+}
+
+fn html_move_capability_allowed(node: &SourceNode, edit_scope_authorized: bool) -> bool {
+    node.capabilities.can_move
+        || (edit_scope_authorized
+            && node.kind == SourceNodeKind::Html
+            && matches!(
+                node.capabilities.reason_code,
+                Some(
+                    crate::source_graph::model::SourceCapabilityReason::HtmlInTeraLoop
+                        | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraCondition
+                        | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraMacro
+                        | crate::source_graph::model::SourceCapabilityReason::HtmlInTeraLocalScope
+                )
+            ))
 }
 
 fn resolve_html_node<'a>(
@@ -1078,6 +1117,68 @@ mod tests {
             .is_some_and(|message| message.contains("template-uri diferite")));
         assert_eq!(fs::read_to_string(index_path).unwrap(), index_before);
         assert_eq!(fs::read_to_string(partial_path).unwrap(), partial_before);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_move_inside_tera_requires_the_explicit_scoped_planner() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = \"http://example.test\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            concat!(
+                "{% for item in section.pages %}\n",
+                "  <section class=\"grid\"></section>\n",
+                "  <article class=\"card\">{{ item.title }}</article>\n",
+                "{% endfor %}\n",
+            ),
+        )
+        .unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let source = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::Html && node.label.starts_with("<article"))
+            .unwrap();
+        let target = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::Html && node.label.starts_with("<section"))
+            .unwrap();
+        assert_eq!(
+            source.capabilities.reason_code,
+            Some(crate::source_graph::model::SourceCapabilityReason::HtmlInTeraLoop)
+        );
+        let intent = ProjectHtmlMoveIntent {
+            source_source_id: Some(source.id.clone()),
+            target_source_id: Some(target.id.clone()),
+            source_location: None,
+            target_location: None,
+            source_tag: Some("article".to_string()),
+            target_tag: Some("section".to_string()),
+            source_selector: None,
+            target_selector: None,
+            position: ProjectMovePosition::Before,
+        };
+
+        let unscoped = plan_html_move(&model, &intent, &HashMap::new());
+        let scoped = plan_html_move_in_edit_scope(&model, &intent, &HashMap::new());
+
+        assert!(!unscoped.allowed);
+        assert!(scoped.allowed, "{:?}", scoped.diagnostic);
         fs::remove_dir_all(root).unwrap();
     }
 

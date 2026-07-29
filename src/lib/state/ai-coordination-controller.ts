@@ -22,9 +22,14 @@ import type {
   AiCoordinationSnapshot,
   EditAuthority,
   ProjectWorkspaceSnapshot,
-  SaveState,
 } from "$lib/types";
+import type {
+  GlobalStatusEscalationRequest,
+  GlobalStatusKind,
+  GlobalStatusPublishOptions,
+} from "$lib/status/global-status";
 import type { ProjectReloadOutcome } from "$lib/state/project-controller";
+import { t } from "$lib/i18n/runtime.svelte";
 
 const AI_COORDINATION_POLL_MS = 500;
 export const AI_COORDINATION_NOTIFICATION_ID = "ai.edit-authority";
@@ -49,15 +54,12 @@ export type AiCoordinationControllerHost = {
   discardSessionAndReloadFromDisk: (
     preferredRelativePath?: string | null,
   ) => Promise<ProjectReloadOutcome>;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  notify: (notification: {
-    id: string;
-    level: "info" | "warning" | "error";
-    title: string;
-    message: string;
-    actionLabel?: string | null;
-    actionId?: string | null;
-  }) => void;
+  setGlobalStatus: (
+    text: string,
+    kind: GlobalStatusKind,
+    options?: GlobalStatusPublishOptions,
+  ) => void;
+  escalateGlobalStatus: (notification: GlobalStatusEscalationRequest) => void;
   clearNotification: (id: string) => void;
 };
 
@@ -86,8 +88,14 @@ async function pollAiCoordination(host: AiCoordinationControllerHost) {
     await applyCoordinationState(host, snapshot.authority);
   } catch (error) {
     host.setGlobalStatus(
-      `Coordonarea AI nu poate fi citită: ${errorMessage(error)}. Mutațiile rămân protejate de nucleul Rust.`,
+      t("ai-coordination-read-failed", { message: errorMessage(error) }),
       "error",
+      {
+        code: "ai.coordination.read-failed",
+        source: "ai",
+        dedupeKey: "ai.coordination.poll",
+        resolutionKey: "ai.coordination.poll",
+      },
     );
   } finally {
     host.aiCoordinationOperationInFlight = false;
@@ -121,12 +129,20 @@ async function applyCoordinationState(
       return;
     case "ai_active":
       host.aiEditLeaseFrontendLockActive = true;
-      host.notify({
-        id: AI_COORDINATION_NOTIFICATION_ID,
-        level: "info",
-        title: "AI editează proiectul",
-        message: `Sursa este rezervată sesiunii ${authority.detail.lease.clientSessionId}. Pană Studio rămâne disponibil pentru navigare, preview și terminal.`,
-      });
+      host.setGlobalStatus(
+        t("ai-coordination-editing-message", {
+          session: authority.detail.lease.clientSessionId,
+        }),
+        "saving",
+        {
+          code: "ai.coordination.active",
+          source: "ai",
+          lifecycle: "until_replaced",
+          escalation: "status_only",
+          dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
+          resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
+        },
+      );
       return;
     case "ai_orphaned":
       host.aiEditLeaseFrontendLockActive = true;
@@ -135,12 +151,12 @@ async function applyCoordinationState(
         resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
         startExternalDiskPolling(host.externalDiskControllerHost());
       }
-      host.notify({
+      host.escalateGlobalStatus({
         id: AI_COORDINATION_NOTIFICATION_ID,
         level: "error",
-        title: "Sesiunea AI s-a întrerupt — editarea rămâne blocată",
-        message: authority.detail.reason,
-        actionLabel: "Adoptă discul și reconstruiește",
+        title: t("ai-coordination-orphaned-title"),
+        message: t("ai-coordination-orphaned-message"),
+        actionLabel: t("ai-coordination-adopt-disk"),
         actionId: AI_COORDINATION_ACCEPT_DISK_ACTION_ID,
       });
       return;
@@ -150,12 +166,14 @@ async function applyCoordinationState(
       return;
     case "conflict":
       host.aiEditLeaseFrontendLockActive = true;
-      host.notify({
+      host.escalateGlobalStatus({
         id: AI_COORDINATION_NOTIFICATION_ID,
         level: "error",
-        title: "Conflict după editarea AI",
-        message: `${authority.detail.reason} ${authority.detail.files.join(", ")}`.trim(),
-        actionLabel: "Acceptă discul și reconciliază",
+        title: t("ai-coordination-conflict-title"),
+        message: t("ai-coordination-conflict-message", {
+          files: authority.detail.files.join(", "),
+        }),
+        actionLabel: t("ai-coordination-accept-disk"),
         actionId: AI_COORDINATION_ACCEPT_DISK_ACTION_ID,
       });
   }
@@ -169,12 +187,18 @@ async function acknowledgePendingRequest(
   host.aiCoordinationHandledRequestId = request.requestId;
   host.aiEditLeaseFrontendLockActive = true;
   host.quiesceExternalReconcileInteractions();
-  host.notify({
-    id: AI_COORDINATION_NOTIFICATION_ID,
-    level: "info",
-    title: "Transfer de autoritate către AI",
-    message: "Pană Studio închide editările tranzitorii și verifică dacă sesiunea este clean.",
-  });
+  host.setGlobalStatus(
+    t("ai-coordination-transfer-message"),
+    "saving",
+    {
+      code: "ai.coordination.transfer",
+      source: "ai",
+      lifecycle: "until_replaced",
+      escalation: "status_only",
+      dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
+      resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
+    },
+  );
 
   let uiQuiescent = true;
   let blockerReason: string | null = null;
@@ -185,7 +209,9 @@ async function acknowledgePendingRequest(
     await suspendAndDrainExternalDiskMonitoring(host.externalDiskControllerHost());
   } catch (error) {
     uiQuiescent = false;
-    blockerReason = `Frontendul nu a putut închide toate editările tranzitorii: ${errorMessage(error)}`;
+    blockerReason = t("ai-coordination-quiesce-failed", {
+      message: errorMessage(error),
+    });
   }
   if (
     host.externalDiskState.checking
@@ -196,8 +222,7 @@ async function acknowledgePendingRequest(
     || host.externalDiskState.truncated
   ) {
     uiQuiescent = false;
-    blockerReason =
-      "Interfața nu poate transfera autoritatea cât timp proiecția disc/surse nu este stabilă și curată.";
+    blockerReason = t("ai-coordination-projection-unstable");
   }
 
   try {
@@ -225,26 +250,32 @@ async function acknowledgePendingRequest(
     const refreshed = await readAiCoordinationState();
     host.aiCoordinationSnapshot = refreshed;
     if (receipt.status === "granted") {
-      host.setGlobalStatus("Autoritatea de editare a fost transferată către AI.", "restored");
+      host.setGlobalStatus(t("ai-coordination-transfer-complete"), "restored", {
+        code: "ai.coordination.transfer-complete",
+        source: "ai",
+        dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
+        resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
+      });
       return;
     }
 
     releaseFrontendLock(host);
-    const reason = receipt.reason ?? "Lease-ul AI nu a putut fi acordat.";
+    const reason = t("ai-coordination-lease-denied");
     const userInstruction = receipt.requiredUserAction === "save_or_discard"
-      ? " Salvează sau aruncă modificările, apoi AI poate solicita din nou lease-ul."
+      ? ` ${t("ai-coordination-save-or-discard")}`
       : "";
-    host.setGlobalStatus(`${reason}${userInstruction}`, "error");
-    host.notify({
+    host.escalateGlobalStatus({
       id: AI_COORDINATION_NOTIFICATION_ID,
       level: "warning",
-      title: "AI așteaptă utilizatorul",
+      title: t("ai-coordination-awaiting-user"),
       message: `${reason}${userInstruction}`,
     });
   } catch (error) {
     releaseFrontendLock(host);
     host.aiCoordinationHandledRequestId = null;
-    host.setGlobalStatus(`Transferul autorității AI a eșuat: ${errorMessage(error)}`, "error");
+    host.setGlobalStatus(t("ai-coordination-transfer-failed", {
+      message: errorMessage(error),
+    }), "error");
   }
 }
 
@@ -256,12 +287,18 @@ async function reconcileReleasedLease(
     host.aiCoordinationReconciliationLeaseId = detail.leaseId;
     resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
     startExternalDiskPolling(host.externalDiskControllerHost());
-    host.notify({
-      id: AI_COORDINATION_NOTIFICATION_ID,
-      level: "info",
-      title: "Se reconciliază modificările AI",
-      message: "Pană Studio verifică manifestul de disc și reconstruiește proiecția înainte de a reda controlul utilizatorului.",
-    });
+    host.setGlobalStatus(
+      t("ai-coordination-reconciling-message"),
+      "saving",
+      {
+        code: "ai.coordination.reconciling",
+        source: "ai",
+        lifecycle: "until_replaced",
+        escalation: "status_only",
+        dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
+        resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
+      },
+    );
     return;
   }
 
@@ -304,13 +341,18 @@ async function reconcileReleasedLease(
   host.aiCoordinationSnapshot = refreshed;
   if (receipt.status === "released_to_user") {
     releaseFrontendLock(host);
-    host.setGlobalStatus("Modificările AI au fost reconciliate; utilizatorul are din nou autoritatea de editare.", "restored");
+    host.setGlobalStatus(t("ai-coordination-reconciled"), "restored", {
+      code: "ai.coordination.reconciled",
+      source: "ai",
+      dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
+      resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
+    });
   } else if (receipt.status === "conflict") {
-    host.notify({
+    host.escalateGlobalStatus({
       id: AI_COORDINATION_NOTIFICATION_ID,
       level: "error",
-      title: "Conflict la reconcilierea AI",
-      message: receipt.reason ?? "Manifestul de disc s-a schimbat din nou în timpul reconcilierii.",
+      title: t("ai-coordination-reconcile-conflict-title"),
+      message: t("ai-coordination-reconcile-conflict-message"),
     });
   }
 }
@@ -363,34 +405,36 @@ async function automaticallyReloadAuthorizedAiReconciliation(
 ) {
   if (host.aiCoordinationAutomaticReloadLeaseId === leaseId) return;
   host.aiCoordinationAutomaticReloadLeaseId = leaseId;
-  host.notify({
-    id: AI_COORDINATION_NOTIFICATION_ID,
-    level: "info",
-    title: "Se aplică modificările AI",
-    message: "Manifestul declarat corespunde discului. Pană Studio reconstruiește automat proiecția proiectului.",
-  });
+  host.setGlobalStatus(
+    t("ai-coordination-applying-message"),
+    "saving",
+    {
+      code: "ai.coordination.applying",
+      source: "ai",
+      lifecycle: "until_replaced",
+      escalation: "status_only",
+      dedupeKey: AI_COORDINATION_NOTIFICATION_ID,
+      resolutionKey: AI_COORDINATION_NOTIFICATION_ID,
+    },
+  );
   try {
     await reloadAuthorizedAiReconciliationFromDisk(host);
     const refreshed = await readAiCoordinationState();
     host.aiCoordinationSnapshot = refreshed;
     if (refreshed.authority.state !== "user_active") {
       throw new Error(
-        "Reconstrucția de pe disc nu a readus coordonarea în starea activă a utilizatorului.",
+        t("ai-coordination-rebuild-not-user-active"),
       );
     }
   } catch (error) {
-    host.notify({
+    host.escalateGlobalStatus({
       id: EXTERNAL_CHANGE_NOTIFICATION_ID,
       level: "error",
-      title: "Aplicarea modificărilor AI a fost oprită",
+      title: t("ai-coordination-apply-stopped"),
       message: errorMessage(error),
-      actionLabel: "Reîncearcă reconstruirea",
+      actionLabel: t("ai-coordination-retry-rebuild"),
       actionId: EXTERNAL_CHANGE_RELOAD_ACTION_ID,
     });
-    host.setGlobalStatus(
-      `Reconstrucția automată după editarea AI a eșuat: ${errorMessage(error)}`,
-      "error",
-    );
   }
 }
 
@@ -435,13 +479,13 @@ async function performAuthorizedAiReconciliationReload(
     const disposition = aiRecoveryAuthorityDisposition(live.authority);
     if (disposition === "reject_active_lease") {
       throw new Error(
-        "Recovery reload este refuzat cât timp o sesiune AI solicită sau deține încă un lease valid.",
+        t("ai-coordination-reload-active-lease"),
       );
     }
     if (disposition === "accept_conflict") {
       const accepted = await acceptAiEditConflictForReconciliation();
       if (accepted.status !== "reconciling" || accepted.authority.state !== "reconciling") {
-        throw new Error(accepted.reason ?? "Conflictul AI nu a putut intra în reconciliere.");
+        throw new Error(t("ai-coordination-conflict-not-reconciling"));
       }
       live = await readAiCoordinationState();
       host.aiCoordinationSnapshot = live;
@@ -455,7 +499,7 @@ async function performAuthorizedAiReconciliationReload(
         || !authorization.authority.detail.recoveryReloadAuthorized
       ) {
         throw new Error(
-          authorization.reason ?? "Nucleul nu a autorizat reconstruirea sesiunii proiectului de pe disc.",
+          t("ai-coordination-rebuild-not-authorized"),
         );
       }
       live = await readAiCoordinationState();
@@ -472,7 +516,7 @@ async function performAuthorizedAiReconciliationReload(
   }
   if (!readyToReload) {
     throw new Error(
-      "Coordonarea AI nu a ajuns la o stare stabilă pentru reconstruirea de pe disc.",
+      t("ai-coordination-not-stable"),
     );
   }
 
@@ -492,8 +536,7 @@ async function performAuthorizedAiReconciliationReload(
         || completion.authority.state !== "user_active"
       ) {
         throw new Error(
-          completion.reason
-            ?? "Nucleul nu a confirmat proiecția frontend a noii ProjectSession.",
+          t("ai-coordination-session-not-confirmed"),
         );
       }
     }
@@ -501,7 +544,7 @@ async function performAuthorizedAiReconciliationReload(
     host.aiCoordinationSnapshot = terminal;
     if (terminal.authority.state !== "user_active") {
       throw new Error(
-        "Recovery reload a reconstruit proiectul, dar autoritatea Rust nu a ajuns în starea user_active.",
+        t("ai-coordination-reload-not-user-active"),
       );
     }
     return outcome;

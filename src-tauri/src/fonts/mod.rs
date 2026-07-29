@@ -1,12 +1,27 @@
-use serde::Serialize;
+mod delivery;
+mod local_import;
+mod roles;
+
+pub use delivery::{
+    annotate_font_preloads, font_delivery_diagnostics, prepare_font_display_update,
+    prepare_font_preload_update, select_font_preload_template, FontDeliveryDiagnostic,
+    FontDisplayMode, FontPreloadRegistration,
+};
+pub use local_import::{
+    prepare_local_font_import, FontLicenseMetadata, FontVariationAxis, LocalFontImportFamilyPlan,
+    LocalFontImportPlan, LocalFontImportPrepared, LOCAL_FONT_IMPORT_SCHEMA_VERSION,
+};
+pub use roles::{prepare_font_role_assignment, read_font_roles, FontRoleAssignment, FontRoleId};
+
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
 
-use crate::zola_theme::ZolaThemeResolver;
+use crate::{kernel::file_buffer_store::hash_bytes, zola_theme::ZolaThemeResolver};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 
 const GOOGLE_FONTS_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -18,19 +33,33 @@ pub struct FontInventory {
     pub families: Vec<LocalFontFamily>,
 }
 
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontCssRegistration {
+    pub registered: bool,
+    pub managed: bool,
+    pub stylesheets: Vec<String>,
+    pub display_modes: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFontDownloadResult {
     pub family: LocalFontFamily,
     pub font_face_css: String,
     pub css_url: String,
+    pub license_file: String,
+    pub license_source_url: String,
     pub variable: bool,
+    pub text_optimized: bool,
+    pub optimized_character_count: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct GoogleFontDownloadPlan {
     pub result: GoogleFontDownloadResult,
     pub writes: Vec<GoogleFontDownloadFileWrite>,
+    pub license_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +79,7 @@ pub struct GoogleFontCatalogFamily {
     pub axes: Vec<GoogleFontAxis>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFontAxis {
     pub tag: String,
@@ -75,6 +104,8 @@ pub struct LocalFontFamily {
     pub origin: FontOrigin,
     pub theme_name: Option<String>,
     pub files: Vec<LocalFontFile>,
+    pub license: FontLicenseMetadata,
+    pub registration: FontCssRegistration,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -85,10 +116,16 @@ pub struct LocalFontFile {
     pub size_bytes: u64,
     pub extension: String,
     pub format: String,
+    pub text_optimized: bool,
+    pub internal_family: Option<String>,
+    pub subfamily: Option<String>,
     pub weight: Option<u16>,
     pub weight_range: Option<FontWeightRange>,
     pub style: Option<String>,
+    pub axes: Vec<FontVariationAxis>,
+    pub license: FontLicenseMetadata,
     pub unicode_range: Option<String>,
+    pub preload: FontPreloadRegistration,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -151,12 +188,23 @@ pub fn scan_font_inventory(zola_root: &Path) -> FontInventory {
                     .then_with(|| left.style.cmp(&right.style))
                     .then_with(|| left.file_name.cmp(&right.file_name))
             });
+            let internal_family = files
+                .iter()
+                .find_map(|file| file.internal_family.clone())
+                .unwrap_or_else(|| family_name_from_directory(&key.directory));
+            let license = files
+                .iter()
+                .map(|file| file.license.clone())
+                .find(|license| !license.is_empty())
+                .unwrap_or_default();
             LocalFontFamily {
-                family: family_name_from_directory(&key.directory),
+                family: internal_family,
                 directory: key.directory,
                 origin: key.origin,
                 theme_name: key.theme_name,
                 files,
+                license,
+                registration: FontCssRegistration::default(),
             }
         })
         .collect();
@@ -176,9 +224,9 @@ pub fn scan_font_inventory(zola_root: &Path) -> FontInventory {
 
 pub fn overlay_staged_font_resources<'a>(
     mut inventory: FontInventory,
-    resources: impl Iterator<Item = (&'a str, usize)>,
+    resources: impl Iterator<Item = (&'a str, &'a [u8])>,
 ) -> FontInventory {
-    for (project_relative_path, size_bytes) in resources {
+    for (project_relative_path, bytes) in resources {
         let relative_zola_path = project_relative_path;
         let path = Path::new(relative_zola_path);
         if !relative_zola_path.starts_with("static/fonturi/") || !is_supported_font_file(path) {
@@ -201,17 +249,7 @@ pub fn overlay_staged_font_resources<'a>(
             .and_then(|extension| extension.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        let file = LocalFontFile {
-            file: project_relative_path.to_string(),
-            file_name: file_name.clone(),
-            size_bytes: size_bytes as u64,
-            extension: extension.clone(),
-            format: font_format_label(&extension).to_string(),
-            weight: detect_font_weight(&file_name),
-            weight_range: detect_font_weight_range(&file_name),
-            style: detect_font_style(&file_name),
-            unicode_range: None,
-        };
+        let file = local_font_file_from_bytes(project_relative_path, &file_name, &extension, bytes);
         let public_directory = directory;
         match inventory
             .families
@@ -234,11 +272,16 @@ pub fn overlay_staged_font_resources<'a>(
                 }
             }
             None => inventory.families.push(LocalFontFamily {
-                family: family_name_from_directory(&public_directory),
+                family: file
+                    .internal_family
+                    .clone()
+                    .unwrap_or_else(|| family_name_from_directory(&public_directory)),
                 directory: public_directory,
                 origin: FontOrigin::Local,
                 theme_name: None,
+                license: file.license.clone(),
                 files: vec![file],
+                registration: FontCssRegistration::default(),
             }),
         }
     }
@@ -262,6 +305,166 @@ pub fn overlay_staged_font_resources<'a>(
             .then_with(|| left.directory.cmp(&right.directory))
     });
     inventory
+}
+
+pub fn annotate_font_registrations<'a>(
+    mut inventory: FontInventory,
+    sources: impl Iterator<Item = (&'a str, &'a str)>,
+) -> FontInventory {
+    let stylesheet_sources = sources
+        .filter(|(path, _)| is_stylesheet_path(path))
+        .collect::<Vec<_>>();
+
+    for family in &mut inventory.families {
+        let normalized_family = normalize_font_family_name(&family.family);
+        let marker = managed_font_start_marker(&family.family);
+        let mut stylesheets = Vec::new();
+        let mut display_modes = Vec::new();
+        let mut managed = false;
+
+        for (path, source) in &stylesheet_sources {
+            let mut matched = false;
+            for block in css_font_face_blocks(source) {
+                let declarations = parse_css_declarations(block);
+                let Some(block_family) = declarations.get("font-family") else {
+                    continue;
+                };
+                if normalize_font_family_name(block_family) != normalized_family {
+                    continue;
+                }
+                matched = true;
+                if let Some(display) = declarations.get("font-display") {
+                    let display = display.trim().to_ascii_lowercase();
+                    if !display.is_empty() && !display_modes.contains(&display) {
+                        display_modes.push(display);
+                    }
+                }
+            }
+            if matched {
+                stylesheets.push((*path).to_string());
+                managed |= source.contains(&marker);
+            }
+        }
+
+        stylesheets.sort();
+        stylesheets.dedup();
+        display_modes.sort();
+        family.registration = FontCssRegistration {
+            registered: !stylesheets.is_empty(),
+            managed,
+            stylesheets,
+            display_modes,
+        };
+    }
+
+    inventory
+}
+
+pub fn font_family_registration_count(source: &str, family: &str) -> usize {
+    let normalized_family = normalize_font_family_name(family);
+    css_font_face_blocks(source)
+        .into_iter()
+        .filter(|block| {
+            parse_css_declarations(block)
+                .get("font-family")
+                .is_some_and(|value| normalize_font_family_name(value) == normalized_family)
+        })
+        .count()
+}
+
+pub fn select_font_face_stylesheet<'a>(
+    sources: impl Iterator<Item = (&'a str, &'a str)>,
+) -> Option<String> {
+    sources
+        .filter(|(path, _)| {
+            is_stylesheet_path(path) && !path.starts_with("public/") && !path.contains("/public/")
+        })
+        .filter_map(|(path, source)| {
+            let normalized = path.replace('\\', "/");
+            let score = if source.contains("/* pana-studio-font:") {
+                0
+            } else if normalized.ends_with("sass/css-framework/_baza.scss") {
+                10
+            } else if normalized.ends_with("/_baza.scss") || normalized == "_baza.scss" {
+                20
+            } else if source.contains("@font-face") {
+                30
+            } else {
+                return None;
+            };
+            Some((score, normalized.len(), normalized))
+        })
+        .min()
+        .map(|(_, _, path)| path)
+}
+
+pub fn upsert_managed_font_face_block(
+    source: &str,
+    family: &str,
+    font_face_css: &str,
+) -> Result<String, String> {
+    let start = managed_font_start_marker(family);
+    let end = managed_font_end_marker(family);
+    let block = format!("{start}\n{}\n{end}", font_face_css.trim());
+
+    if let Some(start_index) = source.find(&start) {
+        let end_search_start = start_index + start.len();
+        let Some(relative_end) = source[end_search_start..].find(&end) else {
+            return Err(format!(
+                "Blocul @font-face administrat pentru {family} are marker de început fără marker de sfârșit."
+            ));
+        };
+        let end_index = end_search_start + relative_end + end.len();
+        return Ok(format!(
+            "{}{}{}",
+            &source[..start_index],
+            block,
+            &source[end_index..]
+        ));
+    }
+    if source.contains(&end) {
+        return Err(format!(
+            "Blocul @font-face administrat pentru {family} are marker de sfârșit fără marker de început."
+        ));
+    }
+
+    let trimmed = source.trim_end();
+    if trimmed.is_empty() {
+        Ok(format!("{block}\n"))
+    } else {
+        Ok(format!("{trimmed}\n\n{block}\n"))
+    }
+}
+
+pub fn remove_managed_font_face_block(source: &str, family: &str) -> Result<String, String> {
+    let start = managed_font_start_marker(family);
+    let end = managed_font_end_marker(family);
+    let Some(start_index) = source.find(&start) else {
+        if source.contains(&end) {
+            return Err(format!(
+                "Blocul @font-face administrat pentru {family} are marker de sfârșit fără marker de început."
+            ));
+        }
+        return Err(format!(
+            "Blocul @font-face administrat pentru {family} nu mai există."
+        ));
+    };
+    let end_search_start = start_index + start.len();
+    let Some(relative_end) = source[end_search_start..].find(&end) else {
+        return Err(format!(
+            "Blocul @font-face administrat pentru {family} are marker de început fără marker de sfârșit."
+        ));
+    };
+    let end_index = end_search_start + relative_end + end.len();
+    let before = source[..start_index].trim_end();
+    let after = source[end_index..].trim_start_matches(['\r', '\n']);
+
+    match (before.is_empty(), after.is_empty()) {
+        (true, true) => Ok(String::new()),
+        (true, false) => Ok(after.to_string()),
+        (false, true) => Ok(format!("{before}\n")),
+        (false, false) => Ok(format!("{before}\n\n{after}")),
+    }
 }
 
 pub fn search_google_fonts(
@@ -306,7 +509,10 @@ fn filter_google_font_catalog(
 pub fn plan_google_font_family_download(
     family: &str,
     weights: &[u16],
+    styles: &[String],
     variable: bool,
+    axes: &[GoogleFontAxis],
+    character_set: Option<&str>,
 ) -> Result<GoogleFontDownloadPlan, String> {
     let family = family.trim();
     if family.is_empty() {
@@ -323,8 +529,19 @@ pub fn plan_google_font_family_download(
     } else {
         normalized_weights(weights)
     };
-    let css_url = google_fonts_css_url(family, &weights, variable);
+    let styles = normalized_google_font_styles(styles);
+    let advanced_axes = normalized_google_font_axes(family, axes)?;
+    let character_set = normalize_google_character_set(character_set)?;
+    let css_url = google_fonts_css_url(
+        family,
+        &weights,
+        &styles,
+        variable,
+        &advanced_axes,
+        character_set.as_deref(),
+    );
     let client = google_fonts_client()?;
+    let license = fetch_google_font_license(&client, family)?;
     let css = client
         .get(&css_url)
         .header(ACCEPT, "text/css,*/*;q=0.1")
@@ -353,6 +570,7 @@ pub fn plan_google_font_family_download(
     }
 
     let family_slug = slugify_family(family);
+    let license_file = format!("static/fonturi/{family_slug}/LICENTA.txt");
     let mut files = Vec::new();
     let mut writes = Vec::new();
     let mut css_blocks = Vec::new();
@@ -361,11 +579,19 @@ pub fn plan_google_font_family_download(
         let extension = "woff2".to_string();
         let weight_range = face.weight_range.or(variable_range);
         let weight_segment = font_weight_file_segment(face.weight, weight_range);
+        let optimization_segment = character_set
+            .as_ref()
+            .map(|characters| {
+                let hash = hash_bytes(characters.as_bytes());
+                format!("-text-{}", &hash[..hash.len().min(8)])
+            })
+            .unwrap_or_default();
         let file_name = format!(
-            "{}-{}-{}-{}.{}",
+            "{}-{}-{}{}-{}.{}",
             family_slug,
             face.style.as_deref().unwrap_or("normal"),
             weight_segment,
+            optimization_segment,
             index + 1,
             extension
         );
@@ -382,6 +608,7 @@ pub fn plan_google_font_family_download(
             })?
             .bytes()
             .map_err(|error| format!("Nu am putut citi fontul {}: {error}", face.url))?;
+        let parsed_metadata = local_import::parse_font_metadata(&bytes).ok();
         let project_relative = format!("static/fonturi/{family_slug}/{file_name}");
         let public_url = format!("/fonturi/{family_slug}/{file_name}");
         files.push(LocalFontFile {
@@ -390,10 +617,19 @@ pub fn plan_google_font_family_download(
             size_bytes: bytes.len() as u64,
             extension: extension.clone(),
             format: font_format_label(&extension).to_string(),
+            text_optimized: character_set.is_some(),
+            internal_family: Some(family.to_string()),
+            subfamily: None,
             weight: face.weight,
             weight_range,
             style: face.style.clone(),
+            axes: parsed_metadata
+                .as_ref()
+                .map(|metadata| metadata.axes.clone())
+                .unwrap_or_default(),
+            license: FontLicenseMetadata::default(),
             unicode_range: face.unicode_range.clone(),
+            preload: FontPreloadRegistration::default(),
         });
         css_blocks.push(google_font_face_css(
             family,
@@ -416,13 +652,88 @@ pub fn plan_google_font_family_download(
                 origin: FontOrigin::Local,
                 theme_name: None,
                 files,
+                license: FontLicenseMetadata {
+                    description: Some(license.identifier.clone()),
+                    url: Some(license.source_url.clone()),
+                },
+                registration: FontCssRegistration::default(),
             },
             font_face_css: css_blocks.join("\n\n"),
             css_url,
-            variable,
+            license_file,
+            license_source_url: license.source_url,
+            variable: variable || !advanced_axes.is_empty(),
+            text_optimized: character_set.is_some(),
+            optimized_character_count: character_set
+                .as_ref()
+                .map(|characters| characters.chars().count())
+                .unwrap_or_default(),
         },
         writes,
+        license_text: license.text,
     })
+}
+
+fn is_stylesheet_path(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref(),
+        Some("css" | "scss")
+    )
+}
+
+fn css_font_face_blocks(source: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative_start) = source[cursor..].find("@font-face") {
+        let start = cursor + relative_start;
+        let Some(relative_open) = source[start..].find('{') else {
+            break;
+        };
+        let open = start + relative_open;
+        let mut depth = 0usize;
+        let mut close = None;
+        for (offset, character) in source[open..].char_indices() {
+            match character {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        close = Some(open + offset + character.len_utf8());
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(close) = close else {
+            break;
+        };
+        blocks.push(&source[open + 1..close - 1]);
+        cursor = close;
+    }
+    blocks
+}
+
+fn normalize_font_family_name(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches(|character| matches!(character, '\'' | '"'))
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+pub(crate) fn managed_font_start_marker(family: &str) -> String {
+    format!("/* pana-studio-font:{}:start */", slugify_family(family))
+}
+
+pub(crate) fn managed_font_end_marker(family: &str) -> String {
+    format!("/* pana-studio-font:{}:end */", slugify_family(family))
 }
 
 fn google_font_catalog() -> Result<Vec<GoogleFontCatalogFamily>, String> {
@@ -463,6 +774,97 @@ fn google_fonts_client() -> Result<reqwest::blocking::Client, String> {
         .user_agent(GOOGLE_FONTS_USER_AGENT)
         .build()
         .map_err(|error| format!("Nu am putut pregăti clientul HTTP: {error}"))
+}
+
+struct GoogleFontLicense {
+    identifier: String,
+    text: String,
+    source_url: String,
+}
+
+fn fetch_google_font_license(
+    client: &reqwest::blocking::Client,
+    family: &str,
+) -> Result<GoogleFontLicense, String> {
+    let repository_slug = family
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if repository_slug.is_empty() {
+        return Err("Familia nu poate fi mapată la catalogul oficial de licențe.".to_string());
+    }
+
+    for root in ["ofl", "apache", "ufl"] {
+        let base =
+            format!("https://raw.githubusercontent.com/google/fonts/main/{root}/{repository_slug}");
+        let metadata_url = format!("{base}/METADATA.pb");
+        let response = client
+            .get(&metadata_url)
+            .send()
+            .map_err(|error| format!("Nu am putut verifica licența Google Fonts: {error}"))?;
+        if !response.status().is_success() {
+            continue;
+        }
+        let metadata = response
+            .text()
+            .map_err(|error| format!("Nu am putut citi METADATA.pb pentru {family}: {error}"))?;
+        let identifier = metadata
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("license:")
+                    .map(|value| value.trim().trim_matches('"').to_string())
+            })
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| root.to_ascii_uppercase());
+        let mut candidates = metadata
+            .lines()
+            .filter_map(|line| {
+                let value = line.trim().strip_prefix("source_file:")?;
+                let value = value.trim().trim_matches('"');
+                let file_name = value.rsplit('/').next().unwrap_or(value);
+                let lower = file_name.to_ascii_lowercase();
+                (lower.ends_with(".txt")
+                    && (lower.contains("license")
+                        || lower.contains("ofl")
+                        || lower.contains("ufl")))
+                .then(|| file_name.to_string())
+            })
+            .collect::<Vec<_>>();
+        candidates.extend(
+            ["OFL.txt", "LICENSE.txt", "UFL.txt"]
+                .into_iter()
+                .map(str::to_string),
+        );
+        candidates.sort();
+        candidates.dedup();
+
+        for candidate in candidates {
+            let source_url = format!("{base}/{candidate}");
+            let response = client.get(&source_url).send().map_err(|error| {
+                format!("Nu am putut descărca licența pentru {family}: {error}")
+            })?;
+            if !response.status().is_success() {
+                continue;
+            }
+            let text = response.text().map_err(|error| {
+                format!("Nu am putut citi licența oficială pentru {family}: {error}")
+            })?;
+            if text.trim().is_empty() {
+                continue;
+            }
+            return Ok(GoogleFontLicense {
+                identifier,
+                text,
+                source_url,
+            });
+        }
+    }
+
+    Err(format!(
+        "Font Manager nu a găsit licența oficială pentru {family} în repository-ul google/fonts și a oprit instalarea."
+    ))
 }
 
 fn google_font_catalog_url() -> String {
@@ -706,12 +1108,12 @@ fn normalized_variable_weight_range(weights: &[u16]) -> FontWeightRange {
     let mut valid = weights
         .iter()
         .copied()
-        .filter(|weight| (100..=900).contains(weight) && weight % 100 == 0)
+        .filter(|weight| (1..=1000).contains(weight))
         .collect::<Vec<_>>();
     valid.sort_unstable();
     valid.dedup();
-    let start = valid.first().copied().unwrap_or(100).clamp(100, 900);
-    let end = valid.last().copied().unwrap_or(900).clamp(100, 900);
+    let start = valid.first().copied().unwrap_or(100).clamp(1, 1000);
+    let end = valid.last().copied().unwrap_or(900).clamp(1, 1000);
     if start <= end {
         FontWeightRange { start, end }
     } else {
@@ -722,9 +1124,132 @@ fn normalized_variable_weight_range(weights: &[u16]) -> FontWeightRange {
     }
 }
 
-fn google_fonts_css_url(family: &str, weights: &[u16], variable: bool) -> String {
+fn normalized_google_font_styles(styles: &[String]) -> Vec<String> {
+    let mut normalized = styles
+        .iter()
+        .map(|style| style.trim().to_ascii_lowercase())
+        .filter(|style| matches!(style.as_str(), "normal" | "italic"))
+        .collect::<Vec<_>>();
+    normalized.sort_by_key(|style| u8::from(style == "italic"));
+    normalized.dedup();
+    if normalized.is_empty() {
+        vec!["normal".to_string()]
+    } else {
+        normalized
+    }
+}
+
+fn normalized_google_font_axes(
+    family: &str,
+    requested: &[GoogleFontAxis],
+) -> Result<Vec<GoogleFontAxis>, String> {
+    if requested.is_empty() {
+        return Ok(Vec::new());
+    }
+    if requested.len() > 8 {
+        return Err("Google Fonts a refuzat mai mult de 8 axe variabile.".to_string());
+    }
+    let catalog = google_font_catalog()?;
+    let catalog_family = catalog
+        .iter()
+        .find(|candidate| candidate.family.eq_ignore_ascii_case(family))
+        .ok_or_else(|| format!("Familia {family} nu mai există în catalogul Google Fonts."))?;
+    let mut normalized = Vec::new();
+    for axis in requested {
+        let requested_tag = axis.tag.trim();
+        if matches!(requested_tag.to_ascii_lowercase().as_str(), "ital" | "wght") {
+            return Err(format!(
+                "Axa {requested_tag} este controlată separat de stil și greutate."
+            ));
+        }
+        if requested_tag.len() != 4
+            || !requested_tag
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric())
+        {
+            return Err(format!(
+                "Tag-ul axei {requested_tag} nu este OpenType valid."
+            ));
+        }
+        if !axis.start.is_finite() || !axis.end.is_finite() || axis.start > axis.end {
+            return Err(format!("Intervalul axei {requested_tag} este invalid."));
+        }
+        let available = catalog_family
+            .axes
+            .iter()
+            .find(|candidate| candidate.tag.eq_ignore_ascii_case(requested_tag))
+            .ok_or_else(|| {
+                format!(
+                    "Familia {family} nu declară axa {requested_tag} în catalogul Google Fonts."
+                )
+            })?;
+        let tag = available.tag.clone();
+        if axis.start < available.start || axis.end > available.end {
+            return Err(format!(
+                "Axa {tag} trebuie să rămână în intervalul {}–{} declarat de Google Fonts.",
+                format_axis_number(available.start),
+                format_axis_number(available.end)
+            ));
+        }
+        if normalized
+            .iter()
+            .any(|candidate: &GoogleFontAxis| candidate.tag.eq_ignore_ascii_case(&tag))
+        {
+            return Err(format!("Axa {tag} a fost solicitată de două ori."));
+        }
+        normalized.push(GoogleFontAxis {
+            tag,
+            start: axis.start,
+            end: axis.end,
+        });
+    }
+    normalized.sort_by(|left, right| left.tag.cmp(&right.tag));
+    Ok(normalized)
+}
+
+fn normalize_google_character_set(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let mut normalized = String::new();
+    let mut seen = HashSet::new();
+    for character in value.chars() {
+        let character = if character.is_whitespace() {
+            ' '
+        } else {
+            character
+        };
+        if character.is_control() {
+            return Err(
+                "Optimizarea caracterelor nu acceptă caractere de control invizibile.".to_string(),
+            );
+        }
+        if seen.insert(character) {
+            normalized.push(character);
+        }
+    }
+    if normalized.trim().is_empty() {
+        return Ok(None);
+    }
+    if normalized.chars().count() > 320 {
+        return Err(
+            "Optimizarea Google Fonts acceptă cel mult 320 de caractere unice per instalare."
+                .to_string(),
+        );
+    }
+    Ok(Some(normalized))
+}
+
+fn google_fonts_css_url(
+    family: &str,
+    weights: &[u16],
+    styles: &[String],
+    variable: bool,
+    advanced_axes: &[GoogleFontAxis],
+    character_set: Option<&str>,
+) -> String {
     let family_query = percent_encode_family(family);
-    let weight_spec = if variable {
+    let weight_values = if variable {
         let range = normalized_variable_weight_range(weights);
         if range.start == range.end {
             range.start.to_string()
@@ -732,15 +1257,93 @@ fn google_fonts_css_url(family: &str, weights: &[u16], variable: bool) -> String
             format!("{}..{}", range.start, range.end)
         }
     } else {
-        weights
-            .iter()
-            .map(u16::to_string)
-            .collect::<Vec<_>>()
-            .join(";")
+        String::new()
     };
-    format!(
-        "https://fonts.googleapis.com/css2?family={family_query}:wght@{weight_spec}&display=swap"
-    )
+    let styles = normalized_google_font_styles(styles);
+    let has_ital_axis = styles != ["normal"];
+    let mut axis_tags = advanced_axes
+        .iter()
+        .map(|axis| axis.tag.as_str())
+        .chain(std::iter::once("wght"))
+        .chain(has_ital_axis.then_some("ital"))
+        .collect::<Vec<_>>();
+    axis_tags.sort();
+    let rows = if variable {
+        styles
+            .iter()
+            .map(|style| {
+                axis_tags
+                    .iter()
+                    .map(|tag| match *tag {
+                        "ital" => u8::from(style == "italic").to_string(),
+                        "wght" => weight_values.clone(),
+                        tag => {
+                            let axis = advanced_axes
+                                .iter()
+                                .find(|axis| axis.tag == tag)
+                                .expect("normalized Google axis must exist");
+                            format_axis_range(axis.start, axis.end)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect::<Vec<_>>()
+    } else {
+        styles
+            .iter()
+            .flat_map(|style| {
+                weights
+                    .iter()
+                    .map(|weight| {
+                        axis_tags
+                            .iter()
+                            .map(|tag| match *tag {
+                                "ital" => u8::from(style == "italic").to_string(),
+                                "wght" => weight.to_string(),
+                                tag => {
+                                    let axis = advanced_axes
+                                        .iter()
+                                        .find(|axis| axis.tag == tag)
+                                        .expect("normalized Google axis must exist");
+                                    format_axis_range(axis.start, axis.end)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let axis_spec = format!("{}@{}", axis_tags.join(","), rows.join(";"));
+    let mut url =
+        format!("https://fonts.googleapis.com/css2?family={family_query}:{axis_spec}&display=swap");
+    if let Some(character_set) = character_set {
+        url.push_str("&text=");
+        url.push_str(&percent_encode_query_value(character_set));
+    }
+    url
+}
+
+fn format_axis_range(start: f64, end: f64) -> String {
+    if (start - end).abs() < f64::EPSILON {
+        format_axis_number(start)
+    } else {
+        format!("{}..{}", format_axis_number(start), format_axis_number(end))
+    }
+}
+
+fn format_axis_number(value: f64) -> String {
+    if value.fract().abs() < f64::EPSILON {
+        format!("{value:.0}")
+    } else {
+        let formatted = format!("{value:.4}");
+        formatted
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
+    }
 }
 
 fn percent_encode_family(family: &str) -> String {
@@ -749,6 +1352,19 @@ fn percent_encode_family(family: &str) -> String {
         .map(|byte| match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => (byte as char).to_string(),
             b' ' => "+".to_string(),
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+fn percent_encode_query_value(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (*byte as char).to_string()
+            }
             _ => format!("%{byte:02X}"),
         })
         .collect()
@@ -1007,6 +1623,19 @@ fn is_supported_font_file(path: &Path) -> bool {
     )
 }
 
+fn is_text_optimized_font_file_name(file_name: &str) -> bool {
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(file_name);
+    let segments = stem.split('-').collect::<Vec<_>>();
+    segments.windows(2).any(|pair| {
+        pair[0] == "text"
+            && pair[1].len() == 8
+            && pair[1].bytes().all(|byte| byte.is_ascii_hexdigit())
+    })
+}
+
 fn local_font_file(path: &Path, relative_zola_path: &str) -> LocalFontFile {
     let file_name = path
         .file_name()
@@ -1018,16 +1647,70 @@ fn local_font_file(path: &Path, relative_zola_path: &str) -> LocalFontFile {
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    LocalFontFile {
-        file: relative_zola_path.to_string(),
-        file_name: file_name.clone(),
-        size_bytes: path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
-        extension: extension.clone(),
-        format: font_format_label(&extension).to_string(),
-        weight: detect_font_weight(&file_name),
-        weight_range: detect_font_weight_range(&file_name),
-        style: detect_font_style(&file_name),
-        unicode_range: None,
+    let bytes = fs::read(path).ok();
+    bytes
+        .as_deref()
+        .map(|bytes| local_font_file_from_bytes(relative_zola_path, &file_name, &extension, bytes))
+        .unwrap_or_else(|| LocalFontFile {
+            file: relative_zola_path.to_string(),
+            file_name: file_name.clone(),
+            size_bytes: path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+            extension: extension.clone(),
+            format: font_format_label(&extension).to_string(),
+            text_optimized: is_text_optimized_font_file_name(&file_name),
+            internal_family: None,
+            subfamily: None,
+            weight: detect_font_weight(&file_name),
+            weight_range: detect_font_weight_range(&file_name),
+            style: detect_font_style(&file_name),
+            axes: Vec::new(),
+            license: FontLicenseMetadata::default(),
+            unicode_range: None,
+            preload: FontPreloadRegistration::default(),
+        })
+}
+
+fn local_font_file_from_bytes(
+    relative_zola_path: &str,
+    file_name: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> LocalFontFile {
+    match local_import::parse_font_metadata(bytes) {
+        Ok(metadata) => LocalFontFile {
+            file: relative_zola_path.to_string(),
+            file_name: file_name.to_string(),
+            size_bytes: bytes.len() as u64,
+            extension: extension.to_string(),
+            format: font_format_label(extension).to_string(),
+            text_optimized: is_text_optimized_font_file_name(file_name),
+            internal_family: Some(metadata.family),
+            subfamily: metadata.subfamily,
+            weight: metadata.weight,
+            weight_range: metadata.weight_range,
+            style: Some(metadata.style),
+            axes: metadata.axes,
+            license: metadata.license,
+            unicode_range: None,
+            preload: FontPreloadRegistration::default(),
+        },
+        Err(_) => LocalFontFile {
+            file: relative_zola_path.to_string(),
+            file_name: file_name.to_string(),
+            size_bytes: bytes.len() as u64,
+            extension: extension.to_string(),
+            format: font_format_label(extension).to_string(),
+            text_optimized: is_text_optimized_font_file_name(file_name),
+            internal_family: None,
+            subfamily: None,
+            weight: detect_font_weight(file_name),
+            weight_range: detect_font_weight_range(file_name),
+            style: detect_font_style(file_name),
+            axes: Vec::new(),
+            license: FontLicenseMetadata::default(),
+            unicode_range: None,
+            preload: FontPreloadRegistration::default(),
+        },
     }
 }
 
@@ -1193,8 +1876,123 @@ mod tests {
 
     #[test]
     fn css2_url_uses_variable_weight_range() {
-        let url = google_fonts_css_url("Inter Tight", &[100, 900], true);
+        let url = google_fonts_css_url(
+            "Inter Tight",
+            &[100, 900],
+            &["normal".to_string()],
+            true,
+            &[],
+            None,
+        );
         assert!(url.contains("family=Inter+Tight:wght@100..900"));
+    }
+
+    #[test]
+    fn css2_url_requests_normal_and_italic_variants_explicitly() {
+        let url = google_fonts_css_url(
+            "Inter Tight",
+            &[400, 700],
+            &["normal".to_string(), "italic".to_string()],
+            false,
+            &[],
+            None,
+        );
+        assert!(url.contains("family=Inter+Tight:ital,wght@0,400;0,700;1,400;1,700"));
+    }
+
+    #[test]
+    fn css2_url_orders_advanced_variable_axes_alphabetically() {
+        let url = google_fonts_css_url(
+            "Roboto Flex",
+            &[100, 1000],
+            &["normal".to_string()],
+            true,
+            &[
+                GoogleFontAxis {
+                    tag: "wdth".to_string(),
+                    start: 25.0,
+                    end: 151.0,
+                },
+                GoogleFontAxis {
+                    tag: "opsz".to_string(),
+                    start: 8.0,
+                    end: 144.0,
+                },
+            ],
+            None,
+        );
+        assert!(url.contains("family=Roboto+Flex:opsz,wdth,wght@8..144,25..151,100..1000"));
+    }
+
+    #[test]
+    fn css2_url_keeps_weight_static_when_only_optical_size_is_variable() {
+        let url = google_fonts_css_url(
+            "Newsreader",
+            &[400, 700],
+            &["normal".to_string()],
+            false,
+            &[GoogleFontAxis {
+                tag: "opsz".to_string(),
+                start: 6.0,
+                end: 72.0,
+            }],
+            None,
+        );
+
+        assert!(url.contains("family=Newsreader:opsz,wght@6..72,400;6..72,700"));
+    }
+
+    #[test]
+    fn css2_url_preserves_case_for_custom_opentype_axes() {
+        let url = google_fonts_css_url(
+            "Roboto Flex",
+            &[400],
+            &["normal".to_string()],
+            false,
+            &[
+                GoogleFontAxis {
+                    tag: "opsz".to_string(),
+                    start: 8.0,
+                    end: 144.0,
+                },
+                GoogleFontAxis {
+                    tag: "GRAD".to_string(),
+                    start: -200.0,
+                    end: 150.0,
+                },
+            ],
+            None,
+        );
+
+        assert!(url.contains("family=Roboto+Flex:GRAD,opsz,wght@-200..150,8..144,400"));
+    }
+
+    #[test]
+    fn css2_url_encodes_an_explicit_character_set() {
+        let characters = normalize_google_character_set(Some("Pană Pană!"))
+            .unwrap()
+            .unwrap();
+        let url = google_fonts_css_url(
+            "Inter",
+            &[400],
+            &["normal".to_string()],
+            false,
+            &[],
+            Some(&characters),
+        );
+
+        assert!(url.ends_with("&text=Pan%C4%83%20%21"));
+    }
+
+    #[test]
+    fn recognizes_only_managed_text_optimization_file_names() {
+        assert!(is_text_optimized_font_file_name(
+            "inter-normal-400-text-a1b2c3d4-1.woff2"
+        ));
+        assert!(!is_text_optimized_font_file_name(
+            "inter-normal-400-text-preview-1.woff2"
+        ));
+        assert!(!is_text_optimized_font_file_name("context-a1b2c3d4.woff2"));
     }
 
     #[test]
@@ -1257,13 +2055,27 @@ mod tests {
             families: Vec::new(),
         };
         let path = "static/fonturi/inter/inter-normal-400-1.woff2";
-        let projected = overlay_staged_font_resources(inventory, [(path, 127)].into_iter());
+        let bytes = include_bytes!(
+            "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
+        );
+        let projected =
+            overlay_staged_font_resources(inventory, [(path, bytes.as_slice())].into_iter());
 
         assert_eq!(projected.families.len(), 1);
         assert_eq!(projected.families[0].family, "Inter");
         assert_eq!(projected.families[0].directory, "static/fonturi/inter");
         assert_eq!(projected.families[0].files[0].file, path);
-        assert_eq!(projected.families[0].files[0].size_bytes, 127);
+        assert_eq!(
+            projected.families[0].files[0].size_bytes,
+            bytes.len() as u64
+        );
+        assert_eq!(
+            projected.families[0].files[0].weight_range,
+            Some(FontWeightRange {
+                start: 100,
+                end: 900
+            })
+        );
         assert!(projected.roots[0].exists);
     }
 
@@ -1285,5 +2097,107 @@ mod tests {
         assert_eq!(faces.len(), 1);
         assert!(is_woff2_google_font_face(&faces[0]));
         assert_eq!(faces[0].weight, Some(400));
+    }
+
+    #[test]
+    fn managed_font_face_block_is_idempotent_and_replaceable() {
+        let initial = "$color: red;\n";
+        let first = upsert_managed_font_face_block(
+            initial,
+            "Inter",
+            "@font-face { font-family: 'Inter'; font-display: swap; }",
+        )
+        .unwrap();
+        let second = upsert_managed_font_face_block(
+            &first,
+            "Inter",
+            "@font-face { font-family: 'Inter'; font-display: optional; }",
+        )
+        .unwrap();
+
+        assert_eq!(second.matches("pana-studio-font:inter:start").count(), 1);
+        assert!(!second.contains("font-display: swap"));
+        assert!(second.contains("font-display: optional"));
+    }
+
+    #[test]
+    fn managed_font_face_block_can_be_removed_without_damaging_neighbors() {
+        let source = "body { color: black; }\n\n/* pana-studio-font:inter:start */\n@font-face { font-family: 'Inter'; }\n/* pana-studio-font:inter:end */\n\nmain { display: block; }\n";
+        let removed = remove_managed_font_face_block(source, "Inter")
+            .expect("managed font block should be removable");
+
+        assert_eq!(
+            removed,
+            "body { color: black; }\n\nmain { display: block; }\n"
+        );
+        assert!(!removed.contains("@font-face"));
+    }
+
+    #[test]
+    fn registration_count_detects_an_external_duplicate_after_managed_removal() {
+        let source = "/* pana-studio-font:inter:start */\n@font-face { font-family: 'Inter'; }\n/* pana-studio-font:inter:end */\n@font-face { font-family: \"Inter\"; src: url('/external.woff2'); }\n";
+        let removed = remove_managed_font_face_block(source, "Inter").unwrap();
+
+        assert_eq!(font_family_registration_count(&removed, "Inter"), 1);
+    }
+
+    #[test]
+    fn inventory_reports_registered_and_managed_font_faces() {
+        let inventory = FontInventory {
+            roots: Vec::new(),
+            families: vec![LocalFontFamily {
+                family: "Inter".to_string(),
+                directory: "static/fonturi/inter".to_string(),
+                origin: FontOrigin::Local,
+                theme_name: None,
+                files: Vec::new(),
+                license: FontLicenseMetadata::default(),
+                registration: FontCssRegistration::default(),
+            }],
+        };
+        let source = r#"
+/* pana-studio-font:inter:start */
+@font-face {
+  font-family: 'Inter';
+  font-display: swap;
+}
+/* pana-studio-font:inter:end */
+"#;
+        let annotated =
+            annotate_font_registrations(inventory, [("sass/_baza.scss", source)].into_iter());
+
+        assert!(annotated.families[0].registration.registered);
+        assert!(annotated.families[0].registration.managed);
+        assert_eq!(
+            annotated.families[0].registration.stylesheets,
+            vec!["sass/_baza.scss"]
+        );
+        assert_eq!(
+            annotated.families[0].registration.display_modes,
+            vec!["swap"]
+        );
+    }
+
+    #[test]
+    fn stylesheet_selection_prefers_the_framework_base_and_ignores_public_output() {
+        let selected = select_font_face_stylesheet(
+            [
+                (
+                    "public/css/framework.css",
+                    "@font-face { font-family: 'Built'; }",
+                ),
+                ("sass/pagini/index.scss", ".page { display: block; }"),
+                (
+                    "themes/demo/sass/css-framework/_baza.scss",
+                    "body { margin: 0; }",
+                ),
+            ]
+            .into_iter(),
+        );
+
+        assert_eq!(
+            selected.as_deref(),
+            Some("themes/demo/sass/css-framework/_baza.scss")
+        );
     }
 }

@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { IconActivity, IconAlertTriangle, IconCircleCheck, IconRefresh } from "@tabler/icons-svelte";
   import { readKernelObservabilityLog } from "$lib/project/io";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type {
     KernelLogLevel,
     KernelObservabilityLogEvent,
@@ -18,14 +20,17 @@
     observabilityHealthLabel,
     observabilitySummary,
   } from "$lib/kernel/observability-log-control";
+  import { errorMessage } from "$lib/util";
 
   let {
     projectKey = "",
     refreshToken = 0,
+    focusToken = 0,
     onStatusUpdate = undefined as ((text: string, kind: "restored" | "saving" | "error") => void) | undefined,
   }: {
     projectKey?: string;
     refreshToken?: number;
+    focusToken?: number;
     onStatusUpdate?: (text: string, kind: "restored" | "saving" | "error") => void;
   } = $props();
 
@@ -39,6 +44,9 @@
   let selectedLevels = $state<KernelLogLevel[]>(["info", "warn", "error"]);
   let sourceFilter = $state<KernelObservabilityLogSourceFilter>("all");
   let eventLimit = $state(80);
+  let observabilityElement: HTMLElement | null = null;
+  let appliedFocusToken = 0;
+  let refreshSerial = 0;
   const levels: KernelLogLevel[] = ["info", "warn", "error"];
   const summary = $derived(observabilitySummary(snapshot));
 
@@ -53,22 +61,47 @@
     void refresh();
   });
 
+  $effect(() => {
+    const token = focusToken;
+    if (token <= 0 || token === appliedFocusToken) return;
+    appliedFocusToken = token;
+    recoveryOnly = false;
+    includeArchives = false;
+    selectedLevels = ["info", "warn", "error"];
+    sourceFilter = "active";
+    eventLimit = 120;
+    void refresh();
+    void focusObservability();
+  });
+
+  async function focusObservability() {
+    await tick();
+    window.requestAnimationFrame(() => {
+      observabilityElement?.scrollIntoView({ block: "start", behavior: "smooth" });
+      observabilityElement?.focus({ preventScroll: true });
+    });
+  }
+
   async function refresh() {
+    const serial = ++refreshSerial;
     loading = true;
     loadError = "";
     try {
-      snapshot = await readKernelObservabilityLog(
+      const nextSnapshot = await readKernelObservabilityLog(
         eventLimit,
         recoveryOnly,
         includeArchives,
         selectedLevels,
         sourceFilter,
       );
+      if (serial !== refreshSerial) return;
+      snapshot = nextSnapshot;
     } catch (error) {
-      loadError = error instanceof Error ? error.message : String(error);
-      onStatusUpdate?.(`Observability Log nu a putut fi citit: ${loadError}`, "error");
+      if (serial !== refreshSerial) return;
+      loadError = errorMessage(error);
+      onStatusUpdate?.(t("observability-read-failed", { message: loadError }), "error");
     } finally {
-      loading = false;
+      if (serial === refreshSerial) loading = false;
     }
   }
 
@@ -84,30 +117,35 @@
   }
 </script>
 
-<section class="observability" aria-labelledby="observability-title">
+<section
+  bind:this={observabilityElement}
+  class="observability"
+  aria-labelledby="observability-title"
+  tabindex="-1"
+>
   <header>
     <div class={`summary ${summary.tone}`}>
       {#if summary.tone === "clean"}<IconCircleCheck size={17} stroke={1.9} />{:else}<IconAlertTriangle size={17} stroke={1.9} />{/if}
       <div>
         <strong id="observability-title">{summary.label}</strong>
-        <span>{loading ? "Se citește logul operațional..." : summary.detail}</span>
+        <span>{loading ? t("observability-loading") : summary.detail}</span>
       </div>
     </div>
-    <button type="button" disabled={loading} onclick={() => void refresh()} title="Recitește">
+    <button type="button" disabled={loading} onclick={() => void refresh()} title={t("observability-refresh")}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
 
   <div class="filters">
-    <label><input type="checkbox" bind:checked={recoveryOnly} onchange={() => void refresh()} /> doar recuperare</label>
-    <label><input type="checkbox" bind:checked={includeArchives} onchange={() => void refresh()} /> include arhive</label>
+    <label><input type="checkbox" bind:checked={recoveryOnly} onchange={() => void refresh()} /> {t("observability-recovery-only")}</label>
+    <label><input type="checkbox" bind:checked={includeArchives} onchange={() => void refresh()} /> {t("observability-include-archives")}</label>
     {#each levels as level}
       <label><input type="checkbox" checked={selectedLevels.includes(level)} onchange={() => toggleLevel(level)} /> {kernelLogLevelLabel(level)}</label>
     {/each}
     <select bind:value={sourceFilter} onchange={() => void refresh()}>
-      <option value="all">toate sursele</option>
-      <option value="active">log activ</option>
-      <option value="archives" disabled={!includeArchives}>arhive</option>
+      <option value="all">{t("observability-source-all")}</option>
+      <option value="active">{t("observability-source-active")}</option>
+      <option value="archives" disabled={!includeArchives}>{t("observability-source-archives")}</option>
     </select>
     <select bind:value={eventLimit} onchange={() => void refresh()}>
       <option value={40}>40</option><option value={80}>80</option><option value={120}>120</option><option value={200}>200</option>

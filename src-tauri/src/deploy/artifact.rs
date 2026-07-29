@@ -36,6 +36,29 @@ pub fn resolve_artifact_root(project_root: &Path, zola_root: &Path) -> Result<Pa
     let project_root = canonical_project_root(project_root)?;
     let zola_root = canonical_zola_root(&project_root, zola_root)?;
     let configured = configured_output_dir(&zola_root)?;
+    resolve_artifact_root_with_configured_output(&zola_root, &configured)
+}
+
+/// Resolves the artifact root against an already captured Zola configuration.
+///
+/// Source Graph uses this entry point for an exact ProjectWorkspace revision,
+/// where the projected `zola.toml` may legitimately be newer than the bytes
+/// currently saved on disk.
+pub(crate) fn resolve_artifact_root_from_config_source(
+    project_root: &Path,
+    zola_root: &Path,
+    config_source: &str,
+) -> Result<PathBuf, String> {
+    let project_root = canonical_project_root(project_root)?;
+    let zola_root = canonical_zola_root(&project_root, zola_root)?;
+    let configured = configured_output_dir_from_source(config_source)?;
+    resolve_artifact_root_with_configured_output(&zola_root, &configured)
+}
+
+fn resolve_artifact_root_with_configured_output(
+    zola_root: &Path,
+    configured: &str,
+) -> Result<PathBuf, String> {
     let output_root = normalize_output_path(&zola_root, &configured)?;
 
     reject_source_overlap(&output_root, &zola_root)?;
@@ -247,23 +270,29 @@ fn configured_output_dir(zola_root: &Path) -> Result<String, String> {
         let bytes = read_regular_file_no_follow(&config_path, &snapshot)?;
         let source = String::from_utf8(bytes)
             .map_err(|error| format!("Configurația Zola nu este UTF-8 valid: {error}."))?;
-        let document = source.parse::<toml_edit::DocumentMut>().map_err(|error| {
+        return configured_output_dir_from_source(&source).map_err(|error| {
             format!(
-                "Configurația Zola {} este TOML invalid: {error}.",
+                "Configurația Zola {} nu poate furniza output_dir: {error}",
                 config_path.display()
             )
-        })?;
-        return document
-            .get("output_dir")
-            .map(|value| {
-                value.as_str().map(str::to_owned).ok_or_else(|| {
-                    "output_dir din configurația Zola trebuie să fie string.".to_string()
-                })
-            })
-            .transpose()
-            .map(|value| value.unwrap_or_else(|| "public".to_string()));
+        });
     }
     Ok("public".to_string())
+}
+
+fn configured_output_dir_from_source(source: &str) -> Result<String, String> {
+    let document = source
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| format!("Configurația Zola este TOML invalid: {error}."))?;
+    document
+        .get("output_dir")
+        .map(|value| {
+            value.as_str().map(str::to_owned).ok_or_else(|| {
+                "output_dir din configurația Zola trebuie să fie string.".to_string()
+            })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or_else(|| "public".to_string()))
 }
 
 fn normalize_output_path(zola_root: &Path, configured: &str) -> Result<PathBuf, String> {

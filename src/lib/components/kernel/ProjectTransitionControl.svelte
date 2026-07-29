@@ -9,12 +9,20 @@
     readKernelProjectTransitionPolicyMatrix,
   } from "$lib/project/io";
   import type {
+    KernelProjectTransitionDecisionJournalHealthStatus,
     KernelProjectTransitionBlockedAuditSnapshot,
     KernelProjectTransitionDecisionJournalSnapshot,
     KernelProjectTransitionDecisionRecoveryAckJournalSnapshot,
     KernelProjectTransitionPolicyMatrixSnapshot,
   } from "$lib/types";
   import { compactKernelPath, formatRecoveryTime } from "$lib/kernel/recovery-control";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import {
+    localizedTransitionPolicyCopy,
+    transitionActionLabel,
+    transitionReasonLabel,
+  } from "$lib/project/transition-decision";
+  import { errorMessage } from "$lib/util";
 
   let {
     projectKey = "",
@@ -97,7 +105,10 @@
     } catch (error) {
       if (requestId !== requestSequence) return;
       loadError = errorMessage(error);
-      onStatusUpdate?.(`ProjectTransition nu a putut fi citit: ${loadError}`, "error");
+      onStatusUpdate?.(
+        t("project-transition-control-read-failed", { detail: loadError }),
+        "error",
+      );
     } finally {
       if (requestId === requestSequence) loading = false;
     }
@@ -113,11 +124,14 @@
         acknowledgementDiagnostic.trim(),
       );
       acknowledgementDiagnostic = "";
-      onStatusUpdate?.("Revizuirea ProjectTransition a fost confirmată.", "restored");
+      onStatusUpdate?.(t("project-transition-control-review-confirmed"), "restored");
       await refresh();
     } catch (error) {
       mutationError = errorMessage(error);
-      onStatusUpdate?.(`Confirmarea ProjectTransition a eșuat: ${mutationError}`, "error");
+      onStatusUpdate?.(
+        t("project-transition-control-confirm-failed", { detail: mutationError }),
+        "error",
+      );
     } finally {
       mutating = false;
     }
@@ -135,20 +149,48 @@
       );
       retentionDiagnostic = "";
       onStatusUpdate?.(
-        `Retention ProjectTransition: ${receipt.archivedRecordCount} decizii arhivate.`,
+        t("project-transition-control-retention-complete", {
+          count: receipt.archivedRecordCount,
+        }),
         receipt.status === "recovery_attention" ? "error" : "restored",
       );
       await refresh();
     } catch (error) {
       mutationError = errorMessage(error);
-      onStatusUpdate?.(`Retention ProjectTransition a eșuat: ${mutationError}`, "error");
+      onStatusUpdate?.(
+        t("project-transition-control-retention-failed", { detail: mutationError }),
+        "error",
+      );
     } finally {
       mutating = false;
     }
   }
 
-  function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
+  function decisionLabel(decision: "allow" | "confirm" | "block") {
+    if (decision === "allow") return t("project-transition-decision-allow");
+    if (decision === "confirm") return t("project-transition-decision-confirm");
+    return t("project-transition-decision-block");
+  }
+
+  function healthCopy(status: KernelProjectTransitionDecisionJournalHealthStatus) {
+    switch (status) {
+      case "clean": return {
+        summary: t("project-transition-health-clean"),
+        detail: t("project-transition-health-clean-detail"),
+      };
+      case "has_decisions": return {
+        summary: t("project-transition-health-decisions"),
+        detail: t("project-transition-health-decisions-detail"),
+      };
+      case "integrity_warning": return {
+        summary: t("project-transition-health-warning"),
+        detail: t("project-transition-health-warning-detail"),
+      };
+      case "degraded": return {
+        summary: t("project-transition-health-degraded"),
+        detail: t("project-transition-health-degraded-detail"),
+      };
+    }
   }
 </script>
 
@@ -157,11 +199,11 @@
     <div>
       <IconRoute size={18} stroke={1.8} />
       <div>
-        <h2 id="project-transition-title">Tranziția proiectului</h2>
-        <p>Deschiderea, reîncărcarea și închiderea sunt decise din starea sesiunii și din conflictele reale de pe disc.</p>
+        <h2 id="project-transition-title">{t("project-transition-control-title")}</h2>
+        <p>{t("project-transition-control-description")}</p>
       </div>
     </div>
-    <button type="button" disabled={loading || mutating} onclick={() => void refresh()} title="Recitește">
+    <button type="button" disabled={loading || mutating} onclick={() => void refresh()} title={t("project-transition-control-refresh")}>
       <IconRefresh size={15} stroke={1.9} />
     </button>
   </header>
@@ -171,6 +213,7 @@
   {#if policyMatrix}
     <div class="policies">
       {#each policyMatrix.policies as policy (policy.action)}
+        {@const copy = localizedTransitionPolicyCopy(policy)}
         <article class:blocked={policy.blocksTransition} class:confirm={policy.requiresOperatorConfirmation}>
           <div>
             {#if policy.blocksTransition || policy.requiresOperatorConfirmation}
@@ -178,11 +221,16 @@
             {:else}
               <IconCircleCheck size={15} stroke={1.9} />
             {/if}
-            <strong>{policy.action.replaceAll("_", " ")}</strong>
-            <em>{policy.decision}</em>
+            <strong>{transitionActionLabel(policy.action)}</strong>
+            <em>{decisionLabel(policy.decision)}</em>
           </div>
-          <p>{policy.message}</p>
-          <small>{policy.reason} · workspace rev {policy.workspaceRevision ?? "—"} · {policy.workspaceDirtyResourceCount} resurse dirty</small>
+          <p>{copy.message}</p>
+          <small>{transitionReasonLabel(policy.reason)} · {t("project-transition-control-policy-meta", {
+            revision: policy.workspaceRevision === null
+              ? "—"
+              : l10n.formatNumber(policy.workspaceRevision),
+            count: policy.workspaceDirtyResourceCount,
+          })}</small>
         </article>
       {/each}
     </div>
@@ -190,11 +238,17 @@
 
   {#if blockedAudit && blockedAudit.records.length}
     <section class="audit">
-      <h3>Tranziții blocate recent</h3>
+      <h3>{t("project-transition-control-recent-blocked")}</h3>
       {#each blockedAudit.records.slice(0, 8) as record (record.id)}
         <article>
-          <strong>{record.action?.replaceAll("_", " ") ?? record.operation}</strong>
-          <span>{formatRecoveryTime(record.blockedAtMs)} · {record.message}</span>
+          <strong>{record.action ? transitionActionLabel(record.action) : record.operation}</strong>
+          <span>{formatRecoveryTime(record.blockedAtMs)} · {record.reason
+            ? t("project-transition-control-blocked-record", {
+                reason: transitionReasonLabel(record.reason),
+                conflicts: record.diskConflictCount,
+                dirty: record.workspaceDirtyResourceCount,
+              })
+            : t("project-transition-control-blocked-record-unknown")}</span>
           <small title={record.targetProjectRoot ?? ""}>{compactKernelPath(record.targetProjectRoot ?? record.target ?? "", 72)}</small>
         </article>
       {/each}
@@ -202,30 +256,36 @@
   {/if}
 
   {#if decisionJournal}
+    {@const journalHealth = healthCopy(decisionJournal.health.status)}
     <section class="decisions">
       <div class="decision-summary">
-        <strong>{decisionJournal.health.summary}</strong>
-        <span>{decisionJournal.health.detail}</span>
-        <small>{decisionJournal.recordCount} decizii · recovery {decisionJournal.recoveryPlan.status}</small>
+        <strong>{journalHealth.summary}</strong>
+        <span>{journalHealth.detail}</span>
+        <small>{t("project-transition-control-decision-count", {
+          count: decisionJournal.recordCount,
+          status: decisionJournal.recoveryPlan.status,
+        })}</small>
       </div>
 
       {#if needsAcknowledgement && !matchingAck}
         <label>
-          <span>Diagnostic de revizuire</span>
+          <span>{t("project-transition-control-review-diagnostic")}</span>
           <textarea rows="2" bind:value={acknowledgementDiagnostic}></textarea>
         </label>
         <button class="action" type="button" disabled={!canAcknowledge} onclick={() => void acknowledgeRecoveryPlan()}>
-          Confirmă revizuirea
+          {t("project-transition-control-confirm-review")}
         </button>
       {/if}
 
       {#if recoveryPlan?.status === "retention_review" && matchingAck}
         <label>
-          <span>Diagnostic pentru retenție</span>
+          <span>{t("project-transition-control-retention-diagnostic")}</span>
           <textarea rows="2" bind:value={retentionDiagnostic}></textarea>
         </label>
         <button class="action" type="button" disabled={!canRetain} onclick={() => void executeRetention()}>
-          Arhivează {recoveryPlan.retentionCandidateCount} decizii superseded
+          {t("project-transition-control-archive-decisions", {
+            count: recoveryPlan.retentionCandidateCount,
+          })}
         </button>
       {/if}
     </section>

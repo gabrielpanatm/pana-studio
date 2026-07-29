@@ -340,10 +340,8 @@
 
   function isStudioOverlayElement(element) {
     if (!(element instanceof Element)) return false;
-    return element.id === HTML_SELECTION_ID ||
-      element.id === PREVIEW_HOVER_ID ||
-      element.id === TEMPLATE_GATE_ID ||
-      element.id === TEMPLATE_GATE_ACTIONS_ID ||
+    return element.hasAttribute("data-pana-canvas-agent-overlay") ||
+      element.hasAttribute("data-pana-canvas-agent-action") ||
       element.id === "pana-studio-preview-drop-line" ||
       element.id === "pana-studio-preview-drop-box" ||
       element.id === "pana-studio-preview-drop-hint";

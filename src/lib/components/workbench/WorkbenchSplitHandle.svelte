@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { WorkbenchSplit } from "$lib/types";
 
   let {
@@ -109,12 +110,12 @@
   class:horizontal={orientation === "horizontal"}
   class="split-handle"
   role="separator"
-  aria-label="Redimensionează suprafețele Vizual și Cod"
+  aria-label={t("workbench-resize-visual-code")}
   aria-orientation={orientation}
   aria-valuemin="20"
   aria-valuemax="80"
   aria-valuenow={Math.round(clampedRatio / 100)}
-  aria-valuetext={`${Math.round(clampedRatio / 100)}% Vizual`}
+  aria-valuetext={t("workbench-visual-ratio", { percent: Math.round(clampedRatio / 100) })}
   tabindex="0"
   onpointerdown={startPointerDrag}
   onkeydown={handleKeydown}

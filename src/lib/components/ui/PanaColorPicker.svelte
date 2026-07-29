@@ -7,6 +7,7 @@
   import Color from "colorjs.io";
   import { IconColorPicker, IconCopy, IconX } from "@tabler/icons-svelte";
   import { registerEditFlushHandler } from "$lib/session/edit-flush-registry";
+  import { t } from "$lib/i18n/runtime.svelte";
   import {
     ColorPickerEditSession,
     inferPickerColorSpace,
@@ -26,7 +27,7 @@
     joined = false,
     empty = false,
     disabled = false,
-    label = "Alege culoarea",
+    label = "",
     oninput,
     oncommit,
     oncancel,
@@ -47,6 +48,7 @@
   } = $props();
 
   const pickerInstanceId = nextPickerInstanceId++;
+  const effectiveLabel = $derived(label || t("inspector-color-choose"));
   let trigger = $state<HTMLButtonElement | null>(null);
   let panel = $state<HTMLDivElement | null>(null);
   let isOpen = $state(false);
@@ -363,8 +365,8 @@
     class="picker-trigger"
     type="button"
     disabled={disabled}
-    title={label}
-    aria-label={label}
+    title={effectiveLabel}
+    aria-label={effectiveLabel}
     aria-haspopup="dialog"
     aria-expanded={isOpen}
     onclick={togglePicker}
@@ -383,12 +385,12 @@
     class:ready={panelReady}
     style={`left: ${panelLeft}px; top: ${panelTop}px;`}
     role="dialog"
-    aria-label="Editor de culoare"
+    aria-label={t("inspector-color-editor")}
     tabindex="-1"
   >
     <div class="popover-header">
-      <strong>Culoare</strong>
-      <button class="icon-button close-button" type="button" aria-label="Închide" onclick={() => closePicker(true)}>
+      <strong>{t("inspector-color-title")}</strong>
+      <button class="ui-icon-button ui-close-button icon-button close-button" type="button" aria-label={t("inspector-close")} onclick={() => closePicker(true)}>
         <IconX size={16} stroke={1.9} />
       </button>
     </div>
@@ -398,11 +400,14 @@
       class="color-area"
       style:--area-hue={hueColor}
       role="slider"
-      aria-label="Saturație și luminozitate"
+      aria-label={t("inspector-color-saturation-brightness")}
       aria-valuemin="0"
       aria-valuemax="100"
       aria-valuenow={Math.round(brightness)}
-      aria-valuetext={`${Math.round(saturation)}% saturație, ${Math.round(brightness)}% luminozitate`}
+      aria-valuetext={t("inspector-color-saturation-brightness-value", {
+        saturation: Math.round(saturation),
+        brightness: Math.round(brightness),
+      })}
       tabindex="0"
       onpointerdown={handleAreaPointerDown}
       onpointermove={handleAreaPointerMove}
@@ -427,7 +432,7 @@
           max="360"
           step="1"
           value={hue}
-          aria-label="Nuanță"
+          aria-label={t("inspector-color-hue")}
           oninput={handleHueInput}
         />
         <output>{Math.round(hue)}°</output>
@@ -442,7 +447,7 @@
             max="100"
             step="1"
             value={alpha * 100}
-            aria-label="Opacitate"
+            aria-label={t("inspector-color-opacity")}
             oninput={handleAlphaInput}
           />
         </span>
@@ -450,7 +455,7 @@
       </label>
     </div>
 
-    <div class="channel-grid" aria-label="Canale RGBA">
+    <div class="channel-grid" aria-label={t("inspector-color-rgba-channels")}>
       {#each ["R", "G", "B"] as channel, index}
         <label>
           <span>{channel}</span>
@@ -478,20 +483,20 @@
     </div>
 
     <div class="value-row">
-      <select value={format} aria-label="Format culoare" onchange={handleFormatChange}>
+      <select value={format} aria-label={t("inspector-color-format")} onchange={handleFormatChange}>
         <option value="hex">HEX</option>
         <option value="rgb">RGB</option>
         <option value="hsl">HSL</option>
         <option value="oklch">OKLCH</option>
         <option value="display-p3">P3</option>
       </select>
-      <input class="color-value" aria-label="Valoare culoare" value={serializedValue} readonly />
+      <input class="color-value" aria-label={t("inspector-color-value")} value={serializedValue} readonly />
       {#if canUseEyeDropper}
-        <button class="icon-button" type="button" aria-label="Preia culoarea de pe ecran" title="Preia de pe ecran" onclick={pickFromScreen}>
+        <button class="icon-button" type="button" aria-label={t("inspector-color-pick-screen")} title={t("inspector-color-pick-screen-short")} onclick={pickFromScreen}>
           <IconColorPicker size={14} stroke={1.9} />
         </button>
       {/if}
-      <button class="icon-button" type="button" aria-label="Copiază valoarea" title="Copiază" onclick={copyValue}>
+      <button class="icon-button" type="button" aria-label={t("inspector-color-copy-value")} title={t("inspector-copy")} onclick={copyValue}>
         <IconCopy size={14} stroke={1.9} />
       </button>
     </div>

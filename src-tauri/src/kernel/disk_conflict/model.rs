@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::kernel::file_buffer_store::{FileBufferBaseline, TextBufferLanguage, TextBufferRole};
+use crate::{
+    kernel::file_buffer_store::{FileBufferBaseline, TextBufferLanguage, TextBufferRole},
+    localization::LocalizedDiagnostic,
+};
 
 pub const KERNEL_DISK_CONFLICT_SCHEMA_VERSION: u32 = 1;
 pub const KERNEL_DISK_CONFLICT_GATE_SCHEMA_VERSION: u32 = 1;
@@ -33,6 +36,8 @@ pub enum KernelDiskConflictKind {
 #[serde(rename_all = "camelCase")]
 pub struct KernelDiskConflictSummary {
     pub status: KernelDiskConflictStatus,
+    pub verdict_diagnostic: LocalizedDiagnostic,
+    #[serde(skip_serializing)]
     pub verdict_reason: String,
     pub tracked_file_count: usize,
     pub clean_count: usize,
@@ -58,6 +63,8 @@ pub struct KernelDiskConflictFileSnapshot {
     pub role: TextBufferRole,
     pub status: KernelDiskConflictStatus,
     pub kind: KernelDiskConflictKind,
+    pub diagnostic: LocalizedDiagnostic,
+    #[serde(skip_serializing)]
     pub message: String,
     pub baseline: FileBufferBaseline,
     pub disk: Option<FileBufferBaseline>,

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   export type SelectControlOption = {
     value: string;
@@ -20,9 +21,9 @@
   let {
     value = "",
     options = [],
-    placeholder = "Alege",
+    placeholder = "",
     disabled = false,
-    ariaLabel = "Alege opțiune",
+    ariaLabel = "",
     onchange = undefined as ((value: string) => void) | undefined,
   }: {
     value?: string;
@@ -46,6 +47,8 @@
     Boolean(option.group) && option.group !== normalizedOptions[index - 1]?.group
   )).length);
   const selected = $derived(normalizedOptions.find((option) => option.value === value) ?? null);
+  const effectivePlaceholder = $derived(placeholder || t("common-choose"));
+  const effectiveAriaLabel = $derived(ariaLabel || t("common-choose-option"));
   const popoverStyle = $derived(
     `left: ${placement.left}px; top: ${placement.top}px; width: ${placement.width}px; max-height: ${placement.maxHeight}px;`,
   );
@@ -187,18 +190,18 @@
     type="button"
     class="select-control"
     {disabled}
-    aria-label={ariaLabel}
+    aria-label={effectiveAriaLabel}
     aria-haspopup="listbox"
     aria-expanded={open}
     onclick={toggle}
     onkeydown={handleKeydown}
   >
-    <span class:placeholder={!selected}>{selected?.label ?? placeholder}</span>
+    <span class:placeholder={!selected}>{selected?.label ?? effectivePlaceholder}</span>
     <span class="select-chevron" aria-hidden="true"></span>
   </button>
 
   {#if open && normalizedOptions.length}
-    <div class="select-popover" role="listbox" aria-label={ariaLabel} style={popoverStyle}>
+    <div class="select-popover" role="listbox" aria-label={effectiveAriaLabel} style={popoverStyle}>
       {#each normalizedOptions as option, index}
         {#if option.group && option.group !== normalizedOptions[index - 1]?.group}
           <div class="select-group-label">{option.group}</div>

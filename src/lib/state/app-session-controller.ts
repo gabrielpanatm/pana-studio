@@ -1,7 +1,6 @@
 import { untrack } from "svelte";
 import {
   dismissNotification as dismissNotificationFromCenter,
-  upsertNotification,
   type AppNotification,
 } from "$lib/notifications/center";
 import {
@@ -14,12 +13,23 @@ import {
   AI_COORDINATION_NOTIFICATION_ID,
   reloadAuthorizedAiReconciliationFromDisk,
 } from "$lib/state/ai-coordination-controller";
-import { setGlobalStatus as setGlobalStatusFromController } from "$lib/state/status-controller";
 import {
-  createCssRequestIdentity,
-  createProjectTextFile,
-  getScssVariables,
+  applyGlobalStatusSnapshot,
+  publishGlobalStatus as publishGlobalStatusFromController,
+} from "$lib/state/status-controller";
+import {
+  globalStatusInputFromKind,
+  type GlobalStatusEscalationRequest,
+  type GlobalStatusInput,
+  type GlobalStatusKind,
+  type GlobalStatusPublishOptions,
+  type GlobalStatusSnapshot,
+} from "$lib/status/global-status";
+import {
+  publishKernelGlobalStatus,
+  readKernelGlobalStatus,
   readProjectFile,
+  resolveKernelGlobalStatus,
 } from "$lib/project/io";
 import { scannedCacheKey } from "$lib/project/files";
 import { createEmptyHtmlPending } from "$lib/state/app-helpers";
@@ -31,28 +41,108 @@ import type { AppState } from "$lib/state/app.svelte";
 import type {
   HtmlPendingArea,
   InspectorPendingArea,
-  SaveState,
 } from "$lib/types";
-import {
-  previewStructuralCommandIdentity,
-  previewStructuralSessionLeaseMatches,
-  requireCurrentPreviewStructuralSession,
-  runInPreviewStructuralLane,
-} from "$lib/kernel/preview-structural-lane";
+import { t } from "$lib/i18n/runtime.svelte";
 
-export function setGlobalStatus(app: AppState, text: string, kind: SaveState) {
-  setGlobalStatusFromController(app.statusControllerHost(), text, kind);
+function projectKernelFailure(
+  app: AppState,
+  error: unknown,
+) {
+  const detail = error instanceof Error ? error.message : String(error);
+  publishGlobalStatusFromController(app.statusControllerHost(), {
+    code: "global-status.kernel-command-failed",
+    source: "global-status",
+    severity: "error",
+    message: t("app-session-global-status-kernel-failed"),
+    detail,
+    lifecycle: "until_resolved",
+    escalation: "notification",
+    dedupeKey: "global-status.kernel",
+    resolutionKey: "global-status.kernel",
+    notification: {
+      title: t("app-session-global-status-unavailable"),
+      message: detail,
+      level: "error",
+    },
+  });
 }
 
-export function notify(app: AppState, notification: Omit<AppNotification, "createdAt">) {
-  app.notifications = upsertNotification(app.notifications, notification);
+function queueKernelStatusCommand(
+  app: AppState,
+  command: () => Promise<GlobalStatusSnapshot>,
+) {
+  const operation = app.globalStatusKernelTail
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        const snapshot = await command();
+        applyGlobalStatusSnapshot(app.statusControllerHost(), snapshot);
+      } catch (error) {
+        projectKernelFailure(app, error);
+      }
+    });
+  app.globalStatusKernelTail = operation;
+  return operation;
+}
+
+export function setGlobalStatus(
+  app: AppState,
+  text: string,
+  kind: GlobalStatusKind,
+  options: GlobalStatusPublishOptions = {},
+) {
+  const input = globalStatusInputFromKind(text, kind, options);
+  void queueKernelStatusCommand(app, () => publishKernelGlobalStatus(input));
+}
+
+export function escalateGlobalStatus(
+  app: AppState,
+  notification: GlobalStatusEscalationRequest,
+) {
+  const input: GlobalStatusInput = {
+    code: notification.id,
+    source: notification.id.split(".")[0] || "application",
+    severity: notification.level === "error"
+      ? "error"
+      : notification.level === "warning"
+        ? "warning"
+        : "info",
+    phase: "settled",
+    message: notification.statusMessage ?? notification.title,
+    detail: notification.message,
+    lifecycle: "until_resolved",
+    escalation: "notification",
+    dedupeKey: notification.id,
+    resolutionKey: notification.id,
+    notification: {
+      title: notification.title,
+      message: notification.message,
+      level: notification.level,
+      actionLabel: notification.actionLabel,
+      actionId: notification.actionId,
+      secondaryActionLabel: notification.secondaryActionLabel,
+      secondaryActionId: notification.secondaryActionId,
+    },
+  };
+  void queueKernelStatusCommand(app, () => publishKernelGlobalStatus(input));
 }
 
 export function clearNotification(app: AppState, id: string) {
-  app.notifications = app.notifications.filter((item) => item.id !== id);
-  if (app.dismissedNotificationIds.has(id)) {
-    app.dismissedNotificationIds = new Set([...app.dismissedNotificationIds].filter((item) => item !== id));
-  }
+  const hasProjection = app.notifications.some((notification) => notification.id === id);
+  const hasOpenStatus = app.globalStatusEvents.some((event) => (
+    event.resolution === "open"
+    && (
+      event.id === id
+      || event.dedupeKey === id
+      || event.resolutionKey === id
+    )
+  ));
+  if (!hasProjection && !hasOpenStatus && !app.dismissedNotificationIds.has(id)) return;
+  void queueKernelStatusCommand(app, () => resolveKernelGlobalStatus(id));
+}
+
+export function refreshGlobalStatusFromKernel(app: AppState) {
+  return queueKernelStatusCommand(app, readKernelGlobalStatus);
 }
 
 export function dismissNotification(app: AppState, id: string) {
@@ -67,7 +157,7 @@ export async function handleNotificationAction(app: AppState, notification: AppN
   ) {
     await reloadAuthorizedAiReconciliationFromDisk(app);
     app.setGlobalStatus(
-      "Starea stabilă de pe disc a fost adoptată și reproiectată; autoritatea utilizatorului este restaurată.",
+      t("app-session-disk-state-adopted"),
       "restored",
     );
     return;
@@ -79,7 +169,7 @@ export async function handleNotificationAction(app: AppState, notification: AppN
     }
     if (actionId === EXTERNAL_CHANGE_KEEP_SESSION_ACTION_ID) {
       app.setGlobalStatus(
-        "Sesiunea rămâne deschisă, dar conflictul extern nu a fost acceptat; salvarea rămâne protejată de controlul conflictelor de pe disc.",
+        t("app-session-external-conflict-kept"),
         "idle",
       );
       return;
@@ -127,31 +217,5 @@ export async function refreshCurrentSession(app: AppState) {
   }
   app.refreshToken += 1;
   await app.requestPreviewRefresh("session-refresh");
-  app.setGlobalStatus("Proiecția sesiunii proiectului a fost reîncărcată în editor și previzualizare.", "restored");
-}
-
-export async function createProjectFile(app: AppState, relativePath: string, content: string) {
-  await runInPreviewStructuralLane(app, async (lease) => {
-    try {
-      const identity = previewStructuralCommandIdentity(lease);
-      const receipt = await createProjectTextFile(relativePath, content, identity);
-      requireCurrentPreviewStructuralSession(app, lease);
-      const createdPath = receipt.relativePath;
-      if (!createdPath) {
-        throw new Error("Receipt-ul creării nu conține path-ul fișierului.");
-      }
-      requireCurrentPreviewStructuralSession(app, lease);
-      await app.rescanCurrentProjectWithinStructuralLane(lease, createdPath, { strict: true });
-      requireCurrentPreviewStructuralSession(app, lease);
-    } catch (error) {
-      if (!previewStructuralSessionLeaseMatches(app, lease)) return;
-      throw error;
-    }
-  });
-}
-
-export async function afterSave(app: AppState) {
-  const identity = createCssRequestIdentity(app.sessionProjectRoot, app.kernelProjectSessionId);
-  await app.requestPreviewRefresh("after-save");
-  app.scssVariables = await getScssVariables(identity).catch(() => app.scssVariables);
+  app.setGlobalStatus(t("app-session-projection-reloaded"), "restored");
 }

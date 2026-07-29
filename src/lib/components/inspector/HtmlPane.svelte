@@ -2,8 +2,9 @@
   import {
     IconCode, IconFingerprint, IconAlignLeft, IconLink, IconPhoto,
     IconAdjustments, IconAccessible, IconDatabase, IconForms, IconTag,
-    IconVideo, IconVolume2, IconBrowser, IconPointer, IconTrash, IconPlus, IconX,
+    IconVideo, IconVolume2, IconBrowser, IconPointer, IconPlus, IconX,
   } from "@tabler/icons-svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import InspectorSection from "./InspectorSection.svelte";
   import AssetPicker from "./controls/AssetPicker.svelte";
   import {
@@ -23,20 +24,25 @@
   import {
     createZolaImageIntent,
     resolveZolaImageSource,
+    zolaImageSourceFailureMessage,
   } from "$lib/html/zola-image";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type {
-    SelectionInfo,
     EditableAttributes,
+    InspectorHtmlPhysicalFacts,
+    InspectorSelectionSummarySnapshot,
     ProjectFile,
     ProjectZolaImageIntent,
+    SelectionSnapshot,
     ZolaImageFormat,
     ZolaImageOperation,
   } from "$lib/types";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
 
   let {
-    selectedElement = null,
+    selectionSummary = null,
+    selectionSnapshot = null,
+    physicalFacts = null,
     canEditHtml = false,
     attributeValues,
     textContentValue = "",
@@ -62,10 +68,11 @@
     setImageSourceValue,
     applyZolaImageProcessingToHtml,
     cancelHtmlAttributeDraft,
-    deleteHtmlElement,
     changeElementTag,
   }: {
-    selectedElement?: SelectionInfo | null;
+    selectionSummary?: InspectorSelectionSummarySnapshot | null;
+    selectionSnapshot?: SelectionSnapshot | null;
+    physicalFacts?: InspectorHtmlPhysicalFacts | null;
     canEditHtml?: boolean;
     attributeValues: EditableAttributes;
     textContentValue?: string;
@@ -91,7 +98,6 @@
     setImageSourceValue: (value: string) => void;
     applyZolaImageProcessingToHtml: (intent: ProjectZolaImageIntent) => void | Promise<EditorActionOutcome>;
     cancelHtmlAttributeDraft: (expectedContextKey?: string) => void;
-    deleteHtmlElement: () => void | Promise<void>;
     changeElementTag: (tag: string) => void;
   } = $props();
 
@@ -119,23 +125,38 @@
   let zolaDraftSelectionKey = "";
 
   const canEdit = $derived(canEditHtml);
-  const tag = $derived(pendingTag ?? selectedElement?.tag ?? "");
+  const hasElementSelection = $derived(
+    selectionSummary?.state === "resolved"
+      && (
+        selectionSummary.subjectKind === "htmlElement"
+        || selectionSummary.subjectKind === "runtimeElement"
+      ),
+  );
+  const tag = $derived(pendingTag ?? selectionSummary?.tag ?? "");
   const tagCapability = $derived(htmlTagCapability(tag));
   const tagOptions = $derived(htmlTagTransitionOptions(tag));
   const canChangeTag = $derived(canEdit && tagOptions.length > 1);
   const assetContextKey = $derived([
-    selectedElement?.sourceId ?? "",
-    selectedElement?.sessionId ?? "",
-    selectedElement?.sourceLocation?.file ?? "",
-    selectedElement?.sourceLocation?.line ?? "",
-    selectedElement?.sourceLocation?.column ?? "",
-    selectedElement?.domPath ?? "",
+    selectionSnapshot?.runtimeSessionId ?? "",
+    selectionSnapshot?.selectionRevision ?? "",
+    selectionSnapshot?.anchor?.sourceNodeId ?? "",
+    selectionSnapshot?.anchor?.renderInstanceId ?? "",
+    selectionSnapshot?.provenance?.definition?.file
+      ?? selectionSnapshot?.provenance?.composition?.file
+      ?? "",
+    selectionSnapshot?.provenance?.definition?.range?.line
+      ?? selectionSnapshot?.provenance?.composition?.range?.line
+      ?? "",
+    selectionSnapshot?.provenance?.definition?.range?.column
+      ?? selectionSnapshot?.provenance?.composition?.range?.column
+      ?? "",
     tag,
   ].join("::"));
-  const zolaImageEnabled = $derived(Boolean(selectedElement?.zolaImage));
+  const zolaImage = $derived(physicalFacts?.zolaImage ?? null);
+  const zolaImageEnabled = $derived(Boolean(zolaImage));
 
   $effect(() => {
-    const presentation = selectedElement?.zolaImage ?? null;
+    const presentation = zolaImage;
     const nextKey = `${assetContextKey}::${JSON.stringify(presentation)}`;
     if (nextKey === zolaDraftSelectionKey) return;
     zolaDraftSelectionKey = nextKey;
@@ -175,26 +196,26 @@
   async function applyAttributeMutation(name: string, nextAttributes: EditableAttributes) {
     const serial = ++fieldCommitSerial;
     const previewMode = htmlAttributePreviewMode(name, tag);
-    setFieldStatus(name, "Se aplică în sesiunea proiectului…", "info");
+    setFieldStatus(name, t("inspector-applying"), "info");
     try {
       const result = await applyAttributesToHtml(nextAttributes);
       if (serial !== fieldCommitSerial) return;
       if (!result) {
-        setFieldStatus(name, attributeStatus || "Operația a fost trimisă către sesiunea proiectului.", "info");
+        setFieldStatus(name, attributeStatus || t("inspector-operation-submitted"), "info");
         return;
       }
       if (result.status === "failed" || result.status === "blocked") {
-        setFieldStatus(name, result.reason || attributeStatus || "Atributul nu a putut fi aplicat.", "error");
+        setFieldStatus(name, result.reason || attributeStatus || t("inspector-attribute-failed"), "error");
         return;
       }
       const projectionNote = previewMode === "sourceOnly"
-        ? " Sursa a fost actualizată; previzualizarea sigură neutralizează acest atribut."
+        ? ` ${t("inspector-source-only-note")}`
         : previewMode === "inert"
-          ? " Sursa a fost actualizată; elementul este inert în previzualizarea sigură."
+          ? ` ${t("inspector-inert-note")}`
           : "";
       setFieldStatus(
         name,
-        (result.reason || attributeStatus || (result.status === "noop" ? "Nicio diferență canonică." : "Atribut aplicat.")) + projectionNote,
+        (result.reason || attributeStatus || (result.status === "noop" ? t("inspector-no-canonical-difference") : t("inspector-attribute-applied"))) + projectionNote,
         "success",
       );
     } catch (error) {
@@ -206,7 +227,7 @@
   function commitAttribute(name: string, value: string) {
     const definition = htmlAttributeDefinition(name);
     if (definition?.sourceEditable === false) {
-      setFieldStatus(name, definition.reason || `${name} este blocat de schema HTML.`, "error");
+      setFieldStatus(name, definition.reason || t("inspector-schema-blocked", { name }), "error");
       return;
     }
     const validationError = htmlAttributeValueError(name, value);
@@ -250,7 +271,7 @@
   }
 
   function currentZolaSourceUrl() {
-    return (zolaSourceDraft || selectedElement?.zolaImage?.sourceUrl || imageSourceValue || getAttr("src")).trim();
+    return (zolaSourceDraft || zolaImage?.sourceUrl || imageSourceValue || getAttr("src")).trim();
   }
 
   async function commitZolaImage(enabled: boolean) {
@@ -264,11 +285,11 @@
         const width = positiveInteger(zolaWidthText);
         const height = positiveInteger(zolaHeightText);
         const quality = positiveInteger(zolaQualityText);
-        if (!width || width > 16384) throw new Error("Lățimea trebuie să fie între 1 și 16384px.");
+        if (!width || width > 16384) throw new Error(t("inspector-width-range"));
         if (zolaOperation !== "fit_width" && (!height || height > 16384)) {
-          throw new Error("Operația selectată necesită o înălțime între 1 și 16384px.");
+          throw new Error(t("inspector-height-range"));
         }
-        if (!quality || quality > 100) throw new Error("Calitatea trebuie să fie între 1 și 100.");
+        if (!quality || quality > 100) throw new Error(t("inspector-quality-range"));
         intent = createZolaImageIntent({
           enabled: true,
           source,
@@ -285,15 +306,15 @@
     }
 
     zolaImagePending = true;
-    setFieldStatus("zola-image", enabled ? "Se scrie contractul resize_image…" : "Se restaurează atributele originale…", "info");
+    setFieldStatus("zola-image", enabled ? t("inspector-zola-writing") : t("inspector-zola-restoring"), "info");
     try {
       const result = await applyZolaImageProcessingToHtml(intent);
       if (result && (result.status === "failed" || result.status === "blocked")) {
-        setFieldStatus("zola-image", result.reason || "Procesarea Zola a fost blocată.", "error");
+        setFieldStatus("zola-image", result.reason || t("inspector-zola-blocked"), "error");
       } else {
         setFieldStatus(
           "zola-image",
-          enabled ? "Imaginea este procesată declarativ de Zola." : "Atributele originale au fost restaurate.",
+          enabled ? t("inspector-zola-enabled") : t("inspector-zola-disabled"),
           "success",
         );
       }
@@ -363,54 +384,54 @@
   const GLOBAL_ATTRS = new Set(htmlGlobalAttributeNames());
   const A11Y_FIXED = htmlAccessibilityAttributeNames();
   const elementSpecificAttributes = $derived(htmlAttributesForElement(tag));
-  const targetOptions = [
-    { value: "", label: "same tab" },
+  const targetOptions = $derived([
+    { value: "", label: t("inspector-same-tab") },
     "_blank",
     "_self",
     "_parent",
     "_top",
-  ];
-  const loadingOptions = [{ value: "", label: "implicit (eager)" }, "lazy", "eager"];
-  const iframeLoadingOptions = [{ value: "", label: "implicit (eager)" }, "lazy", "eager"];
-  const decodingOptions = [{ value: "", label: "implicit (auto)" }, "async", "sync", "auto"];
+  ]);
+  const loadingOptions = $derived([{ value: "", label: t("inspector-default-eager") }, "lazy", "eager"]);
+  const iframeLoadingOptions = $derived([{ value: "", label: t("inspector-default-eager") }, "lazy", "eager"]);
+  const decodingOptions = $derived([{ value: "", label: t("inspector-default-auto") }, "async", "sync", "auto"]);
   const priorityOptions = ["auto", "high", "low"];
-  const zolaOperationOptions = [
-    { value: "fit_width", label: "Potrivește lățimea" },
-    { value: "fit", label: "Încadrează" },
-    { value: "fill", label: "Umple și decupează" },
-  ];
+  const zolaOperationOptions = $derived([
+    { value: "fit_width", label: t("inspector-zola-fit-width") },
+    { value: "fit", label: t("inspector-zola-fit") },
+    { value: "fill", label: t("inspector-zola-fill") },
+  ]);
   const zolaFormatOptions = ["webp", "avif", "auto", "jpg", "png"];
-  const buttonTypeOptions = [{ value: "", label: "implicit (submit)" }, "button", "submit", "reset"];
+  const buttonTypeOptions = $derived([{ value: "", label: t("inspector-default-submit") }, "button", "submit", "reset"]);
   const inputTypeOptions = ["text", "email", "password", "number", "tel", "url", "search", "date", "time", "datetime-local", "month", "week", "checkbox", "radio", "file", "color", "range", "hidden", "submit", "reset", "button"];
   const methodOptions = ["get", "post", "dialog"];
-  const enctypeOptions = [
-    { value: "", label: "urlencoded (default)" },
+  const enctypeOptions = $derived([
+    { value: "", label: t("inspector-default-urlencoded") },
     "multipart/form-data",
     "text/plain",
-  ];
+  ]);
   const preloadOptions = ["metadata", "auto", "none"];
-  const dirOptions = [
-    { value: "", label: "implicit (moștenit)" },
+  const dirOptions = $derived([
+    { value: "", label: t("inspector-default-inherited") },
     "auto",
     "ltr",
     "rtl",
-  ];
-  const contentEditableOptions = [
-    { value: "", label: "implicit (moștenit)" },
+  ]);
+  const contentEditableOptions = $derived([
+    { value: "", label: t("inspector-default-inherited") },
     "true",
     "false",
     "plaintext-only",
-  ];
-  const draggableOptions = [
-    { value: "", label: "implicit (auto)" },
+  ]);
+  const draggableOptions = $derived([
+    { value: "", label: t("inspector-default-auto") },
     "true",
     "false",
-  ];
-  const ariaBooleanOptions = [
-    { value: "", label: "nesetat" },
+  ]);
+  const ariaBooleanOptions = $derived([
+    { value: "", label: t("inspector-unset") },
     "true",
     "false",
-  ];
+  ]);
 
   const SPECIALIZED_ATTRIBUTES: Record<string, string[]> = {
     a: ["href", "target", "rel", "download", "hreflang"],
@@ -436,7 +457,7 @@
   function schemaSelectOptions(name: string) {
     const definition = htmlAttributeDefinition(name);
     return [
-      { value: "", label: definition?.implicitValue ? `implicit (${definition.implicitValue})` : "nesetat" },
+      { value: "", label: definition?.implicitValue ? `implicit (${definition.implicitValue})` : t("inspector-unset") },
       ...(definition?.values ?? []),
     ];
   }
@@ -451,19 +472,19 @@
 
   function attributeModeLabel(name: string) {
     const mode = htmlAttributePreviewMode(name, tag);
-    if (mode === "sourceOnly") return "doar sursă";
-    if (mode === "inert") return "preview inert";
-    if (mode === "blocked") return "blocat";
+    if (mode === "sourceOnly") return t("inspector-mode-source-only");
+    if (mode === "inert") return t("inspector-mode-inert");
+    if (mode === "blocked") return t("inspector-mode-blocked");
     return "live";
   }
 
-  const hasIdentity = $derived(Boolean(selectedElement?.id || selectedElement?.classes.length));
+  const hasIdentity = $derived(Boolean(selectionSummary?.elementId || selectionSummary?.classes.length));
   const hasContent  = $derived(Boolean(textContentValue));
   const hasElementSpecific = $derived(elementSpecificAttributes.some(k => k in attributeValues));
   const hasGlobalAttrs = $derived([...GLOBAL_ATTRS].some(k => k in attributeValues));
   const hasA11y = $derived(A11Y_FIXED.some(k => k in attributeValues) || Object.keys(attributeValues).some(k => k.startsWith("aria-")));
   const hasData = $derived(dataAttrs.length > 0);
-  const hasGeneratedClass = $derived(Boolean(selectedElement?.classes.some((cls) => /^ps-[a-z0-9-]+-[a-z0-9]{6,}$/i.test(cls))));
+  const hasGeneratedClass = $derived(Boolean(selectionSummary?.classes.some((cls) => /^ps-[a-z0-9-]+-[a-z0-9]{6,}$/i.test(cls))));
   const hasDataAnimAttr = $derived(Boolean(attributeValues["data-anim"]?.trim()));
 
   // ── Asset helpers ────────────────────────────────────────────────────────
@@ -485,46 +506,35 @@
   {/if}
 {/snippet}
 
-{#if !selectedElement}
-  <p class="hint">Selectează un element din preview.</p>
+{#if !hasElementSelection}
+  <p class="hint">{t("inspector-select-element")}</p>
 {:else}
 
 <!-- ── ELEMENT ──────────────────────────────────────────────────────────── -->
-<InspectorSection title="Element" hasValues={true}>
+<InspectorSection title={t("inspector-section-element")} hasValues={true}>
   {#snippet icon()}<IconCode size={13} stroke={1.7} />{/snippet}
 
   <div class="hf-row">
-    <span class="hf-label">Tag</span>
-    <SelectControl value={tag} options={tagOptions} disabled={!canChangeTag} ariaLabel="Tag HTML" onchange={commitTagDraft} />
+    <span class="hf-label">{t("inspector-element-tag")}</span>
+    <SelectControl value={tag} options={tagOptions} disabled={!canChangeTag} ariaLabel={t("inspector-element-html-tag")} onchange={commitTagDraft} />
   </div>
   {#if tagCapability?.previewMode === "inert"}
-    <p class="hf-capability-note">{tagCapability.reason ?? "Elementul este păstrat în sursă, dar este inert în previzualizarea sigură."}</p>
+    <p class="hf-capability-note">{tagCapability.reason ?? t("inspector-tag-inert")}</p>
   {:else if canEdit && !canChangeTag}
-    <p class="hf-capability-note">Schimbarea tagului nu are o destinație structural compatibilă și live-projectable.</p>
+    <p class="hf-capability-note">{t("inspector-tag-no-transition")}</p>
   {/if}
   {@render fieldFeedback([], tagStatus)}
   <div class="hf-row">
-    <span class="hf-label">Dim</span>
-    <span class="hf-dims">{selectedElement.rect.width} × {selectedElement.rect.height}</span>
+    <span class="hf-label">{t("inspector-element-dimensions-short")}</span>
+    <span class="hf-dims">{physicalFacts?.rect.width ?? "—"} × {physicalFacts?.rect.height ?? "—"}</span>
   </div>
-  <button
-    type="button"
-    class="hf-delete-element"
-    disabled={!canEdit}
-    title="Șterge elementul selectat"
-    onclick={() => deleteHtmlElement()}
-  >
-    <IconTrash size={13} stroke={1.9} />
-    <span>Șterge element</span>
-  </button>
-
-  {#if !selectedElement.sourceId && !selectedElement.sourceLocation && !isActivePreviewHtmlSource}
-    <p class="hf-warning">Elementul nu are sursă detectabilă. Adaugă o clasă sau id.</p>
+  {#if !selectionSnapshot?.provenance?.definition && !selectionSnapshot?.provenance?.composition && !isActivePreviewHtmlSource}
+    <p class="hf-warning">{t("inspector-no-source")}</p>
   {/if}
 </InspectorSection>
 
 <!-- ── IDENTITY ─────────────────────────────────────────────────────────── -->
-<InspectorSection title="Identity" hasValues={hasIdentity}>
+<InspectorSection title={t("inspector-section-identity")} hasValues={hasIdentity}>
   {#snippet icon()}<IconFingerprint size={13} stroke={1.7} />{/snippet}
 
   <div class="hf-row">
@@ -541,9 +551,9 @@
   </div>
 
   <div class="hf-subheader">
-    <span class="hf-sublabel">Clase</span>
+    <span class="hf-sublabel">{t("inspector-classes")}</span>
     {#if canEdit}
-      <button type="button" class="hf-add-btn" aria-label="Adaugă o clasă" onclick={() => { addingClass = true; }}>
+      <button type="button" class="hf-add-btn" aria-label={t("inspector-add-class")} onclick={() => { addingClass = true; }}>
         <IconPlus size={13} stroke={1.9} />
       </button>
     {/if}
@@ -551,47 +561,47 @@
 
   {#if canEdit && !hasGeneratedClass}
     <button type="button" class="hf-ghost-add" onclick={() => { void generateClassForSelectedHtml(); }}>
-      Generează clasă unică
+      {t("inspector-generate-class")}
     </button>
   {/if}
 
   <div class="chip-list">
-    {#if selectedElement.classes.length}
-      {#each selectedElement.classes as cls}
+    {#if selectionSummary?.classes.length}
+      {#each selectionSummary.classes as cls}
         <span class="cls-chip">
           <span class="cls-chip-name">{cls}</span>
           {#if canEdit}
-            <button type="button" class="cls-chip-del" aria-label={`Elimină clasa ${cls}`} onclick={() => removeClass(cls)}>
+            <button type="button" class="cls-chip-del" aria-label={t("inspector-remove-class", { name: cls })} onclick={() => removeClass(cls)}>
               <IconX size={12} stroke={2} />
             </button>
           {/if}
         </span>
       {/each}
     {:else}
-      <span class="hint-inline">Nicio clasă</span>
+      <span class="hint-inline">{t("inspector-no-classes")}</span>
     {/if}
     {#if addingClass}
       <div class="hf-add-row">
         <input
           class="hf-input"
           type="text"
-          placeholder="nume-clasa"
+          placeholder={t("inspector-class-placeholder")}
           bind:value={newClassName}
           onkeydown={(e) => { if (e.key === "Enter") addClass(); if (e.key === "Escape") { addingClass = false; newClassName = ""; } }}
         />
-        <button type="button" class="hf-ok-btn" onclick={addClass}>OK</button>
+        <button type="button" class="hf-ok-btn" onclick={addClass}>{t("common-confirm")}</button>
       </div>
     {/if}
   </div>
 </InspectorSection>
-{@render fieldFeedback(["id"], classStatus)}
+{@render fieldFeedback(["id"], canEdit ? "" : classStatus)}
 
 <!-- ── CONTENT ──────────────────────────────────────────────────────────── -->
-<InspectorSection title="Content" hasValues={hasContent}>
+<InspectorSection title={t("inspector-section-content")} hasValues={hasContent}>
   {#snippet icon()}<IconAlignLeft size={13} stroke={1.7} />{/snippet}
 
-  {#if selectedElement.hasChildElements}
-    <p class="hint-inline">{selectedElement.childNodes.length} element{selectedElement.childNodes.length !== 1 ? "e" : ""} copil. Editează din preview sau cod.</p>
+  {#if physicalFacts?.hasChildElements}
+    <p class="hint-inline">{t("inspector-child-elements", { count: physicalFacts.childElementCount })}</p>
   {:else}
     <textarea
       class="hf-textarea"
@@ -611,12 +621,12 @@
     ></textarea>
   {/if}
 </InspectorSection>
-{@render fieldFeedback([], textStatus)}
+{@render fieldFeedback([], canEdit ? "" : textStatus)}
 
 <!-- ── ELEMENT SPECIFIC ─────────────────────────────────────────────────── -->
 
 {#if tag === "a"}
-  <InspectorSection title="Link" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-link")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconLink size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">href</span>
@@ -625,7 +635,7 @@
     </div>
     <div class="hf-row">
       <span class="hf-label">target</span>
-      <SelectControl value={getAttr("target")} options={targetOptions} disabled={!canEditAttribute("target")} ariaLabel="Ținta linkului" onchange={(value) => commitField("target", value)} />
+      <SelectControl value={getAttr("target")} options={targetOptions} disabled={!canEditAttribute("target")} ariaLabel={t("inspector-link-target")} onchange={(value) => commitField("target", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">rel</span>
@@ -645,14 +655,14 @@
     {#if getBool("download")}
       <div class="hf-row">
         <span class="hf-label">filename</span>
-        <input class="hf-input" type="text" placeholder="implicit" value={getAttr("download")} disabled={!canEdit}
+        <input class="hf-input" type="text" placeholder={t("inspector-default-value")} value={getAttr("download")} disabled={!canEdit}
           oninput={(e) => setAttr("download", e.currentTarget.value)} onblur={() => commitField("download")} />
       </div>
     {/if}
   </InspectorSection>
 
 {:else if tag === "img"}
-  <InspectorSection title="Image" hasValues={hasElementSpecific || zolaImageEnabled}>
+  <InspectorSection title={t("inspector-section-image")} hasValues={hasElementSpecific || zolaImageEnabled}>
     {#snippet icon()}<IconPhoto size={13} stroke={1.7} />{/snippet}
     <div class="hf-sublabel-row"><span class="hf-sublabel">src</span></div>
     <AssetPicker
@@ -680,12 +690,12 @@
     />
     <div class="hf-row">
       <span class="hf-label">alt</span>
-      <input class="hf-input" type="text" placeholder="Descriere imagine" value={getAttr("alt")} disabled={!canEdit}
+      <input class="hf-input" type="text" placeholder={t("inspector-image-description-placeholder")} value={getAttr("alt")} disabled={!canEdit}
         oninput={(e) => setAttr("alt", e.currentTarget.value)} onblur={() => commitField("alt")} />
     </div>
     <div class="zola-image-box">
       <div class="hf-row">
-        <span class="hf-label">Procesează cu Zola</span>
+        <span class="hf-label">{t("inspector-zola-process")}</span>
         <button
           type="button"
           class="hf-toggle"
@@ -695,18 +705,18 @@
         >{zolaImageEnabled ? "on" : "off"}</button>
       </div>
       {#if !zolaImageEnabled && !zolaSourceResolution.eligible}
-        <p class="hf-zola-note error">{zolaSourceResolution.reason}</p>
+        <p class="hf-zola-note error">{zolaImageSourceFailureMessage(zolaSourceResolution.code)}</p>
       {:else if !zolaImageEnabled}
-        <p class="hf-zola-note">Zola va genera imaginea procesată și dimensiunile reale la build.</p>
+        <p class="hf-zola-note">{t("inspector-zola-build-note")}</p>
       {/if}
       {#if zolaImageEnabled}
         <div class="hf-row">
-          <span class="hf-label">operație</span>
+          <span class="hf-label">{t("inspector-zola-operation")}</span>
           <SelectControl
             value={zolaOperation}
             options={zolaOperationOptions}
             disabled={!canEdit || zolaImagePending}
-            ariaLabel="Operație resize_image"
+            ariaLabel={t("inspector-zola-operation-label")}
             onchange={(value) => {
               zolaOperation = value as ZolaImageOperation;
               void commitZolaImage(true);
@@ -737,7 +747,7 @@
             value={zolaFormat}
             options={zolaFormatOptions}
             disabled={!canEdit || zolaImagePending}
-            ariaLabel="Format imagine Zola"
+            ariaLabel={t("inspector-zola-format-label")}
             onchange={(value) => {
               zolaFormat = value as ZolaImageFormat;
               void commitZolaImage(true);
@@ -746,14 +756,14 @@
         </div>
         {#if zolaFormat !== "png"}
           <div class="hf-row">
-            <span class="hf-label">calitate</span>
+            <span class="hf-label">{t("inspector-zola-quality")}</span>
             <input class="hf-input" type="number" min="1" max="100" value={zolaQualityText}
               disabled={!canEdit || zolaImagePending}
               oninput={(event) => { zolaQualityText = event.currentTarget.value; }}
               onblur={() => { void commitZolaImage(true); }} />
           </div>
         {/if}
-        <p class="hf-zola-note"><code>src</code>, <code>width</code> și <code>height</code> sunt administrate de contractul Zola.</p>
+        <p class="hf-zola-note">{t("inspector-zola-managed-note")}</p>
       {:else}
         <div class="hf-row-2">
           <div class="hf-row">
@@ -769,27 +779,27 @@
         </div>
       {/if}
     </div>
-    {@render fieldFeedback(["zola-image"], imageStatus)}
+    {@render fieldFeedback(["zola-image"], canEdit ? "" : imageStatus)}
     <div class="hf-row">
       <span class="hf-label">loading</span>
-      <SelectControl value={getAttr("loading")} options={loadingOptions} disabled={!canEditAttribute("loading")} ariaLabel="Image loading" onchange={(value) => commitField("loading", value)} />
+      <SelectControl value={getAttr("loading")} options={loadingOptions} disabled={!canEditAttribute("loading")} ariaLabel={t("inspector-image-loading")} onchange={(value) => commitField("loading", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">decoding</span>
-      <SelectControl value={getAttr("decoding")} options={decodingOptions} disabled={!canEditAttribute("decoding")} ariaLabel="Image decoding" onchange={(value) => commitField("decoding", value)} />
+      <SelectControl value={getAttr("decoding")} options={decodingOptions} disabled={!canEditAttribute("decoding")} ariaLabel={t("inspector-image-decoding")} onchange={(value) => commitField("decoding", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">priority</span>
-      <SelectControl value={getAttr("fetchpriority") || "auto"} options={priorityOptions} disabled={!canEdit} ariaLabel="Image priority" onchange={(value) => commitAttribute("fetchpriority", value)} />
+      <SelectControl value={getAttr("fetchpriority") || "auto"} options={priorityOptions} disabled={!canEdit} ariaLabel={t("inspector-image-priority")} onchange={(value) => commitAttribute("fetchpriority", value)} />
     </div>
   </InspectorSection>
 
 {:else if tag === "button"}
-  <InspectorSection title="Button" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-button")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconPointer size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">type</span>
-      <SelectControl value={getAttr("type")} options={buttonTypeOptions} disabled={!canEditAttribute("type")} ariaLabel="Button type" onchange={(value) => commitField("type", value)} />
+      <SelectControl value={getAttr("type")} options={buttonTypeOptions} disabled={!canEditAttribute("type")} ariaLabel={t("inspector-button-type")} onchange={(value) => commitField("type", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">name</span>
@@ -805,11 +815,11 @@
   </InspectorSection>
 
 {:else if tag === "input"}
-  <InspectorSection title="Input" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-input")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconForms size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">type</span>
-      <SelectControl value={getAttr("type") || "text"} options={inputTypeOptions} disabled={!canEdit} ariaLabel="Input type" onchange={(value) => commitAttribute("type", value)} />
+      <SelectControl value={getAttr("type") || "text"} options={inputTypeOptions} disabled={!canEdit} ariaLabel={t("inspector-input-type")} onchange={(value) => commitAttribute("type", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">name</span>
@@ -847,7 +857,7 @@
   </InspectorSection>
 
 {:else if tag === "textarea"}
-  <InspectorSection title="Textarea" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-textarea")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconForms size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">name</span>
@@ -880,7 +890,7 @@
   </InspectorSection>
 
 {:else if tag === "select"}
-  <InspectorSection title="Select" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-select")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconForms size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">name</span>
@@ -896,7 +906,7 @@
   </InspectorSection>
 
 {:else if tag === "form"}
-  <InspectorSection title="Form" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-form")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconForms size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">action</span>
@@ -905,11 +915,11 @@
     </div>
     <div class="hf-row">
       <span class="hf-label">method</span>
-      <SelectControl value={getAttr("method") || "get"} options={methodOptions} disabled={!canEdit} ariaLabel="Form method" onchange={(value) => commitAttribute("method", value)} />
+      <SelectControl value={getAttr("method") || "get"} options={methodOptions} disabled={!canEdit} ariaLabel={t("inspector-form-method")} onchange={(value) => commitAttribute("method", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">enctype</span>
-      <SelectControl value={getAttr("enctype")} options={enctypeOptions} disabled={!canEditAttribute("enctype")} ariaLabel="Form enctype" onchange={(value) => commitField("enctype", value)} />
+      <SelectControl value={getAttr("enctype")} options={enctypeOptions} disabled={!canEditAttribute("enctype")} ariaLabel={t("inspector-form-enctype")} onchange={(value) => commitField("enctype", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">novalidate</span>
@@ -919,7 +929,7 @@
   </InspectorSection>
 
 {:else if tag === "label"}
-  <InspectorSection title="Etichetă" hasValues={"for" in attributeValues}>
+  <InspectorSection title={t("inspector-section-label")} hasValues={"for" in attributeValues}>
     {#snippet icon()}<IconTag size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">for</span>
@@ -929,7 +939,7 @@
   </InspectorSection>
 
 {:else if tag === "video"}
-  <InspectorSection title="Video" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-video")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconVideo size={13} stroke={1.7} />{/snippet}
     <div class="hf-sublabel-row"><span class="hf-sublabel">src</span></div>
     <AssetPicker value={getAttr("src")} assets={videoAssets} assetUrl={projectAssetPublicUrl} assetMeta={projectAssetOriginLabel}
@@ -943,7 +953,7 @@
     </div>
     <div class="hf-row">
       <span class="hf-label">preload</span>
-      <SelectControl value={getAttr("preload") || "metadata"} options={preloadOptions} disabled={!canEdit} ariaLabel="Video preload" onchange={(value) => commitAttribute("preload", value)} />
+      <SelectControl value={getAttr("preload") || "metadata"} options={preloadOptions} disabled={!canEdit} ariaLabel={t("inspector-video-preload")} onchange={(value) => commitAttribute("preload", value)} />
     </div>
     <div class="hf-bools">
       {#each ["controls","autoplay","muted","loop","playsinline"] as b}
@@ -954,7 +964,7 @@
   </InspectorSection>
 
 {:else if tag === "audio"}
-  <InspectorSection title="Audio" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-audio")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconVolume2 size={13} stroke={1.7} />{/snippet}
     <div class="hf-sublabel-row"><span class="hf-sublabel">src</span></div>
     <AssetPicker value={getAttr("src")} assets={audioAssets} assetUrl={projectAssetPublicUrl} assetMeta={projectAssetOriginLabel}
@@ -963,7 +973,7 @@
       oncancel={(_baseline, context) => cancelHtmlAttributeDraft(context)} commitOnInputMs={450} />
     <div class="hf-row">
       <span class="hf-label">preload</span>
-      <SelectControl value={getAttr("preload") || "metadata"} options={preloadOptions} disabled={!canEdit} ariaLabel="Audio preload" onchange={(value) => commitAttribute("preload", value)} />
+      <SelectControl value={getAttr("preload") || "metadata"} options={preloadOptions} disabled={!canEdit} ariaLabel={t("inspector-audio-preload")} onchange={(value) => commitAttribute("preload", value)} />
     </div>
     <div class="hf-bools">
       {#each ["controls","autoplay","muted","loop"] as b}
@@ -974,7 +984,7 @@
   </InspectorSection>
 
 {:else if tag === "iframe"}
-  <InspectorSection title="Iframe" hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-iframe")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconBrowser size={13} stroke={1.7} />{/snippet}
     <div class="hf-row">
       <span class="hf-label">src</span>
@@ -988,7 +998,7 @@
     </div>
     <div class="hf-row">
       <span class="hf-label">loading</span>
-      <SelectControl value={getAttr("loading")} options={iframeLoadingOptions} disabled={!canEditAttribute("loading")} ariaLabel="Iframe loading" onchange={(value) => commitField("loading", value)} />
+      <SelectControl value={getAttr("loading")} options={iframeLoadingOptions} disabled={!canEditAttribute("loading")} ariaLabel={t("inspector-iframe-loading")} onchange={(value) => commitField("loading", value)} />
     </div>
     <div class="hf-row">
       <span class="hf-label">sandbox</span>
@@ -1000,12 +1010,12 @@
 
 {#if sourceOnlySpecializedAttributes.length}
   <p class="hf-capability-note">
-    {sourceOnlySpecializedAttributes.join(", ")} se salvează în sursa canonică, dar sunt neutralizate în previzualizarea sigură.
+    {t("inspector-source-only-attributes", { attributes: sourceOnlySpecializedAttributes.join(", ") })}
   </p>
 {/if}
 
 {#if additionalElementAttributes.length}
-  <InspectorSection title={`Atribute <${tag}>`} hasValues={hasElementSpecific}>
+  <InspectorSection title={t("inspector-section-tag-attributes", { tag })} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconTag size={13} stroke={1.7} />{/snippet}
     {#each additionalElementAttributes as name}
       {@const definition = htmlAttributeDefinition(name)}
@@ -1027,7 +1037,7 @@
             value={getAttr(name)}
             options={schemaSelectOptions(name)}
             disabled={!canEditAttribute(name)}
-            ariaLabel={`Atribut ${name}`}
+            ariaLabel={t("inspector-attribute-label", { name })}
             onchange={(value) => commitField(name, value)}
           />
         {:else}
@@ -1047,10 +1057,10 @@
     {/each}
   </InspectorSection>
 {/if}
-{@render fieldFeedback(elementSpecificAttributes, tag === "img" ? imageStatus : "")}
+{@render fieldFeedback(elementSpecificAttributes, tag === "img" && !canEdit ? imageStatus : "")}
 
 <!-- ── ATRIBUTE ──────────────────────────────────────────────────────────── -->
-<InspectorSection title="Atribute" hasValues={hasGlobalAttrs}>
+<InspectorSection title={t("inspector-section-attributes")} hasValues={hasGlobalAttrs}>
   {#snippet icon()}<IconAdjustments size={13} stroke={1.7} />{/snippet}
 
   <div class="hf-row">
@@ -1065,7 +1075,7 @@
   </div>
   <div class="hf-row">
     <span class="hf-label">dir</span>
-    <SelectControl value={getAttr("dir")} options={dirOptions} disabled={!canEditAttribute("dir")} ariaLabel="Direcție text" onchange={(value) => commitField("dir", value)} />
+    <SelectControl value={getAttr("dir")} options={dirOptions} disabled={!canEditAttribute("dir")} ariaLabel={t("inspector-text-direction")} onchange={(value) => commitField("dir", value)} />
   </div>
   <div class="hf-row">
     <span class="hf-label">tabindex</span>
@@ -1080,17 +1090,17 @@
   </div>
   <div class="hf-row">
     <span class="hf-label">editable</span>
-    <SelectControl value={getAttr("contenteditable")} options={contentEditableOptions} disabled={!canEditAttribute("contenteditable")} ariaLabel="Content editable" onchange={(value) => commitField("contenteditable", value)} />
+    <SelectControl value={getAttr("contenteditable")} options={contentEditableOptions} disabled={!canEditAttribute("contenteditable")} ariaLabel={t("inspector-content-editable")} onchange={(value) => commitField("contenteditable", value)} />
   </div>
   <div class="hf-row">
     <span class="hf-label">draggable</span>
-    <SelectControl value={getAttr("draggable")} options={draggableOptions} disabled={!canEditAttribute("draggable")} ariaLabel="Draggable" onchange={(value) => commitField("draggable", value)} />
+    <SelectControl value={getAttr("draggable")} options={draggableOptions} disabled={!canEditAttribute("draggable")} ariaLabel={t("inspector-draggable")} onchange={(value) => commitField("draggable", value)} />
   </div>
   {@render fieldFeedback([...GLOBAL_ATTRS])}
 </InspectorSection>
 
 <!-- ── ACCESSIBILITY ────────────────────────────────────────────────────── -->
-<InspectorSection title="Accessibility" hasValues={hasA11y}>
+<InspectorSection title={t("inspector-section-accessibility")} hasValues={hasA11y}>
   {#snippet icon()}<IconAccessible size={13} stroke={1.7} />{/snippet}
 
   <div class="hf-row">
@@ -1124,23 +1134,26 @@
     <div class="hf-add-row">
       <input class="hf-input" type="text" placeholder="aria-live" bind:value={newAriaKey}
         onkeydown={(e) => { if (e.key === "Enter") confirmAddAria(); if (e.key === "Escape") { addingAria = false; } }} />
-      <input class="hf-input" type="text" placeholder="valoare" bind:value={newAriaValue}
+      <input class="hf-input" type="text" placeholder={t("inspector-value-placeholder")} bind:value={newAriaValue}
         onkeydown={(e) => { if (e.key === "Enter") confirmAddAria(); if (e.key === "Escape") { addingAria = false; } }} />
-      <button type="button" class="hf-ok-btn" onclick={confirmAddAria}>OK</button>
+      <button type="button" class="hf-ok-btn" onclick={confirmAddAria}>{t("common-confirm")}</button>
     </div>
   {:else if canEdit}
-    <button type="button" class="hf-ghost-add" onclick={() => { addingAria = true; }}>+ alt atribut aria</button>
+    <button type="button" class="hf-ghost-add" onclick={() => { addingAria = true; }}>
+      <IconPlus size={13} stroke={1.9} aria-hidden="true" />
+      {t("inspector-add-aria")}
+    </button>
   {/if}
   {@render fieldFeedback(A11Y_FIXED)}
 </InspectorSection>
 
 <!-- ── DATA ATTRIBUTES ───────────────────────────────────────────────────── -->
-<InspectorSection title="Data" hasValues={hasData}>
+<InspectorSection title={t("inspector-section-data")} hasValues={hasData}>
   {#snippet icon()}<IconDatabase size={13} stroke={1.7} />{/snippet}
 
   {#if canEdit && !hasDataAnimAttr}
     <button type="button" class="hf-ghost-add" onclick={() => { void generateDataAnimForSelectedHtml(); }}>
-      Generează data-anim
+      {t("inspector-generate-data-anim")}
     </button>
   {/if}
 
@@ -1151,7 +1164,7 @@
         oninput={(e) => setAttr(key, e.currentTarget.value)}
         onblur={(e) => commitAttribute(key, e.currentTarget.value)} />
       {#if canEdit}
-        <button type="button" class="hf-del-btn" aria-label={`Elimină atributul ${key}`}
+        <button type="button" class="hf-del-btn" aria-label={t("inspector-remove-attribute", { name: key })}
           onclick={() => commitAttributeRemoval(key)}>
           <IconX size={13} stroke={1.9} />
         </button>
@@ -1163,12 +1176,15 @@
     <div class="hf-add-row">
       <input class="hf-input" type="text" placeholder="data-component" bind:value={newDataKey}
         onkeydown={(e) => { if (e.key === "Enter") confirmAddData(); if (e.key === "Escape") { addingData = false; newDataKey = ""; newDataValue = ""; } }} />
-      <input class="hf-input" type="text" placeholder="valoare" bind:value={newDataValue}
+      <input class="hf-input" type="text" placeholder={t("inspector-value-placeholder")} bind:value={newDataValue}
         onkeydown={(e) => { if (e.key === "Enter") confirmAddData(); if (e.key === "Escape") { addingData = false; } }} />
-      <button type="button" class="hf-ok-btn" onclick={confirmAddData}>OK</button>
+      <button type="button" class="hf-ok-btn" onclick={confirmAddData}>{t("common-confirm")}</button>
     </div>
   {:else if canEdit}
-    <button type="button" class="hf-ghost-add" onclick={() => { addingData = true; }}>+ atribut data-*</button>
+    <button type="button" class="hf-ghost-add" onclick={() => { addingData = true; }}>
+      <IconPlus size={13} stroke={1.9} aria-hidden="true" />
+      {t("inspector-add-data")}
+    </button>
   {/if}
   {@render fieldFeedback(dataAttrs.map(([name]) => name))}
 </InspectorSection>
@@ -1192,39 +1208,11 @@
     gap: 6px;
   }
 
-  .hf-delete-element {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    min-height: 28px;
-    margin-top: 4px;
-    border: 1px solid color-mix(in srgb, #cf4a4a 36%, var(--border-3));
-    border-radius: 6px;
-    background: color-mix(in srgb, #cf4a4a 8%, var(--surface-3));
-    color: #cf4a4a;
-    font-size: 12px;
-    font-weight: 800;
-    cursor: pointer;
-  }
-
-  .hf-delete-element:hover:not(:disabled) {
-    background: color-mix(in srgb, #cf4a4a 14%, var(--surface-3));
-    border-color: color-mix(in srgb, #cf4a4a 58%, var(--border-3));
-  }
-
-  .hf-delete-element:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
   .hf-label {
-    font-size: 12px;
-    font-weight: 700;
+    font-size: 11px;
+    font-weight: 650;
     color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1254,17 +1242,23 @@
     height: 26px;
     padding: 0 7px;
     border: 1px solid var(--border-4);
-    border-radius: 6px;
-    background: var(--surface-8);
+    border-radius: var(--radius-control);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
     color: var(--text);
     font-family: "JetBrains Mono", monospace;
     font-size: 12px;
     outline: none;
-    transition: border-color 80ms;
+    transition:
+      border-color 100ms ease,
+      box-shadow 100ms ease;
   }
 
   .hf-input:focus {
     border-color: var(--brand);
+    box-shadow:
+      var(--shadow-inset),
+      0 0 0 1px color-mix(in srgb, var(--focus-ring) 38%, transparent);
   }
 
   .hf-input:disabled {
@@ -1367,10 +1361,9 @@
   }
 
   .hf-sublabel {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0;
     color: var(--text-muted);
     user-select: none;
   }
@@ -1389,8 +1382,9 @@
     width: 20px;
     height: 20px;
     border: 1px solid var(--border-3);
-    border-radius: 4px;
-    background: var(--surface-4);
+    border-radius: calc(var(--radius-control) - 2px);
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
     color: var(--text-muted);
     font-size: 14px;
     line-height: 1;
@@ -1409,8 +1403,9 @@
     height: 26px;
     padding: 0 6px;
     border: 1px dashed var(--border-3);
-    border-radius: 6px;
-    background: transparent;
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--surface-inset) 44%, transparent);
+    box-shadow: inset 0 1px 2px color-mix(in srgb, var(--skeuo-shade) 28%, transparent);
     color: var(--text-muted);
     font-size: 12px;
     cursor: pointer;
@@ -1556,19 +1551,25 @@
     min-height: 64px;
     padding: 6px 8px;
     border: 1px solid var(--border-4);
-    border-radius: 6px;
-    background: var(--surface-8);
+    border-radius: var(--radius-control);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
     color: var(--text);
     font-size: 12px;
     font-family: inherit;
     resize: vertical;
     outline: none;
     box-sizing: border-box;
-    transition: border-color 80ms;
+    transition:
+      border-color 100ms ease,
+      box-shadow 100ms ease;
   }
 
   .hf-textarea:focus {
     border-color: var(--brand);
+    box-shadow:
+      var(--shadow-inset),
+      0 0 0 1px color-mix(in srgb, var(--focus-ring) 38%, transparent);
   }
 
   .hf-textarea:disabled {

@@ -8,6 +8,7 @@
   import { resolvePickerColor } from "$lib/inspector/color-picker-model";
   import PanaColorPicker from "$lib/components/ui/PanaColorPicker.svelte";
   import VariablePopover from "./VariablePopover.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
     property,
@@ -107,7 +108,7 @@
     joined
     width={26}
     height={24}
-    label="Alege culoarea"
+    label={t("inspector-color-choose")}
     oninput={handlePickerInput}
     oncommit={(next) => oncommit?.(next)}
     oncancel={handlePickerCancel}
@@ -118,7 +119,7 @@
     <button
       type="button"
       class="var-btn"
-      title="Inserează variabilă SCSS"
+      title={t("inspector-insert-scss-variable")}
       onclick={() => {
         showSuggestions = !showSuggestions;
         document.getElementById(inputId)?.focus();

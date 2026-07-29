@@ -10,17 +10,17 @@ pub struct ProjectScan {
     pub preview_warning: Option<String>,
     pub active_theme: Option<String>,
     pub files: Vec<ProjectFile>,
-    pub is_zola: bool,
-    pub is_empty: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_revision: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepted_disk_manifest: Option<ProjectDiskManifest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepted_disk_generation: Option<u64>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFile {
     pub name: String,
@@ -31,7 +31,7 @@ pub struct ProjectFile {
     pub preview_path: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ProjectFileKind {
     Dir,
@@ -44,7 +44,7 @@ pub enum ProjectFileKind {
     Other,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProjectFileRole {
     Page,

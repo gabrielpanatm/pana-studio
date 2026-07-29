@@ -13,6 +13,7 @@ mod zola_settings;
 use crate::{
     commands::project::require_current_project_root,
     kernel::{file_buffer_store::FileBufferStore, project_workspace::WorkspaceResourceMutation},
+    localization::LocalizedDiagnostic,
     project::zola_project_root,
     state::AppState,
 };
@@ -22,20 +23,22 @@ use workspace::{
 };
 
 pub use model::{
-    ApplicationSettingsInput, ApplicationSettingsSnapshot, ProjectAppConfig, ProjectAppConfigInput,
-    ZolaProjectSettings,
+    ApplicationSettingsPatchInput, ApplicationSettingsSnapshot, ProjectAppConfig,
+    ProjectAppConfigInput, ZolaProjectSettings,
 };
 
 #[tauri::command]
-pub fn read_application_settings(app: AppHandle) -> Result<ApplicationSettingsSnapshot, String> {
+pub fn read_application_settings(
+    app: AppHandle,
+) -> Result<ApplicationSettingsSnapshot, LocalizedDiagnostic> {
     app_config::read_application_settings(&app)
 }
 
 #[tauri::command]
 pub fn save_application_settings(
     app: AppHandle,
-    settings: ApplicationSettingsInput,
-) -> Result<ApplicationSettingsSnapshot, String> {
+    settings: ApplicationSettingsPatchInput,
+) -> Result<ApplicationSettingsSnapshot, LocalizedDiagnostic> {
     app_config::write_application_settings(&app, settings)
 }
 

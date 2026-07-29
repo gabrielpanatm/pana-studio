@@ -47,6 +47,9 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
+      - name: Validate Fluent catalogs and generated types
+        run: npm run i18n:check
+
       - name: Check Svelte and TypeScript
         run: npm run check
 
@@ -55,6 +58,12 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Check Rust formatting
+        run: cargo fmt --all --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Check Rust
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
 
       - name: Run Rust tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml

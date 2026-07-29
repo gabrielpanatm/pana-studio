@@ -28,6 +28,7 @@ pub enum WorkbenchActivity {
     DesignSystem,
     Assets,
     Content,
+    Taxonomies,
     Data,
     Versioning,
     Audit,
@@ -41,6 +42,28 @@ pub enum WorkbenchSurface {
     Visual,
     Code,
     Markdown,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkbenchProjectEntryKind {
+    Directory,
+    Text,
+    Binary,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbenchProjectEntrySelection {
+    pub relative_path: String,
+    pub kind: WorkbenchProjectEntryKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkbenchProjectEntryRemap {
+    pub source_prefix: String,
+    pub destination_prefix: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,10 +87,10 @@ pub enum WorkbenchGroupId {
 #[serde(rename_all = "snake_case")]
 pub enum WorkbenchBottomPanelView {
     #[default]
+    #[serde(alias = "timeline")]
     Problems,
     Output,
     Terminal,
-    Timeline,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -160,6 +183,8 @@ pub struct WorkbenchSnapshot {
     pub canvas_viewport: WorkbenchCanvasViewportSnapshot,
     pub groups: Vec<WorkbenchGroupSnapshot>,
     pub bottom_panel: WorkbenchBottomPanelSnapshot,
+    #[serde(default)]
+    pub selected_project_entry: Option<WorkbenchProjectEntrySelection>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -177,6 +202,20 @@ pub enum WorkbenchIntent {
         surface: WorkbenchSurface,
         #[serde(default)]
         pinned: bool,
+    },
+    SelectProjectEntry {
+        relative_path: String,
+        entry_kind: WorkbenchProjectEntryKind,
+        #[serde(default)]
+        open_surface: Option<WorkbenchSurface>,
+    },
+    ReconcileProjectEntries {
+        #[serde(default)]
+        remaps: Vec<WorkbenchProjectEntryRemap>,
+        #[serde(default)]
+        deleted_prefixes: Vec<String>,
+        #[serde(default)]
+        selection_override: Option<WorkbenchProjectEntrySelection>,
     },
     ActivateDocument {
         document_id: String,
@@ -235,7 +274,7 @@ pub struct WorkbenchCommandReceipt {
 
 #[cfg(test)]
 mod tests {
-    use super::WorkbenchActivity;
+    use super::{WorkbenchActivity, WorkbenchBottomPanelView};
 
     #[test]
     fn legacy_site_activity_migrates_to_templates() {
@@ -246,6 +285,18 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&activity).expect("templates activity"),
             r#""templates""#,
+        );
+    }
+
+    #[test]
+    fn legacy_bottom_timeline_migrates_to_problems() {
+        let view: WorkbenchBottomPanelView =
+            serde_json::from_str(r#""timeline""#).expect("legacy timeline view");
+
+        assert_eq!(view, WorkbenchBottomPanelView::Problems);
+        assert_eq!(
+            serde_json::to_string(&view).expect("problems view"),
+            r#""problems""#,
         );
     }
 }

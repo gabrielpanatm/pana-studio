@@ -1647,7 +1647,7 @@ mod linux {
         let authority = capability::capture_directory_authority(
             &fixture.boundary,
             "test/mkdir-v2-project-initializer",
-            DirectoryAuthorityScope::ProjectBootstrap { lease_id: 42 },
+            DirectoryAuthorityScope::ProjectCreation { authority_id: 42 },
         )
         .unwrap();
         let target = WriteTarget::new(
@@ -5568,7 +5568,7 @@ mod linux {
                     "Preview Copy recovery crash fixture.",
                 ),
                 WriteOwner::ProjectInitializer => (
-                    DirectoryAuthorityScope::ProjectBootstrap { lease_id: 1 },
+                    DirectoryAuthorityScope::ProjectCreation { authority_id: 1 },
                     WriteCategory::ProjectSourceWrite,
                     WritePolicy::project_creation_lifecycle(),
                     "Project Initializer Copy recovery crash fixture.",

@@ -6,7 +6,8 @@ import type {
   ProjectScan,
   ProjectWorkspaceSnapshot,
   ScssVariable,
-  SelectionInfo,
+  CoordinatedElementSelection,
+  SelectionSnapshot,
   SourceLanguage,
   UiContextProjection,
 } from "$lib/types";
@@ -24,7 +25,8 @@ export type AiContextControllerHost = {
   centerView: CenterView;
   previewDevice: "desktop" | "tablet" | "mobile";
   sourceLanguage: SourceLanguage;
-  selectedElement: SelectionInfo | null;
+  coordinatedElementSelection: CoordinatedElementSelection | null;
+  selectionSnapshot: SelectionSnapshot | null;
   activeCssSelector: string;
   targetCssFile: string;
   scssVariables: ScssVariable[];
@@ -43,16 +45,33 @@ export function buildAiContextProjection(
 ): UiContextProjection {
   const project = host.scannedProject;
   const workspace = host.projectWorkspaceSnapshot;
-  const selected = host.selectedElement;
+  const selected = host.coordinatedElementSelection;
+  const observation = selected?.observation ?? null;
+  const coordinated = host.selectionSnapshot;
+  const sourceReference =
+    coordinated?.provenance?.definition
+    ?? coordinated?.provenance?.composition
+    ?? null;
+  const coordinatedLocation = sourceReference
+    ? {
+        file: sourceReference.file,
+        line: sourceReference.range?.line ?? 1,
+        column: sourceReference.range?.column ?? 1,
+      }
+    : null;
+  const cssFocus =
+    coordinated?.focus.kind === "cssRule"
+    || coordinated?.focus.kind === "cssProperty"
+      ? coordinated.focus
+      : null;
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     uiRevision,
     expectedProjectSessionId: workspace?.runtimeSessionId ?? null,
     expectedProjectRevision: workspace?.revision ?? null,
     project: {
-      isZola: project?.isZola ?? false,
-      isEmpty: project?.isEmpty ?? true,
+      isOpen: Boolean(project),
       previewBaseUrl: project?.previewBaseUrl ?? null,
       previewWarning: project?.previewWarning ?? null,
     },
@@ -64,23 +83,28 @@ export function buildAiContextProjection(
       sourceLanguage: host.sourceLanguage,
     },
     selection: {
-      hasSelection: Boolean(selected),
-      selector: selected?.selector ?? null,
-      cssSelector: selected?.cssSelector ?? null,
-      tag: selected?.tag ?? null,
-      id: selected?.id ?? null,
-      classes: selected?.classes ?? [],
-      text: selected?.text ?? null,
-      imageSrc: selected?.imageSrc ?? null,
-      sourceLocation: selected?.sourceLocation ?? null,
-      sourceId: selected?.sourceId ?? null,
-      templateSourceId: selected?.templateSourceId ?? null,
-      sessionId: selected?.sessionId ?? null,
-      rect: selected?.rect ?? null,
+      hasSelection: Boolean(coordinated?.subject),
+      selector: observation?.selector ?? null,
+      cssSelector: observation?.cssSelector ?? null,
+      tag: coordinated?.subject?.tag ?? observation?.tag ?? null,
+      id: observation?.id ?? null,
+      classes: observation?.classes ?? [],
+      text: observation?.text ?? null,
+      imageSrc: observation?.imageSrc ?? null,
+      sourceLocation: coordinatedLocation,
+      sourceId: coordinated?.anchor?.sourceNodeId ?? null,
+      templateSourceId:
+        coordinated?.subject?.kind === "teraBoundary"
+          ? coordinated.anchor?.sourceNodeId ?? null
+          : null,
+      sessionId: coordinated?.runtimeSessionId ?? null,
+      rect: observation?.rect ?? null,
     },
     css: {
-      activeSelector: host.activeCssSelector || selected?.cssSelector || null,
-      targetFile: host.targetCssFile || null,
+      activeSelector:
+        cssFocus?.selector
+        ?? (host.activeCssSelector || observation?.cssSelector || null),
+      targetFile: cssFocus?.file ?? (host.targetCssFile || null),
       variablesCount: host.scssVariables.length,
     },
     uiDirtyState: {

@@ -1,15 +1,26 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import {
     IconAlertTriangle,
     IconArrowBackUp,
+    IconBrowser,
     IconBrush,
+    IconCode,
     IconDeviceFloppy,
     IconEdit,
     IconExternalLink,
+    IconForms,
+    IconLink,
+    IconList,
+    IconListNumbers,
     IconPhoto,
+    IconQuote,
+    IconSeparatorHorizontal,
+    IconTable,
+    IconTypography,
   } from "@tabler/icons-svelte";
   import ColorInput from "$lib/components/inspector/controls/ColorInput.svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import {
     applyThemeStyleDraft,
     previewThemeStyleDraft,
@@ -64,17 +75,25 @@
   let previewTimer: ReturnType<typeof setTimeout> | null = null;
   let previewSequence = 0;
 
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase("ro"));
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const visibleTargets = $derived(
     (catalog?.targets ?? []).filter((target) => (
       (category === "all" || target.categoryId === category)
       && (
         !normalizedQuery
         || `${target.label} ${target.description} ${target.selector}`
-          .toLocaleLowerCase("ro")
+          .toLocaleLowerCase(l10n.locale)
           .includes(normalizedQuery)
       )
     )),
+  );
+  const visibleCategories = $derived(
+    (catalog?.categories ?? [])
+      .map((entry) => ({
+        ...entry,
+        targets: visibleTargets.filter((target) => target.categoryId === entry.id),
+      }))
+      .filter((entry) => entry.targets.length > 0),
   );
   const selected = $derived(
     visibleTargets.find((target) => target.id === selectedId)
@@ -86,7 +105,7 @@
     && Object.keys(draft).some((key) => draft[key] !== original[key]),
   );
   const specimenStyle = $derived(
-    (preview
+    (preview?.targetId === selected?.id
       ? preview.properties.map((property) => [property.id, property.value] as const)
       : (selected?.properties ?? []).map(
         (property) => [property.id, property.effectiveValue] as const,
@@ -111,6 +130,17 @@
       && currentRevision !== undefined
       && currentRevision !== editRevision
     ) cancelEdit();
+  });
+
+  $effect(() => {
+    const targetId = selected?.id ?? "";
+    const currentRevision = catalog?.workspaceRevision ?? -1;
+    const detailMode = mode;
+    if (!targetId || detailMode !== "info" || currentRevision < 0) return;
+    untrack(() => {
+      preview = null;
+      schedulePreview(0);
+    });
   });
 
   const unregisterFlush = registerEditFlushHandler(
@@ -176,11 +206,15 @@
     setDraftValue(propertyId, "");
   }
 
-  function inputs(): ThemeStylePropertyInput[] {
-    if (!selected) return [];
-    return selected.properties.map((property) => ({
+  function inputsFor(
+    target: ThemeStyleTargetSnapshot,
+    detailMode: DetailMode,
+  ): ThemeStylePropertyInput[] {
+    return target.properties.map((property) => ({
       id: property.id,
-      value: draft[property.id] ?? "",
+      value: detailMode === "edit"
+        ? draft[property.id] ?? ""
+        : property.value ?? "",
     }));
   }
 
@@ -198,29 +232,34 @@
   }
 
   async function refreshPreview() {
-    if (!selected || mode !== "edit") return;
+    const target = selected;
+    const requestMode = mode;
+    const expectedRevision = requestMode === "edit"
+      ? editRevision
+      : catalog?.workspaceRevision ?? -1;
+    if (!target?.editable || expectedRevision < 0) return;
     const requestId = ++previewSequence;
     const sessionId = app.kernelProjectSessionId;
     previewError = "";
     try {
       const next = await previewThemeStyleDraft(
-        selected.id,
-        inputs(),
-        editRevision,
+        target.id,
+        inputsFor(target, requestMode),
+        expectedRevision,
         identity(),
       );
       if (
         requestId !== previewSequence
-        || mode !== "edit"
+        || mode !== requestMode
         || app.kernelProjectSessionId !== sessionId
         || selected.id !== next.targetId
       ) return;
       preview = next;
-      app.injectRawCss(LIVE_STYLE_ID, next.css);
+      if (requestMode === "edit") app.injectRawCss(LIVE_STYLE_ID, next.css);
     } catch (cause) {
-      if (requestId !== previewSequence) return;
+      if (requestId !== previewSequence || mode !== requestMode) return;
       preview = null;
-      app.injectRawCss(LIVE_STYLE_ID, "");
+      if (requestMode === "edit") app.injectRawCss(LIVE_STYLE_ID, "");
       previewError = errorMessage(cause);
     }
   }
@@ -235,7 +274,7 @@
     try {
       const receipt = await applyThemeStyleDraft(
         selected.id,
-        inputs(),
+        inputsFor(selected, "edit"),
         editRevision,
         identity(),
       );
@@ -256,7 +295,7 @@
       preview = null;
       editRevision = -1;
       app.setGlobalStatus(
-        `Stilul „${receipt.payload.label}” a fost actualizat. Ctrl+S persistă pe disc.`,
+        t("theme-style-updated", { name: receipt.payload.label }),
         "unsaved",
       );
     } catch (cause) {
@@ -268,6 +307,26 @@
   }
 </script>
 
+{#snippet renderSpecimen(target: ThemeStyleTargetSnapshot)}
+  {#if target.previewKind === "image"}
+    <div class="image-specimen" style={specimenStyle}><IconPhoto size={30} stroke={1.5} /></div>
+  {:else if target.previewKind.includes("list")}
+    <ul style={specimenStyle}>
+      {#each target.sampleText.split("|") as item}<li>{item}</li>{/each}
+    </ul>
+  {:else if target.previewKind.startsWith("table")}
+    <table style={specimenStyle}><tbody><tr>{#each target.sampleText.split("|") as item}<td>{item}</td>{/each}</tr></tbody></table>
+  {:else if target.previewKind.includes("code")}
+    <pre style={specimenStyle}>{target.sampleText}</pre>
+  {:else if target.previewKind === "blockquote" || target.previewKind === "quote-text"}
+    <blockquote style={specimenStyle}>{target.sampleText}</blockquote>
+  {:else if target.previewKind === "input" || target.previewKind.includes("input") || target.previewKind === "placeholder"}
+    <input style={specimenStyle} value={target.previewKind === "placeholder" ? "" : target.sampleText} placeholder={target.sampleText} readonly />
+  {:else}
+    <div class="text-specimen" style={specimenStyle}>{target.sampleText}</div>
+  {/if}
+{/snippet}
+
 <div class="theme-styles-body">
   <div
     class="style-target-list"
@@ -276,65 +335,82 @@
     aria-labelledby="design-tab-global-styles"
   >
     {#if loading && !catalog}
-      <div class="workspace-state">Se citește catalogul semantic din ProjectWorkspace…</div>
+      <div class="workspace-state">{t("theme-style-loading")}</div>
     {:else if error}
       <div class="workspace-state error" role="alert">
         <IconAlertTriangle size={16} /> {error}
       </div>
     {:else}
-      {#each visibleTargets as target (target.id)}
-        <button
-          type="button"
-          class="style-target-row"
-          class:selected={selected?.id === target.id}
-          class:unavailable={!target.editable}
-          onclick={() => selectTarget(target)}
-        >
-          <span class="target-icon"><IconBrush size={16} stroke={1.8} /></span>
-          <span class="target-copy">
-            <strong>{target.label}</strong>
-            <small>{target.description}</small>
-          </span>
-          <code>{target.selector}</code>
-          {#if target.hasOverrides}<span class="override-badge">Suprascris</span>{/if}
-        </button>
+      {#each visibleCategories as section (section.id)}
+        <section class="style-category" aria-label={section.label}>
+          <div class="style-category-rows">
+            {#each section.targets as target (target.id)}
+              <button
+                type="button"
+                class="style-target-row ui-entity-selectable"
+                data-ui-selected={selected?.id === target.id ? "true" : undefined}
+                aria-pressed={selected?.id === target.id}
+                class:unavailable={!target.editable}
+                onclick={() => selectTarget(target)}
+              >
+                <span class="target-icon">
+                  {#if target.previewKind === "image"}
+                    <IconPhoto size={16} stroke={1.8} />
+                  {:else if target.previewKind.includes("ordered-list")}
+                    <IconListNumbers size={16} stroke={1.8} />
+                  {:else if target.previewKind.includes("list")}
+                    <IconList size={16} stroke={1.8} />
+                  {:else if target.previewKind.startsWith("table")}
+                    <IconTable size={16} stroke={1.8} />
+                  {:else if target.categoryId === "forms" || target.previewKind.includes("input")}
+                    <IconForms size={16} stroke={1.8} />
+                  {:else if target.previewKind.includes("code")}
+                    <IconCode size={16} stroke={1.8} />
+                  {:else if target.previewKind.includes("quote") || target.previewKind === "blockquote"}
+                    <IconQuote size={16} stroke={1.8} />
+                  {:else if target.categoryId === "links"}
+                    <IconLink size={16} stroke={1.8} />
+                  {:else if target.categoryId === "typography"}
+                    <IconTypography size={16} stroke={1.8} />
+                  {:else if target.categoryId === "general"}
+                    <IconBrowser size={16} stroke={1.8} />
+                  {:else if target.categoryId === "auxiliary"}
+                    <IconSeparatorHorizontal size={16} stroke={1.8} />
+                  {:else}
+                    <IconBrush size={16} stroke={1.8} />
+                  {/if}
+                </span>
+                <span class="target-copy">
+                  <strong>{target.label}</strong>
+                  <small>{target.description}</small>
+                </span>
+                <code>{target.selector}</code>
+                {#if target.hasOverrides}<span class="override-badge">{t("theme-style-overridden")}</span>{/if}
+              </button>
+            {/each}
+          </div>
+        </section>
       {:else}
-        <div class="workspace-state">Nu există stiluri pentru filtrul curent.</div>
+        <div class="workspace-state">{t("theme-style-empty")}</div>
       {/each}
     {/if}
   </div>
 
-  <aside class="style-detail" aria-label="Detalii stil semantic">
+  <aside class="style-detail" aria-label={t("theme-style-detail-label")}>
     {#if selected && mode === "edit"}
       <header class="detail-heading">
         <div>
-          <span class="detail-kicker">Editare vizuală</span>
+          <span class="detail-kicker">{t("theme-style-visual-edit")}</span>
           <h2>{selected.label}</h2>
-          <p>Draftul este proiectat live, fără revizii intermediare.</p>
+          <p>{t("theme-style-edit-description")}</p>
         </div>
-        <button type="button" aria-label="Renunță la editare" disabled={applying} onclick={cancelEdit}>
+        <button type="button" aria-label={t("theme-style-cancel-edit")} disabled={applying} onclick={cancelEdit}>
           <IconArrowBackUp size={15} />
         </button>
       </header>
 
-      <div class="specimen" aria-label={`Previzualizare ${selected.label}`}>
-        {#if selected.previewKind === "image"}
-          <div class="image-specimen" style={specimenStyle}><IconPhoto size={30} stroke={1.5} /></div>
-        {:else if selected.previewKind.includes("list")}
-          <ul style={specimenStyle}>
-            {#each selected.sampleText.split("|") as item}<li>{item}</li>{/each}
-          </ul>
-        {:else if selected.previewKind.startsWith("table")}
-          <table style={specimenStyle}><tbody><tr>{#each selected.sampleText.split("|") as item}<td>{item}</td>{/each}</tr></tbody></table>
-        {:else if selected.previewKind.includes("code")}
-          <pre style={specimenStyle}>{selected.sampleText}</pre>
-        {:else if selected.previewKind === "blockquote" || selected.previewKind === "quote-text"}
-          <blockquote style={specimenStyle}>{selected.sampleText}</blockquote>
-        {:else if selected.previewKind === "input" || selected.previewKind.includes("input") || selected.previewKind === "placeholder"}
-          <input style={specimenStyle} value={selected.previewKind === "placeholder" ? "" : selected.sampleText} placeholder={selected.sampleText} readonly />
-        {:else}
-          <div class="text-specimen" style={specimenStyle}>{selected.sampleText}</div>
-        {/if}
+      <div class="specimen" aria-label={t("theme-style-preview", { name: selected.label })}>
+        {@render renderSpecimen(selected)}
       </div>
 
       <div class="property-form">
@@ -343,7 +419,7 @@
             <span class="property-label">
               <span>{property.label}</span>
               {#if property.inheritedFrom && !draft[property.id]}
-                <small>Moștenit</small>
+                <small>{t("theme-style-inherited")}</small>
               {/if}
             </span>
             {#if property.control === "color"}
@@ -360,7 +436,7 @@
                 onchange={(event) => setDraftValue(property.id, event.currentTarget.value)}
               >
                 {#if property.canClear}
-                  <option value="">Moștenit · {property.effectiveValue ?? "valoare implicită"}</option>
+                  <option value="">{t("theme-style-inherited")} · {property.effectiveValue ?? t("theme-style-default-value")}</option>
                 {/if}
                 {#each property.options as option (option.value)}
                   <option value={option.value}>{option.label}</option>
@@ -370,11 +446,11 @@
               <div class="text-control">
                 <input
                   value={draft[property.id] ?? ""}
-                  placeholder={property.canClear ? `Moștenit · ${property.effectiveValue ?? "—"}` : ""}
+                  placeholder={property.canClear ? `${t("theme-style-inherited")} · ${property.effectiveValue ?? "—"}` : ""}
                   oninput={(event) => setDraftValue(property.id, event.currentTarget.value)}
                 />
                 {#if property.canClear && draft[property.id]}
-                  <button type="button" onclick={() => clearProperty(property.id)}>Moștenește</button>
+                  <button type="button" onclick={() => clearProperty(property.id)}>{t("theme-style-inherit")}</button>
                 {/if}
               </div>
             {/if}
@@ -385,15 +461,15 @@
       {#if previewError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {previewError}</p>{/if}
       {#if applyError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {applyError}</p>{/if}
       <div class="edit-actions">
-        <button type="button" disabled={applying} onclick={cancelEdit}>Renunță</button>
+        <button type="button" disabled={applying} onclick={cancelEdit}>{t("theme-style-cancel")}</button>
         <button
-          class="primary"
+          class="ui-button primary"
           type="button"
           disabled={applying || !dirty || Boolean(previewError)}
           onclick={() => { void applyDraft(); }}
         >
           <IconDeviceFloppy size={14} />
-          {applying ? "Se aplică prin Rust…" : "Aplică modificările"}
+          {applying ? t("theme-style-applying") : t("theme-style-apply")}
         </button>
       </div>
     {:else if selected}
@@ -401,8 +477,8 @@
       <h2>{selected.label}</h2>
       <p>{selected.description}</p>
 
-      <div class="specimen info-specimen" aria-label={`Exemplu ${selected.label}`}>
-        <div class="text-specimen">{selected.sampleText}</div>
+      <div class="specimen info-specimen" aria-label={t("theme-style-example", { name: selected.label })}>
+        {@render renderSpecimen(selected)}
       </div>
 
       <dl class="info-grid">
@@ -411,26 +487,26 @@
             <dt>{property.label}</dt>
             <dd>
               <code>{property.effectiveValue ?? "—"}</code>
-              {#if property.value === null}<small>moștenit</small>{/if}
+              {#if property.value === null}<small>{t("theme-style-inherited").toLocaleLowerCase(l10n.locale)}</small>{/if}
             </dd>
           </div>
         {/each}
       </dl>
 
       {#if selected.diagnostic}
-        <p class="form-error" role="alert"><IconAlertTriangle size={14} /> {selected.diagnostic}</p>
+        <p class="form-error" role="alert"><IconAlertTriangle size={14} /> {t("theme-style-invalid-source")}</p>
       {/if}
-      <div class="source-card"><span>Sursă semantică</span><code>{selected.sourcePath}</code></div>
+      <div class="source-card"><span>{t("theme-style-semantic-source")}</span><code>{selected.sourcePath}</code></div>
       <div class="detail-actions">
-        <button class="primary-action" type="button" disabled={!selected.editable} onclick={beginEdit}>
-          <IconEdit size={14} /> Editează
+        <button class="ui-button primary primary-action" type="button" disabled={!selected.editable} onclick={beginEdit}>
+          <IconEdit size={14} /> {t("theme-style-edit")}
         </button>
-        <button class="secondary-action" type="button" onclick={() => { void openWorkspaceSource(selected.sourcePath); }}>
-          Deschide sursa <IconExternalLink size={13} />
+        <button class="ui-button secondary-action" type="button" onclick={() => { void openWorkspaceSource(selected.sourcePath); }}>
+          {t("theme-style-open-source")} <IconExternalLink size={13} />
         </button>
       </div>
     {:else}
-      <div class="workspace-state">Selectează un stil semantic.</div>
+      <div class="workspace-state">{t("theme-style-select")}</div>
     {/if}
   </aside>
 </div>
@@ -438,9 +514,11 @@
 <style>
   .theme-styles-body { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(320px, .62fr); min-width: 0; min-height: 0; height: 100%; }
   .style-target-list { min-width: 0; min-height: 0; overflow: auto; padding: 8px; border-right: 1px solid var(--wb-border-subtle); }
+  .style-category { min-width: 0; padding: 4px 4px 12px; border-bottom: 1px solid var(--wb-border-subtle); }
+  .style-category + .style-category { padding-top: 12px; }
+  .style-category:last-child { border-bottom: 0; }
+  .style-category-rows { display: grid; gap: 2px; }
   .style-target-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) minmax(110px, auto) auto; align-items: center; gap: 9px; width: 100%; min-height: 56px; padding: 7px 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-primary); background: transparent; text-align: left; }
-  .style-target-row:hover { background: var(--wb-surface-hover); }
-  .style-target-row.selected { border-color: color-mix(in srgb, var(--wb-accent) 34%, var(--wb-border-subtle)); background: var(--wb-accent-soft); box-shadow: inset 3px 0 0 var(--wb-accent); }
   .style-target-row.unavailable { opacity: .62; }
   .target-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 6px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
   .target-copy { min-width: 0; }

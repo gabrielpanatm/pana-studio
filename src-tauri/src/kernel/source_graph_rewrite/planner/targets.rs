@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::source_graph::{
-    model::{SourceGraph, SourceOrigin},
+    model::{SourceDataLocation, SourceGraph, SourceOrigin},
     zola::{
         local_static_asset_project_file_reference, local_zola_data_project_file_reference,
         local_zola_template_project_file_reference, normalize_zola_template_reference,
@@ -14,6 +14,7 @@ pub(super) struct TemplateRewriteTarget {
     pub relative_path: String,
     pub old_name: String,
     pub new_name: String,
+    pub data_reference_rewrites: Vec<(String, String)>,
 }
 
 pub(super) fn rewrite_targets_for_entry(
@@ -54,6 +55,7 @@ pub(super) fn rewrite_targets_for_entry(
                 relative_path: template.file.clone(),
                 old_name,
                 new_name,
+                data_reference_rewrites: Vec::new(),
             },
         );
     }
@@ -84,6 +86,7 @@ pub(super) fn rewrite_targets_for_entry(
                 relative_path: page.file.clone(),
                 old_name,
                 new_name,
+                data_reference_rewrites: Vec::new(),
             },
         );
     }
@@ -121,6 +124,7 @@ pub(super) fn rewrite_targets_for_entry(
                 relative_path: asset.file.clone(),
                 old_name,
                 new_name,
+                data_reference_rewrites: Vec::new(),
             },
         );
     }
@@ -128,9 +132,14 @@ pub(super) fn rewrite_targets_for_entry(
         if !path_is_inside_entry(&data_file.file, source_relative_path) {
             continue;
         }
-        if data_file.origin != SourceOrigin::Local {
+        if data_file.origin != SourceOrigin::Local
+            || matches!(
+                data_file.location,
+                SourceDataLocation::Output | SourceDataLocation::Theme
+            )
+        {
             return Err(format!(
-                "SourceGraphRewrite blocat pentru {}: prima felie rescrie doar fișiere data locale.",
+                "SourceGraphRewrite blocat pentru {}: output-ul și tema sunt read-only.",
                 data_file.file
             ));
         }
@@ -139,16 +148,15 @@ pub(super) fn rewrite_targets_for_entry(
             source_relative_path,
             destination_relative_path,
         )?;
-        let new_name =
-            local_zola_data_project_file_reference(&destination_file).ok_or_else(|| {
-                format!(
-                    "SourceGraphRewrite blocat pentru {}: destinația {} nu rămâne sub date/.",
-                    data_file.file, destination_file
-                )
-            })?;
+        let new_name = local_zola_data_project_file_reference(&destination_file).ok_or_else(|| {
+            format!(
+                "SourceGraphRewrite blocat pentru {}: destinația {} nu este o cale data locală sigură.",
+                data_file.file, destination_file
+            )
+        })?;
         let old_name = local_zola_data_project_file_reference(&data_file.file).ok_or_else(|| {
             format!(
-                "SourceGraphRewrite blocat pentru {}: fișierul data Source Graph nu este sub date/.",
+                "SourceGraphRewrite blocat pentru {}: fișierul data Source Graph nu este local și canonic.",
                 data_file.file
             )
         })?;
@@ -159,12 +167,46 @@ pub(super) fn rewrite_targets_for_entry(
             data_file.node_id.clone(),
             TemplateRewriteTarget {
                 relative_path: data_file.file.clone(),
+                data_reference_rewrites: data_file
+                    .load_paths
+                    .iter()
+                    .map(|reference| {
+                        (
+                            reference.clone(),
+                            moved_data_reference(reference, &old_name, &new_name),
+                        )
+                    })
+                    .collect(),
                 old_name,
                 new_name,
             },
         );
     }
     Ok(targets)
+}
+
+fn moved_data_reference(reference: &str, old_file: &str, new_file: &str) -> String {
+    if let Some(content_reference) = reference.strip_prefix("@/") {
+        if old_file == format!("content/{content_reference}") {
+            if let Some(new_content) = new_file.strip_prefix("content/") {
+                return format!("@/{new_content}");
+            }
+        }
+    }
+    if old_file
+        .strip_prefix("static/")
+        .is_some_and(|old_static| reference == old_static)
+        && new_file.starts_with("static/")
+    {
+        // A short static alias is sensitive to Zola's root-first lookup order.
+        // After a move another root file could shadow it, so publish the exact
+        // project-relative destination instead of manufacturing ambiguity.
+        return new_file.to_string();
+    }
+    if reference.starts_with('/') {
+        return format!("/{new_file}");
+    }
+    new_file.to_string()
 }
 
 fn path_is_inside_entry(file: &str, source_relative_path: &str) -> bool {

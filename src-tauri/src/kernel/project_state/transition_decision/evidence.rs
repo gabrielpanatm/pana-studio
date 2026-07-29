@@ -144,6 +144,9 @@ mod tests {
             max_file_bytes: 1024,
             summary: KernelDiskConflictSummary {
                 status: KernelDiskConflictStatus::Warning,
+                verdict_diagnostic: crate::localization::LocalizedDiagnostic::new(
+                    "diagnostic-disk-conflict-summary-warning",
+                ),
                 verdict_reason: "changed".to_string(),
                 tracked_file_count: 1,
                 clean_count: 0,
@@ -166,6 +169,9 @@ mod tests {
                 role: TextBufferRole::Template,
                 status: KernelDiskConflictStatus::Warning,
                 kind: KernelDiskConflictKind::DiskChanged,
+                diagnostic: crate::localization::LocalizedDiagnostic::new(
+                    "diagnostic-disk-conflict-file-changed",
+                ),
                 message: "changed".to_string(),
                 baseline,
                 disk: Some(disk),

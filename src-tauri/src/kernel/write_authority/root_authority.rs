@@ -30,7 +30,7 @@ pub(super) enum DirectoryAuthorityScope {
     ApplicationWriteAuthorityWal,
     RecoveryTarget,
     ProjectRoot,
-    ProjectBootstrap { lease_id: u64 },
+    ProjectCreation { authority_id: u64 },
     ZolaArtifactPublication { lease_id: u64 },
     ComponentValidation { lease_id: u64 },
     ExternalCodex { lease_id: u64 },
@@ -463,7 +463,7 @@ impl WriteAuthorityRuntime {
                     selector,
                 })
             }
-            AuthoritySelector::ProjectBootstrap | AuthoritySelector::ExternalCodex => {
+            AuthoritySelector::ProjectCreation | AuthoritySelector::ExternalCodex => {
                 let application = self.application.get().ok_or_else(|| {
                     "WriteAuthorityRuntime nu are Application Home instalat.".to_string()
                 })?;
@@ -529,7 +529,7 @@ enum AuthoritySelector {
     Application,
     ActiveProject,
     PreviewCache,
-    ProjectBootstrap,
+    ProjectCreation,
     ExternalCodex,
 }
 
@@ -571,13 +571,13 @@ impl RuntimeWriteLease<'_> {
                 }
                 active.project.clone()
             }
-            AuthoritySelector::ProjectBootstrap => {
+            AuthoritySelector::ProjectCreation => {
                 let authority = target.authority().ok_or_else(|| {
-                    "ProjectInitializer cere un ProjectBootstrapLease sigilat.".to_string()
+                    "ProjectInitializer cere o ProjectCreationAuthority sigilată.".to_string()
                 })?;
                 if !matches!(
                     authority.scope(),
-                    DirectoryAuthorityScope::ProjectBootstrap { .. }
+                    DirectoryAuthorityScope::ProjectCreation { .. }
                 ) {
                     return Err(
                         "ProjectInitializer a primit un grant cu scop incompatibil.".to_string()
@@ -634,14 +634,14 @@ fn selector_for_intent(intent: &WriteIntent) -> AuthoritySelector {
         WriteCategory::PreviewWorkspaceWrite => AuthoritySelector::PreviewCache,
         WriteCategory::ExternalIntegrationWrite => AuthoritySelector::ExternalCodex,
         WriteCategory::ProjectSourceWrite if intent.owner == WriteOwner::ProjectInitializer => {
-            AuthoritySelector::ProjectBootstrap
+            AuthoritySelector::ProjectCreation
         }
         WriteCategory::ProjectSourceWrite => AuthoritySelector::ActiveProject,
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ProjectBootstrapLease {
+pub(crate) struct ProjectCreationAuthority {
     authority: DirectoryAuthority,
 }
 
@@ -701,13 +701,13 @@ impl ActiveProjectReadLease<'_> {
     }
 }
 
-impl ProjectBootstrapLease {
+impl ProjectCreationAuthority {
     pub(crate) fn capture(root: &Path) -> Result<Self, String> {
-        let lease_id = SCOPED_AUTHORITY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let authority_id = SCOPED_AUTHORITY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let authority = capability::capture_directory_authority(
             root,
-            "project-bootstrap/root",
-            DirectoryAuthorityScope::ProjectBootstrap { lease_id },
+            "project-creation/root",
+            DirectoryAuthorityScope::ProjectCreation { authority_id },
         )?;
         Ok(Self { authority })
     }

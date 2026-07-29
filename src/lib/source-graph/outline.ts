@@ -1,5 +1,6 @@
 import type { SourceGraph, SourceGraphNode, SourceGraphTemplate } from "$lib/types";
 import { sourceNodeKindLabel } from "$lib/source-graph/view";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type OutlineTreeItem = {
   node: SourceGraphNode;
@@ -72,14 +73,14 @@ export function semanticOutlineTree(items: OutlineTreeItem[]): SemanticOutlineIt
   }
 
   const bodyChildren = [
-    semanticGroup("semantic:header", "header", "Antet vizibil", headerItems),
-    semanticGroup("semantic:main", "main", "Conținut principal", mainItems),
-    semanticGroup("semantic:footer", "footer", "Subsol vizibil", footerItems),
+    semanticGroup("semantic:header", "header", t("source-outline-visible-header"), headerItems),
+    semanticGroup("semantic:main", "main", t("source-outline-main-content"), mainItems),
+    semanticGroup("semantic:footer", "footer", t("source-outline-visible-footer"), footerItems),
   ].filter((item) => item.children.length > 0 || item.id === "semantic:main");
 
   return [
-    semanticGroup("semantic:head", "head", "Metadate, stiluri și scripturi", headItems),
-    semanticGroup("semantic:body", "body", "Structura vizibilă a paginii", bodyChildren),
+    semanticGroup("semantic:head", "head", t("source-outline-head"), headItems),
+    semanticGroup("semantic:body", "body", t("source-outline-visible-structure"), bodyChildren),
   ];
 }
 
@@ -105,8 +106,7 @@ export function outlineItemContainsNode(item: SemanticOutlineItem, nodeId: strin
 }
 
 export function outlineChildCountLabel(count: number) {
-  if (count === 1) return "1 element";
-  return `${count} elemente`;
+  return t("source-outline-child-count", { count });
 }
 
 export function firstSourceNodeInOutline(item: SemanticOutlineItem): SourceGraphNode | null {

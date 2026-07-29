@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { ContextMenuItem, ContextMenuState } from "$lib/context-menu/store.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let { state: menuState }: { state: ContextMenuState } = $props();
 
@@ -55,7 +56,7 @@
     class="context-menu"
     style={`left: ${left}px; top: ${top}px;`}
     role="menu"
-    aria-label={menuState.current.title ?? "Meniu contextual"}
+    aria-label={menuState.current.title ?? t("context-menu-label")}
   >
     {#if menuState.current.title || menuState.current.subtitle}
       <div class="context-menu-heading">

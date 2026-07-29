@@ -4,7 +4,9 @@ import {
 } from "$lib/project/files";
 import { readProjectFile } from "$lib/project/io";
 import { stageKernelPlannedSourceDraft } from "$lib/session/kernel-planned-draft";
-import type { HtmlPendingArea, PageSection, SaveState } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
+import type { HtmlPendingArea, PageSection } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 
 export type HtmlMutationControllerHost = {
   sourceCache: Record<string, string>;
@@ -13,7 +15,7 @@ export type HtmlMutationControllerHost = {
   pageSections: PageSection[];
   setPageSections?: (sections: PageSection[]) => void;
   setHtmlPending: (area: HtmlPendingArea, pending: boolean) => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 export async function stageKernelPlannedTemplateDraft(
@@ -31,7 +33,7 @@ export async function stageKernelPlannedTemplateDraft(
   const base = source;
   stageKernelPlannedSourceDraft(host, relativePath, base, source, updatedSource, {
     detail: options.pendingArea ?? "template",
-    label: "Kernel planned template draft",
+    label: t("html-mutation-kernel-planned-draft"),
     operation: "kernel.planned_template_draft",
   });
   host.setPageSections?.(host.pageSections);

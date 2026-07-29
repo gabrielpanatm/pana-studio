@@ -1,7 +1,7 @@
 export const FEEDBACK_CHANNELS = Object.freeze({
   statusBar: {
     role: "passive-transient",
-    owns: ["save", "validation", "preview", "ai-authority", "current-source"] as const,
+    owns: ["save", "validation", "preview", "ai-authority"] as const,
   },
   detailsPanel: {
     role: "durable-details",

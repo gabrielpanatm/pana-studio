@@ -1,173 +1,1079 @@
-use super::types::PageJsConfig;
+use super::{MotionDocument, PageJsConfig};
 
 pub fn generate_motion_js(config: &PageJsConfig) -> String {
-    if !config.has_motion_items() {
+    let Some(motion) = config.motion.as_ref().filter(|motion| !motion.is_empty()) else {
         return String::new();
+    };
+    if let Err(error) = motion.validate() {
+        return format!(
+            "  console.error('[Pană Motion v2] Configurația nu poate fi executată', {});",
+            serde_json::to_string(&error)
+                .unwrap_or_else(|_| "\"Configurație invalidă\"".to_string())
+        );
     }
+    generate_motion_runtime(motion)
+}
 
-    let payload = serde_json::json!({
-        "version": config.version.unwrap_or(1),
-        "motion": config.motion,
-    });
-    let payload_json = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
-
+fn generate_motion_runtime(motion: &MotionDocument) -> String {
+    let payload = serde_json::to_string(motion).unwrap_or_else(|_| "{}".to_string());
     format!(
-        r#"    /* === MOTION STUDIO === */
-    (function(){{
-      var anime=window.anime||{{}};
-      var payload={payload_json};
-      var motion=payload.motion||{{items:[]}};
-      var registry=window.__panaMotion=window.__panaMotion||{{items:{{}},errors:[]}};
-      var runningTimelines={{}};
-      var animate=anime.animate||function(){{return null;}};
-      var createTimeline=anime.createTimeline||function(){{return null;}};
-      var createTimer=anime.createTimer||function(){{return null;}};
-      var createAnimatable=anime.createAnimatable||function(){{return null;}};
-      var createDraggable=anime.createDraggable||function(){{return null;}};
-      var createLayout=anime.createLayout||function(){{return null;}};
-      var createScope=anime.createScope||function(){{return null;}};
-      var onScroll=anime.onScroll||function(){{return null;}};
-      var stagger=anime.stagger||function(v){{return v||0;}};
-      var waapi=anime.waapi||null;
-      var engine=anime.engine||null;
-      function warn(item,error){{registry.errors.push({{id:item&&item.id,type:item&&item.type,message:error&&error.message?error.message:String(error)}});if(console&&console.warn)console.warn('[Pana Motion]',item&&item.type,item&&item.id,error);}}
-      function esc(value){{return String(value||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"');}}
-      function hasText(value){{return typeof value==='string'&&value.trim().length>0;}}
-      function runExpression(expression,args,fallback){{if(!expression||!expression.enabled||!hasText(expression.code))return fallback;try{{var fn=(0,eval)('('+expression.code+')');return typeof fn==='function'?fn.apply(null,args||[]):fn;}}catch(error){{warn({{id:expression.label,type:'expression'}},error);return fallback;}}}}
-      function expressionCallback(expression){{if(!expression||!expression.enabled||!hasText(expression.code))return undefined;return function(self){{return runExpression(expression,[self,anime,anime.utils||anime],undefined);}};}}
-      function readTarget(item){{var target=item.target||{{}};if(target.mode==='expression')return runExpression({{enabled:true,label:'target',code:target.expression}},[item,anime],[]);if(target.mode==='dataAnim'&&hasText(target.dataAnim))return '[data-anim="'+esc(target.dataAnim)+'"]';if(hasText(target.selector))return target.selector;if(hasText(target.dataAnim))return '[data-anim="'+esc(target.dataAnim)+'"]';return [];}}
-      function parseMaybeNumber(value){{if(typeof value!=='string')return value;if(value.trim()==='')return value;var n=Number(value);return Number.isFinite(n)&&String(n)===value.trim()?n:value;}}
-      function parsePosition(value,fallback){{if(typeof value==='number')return Math.max(0,Math.round(value));var text=String(value||'').trim();if(!text)return fallback||0;var seconds=text.match(/^(-?\d+(?:\.\d+)?)s$/);if(seconds)return Math.max(0,Math.round(Number(seconds[1])*1000));var ms=text.match(/^(-?\d+(?:\.\d+)?)ms$/);if(ms)return Math.max(0,Math.round(Number(ms[1])));var raw=Number(text);return Number.isFinite(raw)?Math.max(0,Math.round(raw)):fallback||0;}}
-      function parseArgs(text){{if(!hasText(text))return[];try{{var result=(0,eval)('['+text+']');return Array.isArray(result)?result:[];}}catch(error){{return String(text).split(',').map(function(part){{return parseMaybeNumber(part.trim());}});}}}}
-      function parseInlineObject(text){{if(!hasText(text))return{{}};var trimmed=String(text).trim();try{{if(trimmed.charAt(0)==='{{')return (0,eval)('('+trimmed+')');}}catch(error){{}}var result={{}};trimmed.split(';').forEach(function(entry){{var index=entry.indexOf(':');if(index===-1)return;var key=entry.slice(0,index).trim();var value=entry.slice(index+1).trim();if(key)result[key]=parseMaybeNumber(value);}});return result;}}
-      function compactObject(object){{var result={{}};Object.keys(object||{{}}).forEach(function(key){{var value=object[key];if(value!==undefined&&value!==null&&value!=='')result[key]=value;}});return result;}}
-      function resolveUtil(name){{return anime.utils&&anime.utils[name]||anime[name];}}
-      function resolveEasingFunction(name){{return anime[name]||anime.easings&&anime.easings[name];}}
-      function easingValue(item){{if(!item)return'';var value=item.value||'';if(item.mode==='custom')return runExpression(item.advanced&&item.advanced[0],[anime,anime.utils||anime],value);if(item.mode==='builtIn')return value;var args=parseArgs(value);if(item.mode==='cubicBezier'){{var cubicBezier=resolveEasingFunction('cubicBezier');return cubicBezier?cubicBezier.apply(null,args):value;}}if(item.mode==='linear'){{var linear=resolveEasingFunction('linear');return linear?linear.apply(null,args):value;}}if(item.mode==='steps'){{var steps=resolveEasingFunction('steps');return steps?steps.apply(null,args):value;}}if(item.mode==='irregular'){{var irregular=resolveEasingFunction('irregular');return irregular?irregular.apply(null,args):value;}}if(item.mode==='spring'){{var spring=resolveEasingFunction('spring')||resolveEasingFunction('createSpring');return spring?spring.apply(null,args):value;}}return value;}}
-      function withUnit(value,unit){{if(!hasText(unit))return parseMaybeNumber(value);if(typeof value==='number'||/^-?\d+(\.\d+)?$/.test(String(value).trim()))return String(value).trim()+unit;return value;}}
-      function relativeWithUnit(value,unit){{var text=String(value||'').trim();if(!hasText(unit))return text;if(/^[+-]=\d+(\.\d+)?$/.test(text))return text+unit;return withUnit(text,unit);}}
-      function cssVarValue(value){{var text=String(value||'').trim();if(!text)return text;if(text.indexOf('var(')===0)return text;if(text.indexOf('--')===0)return 'var('+text+')';return text;}}
-      function randomValue(value){{var parts=String(value.value||'0,1').split(/[,\s]+/).map(Number).filter(Number.isFinite);var min=parts[0]||0,max=parts.length>1?parts[1]:1;var random=anime.random?anime.random(min,max):min+Math.random()*(max-min);return hasText(value.unit)?String(random)+value.unit:random;}}
-      function motionValue(value){{value=value||{{}};if(value.mode==='expression'||value.mode==='function')return runExpression({{enabled:true,label:'value',code:value.expression}},[anime],undefined);if(value.mode==='random')return randomValue(value);if(value.mode==='relative')return relativeWithUnit(value.value,value.unit);if(value.mode==='cssVariable')return cssVarValue(value.value);if(value.mode==='literal'||value.mode==='color')return withUnit(value.value,value.unit);if(value.mode==='fromTo')return [withUnit(value.from,value.unit),withUnit(value.to,value.unit)];return hasText(value.to)?[withUnit(value.from,value.unit),withUnit(value.to,value.unit)]:withUnit(value.value,value.unit);}}
-      function propertyValue(prop){{var value=prop.value||{{}};var tween=prop.tween||{{}};var base=motionValue(value);var hasModifier=prop.modifier&&prop.modifier.enabled&&hasText(prop.modifier.code);var hasComposition=hasText(prop.composition)&&prop.composition!=='replace';var hasTween=(Number.isFinite(+tween.delay)&&+tween.delay>0)||(Number.isFinite(+tween.duration)&&+tween.duration>0)||hasText(tween.ease);if(!hasModifier&&!hasComposition&&!hasTween)return base;var object={{}};if(value.mode==='fromTo'){{if(hasText(value.from))object.from=withUnit(value.from,value.unit);if(hasText(value.to))object.to=withUnit(value.to,value.unit);}}else object.to=base;if(hasModifier)object.modifier=runExpression(prop.modifier,[anime],undefined);if(hasComposition)object.composition=prop.composition;if(Number.isFinite(+tween.delay)&&+tween.delay>0)object.delay=+tween.delay;if(Number.isFinite(+tween.duration)&&+tween.duration>0)object.duration=+tween.duration;if(hasText(tween.ease))object.ease=tween.ease;return object;}}
-      function assignProps(params,props){{(props||[]).forEach(function(prop){{if(!prop||!hasText(prop.property))return;params[prop.property]=propertyValue(prop);}});return params;}}
-      function applyPlayback(params,playback){{playback=playback||{{}};if(Number.isFinite(+playback.delay))params.delay=+playback.delay;if(Number.isFinite(+playback.duration))params.duration=+playback.duration;if(Number.isFinite(+playback.loopDelay))params.loopDelay=+playback.loopDelay;if(playback.loop===-1)params.loop=true;else if(Number.isFinite(+playback.loop)&&+playback.loop>0)params.loop=+playback.loop;if(playback.alternate)params.alternate=true;if(playback.reversed)params.reversed=true;if(playback.autoplay===false)params.autoplay=false;if(Number.isFinite(+playback.frameRate)&&+playback.frameRate>0)params.frameRate=+playback.frameRate;if(Number.isFinite(+playback.playbackRate)&&+playback.playbackRate!==1)params.playbackRate=+playback.playbackRate;if(hasText(playback.playbackEase)){{params.ease=playback.playbackEase;params.playbackEase=playback.playbackEase;}}if(playback.persist)params.persist=true;return params;}}
-      function callbackParamName(name){{name=String(name||'');if(/^on[A-Z]/.test(name))return name;return 'on'+name.charAt(0).toUpperCase()+name.slice(1);}}
-      function applyCallbacks(params,callbacks){{callbacks=callbacks||{{}};Object.keys(callbacks).forEach(function(name){{var callback=expressionCallback(callbacks[name]);if(!callback)return;params[callbackParamName(name)]=callback;}});return params;}}
-      function applyAdvanced(params,item){{(item.advanced||[]).forEach(function(expression){{runExpression(expression,[params,item,anime],undefined);}});return params;}}
-      function staggerDelay(staggerConfig){{if(!staggerConfig||!staggerConfig.enabled)return undefined;var options={{}};if(Number.isFinite(+staggerConfig.start))options.start=+staggerConfig.start;if(hasText(staggerConfig.from))options.from=staggerConfig.from;if(staggerConfig.reversed)options.reversed=true;if(hasText(staggerConfig.ease))options.ease=staggerConfig.ease;if(hasText(staggerConfig.grid)){{var grid=staggerConfig.grid.split(/[,\sx]+/).map(Number).filter(Number.isFinite);if(grid.length>=2)options.grid=[grid[0],grid[1]];}}if(hasText(staggerConfig.axis))options.axis=staggerConfig.axis;if(Number.isFinite(+staggerConfig.total)&&+staggerConfig.total>0)options.total=+staggerConfig.total;if(staggerConfig.modifier&&staggerConfig.modifier.enabled)options.modifier=runExpression(staggerConfig.modifier,[anime],undefined);return stagger(+staggerConfig.each||0,options);}}
-      function nodeList(target){{if(!target)return[];if(typeof target==='string')return Array.prototype.slice.call(document.querySelectorAll(target));if(target.nodeType)return[target];if(typeof target.length==='number')return Array.prototype.slice.call(target);return[target];}}
-      function splitTextSpans(el,effect){{if(!hasText(effect)||effect==='none')return;if(el.__panaMotionSplit===effect)return;var text=el.textContent||'';if(effect==='words')el.innerHTML=text.trim().split(/\s+/).map(function(w){{return '<span style="display:inline-block">'+w+'</span>';}}).join('<span style="display:inline-block">&nbsp;</span>');else el.innerHTML=text.split('').map(function(c){{return '<span style="display:inline-block">'+(c===' '?'&nbsp;':c)+'</span>';}}).join('');el.__panaMotionSplit=effect;}}
-      function scopedSelector(selector){{selector=selector||'';var trimmed=selector.trim();if(!trimmed)return'';if(trimmed.charAt(0)==='>'||trimmed.charAt(0)==='+'||trimmed.charAt(0)==='~')return ':scope '+trimmed;return trimmed;}}
-      function animationTargets(item,baseEl){{var base=baseEl?[baseEl]:nodeList(readTarget(item));if(!hasText(item.targetSelector)&&!hasText(item.textEffect))return baseEl?baseEl:readTarget(item);var result=[];base.forEach(function(el){{splitTextSpans(el,item.textEffect);if(hasText(item.textEffect))result=result.concat(Array.prototype.slice.call(el.querySelectorAll('span')));else if(hasText(item.targetSelector))result=result.concat(Array.prototype.slice.call(el.querySelectorAll(scopedSelector(item.targetSelector))));else result.push(el);}});return result;}}
-      function isPercentAt(value){{return /^\d+(\.\d+)?%$/.test(String(value||'').trim());}}
-      function keyframeParams(item){{var frames=[];var percentFrames={{}};var hasPercent=false;var hasOther=false;(item.keyframes||[]).forEach(function(frame){{var params=assignProps({{}},frame.properties);if(Number.isFinite(+frame.duration))params.duration=+frame.duration;if(hasText(frame.ease))params.ease=frame.ease;(frame.advanced||[]).forEach(function(expression){{runExpression(expression,[params,frame,item,anime],undefined);}});if(isPercentAt(frame.at)){{hasPercent=true;percentFrames[String(frame.at).trim()]=params;}}else{{hasOther=true;if(hasText(frame.at))params.at=frame.at;frames.push(params);}}}});return hasPercent&&!hasOther?percentFrames:frames;}}
-      function hasKeyframes(frames){{return Array.isArray(frames)?frames.length>0:Boolean(frames&&Object.keys(frames).length);}}
-      function buildAnimationParams(item){{var params=applyPlayback(assignProps({{}},item.properties),item.playback);applyCallbacks(params,item.callbacks);applyAdvanced(params,item);var staggerValue=staggerDelay(item.stagger);if(staggerValue!==undefined){{var use=item.stagger&&hasText(item.stagger.use)?item.stagger.use:'delay';params[use]=staggerValue;}}var frames=keyframeParams(item);if(hasKeyframes(frames))params.keyframes=frames;return params;}}
-      function runAnimation(item){{var trigger=item.trigger||'load';if(trigger==='scroll'&&item.scrollScrub){{var params=buildAnimationParams(item);params.autoplay=onScroll({{target:readTarget(item),sync:true}});registry.items[item.id]=animate(animationTargets(item),params);return;}}if(trigger==='scroll'){{var observer=new IntersectionObserver(function(entries){{entries.forEach(function(entry){{if(!entry.isIntersecting)return;animate(animationTargets(item,entry.target),buildAnimationParams(item));if(!item.scrollRepeat)observer.unobserve(entry.target);}});}},{{threshold:0.15}});nodeList(readTarget(item)).forEach(function(el){{observer.observe(el);}});registry.items[item.id]=observer;return;}}if(trigger==='click'||trigger==='hover'){{nodeList(readTarget(item)).forEach(function(el){{var run=function(){{animate(animationTargets(item,el),buildAnimationParams(item));}};if(trigger==='click')el.addEventListener('click',run);else el.addEventListener('mouseenter',run);}});registry.items[item.id]=true;return;}}registry.items[item.id]=animate(animationTargets(item),buildAnimationParams(item));}}
-      function runTimer(item){{var params=applyPlayback({{}},item.playback);applyCallbacks(params,item.callbacks);applyAdvanced(params,item);registry.items[item.id]=createTimer(params);}}
-      function runTimeline(item){{if(runningTimelines[item.id]){{warn(item,new Error('Timeline circular sync'));return;}}runningTimelines[item.id]=true;var params=applyPlayback({{}},item.playback);if(Number.isFinite(+item.duration)&&+item.duration>0)params.duration=+item.duration;applyAdvanced(params,item);var timeline=createTimeline(params);if(!timeline){{delete runningTimelines[item.id];return;}}registry.items[item.id]=timeline;var byId={{}};(motion.items||[]).forEach(function(entry){{if(entry&&entry.id)byId[entry.id]=entry;}});(item.labels||[]).forEach(function(label){{if(timeline.label)timeline.label(label.name,label.position||undefined);}});(item.steps||[]).forEach(function(step){{var position=hasText(step.position)?step.position:parsePosition(step.position,0);if(step.type==='label'&&timeline.label)timeline.label(step.label,position);else if(step.type==='callback'&&timeline.call)timeline.call(expressionCallback(step.callback)||function(){{}},position);else if(step.type==='timer'&&timeline.add)timeline.add({{duration:+step.duration||0}},position);else if(step.type==='sync'&&timeline.sync){{var syncTarget=byId[step.targetItemId];if(!syncTarget||syncTarget.id===item.id){{if(syncTarget&&syncTarget.id===item.id)warn(item,new Error('Timeline cannot sync itself'));return;}}if(syncTarget.type==='timeline'&&runningTimelines[syncTarget.id]){{warn(item,new Error('Timeline circular sync'));return;}}if(syncTarget.type==='timeline'&&!registry.items[syncTarget.id])runTimeline(syncTarget);var syncInstance=registry.items[step.targetItemId];if(syncInstance&&syncInstance!==timeline)timeline.sync(syncInstance,position);}}else if(step.type==='animation'&&timeline.add){{var target=byId[step.targetItemId];if(!target||target.type!=='animation')return;var animationParams=buildAnimationParams(target);if(Number.isFinite(+step.duration)&&+step.duration>0)animationParams.duration=+step.duration;timeline.add(animationTargets(target),animationParams,position);}}else if(step.type==='set'&&timeline.set){{var setTarget=byId[step.targetItemId];if(!setTarget)return;timeline.set(readTarget(setTarget),assignProps({{}},setTarget.properties||[]),position);}}}});delete runningTimelines[item.id];}}
-      function animatableParams(item){{var params={{}};if(hasText(item.ease))params.ease=item.ease;(item.properties||[]).forEach(function(prop){{if(!prop||!hasText(prop.property))return;var tween=prop.tween||{{}};var setting={{}};var duration=Number.isFinite(+tween.duration)&&+tween.duration>0?+tween.duration:+item.duration;if(Number.isFinite(duration)&&duration>0)setting.duration=duration;var unit=prop.value&&hasText(prop.value.unit)?prop.value.unit:item.unit;if(hasText(unit))setting.unit=unit;if(hasText(tween.ease))setting.ease=tween.ease;params[prop.property]=Object.keys(setting).length?setting:duration||500;}});return params;}}
-      function animatableSet(instance,item,x,y){{(item.properties||[]).forEach(function(prop){{if(!prop||!hasText(prop.property)||typeof instance[prop.property]!=='function')return;var name=prop.property.toLowerCase();var value=name.indexOf('y')!==-1?y:x;instance[prop.property](value,+item.duration||undefined,item.ease||undefined);}});}}
-      function runAnimatable(item){{var target=readTarget(item);var instance=createAnimatable(target,animatableParams(item));applyAdvanced(instance,item);registry.items[item.id]=instance;if(item.mode==='getters')return;if(item.liveSource==='expression'){{runExpression(item.setterExpression,[instance,target,anime,anime.utils||anime],undefined);return;}}if(item.liveSource==='pointer'){{var nodes=nodeList(target);var pointer=function(event){{var el=nodes[0];if(!el)return;var rect=el.getBoundingClientRect();animatableSet(instance,item,event.clientX-rect.left-rect.width/2,event.clientY-rect.top-rect.height/2);}};window.addEventListener('pointermove',pointer,{{passive:true}});return;}}if(item.liveSource==='scroll'){{var scroll=function(){{animatableSet(instance,item,window.scrollX||window.pageXOffset||0,window.scrollY||window.pageYOffset||0);}};window.addEventListener('scroll',scroll,{{passive:true}});scroll();}}}}
-      function parseAxisValue(value){{if(!hasText(value))return undefined;var text=String(value).trim();if(text.charAt(0)==='['||text.charAt(0)==='{{')return runExpression({{enabled:true,label:'axis value',code:'function(){{return '+text+';}}'}},[anime],parseMaybeNumber(text));if(text.indexOf(',')!==-1)return text.split(',').map(function(part){{return parseMaybeNumber(part.trim());}});return parseMaybeNumber(text);}}
-      function draggableAxis(enabled,snap,mapTo){{if(!enabled)return false;var axis={{}};var snapValue=parseAxisValue(snap);if(snapValue!==undefined)axis.snap=snapValue;if(hasText(mapTo))axis.mapTo=mapTo;return Object.keys(axis).length?axis:true;}}
-      function runDraggable(item){{var params={{}};params.x=draggableAxis(item.axes!=='y',item.snapX||item.snap,item.mapTo);params.y=draggableAxis(item.axes!=='x',item.snapY||item.snap,item.mapTo);if(hasText(item.container))params.container=item.container;if(hasText(item.trigger))params.trigger=item.trigger;if(item.modifier&&item.modifier.enabled)params.modifier=runExpression(item.modifier,[anime],undefined);if(Number.isFinite(+item.containerPadding)&&+item.containerPadding>0)params.containerPadding=+item.containerPadding;if(Number.isFinite(+item.friction))params.containerFriction=+item.friction;if(Number.isFinite(+item.releaseContainerFriction)&&+item.releaseContainerFriction>0)params.releaseContainerFriction=+item.releaseContainerFriction;if(Number.isFinite(+item.velocity))params.velocityMultiplier=+item.velocity;if(Number.isFinite(+item.minVelocity)&&+item.minVelocity>0)params.minVelocity=+item.minVelocity;if(Number.isFinite(+item.maxVelocity)&&+item.maxVelocity>0)params.maxVelocity=+item.maxVelocity;if(hasText(item.releaseEase))params.releaseEase=item.releaseEase;if(Number.isFinite(+item.dragSpeed)&&+item.dragSpeed>0)params.dragSpeed=+item.dragSpeed;if(Number.isFinite(+item.dragThreshold)&&+item.dragThreshold>0)params.dragThreshold=+item.dragThreshold;if(Number.isFinite(+item.scrollThreshold)&&+item.scrollThreshold>0)params.scrollThreshold=+item.scrollThreshold;if(Number.isFinite(+item.scrollSpeed)&&+item.scrollSpeed>0)params.scrollSpeed=+item.scrollSpeed;if(typeof item.cursor==='boolean')params.cursor=item.cursor;if(item.release){{if(Number.isFinite(+item.release.mass))params.releaseMass=+item.release.mass;if(Number.isFinite(+item.release.stiffness))params.releaseStiffness=+item.release.stiffness;if(Number.isFinite(+item.release.damping))params.releaseDamping=+item.release.damping;}}applyCallbacks(params,item.callbacks);applyAdvanced(params,item);registry.items[item.id]=createDraggable(readTarget(item),params);}}
-      function layoutProperties(item){{if(hasText(item.properties))return item.properties.split(',').map(function(part){{return part.trim();}}).filter(Boolean);var props=[];if(item.includeDisplay)props.push('display');if(item.includeGrid)props=props.concat(['gridTemplateColumns','gridTemplateRows','gap']);if(item.includeFlex)props=props.concat(['flexBasis','flexGrow','flexShrink']);if(item.includeOrder)props.push('order');return props;}}
-      function runLayout(item){{var params=applyPlayback({{}},item.playback);if(hasText(item.children))params.children=item.children;var props=layoutProperties(item);if(props.length)params.properties=props;if(item.enterExit&&hasText(item.enterFrom))params.enterFrom=parseInlineObject(item.enterFrom);if(item.enterExit&&hasText(item.leaveTo))params.leaveTo=parseInlineObject(item.leaveTo);if(item.swapParent&&hasText(item.swapAt))params.swapAt=parseMaybeNumber(item.swapAt);applyCallbacks(params,item.callbacks);applyAdvanced(params,item);var layout=createLayout(readTarget(item),params);registry.items[item.id]=layout;if(!layout)return;if(item.mode==='record'&&layout.record)layout.record();else if(item.mode==='animate'&&layout.animate)layout.animate();else if(item.mode==='update'&&layout.update)layout.update(function(){{}});else if(item.mode==='revert'&&layout.revert)layout.revert();}}
-      function scopeRoot(root){{if(!hasText(root))return document;try{{return document.querySelector(root)||root;}}catch(error){{return root;}}}}
-      function runScope(item){{if(item.reducedMotion==='disable'&&window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)return;var params={{root:scopeRoot(item.root||item.target&&item.target.selector),defaults:item.defaults||{{}},mediaQueries:{{}}}};(item.mediaQueries||[]).forEach(function(query){{if(query.enabled!==false&&hasText(query.query))params.mediaQueries[query.id||query.query]=query.query;}});applyAdvanced(params,item);var scope=createScope(params);if(scope&&item.keepTime&&scope.keepTime)scope.keepTime();registry.items[item.id]=scope;}}
-      function applyScrollSync(params,item){{var mode=item.syncMode||'methods';if(mode==='progress'){{params.sync=true;return;}}if(mode==='smooth'){{var smooth=Number(item.smooth);params.sync=Number.isFinite(smooth)&&smooth>0?smooth:true;return;}}if(mode==='eased'){{params.sync=hasText(item.syncEase)?item.syncEase:true;return;}}if(hasText(item.syncMethods)){{params.sync=item.syncMethods;return;}}if(hasText(item.sync))params.sync=item.sync==='progress'?true:item.sync;}}
-      function runScroll(item){{var params={{target:readTarget(item)}};if(hasText(item.container))params.container=item.container;if(hasText(item.axis))params.axis=item.axis;if(typeof item.repeat==='boolean')params.repeat=item.repeat;if(item.debug)params.debug=true;var enter=hasText(item.enter)?item.enter:item.threshold;var leave=hasText(item.leave)?item.leave:'';if(hasText(enter))params.enter=enter;if(hasText(leave))params.leave=leave;applyScrollSync(params,item);applyCallbacks(params,item.callbacks);applyAdvanced(params,item);registry.items[item.id]=onScroll(params);}}
-      function svgUtil(name){{return anime.svg&&anime.svg[name]||anime[name];}}
-      function textUtil(name){{return anime.text&&anime.text[name]||anime[name];}}
-      function drawValue(value){{var text=String(value||'0 1').trim();if(text.indexOf(',')===-1)return text;return text.split(',').map(function(part){{return part.trim();}}).filter(Boolean);}}
-      function splitPartOptions(split){{var hasOptions=hasText(split.className)||hasText(split.wrap)||split.clone;var options={{}};if(hasText(split.className))options.class=split.className;if(hasText(split.wrap))options.wrap=split.wrap;if(split.clone)options.clone=true;return hasOptions?options:true;}}
-      function splitTextSettings(split){{split=split||{{}};var params={{}};if(split.lines)params.lines=true;if(split.words)params.words=splitPartOptions(split);if(split.chars)params.chars=splitPartOptions(split);if(split.includeSpaces)params.includeSpaces=true;if(split.accessible===false)params.accessible=false;if(split.debug)params.debug=true;return params;}}
-      function scrambleSettings(scramble){{scramble=scramble||{{}};var params={{}};if(hasText(scramble.text))params.text=scramble.text;if(hasText(scramble.chars))params.chars=scramble.chars;if(typeof scramble.override==='boolean')params.override=scramble.override;if(hasText(scramble.ease))params.ease=scramble.ease;if(hasText(scramble.cursor))params.cursor=scramble.cursor;if(Number.isFinite(+scramble.revealRate))params.revealRate=+scramble.revealRate;if(Number.isFinite(+scramble.revealDelay))params.revealDelay=+scramble.revealDelay;if(Number.isFinite(+scramble.settleRate))params.settleRate=+scramble.settleRate;if(Number.isFinite(+scramble.settleDuration))params.settleDuration=+scramble.settleDuration;if(Number.isFinite(+scramble.delay))params.delay=+scramble.delay;if(Number.isFinite(+scramble.duration))params.duration=+scramble.duration;if(hasText(scramble.from))params.from=parseMaybeNumber(scramble.from);if(scramble.reversed)params.reversed=true;if(Number.isFinite(+scramble.perturbation))params.perturbation=+scramble.perturbation;if(Number.isFinite(+scramble.seed))params.seed=+scramble.seed;return params;}}
-      function runSvg(item){{var target=readTarget(item);var params=applyPlayback({{}},item.playback);applyCallbacks(params,item.callbacks);if(item.mode==='morphTo'){{var morphTo=svgUtil('morphTo');if(!morphTo)return;params[item.attribute==='points'?'points':'d']=morphTo(item.source||item.path,Number.isFinite(+item.precision)?+item.precision:0.33);applyAdvanced(params,item);registry.items[item.id]=animate(target,params);return;}}if(item.mode==='createMotionPath'){{var createMotionPath=svgUtil('createMotionPath');if(!createMotionPath)return;var motion=createMotionPath(item.source||item.path||target,Number.isFinite(+item.offset)?+item.offset:0);Object.keys(motion||{{}}).forEach(function(key){{params[key]=motion[key];}});applyAdvanced(params,item);registry.items[item.id]=animate(target,params);return;}}var createDrawable=svgUtil('createDrawable');if(!createDrawable)return;params.draw=drawValue(item.draw);applyAdvanced(params,item);registry.items[item.id]=animate(createDrawable(item.source||item.path||target),params);}}
-      function runText(item){{var target=readTarget(item);if(item.mode==='scrambleText'){{var scrambleText=textUtil('scrambleText');if(!scrambleText)return;var params={{innerHTML:scrambleText(scrambleSettings(item.scramble))}};applyCallbacks(params,item.callbacks);applyAdvanced(params,item);registry.items[item.id]=animate(target,params);return;}}var splitText=textUtil('splitText');if(!splitText)return;var splitParams=splitTextSettings(item.split);applyAdvanced(splitParams,item);registry.items[item.id]=splitText(target,splitParams);}}
-      function runUtilities(item){{if(item.expression&&item.expression.enabled){{registry.items[item.id]=runExpression(item.expression,[anime,item,anime.utils||anime],null);return;}}if(item.utility==='stagger'){{var config=item.stagger||{{}};var options={{}};if(Number.isFinite(+config.start))options.start=+config.start;if(hasText(config.from))options.from=config.from;if(config.reversed)options.reversed=true;if(hasText(config.ease))options.ease=config.ease;if(hasText(config.grid)){{var grid=config.grid.split(/[,\sx]+/).map(Number).filter(Number.isFinite);if(grid.length>=2)options.grid=[grid[0],grid[1]];}}if(hasText(config.axis))options.axis=config.axis;if(Number.isFinite(+config.total)&&+config.total>0)options.total=+config.total;if(config.modifier&&config.modifier.enabled)options.modifier=runExpression(config.modifier,[anime,anime.utils||anime],undefined);registry.items[item.id]=stagger(+config.each||parseMaybeNumber(item.args)||0,options);return;}}var util=resolveUtil(item.utility);if(typeof util==='function')registry.items[item.id]=util.apply(null,parseArgs(item.args));}}
-      function runEasing(item){{registry.items[item.id]=easingValue(item);}}
-      function runWaapi(item){{if(!waapi||!waapi.animate)return;var params=applyPlayback(assignProps({{}},item.properties),item.playback);if(Number.isFinite(+item.iterations))params.iterations=+item.iterations;if(hasText(item.direction))params.direction=item.direction;if(hasText(item.easing)){{var ease=item.easing;if(item.convertEase&&waapi.convertEase)try{{ease=waapi.convertEase(ease);}}catch(error){{}}params.ease=ease;params.easing=ease;}}if(item.autoplay===false)params.autoplay=false;if(item.hardwareAcceleration)params.hardwareAcceleration=true;applyAdvanced(params,item);var animation=waapi.animate(readTarget(item),params);registry.items[item.id]=animation;if(item.finished&&item.finished.enabled&&animation&&animation.finished&&animation.finished.then)animation.finished.then(function(){{runExpression(item.finished,[animation,anime,anime.utils||anime],undefined);}});}}
-      function runEngine(item){{if(!engine)return;if(hasText(item.timeUnit))engine.timeUnit=item.timeUnit;if(Number.isFinite(+item.speed))engine.speed=+item.speed;if(Number.isFinite(+item.fps))engine.fps=+item.fps;if(Number.isFinite(+item.precision))engine.precision=+item.precision;if(typeof item.pauseOnDocumentHidden==='boolean')engine.pauseOnDocumentHidden=item.pauseOnDocumentHidden;if(Number.isFinite(+item.priority)){{engine.defaults=engine.defaults||{{}};engine.defaults.priority=+item.priority;}}registry.items[item.id]=engine;}}
-      function runInteraction(item){{var target=readTarget(item);document.addEventListener(item.event||'click',function(event){{var trigger=event.target&&event.target.closest?event.target.closest(target):null;if(!trigger)return;var nodes=document.querySelectorAll(item.targetSelector||target);nodes.forEach(function(node){{if(item.action==='toggleClass')node.classList.toggle(item.value);else if(item.action==='addClass')node.classList.add(item.value);else if(item.action==='removeClass')node.classList.remove(item.value);else if(item.action==='show')node.style.display='';else if(item.action==='hide')node.style.display='none';else if(item.action==='scrollTo')node.scrollIntoView({{behavior:'smooth'}});}});}});}}
-      function runCustom(item){{registry.items[item.id]=runExpression({{enabled:true,label:item.name||'custom',code:item.code}},[anime,item,registry],null);}}
-      function runItem(item){{if(!item||item.enabled===false)return;try{{if(item.type==='animation')runAnimation(item);else if(item.type==='timeline')runTimeline(item);else if(item.type==='timer')runTimer(item);else if(item.type==='animatable')runAnimatable(item);else if(item.type==='draggable')runDraggable(item);else if(item.type==='layout')runLayout(item);else if(item.type==='scope')runScope(item);else if(item.type==='scroll')runScroll(item);else if(item.type==='svg')runSvg(item);else if(item.type==='text')runText(item);else if(item.type==='utilities')runUtilities(item);else if(item.type==='easing')runEasing(item);else if(item.type==='waapi')runWaapi(item);else if(item.type==='engine')runEngine(item);else if(item.type==='interaction')runInteraction(item);else if(item.type==='custom')runCustom(item);}}catch(error){{warn(item,error);}}}}
-      (motion.items||[]).forEach(runItem);
-    }})();"#
+        r#"  /* PANA MOTION V2 · Anime.js 4.4.1 */
+  (function(){{
+    'use strict';
+    var documentConfig={payload};
+    var anime=window.anime||{{}};
+    var createTimeline=anime.createTimeline||function(){{return null;}};
+    var createScope=anime.createScope||function(){{return null;}};
+    var createDraggable=anime.createDraggable||function(){{return null;}};
+    var createLayout=anime.createLayout||function(){{return null;}};
+    var onScroll=anime.onScroll||function(){{return null;}};
+    var stagger=anime.stagger||function(value){{return value;}};
+    var splitText=anime.splitText||(anime.text&&anime.text.splitText);
+    var svg=anime.svg||{{}};
+    var PROGRESS_DURATION=1000;
+    var previewOnly=false;
+    try{{previewOnly=new URLSearchParams(window.location.search).get('__pana_motion_mode')==='preview';}}catch(error){{}}
+    var previousRegistry=window.__panaMotionV2;
+    if(previousRegistry&&typeof previousRegistry.destroy==='function'){{
+      try{{previousRegistry.destroy();}}catch(error){{}}
+    }}
+    var registry=window.__panaMotionV2={{}};
+    registry.schemaVersion=2;
+    registry.animeVersion='4.4.1';
+    registry.document=documentConfig;
+    registry.instances={{}};
+    registry.scopes={{}};
+    registry.behaviors={{}};
+    registry.splitters=[];
+    registry.errors=[];
+    registry.cleanups=[];
+    registry.effectCleanups=[];
+    var instanceIds=new WeakMap();
+    var nextInstanceId=1;
+
+    function report(owner,error){{
+      var diagnostic={{id:owner&&owner.id||'',message:error&&error.message?error.message:String(error)}};
+      registry.errors.push(diagnostic);
+      if(window.console&&console.warn)console.warn('[Pană Motion v2]',diagnostic.id,error);
+    }}
+    function list(value){{
+      if(!value)return[];
+      if(Array.isArray(value))return value;
+      if(typeof value.length==='number'&&typeof value!=='string')return Array.prototype.slice.call(value);
+      return[value];
+    }}
+    function cssEscape(value){{
+      if(window.CSS&&typeof window.CSS.escape==='function')return window.CSS.escape(String(value));
+      return String(value).replace(/["\\]/g,'\\$&');
+    }}
+    function query(selector,root){{
+      if(!selector)return[];
+      try{{return list((root||document).querySelectorAll(selector));}}catch(error){{report({{id:'target'}},error);return[];}}
+    }}
+    function first(value){{return list(value)[0]||null;}}
+    function targetSelector(ref){{
+      if(!ref)return'';
+      if(ref.kind==='element'&&ref.dataAnim)return'[data-anim="'+cssEscape(ref.dataAnim)+'"]';
+      return ref.selector||'';
+    }}
+    function applyScope(nodes,scope){{
+      if(scope==='first')return nodes.length?[nodes[0]]:[];
+      return nodes;
+    }}
+    function relativeTargets(ref,trigger){{
+      if(!trigger)return[];
+      var selector=ref.selector||'*';
+      var nodes=[];
+      if(ref.relation==='children')nodes=list(trigger.children).filter(function(node){{return node.matches&&node.matches(selector);}});
+      else if(ref.relation==='descendants')nodes=query(selector,trigger);
+      else if(ref.relation==='parent')nodes=trigger.parentElement&&trigger.parentElement.matches(selector)?[trigger.parentElement]:[];
+      else if(ref.relation==='ancestors'){{var node=trigger.parentElement;while(node){{if(node.matches&&node.matches(selector))nodes.push(node);node=node.parentElement;}}}}
+      else if(ref.relation==='siblings')nodes=trigger.parentElement?list(trigger.parentElement.children).filter(function(node){{return node!==trigger&&node.matches&&node.matches(selector);}}):[];
+      else if(ref.relation==='nextSibling')nodes=trigger.nextElementSibling&&trigger.nextElementSibling.matches(selector)?[trigger.nextElementSibling]:[];
+      else if(ref.relation==='previousSibling')nodes=trigger.previousElementSibling&&trigger.previousElementSibling.matches(selector)?[trigger.previousElementSibling]:[];
+      else nodes=trigger.matches&&trigger.matches(selector)?[trigger]:[];
+      return applyScope(nodes,ref.scope);
+    }}
+    function resolveTarget(ref,trigger){{
+      if(!ref)return[];
+      if(ref.kind==='trigger')return trigger?[trigger]:[];
+      if(ref.kind==='viewport')return[window];
+      if(ref.kind==='document')return[document];
+      if(ref.kind==='relative')return relativeTargets(ref,trigger);
+      return applyScope(query(targetSelector(ref),document),ref.scope);
+    }}
+    function readValue(value){{
+      if(!value)return'';
+      var raw=value.value==null?'':String(value.value);
+      var unit=value.unit||'';
+      if(value.kind==='cssVariable')return raw.indexOf('var(')===0?raw:'var('+raw+')';
+      if(value.kind==='number'&&!unit&&raw.trim()!==''&&isFinite(Number(raw)))return Number(raw);
+      return raw+unit;
+    }}
+    function propertyValue(property,mode){{
+      var to=readValue(property.to);
+      var from=property.from?readValue(property.from):undefined;
+      if(mode==='fromTo'&&from!==undefined)return[from,to];
+      if(mode==='from'&&from!==undefined)return{{from:from}};
+      return to;
+    }}
+    function actionProperties(action){{
+      var params={{}};
+      (action.properties||[]).forEach(function(property){{
+        if(property&&property.name)params[property.name]=propertyValue(property,action.mode);
+      }});
+      return params;
+    }}
+    function keyframes(action){{
+      if(!action.keyframes||!action.keyframes.length)return null;
+      var frames={{}};
+      action.keyframes.forEach(function(frame){{
+        var values={{}};
+        (frame.properties||[]).forEach(function(property){{
+          if(property&&property.name)values[property.name]=propertyValue(property,'to');
+        }});
+        if(frame.ease)values.ease=frame.ease;
+        frames[String(Math.max(0,Math.min(100,frame.offset)))+'%']=values;
+      }});
+      return frames;
+    }}
+    function applyRepeat(params,repeat){{
+      if(!repeat)return params;
+      if(repeat.infinite)params.loop=true;
+      else if(Number(repeat.count)>0)params.loop=Number(repeat.count);
+      if(repeat.alternate)params.alternate=true;
+      if(Number(repeat.delayMs)>0)params.loopDelay=Number(repeat.delayMs);
+      return params;
+    }}
+    function timelinePosition(interaction,value){{
+      return interaction.domain==='progress'?Number(value||0)/100*PROGRESS_DURATION:Number(value||0);
+    }}
+    function timelineDuration(interaction,value){{
+      var duration=interaction.domain==='progress'?Number(value||0)/100*PROGRESS_DURATION:Number(value||0);
+      return interaction.domain!=='progress'&&reducedMode(interaction)==='reduce'?duration*0.2:duration;
+    }}
+    function naturalDuration(interaction){{
+      var max=0;
+      (interaction.actions||[]).forEach(function(action){{
+        var duration=timelineDuration(interaction,action.duration);
+        if(action.type==='animate'&&action.repeat&&!action.repeat.infinite){{
+          var repeats=Math.max(0,Number(action.repeat.count)||0);
+          duration=duration*(repeats+1)+timelineDuration(interaction,action.repeat.delayMs)*repeats;
+        }}
+        max=Math.max(max,timelinePosition(interaction,action.start)+duration);
+      }});
+      return interaction.domain==='progress'?PROGRESS_DURATION:Math.max(1,max);
+    }}
+    function specializationTarget(interaction,action,nodes){{
+      var spec=action.specialization;
+      if(!spec)return nodes;
+      if(spec.type==='splitText'&&splitText){{
+        var fragments=[];
+        nodes.forEach(function(node){{
+          var split=splitText(node,{{lines:spec.mode==='lines',words:spec.mode==='words',chars:spec.mode==='chars',accessible:true}});
+          if(split){{
+            registry.splitters.push({{interactionId:interaction.id,instance:split}});
+            fragments=fragments.concat(split[spec.mode]||[]);
+          }}
+        }});
+        return fragments.length?fragments:nodes;
+      }}
+      if(spec.type==='svgPath'&&svg.createMotionPath){{
+        var path=first(query(spec.path));
+        var motionPath=svg.createMotionPath(path);
+        if(motionPath&&spec.autoRotate===false)delete motionPath.rotate;
+        return{{nodes:nodes,motionPath:motionPath}};
+      }}
+      if(spec.type==='svgMorph'&&svg.morphTo){{
+        return{{nodes:nodes,morph:svg.morphTo(spec.source,Number(spec.precision)||0.33)}};
+      }}
+      if(spec.type==='svgDraw'&&svg.createDrawable)return svg.createDrawable(nodes);
+      return nodes;
+    }}
+    function animationParameters(interaction,action,nodes){{
+      var params=actionProperties(action);
+      params.duration=timelineDuration(interaction,action.duration);
+      if(action.ease)params.ease=action.ease;
+      var frames=keyframes(action);
+      if(frames)params.keyframes=frames;
+      if(action.stagger){{
+        var options={{}};
+        if(action.stagger.from)options.from=action.stagger.from;
+        if(action.stagger.reversed)options.reversed=true;
+        if(action.stagger.ease)options.ease=action.stagger.ease;
+        if(action.stagger.mode==='total')options.total=timelineDuration(interaction,action.stagger.amount);
+        params.delay=stagger(
+          action.stagger.mode==='total'?0:timelineDuration(interaction,action.stagger.amount),
+          options
+        );
+      }}
+      applyRepeat(params,action.repeat);
+      var specialized=specializationTarget(interaction,action,nodes);
+      if(specialized&&specialized.motionPath)Object.keys(specialized.motionPath).forEach(function(key){{params[key]=specialized.motionPath[key];}});
+      if(specialized&&specialized.morph)params.d=specialized.morph;
+      return{{targets:specialized&&specialized.nodes||specialized,params:params}};
+    }}
+    function setAction(timeline,interaction,action,trigger,allowSideEffects,lifecycleId){{
+      var targets=resolveTarget(action.target,trigger);
+      var properties={{}};
+      var sideEffects=[];
+      (action.values||[]).forEach(function(value){{
+        if(value.type==='property')properties[value.name]=readValue(value.value);
+        else sideEffects.push(value);
+      }});
+      var position=timelinePosition(interaction,action.start);
+      if(Object.keys(properties).length&&timeline.set)timeline.set(targets,properties,position);
+      if(allowSideEffects&&sideEffects.length&&timeline.call){{
+        var restorers=[];
+        var active=false;
+        var restore=function(){{
+          restorers.splice(0).reverse().forEach(function(revert){{try{{revert();}}catch(error){{}}}});
+          active=false;
+        }};
+        trackEffectCleanup(lifecycleId,restore);
+        timeline.call(function(){{
+          if(timeline.backwards){{restore();return;}}
+          if(!active){{
+            active=true;
+            targets.forEach(function(node){{
+              sideEffects.forEach(function(value){{
+                if(value.type==='attribute'){{
+                  var hadAttribute=node.hasAttribute(value.name);
+                  var previousAttribute=node.getAttribute(value.name);
+                  restorers.push(function(){{
+                    if(hadAttribute)node.setAttribute(value.name,previousAttribute);
+                    else node.removeAttribute(value.name);
+                  }});
+                }}else{{
+                  var hadClass=node.classList.contains(value.name);
+                  restorers.push(function(){{
+                    if(hadClass)node.classList.add(value.name);
+                    else node.classList.remove(value.name);
+                  }});
+                }}
+              }});
+            }});
+          }}
+          targets.forEach(function(node){{
+            sideEffects.forEach(function(value){{
+              if(value.type==='attribute')node.setAttribute(value.name,value.value);
+              else if(value.type==='addClass')node.classList.add(value.name);
+              else if(value.type==='removeClass')node.classList.remove(value.name);
+              else if(value.type==='toggleClass')node.classList.toggle(value.name);
+            }});
+          }});
+        }},position);
+      }}
+    }}
+    function mediaAction(timeline,interaction,action,trigger,lifecycleId){{
+      if(!timeline.call)return;
+      var restorers=[];
+      var active=false;
+      var restore=function(){{
+        restorers.splice(0).reverse().forEach(function(revert){{try{{revert();}}catch(error){{}}}});
+        active=false;
+      }};
+      trackEffectCleanup(lifecycleId,restore);
+      timeline.call(function(){{
+        if(timeline.backwards){{restore();return;}}
+        resolveTarget(action.target,trigger).forEach(function(node){{
+          if(!active){{
+            var previousPaused=node.paused;
+            var previousTime=Number(node.currentTime)||0;
+            restorers.push(function(){{
+              if(node.pause)node.pause();
+              try{{node.currentTime=previousTime;}}catch(error){{}}
+              if(previousPaused===false&&node.play){{
+                var resumed=node.play();
+                if(resumed&&resumed.catch)resumed.catch(function(){{}});
+              }}
+            }});
+          }}
+          if(action.command==='play'&&node.play){{var result=node.play();if(result&&result.catch)result.catch(function(){{}});}}
+          else if(action.command==='pause'&&node.pause)node.pause();
+          else if(action.command==='reset'){{if(node.pause)node.pause();try{{node.currentTime=0;}}catch(error){{}}}}
+          else if(action.command==='toggle'){{if(node.paused&&node.play)node.play();else if(node.pause)node.pause();}}
+        }});
+        active=true;
+      }},timelinePosition(interaction,action.start));
+    }}
+    function compileCall(code,owner){{
+      try{{return new Function('timeline','anime','registry','trigger','\"use strict\";\n'+String(code||''));}}
+      catch(error){{report(owner,error);return function(){{}};}}
+    }}
+    function emitPreviewState(interaction,timeline,phase){{
+      if(!previewOnly||!interaction||!timeline||!window.parent)return;
+      var rawDuration=Number(timeline.iterationDuration||timeline.duration||naturalDuration(interaction));
+      var rawValue=Number(timeline.iterationCurrentTime);
+      if(!isFinite(rawValue))rawValue=Number(timeline.currentTime)||0;
+      var progress=rawDuration>0?Math.max(0,Math.min(1,rawValue/rawDuration)):0;
+      window.parent.postMessage({{
+        source:'pana-studio-motion-runtime',
+        type:'state',
+        phase:phase||'update',
+        interactionId:interaction.id,
+        value:interaction.domain==='progress'?progress*100:rawValue,
+        duration:interaction.domain==='progress'?100:rawDuration,
+        progress:progress,
+        paused:timeline.paused!==false,
+        reversed:timeline.reversed===true
+      }},'*');
+    }}
+    function playbackParameters(interaction,autoplay,mode){{
+      var playback=interaction.playback||{{}};
+      var params={{autoplay:autoplay===undefined?false:autoplay}};
+      if(Number(playback.delayMs)>0)params.delay=Number(playback.delayMs);
+      if(playback.infinite)params.loop=true;
+      else if(Number(playback.repeat)>0)params.loop=Number(playback.repeat);
+      if(Number(playback.loopDelayMs)>0)params.loopDelay=Number(playback.loopDelayMs);
+      if(playback.alternate)params.alternate=true;
+      if(playback.reversed)params.reversed=true;
+      if(Number(playback.playbackRate)>0&&Number(playback.playbackRate)!==1)params.playbackRate=Number(playback.playbackRate);
+      if(playback.playbackEase)params.playbackEase=playback.playbackEase;
+      if(mode==='previewSafe'){{
+        params.onUpdate=function(self){{emitPreviewState(interaction,self,'update');}};
+        params.onPause=function(self){{emitPreviewState(interaction,self,'pause');}};
+        params.onComplete=function(self){{emitPreviewState(interaction,self,'complete');}};
+      }}
+      return params;
+    }}
+    function scrollAutoplay(interaction,trigger,mode){{
+      var config=interaction.trigger||{{}};
+      var params={{target:trigger||first(resolveTarget(interaction.triggerTarget,null)),enter:config.start,leave:config.end,debug:false}};
+      params.repeat=config.once===false;
+      params.sync=mode==='scrollTrigger'?'restart':Number(config.smoothMs)>0?Number(config.smoothMs):true;
+      return onScroll(params);
+    }}
+    function buildTimeline(interaction,trigger,mode,stack,lifecycleId){{
+      stack=stack||{{}};
+      lifecycleId=lifecycleId||interaction.id;
+      if(stack[interaction.id]){{report(interaction,new Error('Referință nested circulară'));return null;}}
+      stack[interaction.id]=true;
+      var autoplay=mode==='scrollScrub'||mode==='scrollTrigger'
+        ?scrollAutoplay(interaction,trigger,mode)
+        :false;
+      var timeline=createTimeline(playbackParameters(interaction,autoplay,mode));
+      if(!timeline){{delete stack[interaction.id];return null;}}
+      (interaction.markers||[]).forEach(function(marker){{
+        if(timeline.label)timeline.label(marker.name,timelinePosition(interaction,marker.at));
+      }});
+      (interaction.actions||[]).forEach(function(action){{
+        if(!action||action.enabled===false)return;
+        var position=timelinePosition(interaction,action.start);
+        var safeMode=mode==='previewSafe'||mode==='scrollScrub';
+        if(action.type==='animate'&&timeline.add){{
+          var compiled=animationParameters(interaction,action,resolveTarget(action.target,trigger));
+          timeline.add(compiled.targets,compiled.params,position);
+        }}else if(action.type==='set')setAction(timeline,interaction,action,trigger,!safeMode,lifecycleId);
+        else if(action.type==='media'&&!safeMode)mediaAction(timeline,interaction,action,trigger,lifecycleId);
+        else if(action.type==='call'&&!safeMode&&timeline.call){{
+          var callback=compileCall(action.code,action);
+          var callbackCleanups=[];
+          var cleanupCallback=function(){{
+            callbackCleanups.splice(0).reverse().forEach(function(cleanup){{try{{dispose(cleanup);}}catch(error){{}}}});
+          }};
+          trackEffectCleanup(lifecycleId,cleanupCallback);
+          timeline.call(function(){{
+            if(timeline.backwards){{cleanupCallback();return;}}
+            var cleanup=callback(timeline,anime,registry,trigger);
+            if(cleanup)callbackCleanups.push(cleanup);
+          }},position);
+        }}else if(action.type==='nested'&&timeline.sync){{
+          var nested=(documentConfig.interactions||[]).find(function(candidate){{return candidate.id===action.interactionId;}});
+          if(nested){{
+            var nestedTimeline=buildTimeline(
+              nested,
+              trigger,
+              safeMode?mode:'manual',
+              stack,
+              lifecycleId
+            );
+            if(nestedTimeline){{
+              var desiredDuration=timelineDuration(interaction,action.duration);
+              if(desiredDuration>0&&nestedTimeline.stretch)nestedTimeline.stretch(desiredDuration);
+              timeline.sync(nestedTimeline,position);
+            }}
+          }}
+        }}
+      }});
+      delete stack[interaction.id];
+      return timeline;
+    }}
+    function instanceKey(interaction,trigger){{
+      if(!trigger)return interaction.id;
+      if(!instanceIds.has(trigger))instanceIds.set(trigger,nextInstanceId++);
+      return interaction.id+'@'+instanceIds.get(trigger);
+    }}
+    function remember(interaction,trigger,timeline){{
+      var key=instanceKey(interaction,trigger);
+      registry.instances[key]=timeline;
+      if(!registry.instances[interaction.id])registry.instances[interaction.id]=timeline;
+      return timeline;
+    }}
+    function instance(interaction,trigger,mode){{
+      var key=instanceKey(interaction,trigger);
+      return registry.instances[key]||remember(interaction,trigger,buildTimeline(interaction,trigger,mode||'manual'));
+    }}
+    function control(timeline,command,interaction){{
+      if(!timeline||command==='none')return;
+      if(command==='restart'&&timeline.restart)timeline.restart();
+      else if(command==='play'&&timeline.play)timeline.play();
+      else if(command==='pause'&&timeline.pause)timeline.pause();
+      else if(command==='reverse'&&timeline.reverse)timeline.reverse();
+      else if(command==='reset'&&timeline.seek){{if(timeline.pause)timeline.pause();timeline.seek(0);}}
+      else if(command==='toggle'){{if(timeline.paused&&timeline.play)timeline.play();else if(timeline.pause)timeline.pause();}}
+      else if(timeline.restart)timeline.restart();
+      if(interaction&&reducedMode(interaction)==='skipToEnd'&&timeline.seek){{
+        timeline.seek(Number(timeline.iterationDuration)||naturalDuration(interaction));
+      }}
+    }}
+    function mediaMatches(interaction,scope){{
+      var queries=(interaction.conditions&&interaction.conditions.mediaQueries||[]).filter(function(condition){{return condition.enabled!==false&&condition.query;}});
+      return !queries.length||queries.some(function(condition){{
+        if(scope&&scope.matches&&condition.id in scope.matches)return scope.matches[condition.id];
+        return !window.matchMedia||window.matchMedia(condition.query).matches;
+      }});
+    }}
+    function reducedMode(interaction,scope){{
+      var matches=scope&&scope.matches&&scope.matches.reduceMotion;
+      if(matches===undefined)matches=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if(!matches)return'none';
+      return interaction.conditions&&interaction.conditions.reducedMotion||'reduce';
+    }}
+    function listen(node,event,handler,options,cleanups){{
+      node.addEventListener(event,handler,options);
+      (cleanups||registry.cleanups).push(function(){{node.removeEventListener(event,handler,options);}});
+    }}
+    function dispose(item){{
+      if(!item)return;
+      if(typeof item==='function')item();
+      else if(item.revert)item.revert();
+      else if(item.cancel)item.cancel();
+      else if(item.destroy)item.destroy();
+    }}
+    function trackEffectCleanup(interactionId,cleanup){{
+      registry.effectCleanups.push({{interactionId:interactionId,cleanup:cleanup}});
+    }}
+    function clearInteractionEffects(interactionId){{
+      var retained=[];
+      registry.effectCleanups.forEach(function(entry){{
+        if(entry.interactionId!==interactionId){{retained.push(entry);return;}}
+        try{{entry.cleanup();}}catch(error){{}}
+      }});
+      registry.effectCleanups=retained;
+    }}
+    function triggerNodes(interaction){{
+      var nodes=resolveTarget(interaction.triggerTarget,null);
+      if(!nodes.length&&(interaction.triggerTarget.kind==='document'||interaction.trigger.type==='load'))return[document];
+      return nodes;
+    }}
+    function clearInteractionInstances(interactionId){{
+      clearInteractionEffects(interactionId);
+      var disposed=[];
+      Object.keys(registry.instances).forEach(function(key){{
+        if(key!==interactionId&&key.indexOf(interactionId+'@')!==0)return;
+        var item=registry.instances[key];
+        if(item&&disposed.indexOf(item)<0){{
+          disposed.push(item);
+          try{{dispose(item);}}catch(error){{}}
+        }}
+        delete registry.instances[key];
+      }});
+      registry.splitters=registry.splitters.filter(function(entry){{
+        if(entry.interactionId!==interactionId)return true;
+        try{{if(entry.instance&&entry.instance.revert)entry.instance.revert();}}catch(error){{}}
+        return false;
+      }});
+    }}
+    function installInteraction(interaction,scope){{
+      var cleanups=[];
+      var cleanup=function(){{
+        cleanups.splice(0).forEach(function(dispose){{try{{dispose();}}catch(error){{}}}});
+        clearInteractionInstances(interaction.id);
+      }};
+      if(!interaction||interaction.enabled===false||!mediaMatches(interaction,scope))return cleanup;
+      var reduced=reducedMode(interaction,scope);
+      if(reduced==='disable')return cleanup;
+      var trigger=interaction.trigger||{{type:'load'}};
+      var nodes=triggerNodes(interaction);
+      if(trigger.type==='load'){{
+        var loadNode=first(nodes)||null;
+        var run=function(){{control(instance(interaction,loadNode,'manual'),'restart',interaction);}};
+        if(trigger.phase==='windowLoad'&&document.readyState!=='complete')listen(window,'load',run,{{once:true}},cleanups);
+        else run();
+      }}else if(trigger.type==='inView'){{
+        var observer=new IntersectionObserver(function(entries){{
+          entries.forEach(function(entry){{
+            if(!entry.isIntersecting)return;
+            control(instance(interaction,entry.target,'manual'),'restart',interaction);
+            if(trigger.once!==false)observer.unobserve(entry.target);
+          }});
+        }},{{threshold:isFinite(Number(trigger.threshold))?Number(trigger.threshold):0.15}});
+        nodes.forEach(function(node){{observer.observe(node);}});
+        cleanups.push(function(){{observer.disconnect();}});
+      }}else if(trigger.type==='click'){{
+        nodes.forEach(function(node){{
+          var clicks=0;
+          listen(node,'click',function(event){{
+            if(trigger.preventDefault)event.preventDefault();
+            clicks+=1;
+            var command=clicks%2===1?trigger.firstClick:trigger.secondClick;
+            control(instance(interaction,node,'manual'),command||'restart',interaction);
+          }},undefined,cleanups);
+        }});
+      }}else if(trigger.type==='hover'){{
+        nodes.forEach(function(node){{
+          listen(node,'mouseenter',function(){{control(instance(interaction,node,'manual'),trigger.enter||'restart',interaction);}},undefined,cleanups);
+          listen(node,'mouseleave',function(){{control(instance(interaction,node,'manual'),trigger.leave||'reverse',interaction);}},undefined,cleanups);
+        }});
+      }}else if(trigger.type==='scroll'&&trigger.mode==='scrub'){{
+        nodes.forEach(function(node){{instance(interaction,node,'scrollScrub');}});
+      }}else if(trigger.type==='scroll'){{
+        nodes.forEach(function(node){{instance(interaction,node,'scrollTrigger');}});
+      }}else if(trigger.type==='pointer'){{
+        nodes.forEach(function(node){{
+          var timeline=instance(interaction,node,'manual');
+          var current=Number(trigger.rest);
+          if(!isFinite(current))current=0.5;
+          var targetProgress=current;
+          var frame=0;
+          var previousTime=0;
+          var render=function(now){{
+            var smoothing=Math.max(0,Number(trigger.smoothMs)||0);
+            var factor=smoothing>0?1-Math.exp(-Math.max(0,now-previousTime)/smoothing):1;
+            previousTime=now;
+            current+=(targetProgress-current)*factor;
+            if(timeline&&timeline.seek)timeline.seek(
+              Math.max(0,Math.min(1,current))*(Number(timeline.iterationDuration)||naturalDuration(interaction))
+            );
+            if(Math.abs(targetProgress-current)>.0001)frame=requestAnimationFrame(render);
+            else frame=0;
+          }};
+          var moveTo=function(progress){{
+            targetProgress=Math.max(0,Math.min(1,progress));
+            if(!frame){{previousTime=performance.now();frame=requestAnimationFrame(render);}}
+          }};
+          listen(node,'pointermove',function(event){{
+            var rect=node.getBoundingClientRect();
+            var x=(event.clientX-rect.left)/Math.max(1,rect.width);
+            var y=(event.clientY-rect.top)/Math.max(1,rect.height);
+            var progress=trigger.axis==='y'?y:trigger.axis==='both'?(x+y)/2:x;
+            moveTo(progress);
+          }},{{passive:true}},cleanups);
+          listen(node,'pointerleave',function(){{moveTo(Number(trigger.rest));}},{{passive:true}},cleanups);
+          cleanups.push(function(){{if(frame)cancelAnimationFrame(frame);}});
+        }});
+      }}else if(trigger.type==='custom'){{
+        nodes.forEach(function(node){{
+          listen(node,trigger.event||'pana-motion',function(event){{
+            if(trigger.preventDefault)event.preventDefault();
+            control(instance(interaction,node,'manual'),'restart',interaction);
+          }},undefined,cleanups);
+        }});
+      }}
+      return cleanup;
+    }}
+    function installBehavior(behavior){{
+      if(!behavior||behavior.enabled===false)return;
+      var target=resolveTarget(behavior.target,null);
+      if(behavior.type==='draggable'){{
+        var params={{x:behavior.axis!=='y',y:behavior.axis!=='x',cursor:behavior.cursor!==false}};
+        if(behavior.container)params.container=behavior.container;
+        if(Number(behavior.snap)>0)params.snap=Number(behavior.snap);
+        if(isFinite(Number(behavior.friction)))params.containerFriction=Number(behavior.friction);
+        registry.behaviors[behavior.id]=target.map(function(node){{return createDraggable(node,params);}});
+      }}else if(behavior.type==='layout'){{
+        var layoutParams={{duration:Number(behavior.durationMs)||600,ease:behavior.ease||'out(3)'}};
+        if(behavior.childrenSelector)layoutParams.children=behavior.childrenSelector;
+        if(behavior.properties&&behavior.properties.length)layoutParams.properties=behavior.properties;
+        registry.behaviors[behavior.id]=target.map(function(node){{return createLayout(node,layoutParams);}});
+      }}
+    }}
+    registry.updateLayout=function(id,mutate,parameters){{
+      if(typeof mutate!=='function')throw new Error('updateLayout cere o funcție de mutație DOM.');
+      return list(registry.behaviors[id]).map(function(layout){{
+        return layout&&layout.update
+          ?layout.update(function(context){{return mutate(context,layout);}},parameters||{{}})
+          :null;
+      }});
+    }};
+    function installCustom(custom){{
+      if(!custom||custom.enabled===false||!custom.code)return;
+      try{{registry.instances[custom.id]=new Function('anime','registry','\"use strict\";\n'+custom.code)(anime,registry);}}
+      catch(error){{report(custom,error);}}
+    }}
+    function findInteraction(id){{
+      return(documentConfig.interactions||[]).find(function(interaction){{return interaction.id===id;}})||null;
+    }}
+    function previewTrigger(interaction){{
+      return first(triggerNodes(interaction))||null;
+    }}
+    function previewTimeline(interaction){{
+      return interaction&&instance(interaction,previewTrigger(interaction),'previewSafe');
+    }}
+    registry.preview={{
+      prepare:function(id){{
+        var interaction=findInteraction(id);if(!interaction)return null;
+        return previewTimeline(interaction);
+      }},
+      seek:function(id,value){{
+        var interaction=findInteraction(id),timeline=previewTimeline(interaction);
+        if(timeline&&timeline.pause)timeline.pause();
+        if(timeline&&timeline.seek)timeline.seek(interaction.domain==='progress'?Number(value)/100*PROGRESS_DURATION:Number(value));
+        emitPreviewState(interaction,timeline,'seek');
+        return timeline;
+      }},
+      play:function(id){{
+        var interaction=findInteraction(id),timeline=previewTimeline(interaction);
+        control(timeline,'play',interaction);
+        emitPreviewState(interaction,timeline,'play');
+        return timeline;
+      }},
+      pause:function(id){{
+        var interaction=findInteraction(id),timeline=previewTimeline(interaction);
+        if(timeline&&timeline.pause)timeline.pause();
+        emitPreviewState(interaction,timeline,'pause');
+        return timeline;
+      }},
+      reverse:function(id){{
+        var interaction=findInteraction(id),timeline=previewTimeline(interaction);
+        control(timeline,'reverse',interaction);
+        emitPreviewState(interaction,timeline,'reverse');
+        return timeline;
+      }},
+      restart:function(id){{
+        var interaction=findInteraction(id),timeline=previewTimeline(interaction);
+        control(timeline,'restart',interaction);
+        emitPreviewState(interaction,timeline,'restart');
+        return timeline;
+      }}
+    }};
+    function handleStudioMotionMessage(event){{
+      var message=event&&event.data;
+      if(!message||message.source!=='pana-studio-motion'||message.type!=='command')return;
+      var command=message.command;
+      var method=registry.preview&&registry.preview[command];
+      if(typeof method!=='function')return;
+      try{{
+        if(command==='seek')method(message.interactionId,message.value);
+        else method(message.interactionId);
+        if(event.source&&event.source.postMessage)event.source.postMessage({{
+          source:'pana-studio-motion-runtime',
+          type:'command-applied',
+          interactionId:message.interactionId,
+          command:command,
+          value:message.value
+        }},'*');
+      }}catch(error){{report({{id:message.interactionId||'preview'}},error);}}
+    }}
+    listen(window,'message',handleStudioMotionMessage);
+    registry.destroy=function(){{
+      registry.cleanups.splice(0).forEach(function(cleanup){{try{{cleanup();}}catch(error){{}}}});
+      Object.keys(registry.scopes).forEach(function(id){{try{{dispose(registry.scopes[id]);}}catch(error){{}}}});
+      registry.effectCleanups.splice(0).reverse().forEach(function(entry){{try{{entry.cleanup();}}catch(error){{}}}});
+      var disposed=[];
+      Object.keys(registry.instances).forEach(function(id){{
+        var item=registry.instances[id];
+        if(!item||disposed.indexOf(item)>=0)return;
+        disposed.push(item);
+        try{{dispose(item);}}catch(error){{}}
+      }});
+      Object.keys(registry.behaviors).forEach(function(id){{
+        list(registry.behaviors[id]).forEach(function(item){{try{{dispose(item);}}catch(error){{}}}});
+      }});
+      registry.splitters.splice(0).forEach(function(entry){{if(entry.instance&&entry.instance.revert)entry.instance.revert();}});
+      registry.instances={{}};registry.scopes={{}};registry.behaviors={{}};registry.effectCleanups=[];
+    }};
+
+    if(!previewOnly)(documentConfig.interactions||[]).forEach(function(interaction){{
+      try{{
+        var resolvedRoot=first(resolveTarget(interaction.triggerTarget,null));
+        var root=resolvedRoot&&resolvedRoot.nodeType===1?resolvedRoot:document.documentElement;
+        var mediaQueries={{reduceMotion:'(prefers-reduced-motion: reduce)'}};
+        (interaction.conditions&&interaction.conditions.mediaQueries||[]).forEach(function(condition){{
+          if(condition.enabled!==false&&condition.id&&condition.query)mediaQueries[condition.id]=condition.query;
+        }});
+        var scope=createScope({{root:root,mediaQueries:mediaQueries}});
+        if(scope&&scope.add){{
+          registry.scopes[interaction.id]=scope;
+          scope.add(function(self){{return installInteraction(interaction,self);}});
+        }}else{{
+          registry.cleanups.push(installInteraction(interaction,null));
+        }}
+      }}catch(error){{report(interaction,error);}}
+    }});
+    if(!previewOnly)(documentConfig.behaviors||[]).forEach(function(behavior){{try{{installBehavior(behavior);}}catch(error){{report(behavior,error);}}}});
+    if(!previewOnly)(documentConfig.customCode||[]).forEach(installCustom);
+  }})();"#
     )
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io::Write,
+        process::{Command, Stdio},
+    };
+
+    use serde_json::json;
+
     use super::*;
+    use crate::js::motion_model::{
+        MotionAction, MotionActionRepeat, MotionAnimateAction, MotionAnimationMode,
+        MotionConditions, MotionInteraction, MotionPlayback, MotionProperty,
+        MotionPropertyCategory, MotionTarget, MotionTimelineDomain, MotionTrigger, MotionValue,
+        MotionValueKind,
+    };
 
-    #[test]
-    fn motion_js_is_empty_without_motion_items() {
-        let js = generate_motion_js(&PageJsConfig::default());
-        assert!(js.is_empty());
+    fn config() -> PageJsConfig {
+        PageJsConfig {
+            version: Some(2),
+            blocks: Vec::new(),
+            motion: Some(MotionDocument {
+                interactions: vec![MotionInteraction {
+                    id: "hero-load".to_string(),
+                    name: "Hero load".to_string(),
+                    enabled: true,
+                    trigger: MotionTrigger::default(),
+                    trigger_target: MotionTarget::for_data_anim("hero"),
+                    conditions: MotionConditions::default(),
+                    playback: MotionPlayback::default(),
+                    domain: MotionTimelineDomain::Time,
+                    actions: vec![MotionAction::Animate(MotionAnimateAction {
+                        id: "fade".to_string(),
+                        name: "Fade".to_string(),
+                        enabled: true,
+                        target: MotionTarget::for_data_anim("hero"),
+                        start: 0.0,
+                        duration: 600.0,
+                        mode: MotionAnimationMode::FromTo,
+                        ease: "out(3)".to_string(),
+                        properties: vec![MotionProperty {
+                            id: "opacity".to_string(),
+                            name: "opacity".to_string(),
+                            category: MotionPropertyCategory::Style,
+                            from: Some(MotionValue {
+                                kind: MotionValueKind::Number,
+                                value: "0".to_string(),
+                                unit: String::new(),
+                            }),
+                            to: MotionValue {
+                                kind: MotionValueKind::Number,
+                                value: "1".to_string(),
+                                unit: String::new(),
+                            },
+                        }],
+                        keyframes: Vec::new(),
+                        stagger: None,
+                        repeat: MotionActionRepeat::default(),
+                        specialization: None,
+                    })],
+                    markers: Vec::new(),
+                }],
+                ..MotionDocument::default()
+            }),
+        }
+    }
+
+    fn browser_config() -> PageJsConfig {
+        serde_json::from_value(json!({
+            "version": 2,
+            "motion": {
+                "schemaVersion": 2,
+                "animeVersion": "4.4.1",
+                "interactions": [
+                    {
+                        "id": "preview-sequence",
+                        "name": "Preview sequence",
+                        "trigger": { "type": "load" },
+                        "triggerTarget": { "kind": "element", "dataAnim": "hero" },
+                        "actions": [
+                            {
+                                "type": "animate",
+                                "id": "move",
+                                "name": "Move",
+                                "target": { "kind": "trigger" },
+                                "duration": 200,
+                                "mode": "fromTo",
+                                "ease": "linear",
+                                "properties": [
+                                    {
+                                        "id": "translate-x",
+                                        "name": "translateX",
+                                        "from": { "kind": "number", "value": "0", "unit": "px" },
+                                        "to": { "kind": "number", "value": "100", "unit": "px" }
+                                    },
+                                    {
+                                        "id": "opacity",
+                                        "name": "opacity",
+                                        "category": "style",
+                                        "from": { "kind": "number", "value": "0" },
+                                        "to": { "kind": "number", "value": "1" }
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "set",
+                                "id": "state",
+                                "name": "State",
+                                "target": { "kind": "trigger" },
+                                "start": 100,
+                                "values": [
+                                    {
+                                        "type": "property",
+                                        "name": "--motion-probe",
+                                        "value": { "kind": "text", "value": "ready" }
+                                    },
+                                    { "type": "addClass", "name": "published-motion" },
+                                    { "type": "attribute", "name": "data-motion-state", "value": "ready" }
+                                ]
+                            },
+                            {
+                                "type": "call",
+                                "id": "effect",
+                                "name": "Effect",
+                                "start": 100,
+                                "code": "window.__motionCallCount=(window.__motionCallCount||0)+1; return function(){window.__motionCallCleanup=(window.__motionCallCleanup||0)+1;};"
+                            }
+                        ]
+                    },
+                    {
+                        "id": "click-sequence",
+                        "name": "Click sequence",
+                        "trigger": {
+                            "type": "click",
+                            "firstClick": "restart",
+                            "secondClick": "reverse"
+                        },
+                        "triggerTarget": { "kind": "element", "dataAnim": "button" },
+                        "actions": [{
+                            "type": "animate",
+                            "id": "click-fade",
+                            "name": "Click fade",
+                            "target": { "kind": "trigger" },
+                            "duration": 80,
+                            "mode": "fromTo",
+                            "ease": "linear",
+                            "properties": [{
+                                "id": "click-opacity",
+                                "name": "opacity",
+                                "category": "style",
+                                "from": { "kind": "number", "value": "0" },
+                                "to": { "kind": "number", "value": "1" }
+                            }]
+                        }]
+                    },
+                    {
+                        "id": "responsive-hidden",
+                        "name": "Responsive hidden",
+                        "trigger": { "type": "load" },
+                        "triggerTarget": { "kind": "element", "dataAnim": "hidden" },
+                        "conditions": {
+                            "mediaQueries": [{
+                                "id": "impossible",
+                                "query": "(min-width: 99999px)"
+                            }]
+                        },
+                        "actions": [{
+                            "type": "call",
+                            "id": "hidden-call",
+                            "name": "Must not run",
+                            "code": "window.__hiddenMotionRan=true;"
+                        }]
+                    },
+                    {
+                        "id": "reduced-skip",
+                        "name": "Reduced skip",
+                        "trigger": { "type": "load" },
+                        "triggerTarget": { "kind": "element", "dataAnim": "reduced-skip" },
+                        "conditions": { "reducedMotion": "skipToEnd" },
+                        "actions": [{
+                            "type": "animate",
+                            "id": "reduced-skip-opacity",
+                            "name": "Reduced skip opacity",
+                            "target": { "kind": "trigger" },
+                            "duration": 200,
+                            "mode": "fromTo",
+                            "ease": "linear",
+                            "properties": [{
+                                "id": "reduced-skip-value",
+                                "name": "opacity",
+                                "category": "style",
+                                "from": { "kind": "number", "value": "0" },
+                                "to": { "kind": "number", "value": "1" }
+                            }]
+                        }]
+                    },
+                    {
+                        "id": "reduced-duration",
+                        "name": "Reduced duration",
+                        "trigger": { "type": "load" },
+                        "triggerTarget": { "kind": "element", "dataAnim": "reduced-duration" },
+                        "conditions": { "reducedMotion": "reduce" },
+                        "actions": [{
+                            "type": "animate",
+                            "id": "reduced-duration-opacity",
+                            "name": "Reduced duration opacity",
+                            "target": { "kind": "trigger" },
+                            "duration": 200,
+                            "mode": "fromTo",
+                            "ease": "linear",
+                            "properties": [{
+                                "id": "reduced-duration-value",
+                                "name": "opacity",
+                                "category": "style",
+                                "from": { "kind": "number", "value": "0" },
+                                "to": { "kind": "number", "value": "1" }
+                            }]
+                        }]
+                    },
+                    {
+                        "id": "pointer-scrub",
+                        "name": "Pointer scrub",
+                        "trigger": {
+                            "type": "pointer",
+                            "axis": "x",
+                            "smoothMs": 0,
+                            "rest": 0
+                        },
+                        "triggerTarget": { "kind": "element", "dataAnim": "pointer" },
+                        "domain": "progress",
+                        "actions": [{
+                            "type": "animate",
+                            "id": "pointer-move",
+                            "name": "Pointer move",
+                            "target": { "kind": "trigger" },
+                            "duration": 100,
+                            "mode": "fromTo",
+                            "ease": "linear",
+                            "properties": [{
+                                "id": "pointer-x",
+                                "name": "translateX",
+                                "from": { "kind": "number", "value": "0", "unit": "px" },
+                                "to": { "kind": "number", "value": "100", "unit": "px" }
+                            }]
+                        }]
+                    },
+                    {
+                        "id": "scroll-scrub",
+                        "name": "Scroll scrub",
+                        "trigger": {
+                            "type": "scroll",
+                            "mode": "scrub",
+                            "start": "bottom top",
+                            "end": "top bottom",
+                            "smoothMs": 100
+                        },
+                        "triggerTarget": { "kind": "element", "dataAnim": "scroll" },
+                        "domain": "progress",
+                        "actions": [{
+                            "type": "animate",
+                            "id": "scroll-fade",
+                            "name": "Scroll fade",
+                            "target": { "kind": "trigger" },
+                            "duration": 100,
+                            "mode": "fromTo",
+                            "ease": "linear",
+                            "properties": [{
+                                "id": "scroll-opacity",
+                                "name": "opacity",
+                                "category": "style",
+                                "from": { "kind": "number", "value": "0" },
+                                "to": { "kind": "number", "value": "1" }
+                            }]
+                        }]
+                    }
+                ],
+                "behaviors": [
+                    {
+                        "type": "draggable",
+                        "id": "drag-behavior",
+                        "name": "Drag behavior",
+                        "target": { "kind": "element", "dataAnim": "drag" },
+                        "axis": "both",
+                        "snap": 10,
+                        "friction": 0.8,
+                        "cursor": true
+                    },
+                    {
+                        "type": "layout",
+                        "id": "layout-behavior",
+                        "name": "Layout behavior",
+                        "target": { "kind": "element", "dataAnim": "layout" },
+                        "childrenSelector": ".layout-item",
+                        "properties": ["borderRadius"],
+                        "durationMs": 120,
+                        "ease": "linear"
+                    }
+                ],
+                "customCode": [{
+                    "id": "custom-cleanup",
+                    "name": "Custom cleanup",
+                    "code": "window.__customActive=(window.__customActive||0)+1; return function(){window.__customActive-=1;};"
+                }]
+            }
+        }))
+        .expect("valid browser fixture")
     }
 
     #[test]
-    fn motion_js_embeds_runtime_and_payload() {
-        let config = PageJsConfig {
-            version: Some(1),
-            motion: Some(serde_json::json!({
-                "schemaVersion": 1,
-                "animeVersion": "4.4.1",
-                "items": [{
-                    "id": "animation-a",
-                    "type": "animation",
-                    "enabled": true,
-                    "target": { "mode": "selector", "selector": ".hero-title" },
-                    "properties": [],
-                    "keyframes": [{
-                        "id": "keyframe-a",
-                        "label": "Intro",
-                        "at": "50%",
-                        "duration": 200,
-                        "ease": "outQuad",
-                        "properties": []
-                    }]
-                }]
-            })),
-            ..PageJsConfig::default()
-        };
-
-        let js = generate_motion_js(&config);
-        assert!(js.contains("MOTION STUDIO"));
-        assert!(js.contains("runAnimation"));
-        assert!(js.contains("keyframeParams"));
-        assert!(js.contains("\"id\":\"animation-a\""));
-        assert!(js.contains("\"id\":\"keyframe-a\""));
-        assert!(js.contains("\"selector\":\".hero-title\""));
+    fn empty_document_emits_no_motion_runtime() {
+        assert!(generate_motion_js(&PageJsConfig::default()).is_empty());
     }
 
     #[test]
-    fn motion_js_guards_timeline_self_sync() {
-        let config = PageJsConfig {
-            version: Some(1),
-            motion: Some(serde_json::json!({
-                "schemaVersion": 1,
-                "animeVersion": "4.4.1",
-                "items": [{
-                    "id": "timeline-a",
-                    "type": "timeline",
-                    "enabled": true,
-                    "steps": [{
-                        "id": "step-a",
-                        "type": "sync",
-                        "targetItemId": "timeline-a",
-                        "position": "0"
-                    }]
-                }]
-            })),
-            ..PageJsConfig::default()
-        };
+    fn compiler_emits_one_interaction_timeline_and_preview_api() {
+        let js = generate_motion_js(&config());
+        assert!(js.contains("PANA MOTION V2"));
+        assert!(js.contains("\"schemaVersion\":2"));
+        assert!(js.contains("timeline.add(compiled.targets,compiled.params,position)"));
+        assert!(js.contains("registry.preview"));
+        assert!(js.contains("type:'state'"));
+        assert!(js.contains("new WeakMap()"));
+        assert!(!js.contains("Math.random"));
+        assert!(!js.contains("runAnimation(item)"));
+    }
 
-        let js = generate_motion_js(&config);
-        assert!(js.contains("syncTarget.id===item.id"));
-        assert!(js.contains("syncInstance&&syncInstance!==timeline"));
+    #[test]
+    fn generated_runtime_is_valid_javascript_when_node_is_available() {
+        let js = generate_motion_js(&browser_config());
+        let mut child = match Command::new("node")
+            .args(["--check", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("node could not start: {error}"),
+        };
+        child
+            .stdin
+            .as_mut()
+            .expect("node stdin")
+            .write_all(js.as_bytes())
+            .expect("runtime stdin");
+        let output = child.wait_with_output().expect("node --check");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn browser_fixture_emits_exact_runtime() {
+        let js = generate_motion_js(&browser_config());
+        println!(
+            "PANA_MOTION_RUNTIME_JSON={}",
+            serde_json::to_string(&js).expect("runtime JSON")
+        );
+    }
+
+    #[test]
+    fn compiler_uses_fixed_anime_version() {
+        let js = generate_motion_js(&config());
+        assert!(js.contains("registry.animeVersion='4.4.1'"));
     }
 }

@@ -10,7 +10,9 @@
     IconSearch,
     IconX,
   } from "@tabler/icons-svelte";
+  import PageTaxonomyAssignments from "$lib/components/content/PageTaxonomyAssignments.svelte";
   import ProjectPageSettingsTab from "$lib/components/project/ProjectPageSettingsTab.svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { slugifyPageTitle } from "$lib/project/files";
   import type { AppState } from "$lib/state/app.svelte";
   import type { SourceGraphPage, SourcePageKind } from "$lib/types";
@@ -27,11 +29,11 @@
   type ContentView = "all" | "pages" | "sections";
   type DetailMode = "info" | "create" | "edit";
 
-  const contentViews: { id: ContentView; label: string }[] = [
-    { id: "all", label: "Toate" },
-    { id: "pages", label: "Pagini" },
-    { id: "sections", label: "Secțiuni" },
-  ];
+  const contentViews = $derived([
+    { id: "all" as const, label: t("content-view-all") },
+    { id: "pages" as const, label: t("content-view-pages") },
+    { id: "sections" as const, label: t("content-view-sections") },
+  ]);
 
   let activeView = $state<ContentView>("all");
   let detailMode = $state<DetailMode>("info");
@@ -53,9 +55,9 @@
     const values = new Set<string>();
     for (const page of pages) values.add(contentSection(page.file));
     values.add("");
-    return [...values].sort((left, right) => left.localeCompare(right, "ro"));
+    return [...values].sort((left, right) => l10n.compare(left, right));
   });
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase("ro"));
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredPages = $derived(
     pages
       .filter((page) => (
@@ -64,13 +66,13 @@
           || activeView === "pages" && page.pageKind !== "section")
         && (sectionFilter === "all" || contentSection(page.file) === sectionFilter)
         && (!normalizedQuery || `${page.title} ${page.url} ${page.file} ${page.resolvedTemplate ?? ""}`
-          .toLocaleLowerCase("ro")
+          .toLocaleLowerCase(l10n.locale)
           .includes(normalizedQuery))
       ))
       .sort((left, right) => {
         if (left.pageKind === "home" && right.pageKind !== "home") return -1;
         if (right.pageKind === "home" && left.pageKind !== "home") return 1;
-        return left.url.localeCompare(right.url, "ro");
+        return l10n.compare(left.url, right.url);
       }),
   );
   const selectedPage = $derived(
@@ -92,13 +94,13 @@
   }
 
   function sectionLabel(section: string) {
-    return section || "Rădăcină content";
+    return section || t("content-root-section");
   }
 
   function kindLabel(kind: SourcePageKind) {
-    if (kind === "home") return "Acasă";
-    if (kind === "section") return "Secțiune";
-    return "Pagină";
+    if (kind === "home") return t("content-kind-home");
+    if (kind === "section") return t("content-kind-section");
+    return t("content-kind-page");
   }
 
   function relationCount(page: SourceGraphPage) {
@@ -143,11 +145,11 @@
     const title = titleDraft.trim();
     const slug = slugifyPageTitle(slugDraft || title);
     if (!title) {
-      createError = "Adaugă un titlu pentru pagina nouă.";
+      createError = t("content-title-required");
       return;
     }
     if (!slug) {
-      createError = "Slug-ul nu conține caractere care pot forma un URL.";
+      createError = t("content-slug-invalid");
       return;
     }
     creating = true;
@@ -159,13 +161,13 @@
         section: sectionDraft,
       });
       if (!relativePath) {
-        createError = app.projectStatus || "Pagina nu a putut fi creată.";
+        createError = app.projectStatus || t("content-create-failed");
         return;
       }
       selectedPageId = app.sourceGraph?.pages.find((page) => page.file === relativePath)?.id ?? "";
       detailMode = "info";
       app.setGlobalStatus(
-        `Pagina ${relativePath} este pregătită în sesiunea proiectului — Ctrl+S persistă pe disc.`,
+        t("content-created-status", { path: relativePath }),
         "unsaved",
       );
     } catch (error) {
@@ -220,22 +222,22 @@
   }
 </script>
 
-<section class="content-workspace" aria-labelledby="content-title">
+<section class="activity-workspace content-workspace" aria-labelledby="content-title">
   <header class="workspace-header">
     <div>
-      <span class="eyebrow"><IconFileText size={15} stroke={1.9} /> Spațiu de conținut</span>
-      <h1 id="content-title">Conținut</h1>
-      <p>Paginile și secțiunile sunt proiectate din harta surselor; Markdown-ul Zola rămâne sursa reală.</p>
+      <span class="eyebrow"><IconFileText size={15} stroke={1.9} /> {t("content-eyebrow")}</span>
+      <h1 id="content-title">{t("content-title")}</h1>
+      <p>{t("content-description")}</p>
     </div>
     <dl>
-      <div><dt>Pagini</dt><dd>{pages.filter((page) => page.pageKind !== "section").length}</dd></div>
-      <div><dt>Secțiuni</dt><dd>{pages.filter((page) => page.pageKind === "section").length}</dd></div>
+      <div><dt>{t("content-stat-pages")}</dt><dd>{l10n.formatNumber(pages.filter((page) => page.pageKind !== "section").length)}</dd></div>
+      <div><dt>{t("content-stat-sections")}</dt><dd>{l10n.formatNumber(pages.filter((page) => page.pageKind === "section").length)}</dd></div>
       <div class:warning={contentDiagnostics.length > 0}><dt>SEO</dt><dd>{contentDiagnostics.length}</dd></div>
     </dl>
   </header>
 
   <div class="workspace-toolbar">
-    <div class="view-tabs" role="tablist" aria-label="Tipuri de conținut">
+    <div class="ui-tabs view-tabs" role="tablist" aria-label={t("content-types-label")}>
       {#each contentViews as view, index (view.id)}
         <button
           id={`content-tab-${view.id}`}
@@ -244,28 +246,35 @@
           aria-selected={activeView === view.id ? "true" : "false"}
           aria-controls={`content-panel-${view.id}`}
           tabindex={activeView === view.id ? 0 : -1}
+          class="ui-tab"
           class:active={activeView === view.id}
           onclick={() => selectView(view.id)}
           onkeydown={(event) => handleViewKeydown(event, index)}
         >{view.label}</button>
       {/each}
     </div>
-    <label class="section-field">
-      <span class="sr-only">Colecție de conținut</span>
-      <select bind:value={sectionFilter} aria-label="Colecție de conținut">
-        <option value="all">Toate colecțiile</option>
-        {#each sections as section (section)}
-          <option value={section}>{sectionLabel(section)}</option>
-        {/each}
-      </select>
-    </label>
-    <label class="search-field">
-      <span class="sr-only">Caută în conținut</span>
-      <IconSearch size={14} stroke={1.9} />
-      <input bind:value={query} type="search" placeholder="Caută titlu, URL, template sau fișier" />
-    </label>
-    <button class="toolbar-action" type="button" disabled={creating} onclick={() => beginCreate()}>
-      <IconPlus size={14} stroke={2} /> Adaugă
+    <div class="toolbar-query-group with-filter">
+      <label class="toolbar-filter">
+        <span class="sr-only">{t("content-collection-label")}</span>
+        <select
+          class="ui-field toolbar"
+          bind:value={sectionFilter}
+          aria-label={t("content-collection-label")}
+        >
+          <option value="all">{t("content-all-collections")}</option>
+          {#each sections as section (section)}
+            <option value={section}>{sectionLabel(section)}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="search-field">
+        <span class="sr-only">{t("content-search-label")}</span>
+        <IconSearch size={14} stroke={1.9} />
+        <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("content-search-placeholder")} />
+      </label>
+    </div>
+    <button class="ui-button primary toolbar toolbar-action" type="button" disabled={creating} onclick={() => beginCreate()}>
+      <IconPlus size={14} stroke={2} /> {t("content-add")}
     </button>
   </div>
 
@@ -276,14 +285,15 @@
       role="tabpanel"
       aria-labelledby={`content-tab-${activeView}`}
     >
-      <div class="column-head" aria-hidden="true"><span>Conținut</span><span>Tip</span><span>Template</span></div>
-      <div class="page-list" role="listbox" aria-label="Intrări de conținut">
+      <div class="column-head" aria-hidden="true"><span>{t("content-column-content")}</span><span>{t("content-column-kind")}</span><span>{t("content-column-template")}</span></div>
+      <div class="page-list" role="listbox" aria-label={t("content-entries-label")}>
         {#each filteredPages as page (page.id)}
           <button
             type="button"
             role="option"
             aria-selected={selectedPage?.id === page.id}
-            class:selected={selectedPage?.id === page.id}
+            class="ui-entity-selectable"
+            data-ui-selected={selectedPage?.id === page.id ? "true" : undefined}
             onclick={() => selectPage(page.id)}
           >
             <span class="page-main">
@@ -291,70 +301,78 @@
               <span><strong>{page.title}</strong><small>{page.url || "/"} · {page.file}</small></span>
             </span>
             <span class="kind-badge">{kindLabel(page.pageKind)}</span>
-            <code>{page.resolvedTemplate ?? page.frontmatterTemplate ?? "implicit"}</code>
+            <code>{page.resolvedTemplate ?? page.frontmatterTemplate ?? t("content-template-default")}</code>
           </button>
         {:else}
           <div class="empty-state">
             <IconSearch size={25} stroke={1.5} />
-            <strong>{pages.length === 0 ? "Nu există conținut indexat" : "Nicio intrare nu corespunde filtrelor"}</strong>
-            <span>{pages.length === 0 ? "Creează prima pagină Markdown pentru acest proiect Zola." : "Schimbă tabul, colecția sau termenul de căutare."}</span>
+            <strong>{pages.length === 0
+              ? t("content-empty-index-title")
+              : t("content-empty-filter-title")}</strong>
+            <span>{pages.length === 0
+              ? t("content-empty-index-description")
+              : t("content-empty-filter-description")}</span>
           </div>
         {/each}
       </div>
     </div>
 
-    <aside class="detail-panel" aria-label="Panou contextual conținut">
+    <aside class="detail-panel" aria-label={t("content-detail-label")}>
       {#if detailMode === "create"}
         <header class="detail-header">
-          <div><span>Intrare nouă</span><h2>Pagină Markdown</h2><p>Crearea este validată de Rust și devine o singură tranzacție ProjectWorkspace.</p></div>
-          <button type="button" aria-label="Renunță la creare" disabled={creating} onclick={resetPanel}><IconX size={14} /></button>
+          <div><span>{t("content-new-entry")}</span><h2>{t("content-markdown-page")}</h2><p>{t("content-create-description")}</p></div>
+          <button class="ui-icon-button ui-close-button" type="button" aria-label={t("content-cancel-create")} disabled={creating} onclick={resetPanel}><IconX size={14} /></button>
         </header>
         <form onsubmit={(event) => { event.preventDefault(); void createPage(); }}>
           <label>
-            <span>Titlu</span>
+            <span>{t("content-page-title")}</span>
             <input
               value={titleDraft}
               oninput={(event) => updateTitle(event.currentTarget.value)}
-              placeholder="Despre noi"
+              placeholder={t("content-title-placeholder")}
               disabled={creating}
             />
           </label>
           <label>
-            <span>Slug URL</span>
+            <span>{t("content-url-slug")}</span>
             <input
               value={slugDraft}
               oninput={(event) => { slugTouched = true; slugDraft = event.currentTarget.value; }}
-              placeholder="despre-noi"
+              placeholder={t("content-slug-placeholder")}
               disabled={creating}
             />
-            <small>Va deveni <code>{slugifyPageTitle(slugDraft || titleDraft) || "slug"}.md</code>.</small>
+            <small>{t("content-file-result", {
+              file: slugifyPageTitle(slugDraft || titleDraft) || "slug",
+            })}</small>
           </label>
           <label>
-            <span>Secțiune</span>
+            <span>{t("content-section")}</span>
             <select bind:value={sectionDraft} disabled={creating}>
               {#each sections as section (section)}
                 <option value={section}>{sectionLabel(section)}</option>
               {/each}
             </select>
-            <small>Fișierul va fi creat sub <code>content/{sectionDraft ? `${sectionDraft}/` : ""}</code>.</small>
+            <small>{t("content-file-location", {
+              path: `content/${sectionDraft ? `${sectionDraft}/` : ""}`,
+            })}</small>
           </label>
           {#if createError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {createError}</p>{/if}
           <div class="form-actions">
-            <button type="button" onclick={resetPanel} disabled={creating}>Renunță</button>
-            <button class="primary" type="submit" disabled={creating || !titleDraft.trim()}>
-              <IconPlus size={14} /> {creating ? "Se creează prin Rust…" : "Creează în sesiune"}
+            <button type="button" onclick={resetPanel} disabled={creating}>{t("content-cancel")}</button>
+            <button class="ui-button primary" type="submit" disabled={creating || !titleDraft.trim()}>
+              <IconPlus size={14} /> {creating ? t("content-creating") : t("content-create-session")}
             </button>
           </div>
         </form>
       {:else if detailMode === "edit" && selectedPage}
         <header class="detail-header">
-          <div><span>Modificare controlată</span><h2>{selectedPage.title}</h2><p>Frontmatter-ul rămâne draft până la Ctrl+S, când intră într-o tranzacție coerentă.</p></div>
-          <button type="button" aria-label="Încheie editarea" onclick={resetPanel}><IconX size={14} /></button>
+          <div><span>{t("content-controlled-change")}</span><h2>{selectedPage.title}</h2><p>{t("content-edit-description")}</p></div>
+          <button class="ui-icon-button ui-close-button" type="button" aria-label={t("content-finish-editing")} onclick={resetPanel}><IconX size={14} /></button>
         </header>
         {#if metadataError}
           <p class="form-error" role="alert"><IconAlertTriangle size={14} /> {metadataError}</p>
         {:else if metadataLoading}
-          <div class="empty-state">Se citește frontmatter-ul din sesiunea proiectului…</div>
+          <div class="empty-state">{t("content-loading-frontmatter")}</div>
         {:else}
           <div class="metadata-editor">
             <ProjectPageSettingsTab
@@ -365,79 +383,62 @@
               pageSource={metadataSource}
               updatePageFrontmatterSource={updateMetadataSource}
             />
+            <PageTaxonomyAssignments {app} page={selectedPage} />
           </div>
-          <button class="secondary-action" type="button" onclick={resetPanel}>Încheie editarea</button>
+          <button class="ui-button secondary-action" type="button" onclick={resetPanel}>{t("content-finish-editing")}</button>
         {/if}
       {:else if selectedPage}
-        <span class="detail-kicker">{kindLabel(selectedPage.pageKind)} · {contentSection(selectedPage.file) || "root"}</span>
+        <span class="detail-kicker">{kindLabel(selectedPage.pageKind)} · {contentSection(selectedPage.file) || t("content-root-short")}</span>
         <h2>{selectedPage.title}</h2>
         <a class="route" href={selectedPage.url || "/"} onclick={(event) => { event.preventDefault(); void app.openCurrentProjectInBrowser(selectedPage.url || "/"); }}>
           {selectedPage.url || "/"} <IconExternalLink size={13} />
         </a>
         <dl>
-          <div><dt>Fișier Markdown</dt><dd>{selectedPage.file}</dd></div>
-          <div><dt>Template rezolvat</dt><dd>{selectedPage.resolvedTemplate ?? "Template implicit Zola"}</dd></div>
-          <div><dt>Template declarat</dt><dd>{selectedPage.frontmatterTemplate ?? "—"}</dd></div>
-          <div><dt>Relații în harta surselor</dt><dd>{relationCount(selectedPage)}</dd></div>
+          <div><dt>{t("content-markdown-file")}</dt><dd>{selectedPage.file}</dd></div>
+          <div><dt>{t("content-resolved-template")}</dt><dd>{selectedPage.resolvedTemplate ?? t("content-zola-default-template")}</dd></div>
+          <div><dt>{t("content-declared-template")}</dt><dd>{selectedPage.frontmatterTemplate ?? "—"}</dd></div>
+          <div><dt>{t("content-source-relations")}</dt><dd>{l10n.formatNumber(relationCount(selectedPage))}</dd></div>
         </dl>
         {#if selectedDiagnostics.length > 0}
-          <section class="quality-card" aria-label="Probleme pentru această pagină">
-            <strong><IconAlertTriangle size={14} /> {selectedDiagnostics.length} {selectedDiagnostics.length === 1 ? "problemă" : "probleme"}</strong>
+          <section class="quality-card" aria-label={t("content-page-problems-label")}>
+            <strong><IconAlertTriangle size={14} /> {t("content-problems-count", { count: selectedDiagnostics.length })}</strong>
             {#each selectedDiagnostics.slice(0, 3) as diagnostic (diagnostic.id)}
-              <span>{diagnostic.message}</span>
+              <span>{errorMessage(diagnostic.messageDiagnostic)}</span>
             {/each}
           </section>
         {:else}
-          <section class="quality-card clean"><strong>Fără probleme cunoscute pentru această pagină</strong><span>Rezultatul provine din ultimul audit Rust.</span></section>
+          <section class="quality-card clean"><strong>{t("content-no-known-problems")}</strong><span>{t("content-audit-origin")}</span></section>
         {/if}
         <div class="detail-actions">
-          <button class="primary-action" type="button" onclick={() => { void beginEdit(selectedPage); }}>
-            <IconEdit size={14} /> Editează
+          <button class="ui-button primary primary-action" type="button" onclick={() => { void beginEdit(selectedPage); }}>
+            <IconEdit size={14} /> {t("content-edit")}
           </button>
-          <button class="secondary-action" type="button" onclick={() => { void openSource(selectedPage); }}>
-            <IconCode size={14} /> Deschide Markdown
+          <button class="ui-button secondary-action" type="button" onclick={() => { void openSource(selectedPage); }}>
+            <IconCode size={14} /> {t("content-open-markdown")}
           </button>
         </div>
-        <button class="secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(selectedPage.url || "/"); }}>
-          Vezi pagina publică <IconExternalLink size={13} />
+        <button class="ui-button secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(selectedPage.url || "/"); }}>
+          {t("content-view-public")} <IconExternalLink size={13} />
         </button>
       {:else}
-        <div class="empty-state"><strong>Selectează o intrare</strong><span>Detaliile despre rută, template și calitate vor apărea aici.</span></div>
+        <div class="empty-state"><strong>{t("content-select-entry")}</strong><span>{t("content-select-description")}</span></div>
       {/if}
     </aside>
   </div>
 </section>
 
 <style>
-  .content-workspace { display: grid; grid-template-rows: auto 42px minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-panel); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 17px 20px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .eyebrow, .workspace-toolbar, .view-tabs, .search-field, .toolbar-action, .page-main, .detail-header, .route, .quality-card strong, .detail-actions, .primary-action, .secondary-action, .form-error, .form-actions, .form-actions button { display: flex; align-items: center; }
-  .eyebrow { gap: 6px; color: var(--wb-accent-strong); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
-  h1 { margin: 6px 0 0; color: var(--text-strong); font-size: 20px; font-weight: 650; letter-spacing: -.015em; }
-  .workspace-header p { margin: 5px 0 0; color: var(--wb-text-muted); font-size: 12px; }
-  .workspace-header > dl { display: flex; gap: 7px; margin: 0; }
-  .workspace-header > dl div { min-width: 76px; padding: 7px 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
+  .page-main, .detail-header, .route, .quality-card strong, .detail-actions, .primary-action, .secondary-action, .form-error, .form-actions, .form-actions button { display: flex; align-items: center; }
   .workspace-header > dl div.warning { border-color: color-mix(in srgb, var(--wb-warning) 45%, var(--wb-border-subtle)); }
   dt, .detail-kicker { color: var(--wb-text-muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
-  .workspace-toolbar { justify-content: flex-end; gap: 8px; padding: 5px 9px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .view-tabs { align-self: stretch; gap: 2px; margin-right: auto; }
-  .view-tabs button { height: 100%; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; font-size: 12px; font-weight: 600; }
-  .view-tabs button.active { border-bottom-color: var(--wb-accent); color: var(--wb-accent-strong); }
-  .search-field { position: relative; width: min(320px, 30vw); }
-  .search-field :global(svg) { position: absolute; left: 8px; color: var(--wb-text-muted); }
-  .workspace-toolbar input, .workspace-toolbar select, form input, form select { height: 28px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
-  .search-field input { width: 100%; padding: 0 8px 0 28px; }
-  .section-field select { min-width: 145px; padding: 0 7px; }
-  .toolbar-action { flex: 0 0 auto; justify-content: center; gap: 5px; min-height: 28px; padding: 0 10px; border: 1px solid var(--wb-accent); border-radius: var(--radius-control); color: #fff; background: var(--wb-accent); font-size: 12px; font-weight: 650; }
+  form input, form select { height: 28px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); box-shadow: var(--shadow-inset); font-size: 12px; }
   .workspace-body { display: grid; grid-template-columns: minmax(390px, 1fr) minmax(300px, .58fr); min-width: 0; min-height: 0; }
   .content-list { display: grid; grid-template-rows: 28px minmax(0, 1fr); min-width: 0; min-height: 0; border-right: 1px solid var(--wb-border-subtle); }
   .column-head, .page-list > button { display: grid; grid-template-columns: minmax(180px, 1fr) 78px minmax(110px, .7fr); gap: 9px; align-items: center; }
   .column-head { padding: 0 11px; border-bottom: 1px solid var(--wb-border-subtle); color: var(--wb-text-muted); background: var(--wb-surface-chrome); font-size: 12px; font-weight: 800; text-transform: uppercase; }
   .page-list { min-width: 0; min-height: 0; overflow: auto; padding: 8px; }
   .page-list > button { width: 100%; min-height: 54px; padding: 7px 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-primary); background: transparent; text-align: left; }
-  .page-list > button:hover, .page-list > button.selected { border-color: var(--wb-border-subtle); background: var(--control-hover); }
-  .page-list > button.selected { background: var(--control-selected); box-shadow: inset 3px 0 0 var(--wb-accent); }
   .page-main { min-width: 0; gap: 8px; }
   .page-main > i { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; border-radius: 6px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
   .page-main > span { display: grid; min-width: 0; gap: 3px; }

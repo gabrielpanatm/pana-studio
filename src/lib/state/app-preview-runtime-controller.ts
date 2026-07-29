@@ -1,7 +1,10 @@
 import { serializeOverrides } from "$lib/css/serializer";
-import { htmlVoidTags } from "$lib/html/mutations";
-import { applyStagedOverrideStylesToDocument, ensurePreviewInspectorStyles, updatePreviewHtmlSelectionOverlay } from "$lib/preview/bridge";
-import { collectDomTree, resolveHtmlSourceSelectionContext } from "$lib/preview/selection";
+import {
+  applyApplicationAppearanceToPreviewDocument,
+  applyStagedOverrideStylesToDocument,
+  ensurePreviewInspectorStyles,
+} from "$lib/preview/bridge";
+import { collectDomTree } from "$lib/preview/selection";
 import { isMessageFromExactPreviewFrame } from "$lib/preview/frame-origin";
 import {
   isZolaTemplatePath,
@@ -20,18 +23,23 @@ import {
   handlePreviewProjectionIntent,
   isPreviewProjectionIntentMessage,
 } from "$lib/state/preview-projection-controller";
+import {
+  handleCanvasAgentMessage,
+  retryCanvasInteractionBinding,
+} from "$lib/state/canvas-interaction-controller";
 import { confirmMountedCanvasProjection } from "$lib/state/preview-controller";
-import { templateEditGateSelectionStatus } from "$lib/tera/template-edit-gate";
-import { normalizedProjectPath, templateOriginKind } from "$lib/state/app-helpers";
+import {
+  contrastingTextColor,
+  normalizedProjectPath,
+} from "$lib/state/app-helpers";
 import {
   resolveSourceEditLocationForSourceId as resolveSourceEditLocationFromGraph,
   resolveSourceEditTargetForSourceId as resolveSourceEditTargetFromGraph,
 } from "$lib/source-graph/location";
 import type { AppState } from "$lib/state/app.svelte";
-import type { PageSection, PreviewSelectionState, ProjectFile, SelectionInfo } from "$lib/types";
+import type { PageSection, ProjectFile } from "$lib/types";
 import { errorMessage } from "$lib/util";
-
-const TEMPLATE_GATE_ACTIONS_ID = "pana-studio-template-gate-actions";
+import { t } from "$lib/i18n/runtime.svelte";
 
 /**
  * Messages which complete an application-owned Preview transaction must keep
@@ -59,52 +67,22 @@ function markPreviewMessageRevision(app: AppState, data: Record<string, unknown>
   return false;
 }
 
-function activeTemplateContextPath(app: AppState) {
-  if (app.activeScannedPath && isZolaTemplatePath(app.activeScannedPath)) {
-    return normalizedProjectPath(app.activeScannedPath);
-  }
-  return normalizedProjectPath(app.activeRenderedTemplatePath ?? app.activeScannedPath);
-}
-
-function sourceFileForSection(app: AppState, section: PageSection) {
-  const sourceNode = section.sourceId
-    ? app.sourceGraph?.nodes.find((node) => node.id === section.sourceId)
-    : null;
-  if (sourceNode?.file) return normalizedProjectPath(sourceNode.file);
-  const templateNode = section.templateSourceId
-    ? app.sourceGraph?.nodes.find((node) => node.id === section.templateSourceId)
-    : null;
-  return normalizedProjectPath(templateNode?.file ?? section.sourceLocation?.file ?? null);
-}
-
-function autoSelectionElementForSections(
-  app: AppState,
-  previewDocument: Document,
-  sections: PageSection[],
-) {
-  const activeTemplatePath = activeTemplateContextPath(app);
-  const section =
-    (activeTemplatePath
-      ? sections.find((candidate) => sourceFileForSection(app, candidate) === activeTemplatePath)
-      : null) ??
-    sections.find((candidate) => candidate.sourceId || candidate.templateSourceId) ??
-    null;
-  return section?.selector ? previewDocument.querySelector(section.selector) : null;
-}
-
 export async function refreshSourceGraph(
   app: AppState,
   options: { strict?: boolean } = {},
 ) {
   const serial = ++app.sourceGraphLoadSerial;
-  if (!app.scannedProject?.isZola) {
+  if (!app.scannedProject) {
     app.sourceGraph = null;
+    app.sourceGraphProjectionStatus = "deferred";
+    app.sourceGraphWorkspaceRevision = null;
     app.pageSections = app.hydratePageSections(app.pageSections);
     return true;
   }
   const projectRoot = app.sessionProjectRoot.trim();
   const runtimeSessionId = app.kernelProjectSessionId.trim();
   const projectSessionEpoch = app.projectSessionEpoch;
+  const expectedWorkspaceRevision = app.projectWorkspaceSnapshot?.revision ?? null;
   const projectionMatches = () => (
     serial === app.sourceGraphLoadSerial
     && app.sessionProjectRoot === projectRoot
@@ -113,12 +91,12 @@ export async function refreshSourceGraph(
   );
   if (!projectRoot || !runtimeSessionId) {
     if (options.strict) {
-      throw new Error("Source Graph nu poate fi citit fără identitatea runtime a ProjectSession.");
+      throw new Error(t("source-graph-runtime-identity-missing"));
     }
     return false;
   }
   try {
-    const graph = await readSourceGraph(
+    const receipt = await readSourceGraph(
       {
         expectedProjectRoot: projectRoot,
         expectedSessionId: runtimeSessionId,
@@ -126,52 +104,47 @@ export async function refreshSourceGraph(
     );
     if (!projectionMatches()) {
       if (options.strict) {
-        throw new Error("Source Graph refresh a fost înlocuit de altă generație ProjectSession.");
+        throw new Error(t("source-graph-refresh-superseded"));
       }
       return false;
     }
-    app.sourceGraph = graph;
-    app.pageSections = app.hydratePageSections(app.pageSections);
-    if (app.selectedElement) {
-      app.applySelectionState(app.selectedElement, undefined, false);
+    if (
+      receipt.projectRoot !== projectRoot
+      || receipt.runtimeSessionId !== runtimeSessionId
+      || !Number.isSafeInteger(receipt.workspaceRevision)
+      || receipt.workspaceRevision < 0
+    ) {
+      throw new Error(t("source-graph-workspace-identity-invalid"));
     }
-    app.syncPreviewTeraGateState();
+    const currentRevision = app.projectWorkspaceSnapshot?.revision ?? null;
+    if (
+      expectedWorkspaceRevision !== null
+      && receipt.workspaceRevision !== expectedWorkspaceRevision
+    ) {
+      if (currentRevision !== null && currentRevision > expectedWorkspaceRevision) {
+        return false;
+      }
+      throw new Error(
+        t("source-graph-revision-mismatch", {
+          actual: receipt.workspaceRevision,
+          expected: expectedWorkspaceRevision,
+        }),
+      );
+    }
+    if (currentRevision !== null && receipt.workspaceRevision !== currentRevision) return false;
+    app.sourceGraph = receipt.graph;
+    app.sourceGraphProjectionStatus = "current";
+    app.sourceGraphWorkspaceRevision = receipt.workspaceRevision;
+    app.pageSections = app.hydratePageSections(app.pageSections);
+    if (app.coordinatedElementSelection) {
+      app.applySelectionState(app.coordinatedElementSelection.observation);
+    }
     return true;
   } catch (error) {
-    if (projectionMatches()) app.sourceGraph = null;
+    if (projectionMatches()) app.sourceGraphProjectionStatus = "degraded";
     if (options.strict) throw error;
     return false;
   }
-}
-
-export function derivePreviewSelectionState(app: AppState): PreviewSelectionState {
-  if (app.selectedTemplateSourceId) {
-    const node = app.selectedTemplateSourceNode;
-    return {
-      kind: "tera",
-      selector: app.selectedTemplatePreviewSelector,
-      sourceId: app.selectedTemplateSourceId,
-      templateSourceId: node?.kind === "html" ? null : app.selectedTemplateSourceId,
-      origin: node ? templateOriginKind(node, app.activeScannedPath) : null,
-      themeName: node?.themeName ?? null,
-      canSelectHtml: true,
-      editable: false,
-    };
-  }
-
-  if (app.selectedElement) {
-    return {
-      kind: "html",
-      selector: app.selectedElement.domPath ?? app.selectedElement.cssSelector ?? null,
-      sourceId: app.selectedElement.sourceId,
-      templateSourceId: app.selectedElement.templateSourceId,
-      sessionId: app.selectedElement.sessionId,
-      selection: app.selectedElement,
-      editable: app.canEditHtml,
-    };
-  }
-
-  return { kind: "none" };
 }
 
 export function previewUrlForScannedFile(app: AppState, file: ProjectFile) {
@@ -193,17 +166,10 @@ export function resolveSourceEditLocationForSourceId(app: AppState, sourceId: st
   return resolveSourceEditLocationFromGraph(app.sourceGraph, sourceId);
 }
 
-export function syncHtmlCodeToPreview(app: AppState, sourceText: string, cursorPosition: number) {
+export function syncHtmlCodeToPreview(app: AppState, sourceText: string, _cursorPosition: number) {
   app.cancelPreviewSync();
-  const context = resolveHtmlSourceSelectionContext({
-    sourceText,
-    cursorPosition,
-    selectedElement: app.selectedElement,
-    htmlVoidTags,
-  });
-  app.setPageSections(context.pageSections);
-  app.reconcileSelectionWithSourceDocument(context.parsedDocument, context.activeSelector);
-  app.pendingSelectionSelector = context.pendingSelector;
+  const parsedDocument = new DOMParser().parseFromString(sourceText, "text/html");
+  app.setPageSections(collectDomTree(parsedDocument));
 
   const projectRoot = app.sessionProjectRoot;
   const runtimeSessionId = app.kernelProjectSessionId;
@@ -233,7 +199,9 @@ export function syncHtmlCodeToPreview(app: AppState, sourceText: string, cursorP
           || app.projectSessionEpoch !== projectSessionEpoch
         ) return;
         app.setGlobalStatus(
-          `Preview-ul documentului nu a putut proiecta draftul ProjectWorkspace: ${errorMessage(error)}`,
+          t("preview-runtime-draft-projection-failed", {
+            message: errorMessage(error),
+          }),
           "error",
         );
       }
@@ -248,7 +216,19 @@ export function applyStagedOverrideStylesToPreview(app: AppState, css: string) {
     return;
   }
   applyStagedOverrideStylesToDocument(previewDocument, css);
-  updatePreviewHtmlSelectionOverlay(app.selectedPreviewElement);
+}
+
+function syncApplicationAppearanceToPreview(app: AppState) {
+  const textOnAccent = contrastingTextColor(app.uiAccent);
+  const previewDocument = app.getPreviewDocument();
+  if (previewDocument) {
+    applyApplicationAppearanceToPreviewDocument(previewDocument, app.uiAccent, textOnAccent);
+  }
+  app.postPreviewMessage({
+    type: "set-application-appearance",
+    accent: app.uiAccent,
+    textOnAccent,
+  });
 }
 
 export function attachPreviewInspector(app: AppState) {
@@ -258,69 +238,19 @@ export function attachPreviewInspector(app: AppState) {
 
   const previewDocument = app.getPreviewDocument();
   const overrideCss = serializeOverrides(app.overrideRules, app.variableOverrides);
+  syncApplicationAppearanceToPreview(app);
 
   if (previewDocument?.body) {
     ensurePreviewInspectorStyles(previewDocument);
-    previewDocument.defaultView?.addEventListener("scroll", () => {
-      updatePreviewHtmlSelectionOverlay(app.selectedPreviewElement);
-    }, true);
-    previewDocument.defaultView?.addEventListener("resize", () => {
-      updatePreviewHtmlSelectionOverlay(app.selectedPreviewElement);
-    });
     app.applyStagedOverrideStylesToPreview(overrideCss);
     app.restoreLiveCssLayersToPreview();
     const sections = collectDomTree(previewDocument);
     app.setPageSections(sections);
-    app.syncPreviewTeraGateState();
-
-    previewDocument.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof previewDocument.defaultView!.Element)) return;
-      if (target.closest(`#${TEMPLATE_GATE_ACTIONS_ID}`)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const templateGate = app.templateGateForPreviewClick(target);
-      if (templateGate && templateGate.sourceId !== app.templateHtmlEditSourceId) {
-        app.selectPreviewTemplateElement(templateGate.element, templateGate);
-        return;
-      }
-      app.selectPreviewElement(target, { revealCode: false });
-    }, true);
-
-    if (app.previewSelection.kind === "tera" && app.previewSelection.selector) {
-      app.renderPreviewSelectionToBridge();
-      return;
-    }
-
-    const preservedSelection = app.selectedElement?.tag === "body" || app.selectedElement?.tag === "html"
-      ? app.lastMeaningfulSelectedElement ?? app.lastSelectedImageElement
-      : app.selectedElement;
-    const preservedSelectionSelector = preservedSelection?.domPath ?? preservedSelection?.cssSelector ?? null;
-    const preservedSessionElement = preservedSelection?.sessionId
-      ? previewDocument.querySelector(`[data-pana-session-id="${preservedSelection.sessionId}"]`)
-      : null;
-    const initialElement =
-      (app.pendingSelectionSelector ? previewDocument.querySelector(app.pendingSelectionSelector) : null) ??
-      preservedSessionElement ??
-      (preservedSelectionSelector ? previewDocument.querySelector(preservedSelectionSelector) : null) ??
-      autoSelectionElementForSections(app, previewDocument, sections);
-    app.pendingSelectionSelector = null;
-    if (!initialElement) {
-      app.renderPreviewSelectionToBridge({ kind: "none" });
-      return;
-    }
-    const initialTemplateGate = app.templateGateForPreviewClick(initialElement);
-    if (initialTemplateGate && initialTemplateGate.sourceId !== app.templateHtmlEditSourceId) {
-      app.selectPreviewTemplateElement(initialTemplateGate.element, initialTemplateGate);
-    } else {
-      app.selectPreviewElement(initialElement);
-    }
     return;
   }
 
   app.applyStagedOverrideStylesToPreview(overrideCss);
   app.restoreLiveCssLayersToPreview();
-  app.syncPreviewTeraGateState();
   // ACK-ul de structură este urmărit: dacă iframe-ul este înlocuit sau bridge-ul
   // lipsește, eroarea rămâne în controlerul care poate decide recovery-ul și nu
   // produce un toast concurent cu proiecția canonică.
@@ -340,15 +270,6 @@ export function attachPreviewInspector(app: AppState) {
       scheduleProjectWorkspaceDerivedPreviewProjection(app, "session-refresh");
     })
     .catch(() => undefined);
-  if (app.pendingSelectionSelector) {
-    app.postPreviewMessage({
-      type: "select-by-selector",
-      selector: app.pendingSelectionSelector,
-    });
-  } else {
-    app.renderPreviewSelectionToBridge({ kind: "none" });
-  }
-  app.pendingSelectionSelector = null;
 
   // Cross-origin iframe: fetch the rendered HTML and build full DOM tree.
   app.fetchDomTreeFromPreview();
@@ -356,8 +277,16 @@ export function attachPreviewInspector(app: AppState) {
 
 export function handlePreviewMessage(app: AppState, event: MessageEvent) {
   const data = event.data;
+  if (data?.source === "pana-studio-canvas-agent") {
+    const exactFrame = isMessageFromExactPreviewFrame(app.previewFrame, event);
+    if (!exactFrame) return;
+    if (!app.previewRuntime.acceptIncomingMessage()) return;
+    handleCanvasAgentMessage(app, event);
+    return;
+  }
   if (!data || data.source !== "pana-studio-preview") return;
-  if (!isMessageFromExactPreviewFrame(app.previewFrame, event)) return;
+  const exactFrame = isMessageFromExactPreviewFrame(app.previewFrame, event);
+  if (!exactFrame) return;
   if (!app.previewRuntime.acceptIncomingMessage()) return;
   const ack = app.previewRuntime.handleAck(data);
   if (ack) {
@@ -367,6 +296,7 @@ export function handlePreviewMessage(app: AppState, event: MessageEvent) {
     return;
   }
   if (data.type === "ready") {
+    syncApplicationAppearanceToPreview(app);
     void confirmMountedCanvasProjection(
       app.previewControllerHost(),
       data.canvasIdentity && typeof data.canvasIdentity === "object"
@@ -377,12 +307,14 @@ export function handlePreviewMessage(app: AppState, event: MessageEvent) {
         : [],
     ).catch((error) => {
       app.setGlobalStatus(
-        `Confirmarea Canvas a eșuat: ${error instanceof Error ? error.message : String(error)}`,
+        t("preview-runtime-canvas-confirmation-failed", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
         "error",
       );
     });
     app.restoreLiveCssLayersToPreview();
-    app.syncPreviewTeraGateState();
+    void retryCanvasInteractionBinding(app);
     return;
   }
   if (data.type === "structure") {
@@ -403,46 +335,4 @@ export function handlePreviewMessage(app: AppState, event: MessageEvent) {
     void handlePreviewProjectionIntent(app, data);
     return;
   }
-  if (data.type === "preview-hover") {
-    app.hoverPreviewSelection((data.selection ?? null) as SelectionInfo | null);
-    return;
-  }
-  if (data.type === "preview-hover-clear") {
-    app.hoverPreviewSelection(null);
-    return;
-  }
-  if (data.type === "preview-context-menu") {
-    app.openPreviewContextMenu(data);
-    return;
-  }
-  if (data.type === "preview-pointerdown") {
-    app.closeContextMenu();
-    return;
-  }
-  if (data.type !== "selection") return;
-  if (markPreviewMessageRevision(app, data)) return;
-  const selection = data.selection as SelectionInfo;
-  if (app.pendingRestoredSelectionTag) {
-    if (selection.tag !== app.pendingRestoredSelectionTag) return;
-    app.pendingRestoredSelectionTag = null;
-    if (app.pendingRestoredSelectionTimer !== null) {
-      window.clearTimeout(app.pendingRestoredSelectionTimer);
-      app.pendingRestoredSelectionTimer = null;
-    }
-  }
-  const templateGate = app.templateGateForSelection(selection);
-  if (templateGate && templateGate.sourceId !== app.templateHtmlEditSourceId) {
-    app.setPreviewTeraSelection(templateGate, {
-      clearHtmlMarker: false,
-      status: templateEditGateSelectionStatus(templateGate.canSelectHtml, "element"),
-    });
-    return;
-  }
-
-  const previewDocument = app.getPreviewDocument();
-  app.selectedPreviewElement =
-    previewDocument?.querySelector(selection.domPath) ??
-    previewDocument?.querySelector(selection.cssSelector) ??
-    null;
-  app.applySelectionState(selection);
 }

@@ -1,5 +1,7 @@
 import { htmlTagGroups, type HtmlTagGroup } from "$lib/html/tag-catalog";
 import { buildHtmlSnippet } from "$lib/html/snippets";
+import { t } from "$lib/i18n/runtime.svelte";
+import type { MessageId } from "$lib/i18n/generated/catalog";
 
 export type HtmlPaletteElement = {
   id: string;
@@ -27,67 +29,76 @@ export type HtmlPaletteInsertOptions = {
   html: string;
 };
 
-const tagMeta: Record<string, { label: string; description: string; text: string; className?: string }> = {
-  div: { label: "Container", description: "Container neutru", text: "" },
-  section: { label: "Secțiune", description: "Bloc semantic", text: "" },
-  article: { label: "Articol", description: "Conținut independent", text: "Articol nou" },
-  main: { label: "Conținut principal", description: "Zona principală a paginii", text: "" },
-  header: { label: "Antet", description: "Antet", text: "" },
-  footer: { label: "Subsol", description: "Subsol", text: "" },
-  nav: { label: "Navigație", description: "Navigație", text: "" },
-  aside: { label: "Conținut lateral", description: "Conținut lateral", text: "" },
-  figure: { label: "Figură", description: "Media + descriere", text: "" },
-  figcaption: { label: "Legendă figură", description: "Descriere media", text: "Descriere" },
-  p: { label: "Paragraf", description: "Text de corp", text: "Paragraf nou." },
-  h1: { label: "H1", description: "Titlu principal", text: "Titlu principal" },
-  h2: { label: "H2", description: "Titlu secundar", text: "Titlu nou" },
-  h3: { label: "H3", description: "Subtitlu", text: "Subtitlu nou" },
-  h4: { label: "H4", description: "Titlu nivel 4", text: "Titlu nou" },
-  h5: { label: "H5", description: "Titlu nivel 5", text: "Titlu nou" },
-  h6: { label: "H6", description: "Titlu nivel 6", text: "Titlu nou" },
-  span: { label: "Text în linie", description: "Text în linie", text: "Text" },
-  blockquote: { label: "Citat", description: "Citat", text: "Citat nou." },
-  pre: { label: "Text preformatat", description: "Text preformatat", text: "Text preformatat" },
-  code: { label: "Cod", description: "Cod în linie", text: "cod" },
-  strong: { label: "Evidențiere", description: "Accent puternic", text: "Text important" },
-  em: { label: "Accent", description: "Accent italic", text: "Text accentuat" },
-  small: { label: "Text secundar", description: "Text secundar", text: "Text mic" },
-  label: { label: "Etichetă", description: "Etichetă formular", text: "Etichetă" },
-  ul: { label: "Listă neordonată", description: "Listă neordonată", text: "Element listă" },
-  ol: { label: "Listă ordonată", description: "Listă ordonată", text: "Element listă" },
-  li: { label: "Element de listă", description: "Element listă", text: "Element listă" },
-  dl: { label: "Listă de descrieri", description: "Listă descrieri", text: "Termen" },
-  dt: { label: "Termen", description: "Termen", text: "Termen" },
-  dd: { label: "Descriere termen", description: "Descriere termen", text: "Descriere" },
-  img: { label: "Imagine", description: "Imagine", text: "Imagine" },
-  video: { label: "Video", description: "Video cu comenzi", text: "" },
-  audio: { label: "Audio", description: "Audio cu comenzi", text: "" },
-  source: { label: "Sursă media", description: "Sursă media", text: "" },
-  picture: { label: "Imagine adaptivă", description: "Imagine adaptivă", text: "Imagine" },
-  iframe: { label: "Cadru încorporat", description: "Conținut încorporat", text: "Cadru" },
-  a: { label: "Legătură", description: "Legătură", text: "Legătură nouă" },
-  button: { label: "Buton", description: "Acțiune", text: "Buton nou", className: "btn" },
-  form: { label: "Formular", description: "Formular", text: "Trimite" },
-  input: { label: "Câmp text", description: "Câmp text", text: "Text" },
-  textarea: { label: "Zonă de text", description: "Câmp lung", text: "Text" },
-  select: { label: "Listă de opțiuni", description: "Listă opțiuni", text: "Opțiune" },
-  option: { label: "Opțiune", description: "Opțiune din listă", text: "Opțiune" },
-  fieldset: { label: "Grup de câmpuri", description: "Grup formular", text: "Legendă" },
-  legend: { label: "Legendă", description: "Titlul grupului de câmpuri", text: "Legendă" },
-  table: { label: "Tabel", description: "Tabel simplu", text: "Celulă" },
-  thead: { label: "Antet tabel", description: "Antet tabel", text: "Titlu" },
-  tbody: { label: "Corp tabel", description: "Corp tabel", text: "Celulă" },
-  tfoot: { label: "Subsol tabel", description: "Subsol tabel", text: "Total" },
-  tr: { label: "Rând tabel", description: "Rând tabel", text: "Celulă" },
-  th: { label: "Celulă antet", description: "Celulă antet", text: "Titlu" },
-  td: { label: "Celulă tabel", description: "Celulă tabel", text: "Celulă" },
-  caption: { label: "Descriere tabel", description: "Descriere tabel", text: "Descriere tabel" },
+const tagMeta: Record<string, { labelId: MessageId; text: string; className?: string }> = {
+  div: { labelId: "project-html-tag-div", text: "" },
+  section: { labelId: "project-html-tag-section", text: "" },
+  article: { labelId: "project-html-tag-article", text: "New article" },
+  main: { labelId: "project-html-tag-main", text: "" },
+  header: { labelId: "project-html-tag-header", text: "" },
+  footer: { labelId: "project-html-tag-footer", text: "" },
+  nav: { labelId: "project-html-tag-nav", text: "" },
+  aside: { labelId: "project-html-tag-aside", text: "" },
+  figure: { labelId: "project-html-tag-figure", text: "" },
+  figcaption: { labelId: "project-html-tag-figcaption", text: "Description" },
+  p: { labelId: "project-html-tag-p", text: "New paragraph." },
+  h1: { labelId: "project-html-tag-h1", text: "Main heading" },
+  h2: { labelId: "project-html-tag-h2", text: "New heading" },
+  h3: { labelId: "project-html-tag-h3", text: "New subheading" },
+  h4: { labelId: "project-html-tag-h4", text: "New heading" },
+  h5: { labelId: "project-html-tag-h5", text: "New heading" },
+  h6: { labelId: "project-html-tag-h6", text: "New heading" },
+  span: { labelId: "project-html-tag-span", text: "Text" },
+  blockquote: { labelId: "project-html-tag-blockquote", text: "New quote." },
+  pre: { labelId: "project-html-tag-pre", text: "Preformatted text" },
+  code: { labelId: "project-html-tag-code", text: "code" },
+  strong: { labelId: "project-html-tag-strong", text: "Important text" },
+  em: { labelId: "project-html-tag-em", text: "Emphasized text" },
+  small: { labelId: "project-html-tag-small", text: "Small text" },
+  label: { labelId: "project-html-tag-label", text: "Label" },
+  ul: { labelId: "project-html-tag-ul", text: "List item" },
+  ol: { labelId: "project-html-tag-ol", text: "List item" },
+  li: { labelId: "project-html-tag-li", text: "List item" },
+  dl: { labelId: "project-html-tag-dl", text: "Term" },
+  dt: { labelId: "project-html-tag-dt", text: "Term" },
+  dd: { labelId: "project-html-tag-dd", text: "Description" },
+  img: { labelId: "project-html-tag-img", text: "Image" },
+  video: { labelId: "project-html-tag-video", text: "" },
+  audio: { labelId: "project-html-tag-audio", text: "" },
+  source: { labelId: "project-html-tag-source", text: "" },
+  picture: { labelId: "project-html-tag-picture", text: "Image" },
+  iframe: { labelId: "project-html-tag-iframe", text: "Embedded frame" },
+  a: { labelId: "project-html-tag-a", text: "New link" },
+  button: { labelId: "project-html-tag-button", text: "New button", className: "btn" },
+  form: { labelId: "project-html-tag-form", text: "Submit" },
+  input: { labelId: "project-html-tag-input", text: "Text" },
+  textarea: { labelId: "project-html-tag-textarea", text: "Text" },
+  select: { labelId: "project-html-tag-select", text: "Option" },
+  option: { labelId: "project-html-tag-option", text: "Option" },
+  fieldset: { labelId: "project-html-tag-fieldset", text: "Legend" },
+  legend: { labelId: "project-html-tag-legend", text: "Legend" },
+  table: { labelId: "project-html-tag-table", text: "Cell" },
+  thead: { labelId: "project-html-tag-thead", text: "Heading" },
+  tbody: { labelId: "project-html-tag-tbody", text: "Cell" },
+  tfoot: { labelId: "project-html-tag-tfoot", text: "Total" },
+  tr: { labelId: "project-html-tag-tr", text: "Cell" },
+  th: { labelId: "project-html-tag-th", text: "Heading" },
+  td: { labelId: "project-html-tag-td", text: "Cell" },
+  caption: { labelId: "project-html-tag-caption", text: "Table description" },
+};
+
+const groupMessageByFirstTag: Record<string, MessageId> = {
+  div: "project-html-group-structure",
+  p: "project-html-group-text",
+  ul: "project-html-group-lists",
+  img: "project-html-group-media",
+  a: "project-html-group-actions",
+  form: "project-html-group-forms",
+  table: "project-html-group-tables",
 };
 
 function paletteElementForTag(tag: string): HtmlPaletteElement {
   const meta = tagMeta[tag] ?? {
-    label: tag.toUpperCase(),
-    description: "Element HTML",
+    labelId: "project-html-tag-generic" as MessageId,
     text: "",
   };
   const className = meta.className ?? "";
@@ -95,8 +106,10 @@ function paletteElementForTag(tag: string): HtmlPaletteElement {
   return {
     id: tag,
     tag,
-    label: meta.label,
-    description: meta.description,
+    label: meta.labelId === "project-html-tag-generic"
+      ? t(meta.labelId, { tag: tag.toUpperCase() })
+      : t(meta.labelId),
+    description: t("project-html-element-description", { tag }),
     text,
     className,
     html: buildHtmlSnippet({ tag, className, text }),
@@ -105,13 +118,18 @@ function paletteElementForTag(tag: string): HtmlPaletteElement {
 
 function paletteGroupFor(group: HtmlTagGroup): HtmlPaletteGroup {
   return {
-    label: group.label,
+    label: t(groupMessageByFirstTag[group.tags[0]] ?? "project-html-group-other"),
     elements: group.tags.map(paletteElementForTag),
   };
 }
 
-export const htmlPaletteGroups: HtmlPaletteGroup[] = htmlTagGroups.map(paletteGroupFor);
-export const htmlPaletteElements: HtmlPaletteElement[] = htmlPaletteGroups.flatMap((group) => group.elements);
+export function htmlPaletteGroups(): HtmlPaletteGroup[] {
+  return htmlTagGroups.map(paletteGroupFor);
+}
+
+export function htmlPaletteElements(): HtmlPaletteElement[] {
+  return htmlPaletteGroups().flatMap((group) => group.elements);
+}
 
 function joinClassNames(...tokens: Array<string | undefined>) {
   return Array.from(new Set(tokens.flatMap((token) => token?.split(/\s+/).map((part) => part.trim()).filter(Boolean) ?? []))).join(" ");

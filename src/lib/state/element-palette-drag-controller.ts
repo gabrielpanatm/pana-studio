@@ -1,14 +1,15 @@
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
 import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
-import type { CenterView, SaveState } from "$lib/types";
+import type { CenterView } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type ElementPaletteDragHost = {
   centerView: CenterView;
   previewFrame: HTMLIFrameElement | undefined;
   previewZoom: number;
   postPreviewMessage: (payload: Record<string, unknown>) => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  syncPreviewTeraGateState?: () => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 const dragThreshold = 6;
@@ -66,7 +67,7 @@ function createDragOverlay(element: HtmlPaletteElement) {
   ghost.style.gap = "7px";
   ghost.style.maxWidth = "220px";
   ghost.style.padding = "7px 9px";
-  ghost.style.border = "1px solid rgba(47, 170, 140, 0.68)";
+  ghost.style.border = "1px solid color-mix(in srgb, var(--brand) 68%, white)";
   ghost.style.borderRadius = "8px";
   ghost.style.color = "#eef5f0";
   ghost.style.background = "rgba(18, 24, 22, 0.94)";
@@ -76,7 +77,7 @@ function createDragOverlay(element: HtmlPaletteElement) {
 
   const tag = document.createElement("span");
   tag.textContent = `<${element.tag}>`;
-  tag.style.color = "#7fe0c7";
+  tag.style.color = "color-mix(in srgb, var(--brand) 62%, white)";
   tag.style.fontFamily = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 
   const label = document.createElement("span");
@@ -165,7 +166,6 @@ export function startElementPaletteDrag(
       return;
     }
     wasOverPreview = true;
-    host.syncPreviewTeraGateState?.();
     host.postPreviewMessage({
       type: "preview-insert-drag-update",
       x: coordinates.x,
@@ -192,7 +192,6 @@ export function startElementPaletteDrag(
       upEvent.preventDefault();
       const coordinates = previewCoordinatesForPointer(host, upEvent);
       if (coordinates) {
-        host.syncPreviewTeraGateState?.();
         host.postPreviewMessage({
           type: "preview-insert-drag-drop",
           x: coordinates.x,
@@ -200,7 +199,7 @@ export function startElementPaletteDrag(
           element: previewPayloadFor(element),
         });
       } else if (host.centerView !== "preview") {
-        host.setGlobalStatus("Comută pe Previzualizare ca să adaugi elemente prin tragere.", "error");
+        host.setGlobalStatus(t("palette-drag-switch-preview-html"), "error");
       }
     }
     cleanup();

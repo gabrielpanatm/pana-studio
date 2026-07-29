@@ -75,15 +75,11 @@
     return root;
   }
 
-  function setLiveOverridesCss(css, shouldRefreshSelection) {
-    setLiveStyleCss(LIVE_OVERRIDES_ID, css, shouldRefreshSelection);
+  function setLiveOverridesCss(css) {
+    setLiveStyleCss(LIVE_OVERRIDES_ID, css);
   }
 
-  function setLiveStyleCss(id, css, shouldRefreshSelection) {
-    if (shouldRefreshSelection === undefined) {
-      shouldRefreshSelection = true;
-    }
-
+  function setLiveStyleCss(id, css) {
     var styleId = String(id || LIVE_OVERRIDES_ID);
     var styleElement = document.getElementById(styleId);
     if (!styleElement) {
@@ -94,8 +90,4 @@
     }
 
     styleElement.textContent = String(css || "");
-
-    if (shouldRefreshSelection) {
-      refreshSelection();
-    }
   }

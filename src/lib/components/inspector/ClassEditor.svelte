@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { CssProperty, ProjectFile, ScssVariable } from "$lib/types";
+  import type { CssProperty, InstalledFontVariationAxis, ProjectFile, ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import TypographySection from "./sections/TypographySection.svelte";
   import ColorsSection     from "./sections/ColorsSection.svelte";
@@ -15,12 +15,16 @@
     classRules,
     pendingValues,
     scssVariables = [],
+    fontFamilies = [],
+    installedFontAxes = [],
     scannedAssets = [],
     cssPropertyEdit,
   }: {
     classRules: CssProperty[];
     pendingValues: Record<string, string>;
     scssVariables?: ScssVariable[];
+    fontFamilies?: string[];
+    installedFontAxes?: InstalledFontVariationAxis[];
     scannedAssets?: ProjectFile[];
     cssPropertyEdit: CssPropertyEditController;
   } = $props();
@@ -31,7 +35,7 @@
 </script>
 
 <div class="class-editor">
-  <TypographySection {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
+  <TypographySection {pendingValues} {rulesMap} {scssVariables} {fontFamilies} {installedFontAxes} edit={cssPropertyEdit} />
   <ColorsSection     {pendingValues} {rulesMap} {scssVariables} {scannedAssets} edit={cssPropertyEdit} />
   <SpacingSection    {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />
   <LayoutSection     {pendingValues} {rulesMap} {scssVariables} edit={cssPropertyEdit} />

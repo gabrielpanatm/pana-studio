@@ -82,8 +82,9 @@ pub fn commit_project_workspace_session_mutation_with_projection<R: Runtime, T>(
     }
     let mut candidate = live_workspace.clone();
     let result = mutate(&mut candidate)?;
-    persist_project_workspace_recovery_with_projection(app, &candidate, preview_projection)?;
+    persist_project_workspace_recovery_snapshot(app, &candidate)?;
     *live_workspace = candidate;
+    emit_project_workspace_mutated(app, live_workspace, preview_projection);
     Ok(result)
 }
 
@@ -211,11 +212,7 @@ pub fn persist_project_workspace_recovery<R: Runtime>(
     app: &AppHandle<R>,
     workspace: &ProjectWorkspace,
 ) -> Result<(), String> {
-    persist_project_workspace_recovery_with_projection(
-        app,
-        workspace,
-        ProjectWorkspacePreviewProjection::Required,
-    )
+    persist_project_workspace_recovery_snapshot(app, workspace)
 }
 
 /// Canonical durable Save boundary for callers that already own a detached
@@ -249,10 +246,9 @@ pub fn save_project_workspace_with_recovery<R: Runtime>(
     Ok(receipt)
 }
 
-fn persist_project_workspace_recovery_with_projection<R: Runtime>(
+fn persist_project_workspace_recovery_snapshot<R: Runtime>(
     app: &AppHandle<R>,
     workspace: &ProjectWorkspace,
-    preview_projection: ProjectWorkspacePreviewProjection,
 ) -> Result<(), String> {
     workspace.accepted_disk.require_identity(
         &workspace.runtime_session_id(),
@@ -317,6 +313,14 @@ fn persist_project_workspace_recovery_with_projection<R: Runtime>(
     WriteAuthority::new(app)
         .write_text(intent, &format!("{source}\n"))
         .map_err(|error| error.into_terminal_diagnostic())?;
+    Ok(())
+}
+
+pub fn emit_project_workspace_mutated<R: Runtime>(
+    app: &AppHandle<R>,
+    workspace: &ProjectWorkspace,
+    preview_projection: ProjectWorkspacePreviewProjection,
+) {
     if let Err(error) = app.emit(
         PROJECT_WORKSPACE_MUTATED_EVENT,
         ProjectWorkspaceMutationEvent {
@@ -330,7 +334,6 @@ fn persist_project_workspace_recovery_with_projection<R: Runtime>(
     ) {
         eprintln!("[Pană Studio] ProjectWorkspace mutation event nu a putut fi emis: {error}");
     }
-    Ok(())
 }
 
 pub fn inspect_project_workspace_recovery_for_open<R: Runtime>(
@@ -949,7 +952,10 @@ mod tests {
         app_home::{ensure_app_home, TEST_APP_ENV_LOCK},
         js::PageJsDraftStore,
         kernel::{
-            file_buffer_store::{hash_bytes, FileBufferStore, FileBufferStoreLimits},
+            file_buffer_store::{
+                hash_bytes, hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStore,
+                FileBufferStoreLimits, TextBufferLanguage, TextBufferRole,
+            },
             project_session::{
                 fingerprint_project_root, persist_project_session_open, ProjectRootFingerprint,
                 ProjectSessionScanSummary, ProjectSessionSnapshot,
@@ -958,8 +964,13 @@ mod tests {
                 ProjectWorkspaceIdentity, WorkspaceMutationMetadata,
                 PROJECT_WORKSPACE_SCHEMA_VERSION,
             },
+            taxonomy_mutation::{
+                plan_taxonomy_mutation, stage_taxonomy_mutation, TaxonomyDefinitionInput,
+                TaxonomyMutationInput, TaxonomyMutationOperation,
+            },
         },
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
+        source_graph::{build_source_graph_from_workspace_projection, build_taxonomy_catalog},
     };
 
     use super::*;
@@ -1147,6 +1158,131 @@ mod tests {
 
         drop(app);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn taxonomy_composite_mutation_survives_recovery_as_one_history_entry() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "pana-project-workspace-taxonomy-recovery-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let project_path = root.join("project");
+        fs::create_dir_all(project_path.join("content")).unwrap();
+        let config = "base_url = \"https://example.test\"\ntaxonomies = [{ name = \"tags\" }]\n";
+        let page = "+++\ntitle = \"Unu\"\n[taxonomies]\ntags = [\"Rust\"]\n+++\n\nCorp\n";
+        fs::write(project_path.join("zola.toml"), config).unwrap();
+        fs::write(project_path.join("content/unu.md"), page).unwrap();
+        let project = project_path.canonicalize().unwrap();
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let app_home = ensure_app_home(app.handle()).unwrap();
+        let session_dir = PathBuf::from(&app_home.sessions_dir).join("taxonomy-recovery-session");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session = test_session(&project, &session_dir);
+
+        let mut original = workspace(&project, &session);
+        load_taxonomy_recovery_baselines(&mut original, &project, config, page);
+        let projection = original.capture_projection_lease().unwrap();
+        let graph = build_source_graph_from_workspace_projection(&project, &projection).unwrap();
+        let catalog = build_taxonomy_catalog(&graph, "zola.toml", config);
+        let planned = plan_taxonomy_mutation(
+            &graph,
+            &catalog,
+            &projection.source_texts,
+            &TaxonomyMutationInput {
+                operation: TaxonomyMutationOperation::UpsertDefinition {
+                    original_name: Some("tags".to_string()),
+                    original_language: Some("en".to_string()),
+                    definition: TaxonomyDefinitionInput {
+                        name: "topics".to_string(),
+                        language: "en".to_string(),
+                        render: true,
+                        feed: false,
+                        paginate_by: None,
+                        paginate_path: None,
+                    },
+                },
+            },
+        )
+        .unwrap();
+        let (_, receipt) = stage_taxonomy_mutation(&mut original, planned, 20).unwrap();
+        assert_eq!(receipt.history.undo_count, 1);
+        assert_eq!(receipt.touched_files.len(), 2);
+        persist_project_workspace_recovery(app.handle(), &original).unwrap();
+
+        let mut restored = workspace(&project, &session);
+        load_taxonomy_recovery_baselines(&mut restored, &project, config, page);
+        assert_eq!(
+            restore_project_workspace_recovery(app.handle(), &mut restored).unwrap(),
+            ProjectWorkspaceRecoveryStatus::Restored
+        );
+        assert_eq!(restored.snapshot().history.undo_count, 1);
+        assert!(restored
+            .documents
+            .text_for("zola.toml")
+            .unwrap()
+            .contains("name = \"topics\""));
+        assert!(restored
+            .documents
+            .text_for("content/unu.md")
+            .unwrap()
+            .contains("topics = [\"Rust\"]"));
+
+        restored.undo(&identity(&restored), 21).unwrap();
+        assert_eq!(
+            restored.documents.text_for("zola.toml").as_deref(),
+            Some(config)
+        );
+        assert_eq!(
+            restored.documents.text_for("content/unu.md").as_deref(),
+            Some(page)
+        );
+
+        clear_project_workspace_recovery(app.handle(), &session.project_root).unwrap();
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn load_taxonomy_recovery_baselines(
+        workspace: &mut ProjectWorkspace,
+        project: &Path,
+        config: &str,
+        page: &str,
+    ) {
+        for (relative_path, source, language, role) in [
+            (
+                "zola.toml",
+                config,
+                TextBufferLanguage::Toml,
+                TextBufferRole::Config,
+            ),
+            (
+                "content/unu.md",
+                page,
+                TextBufferLanguage::Markdown,
+                TextBufferRole::Page,
+            ),
+        ] {
+            workspace.documents.insert_loaded_file(FileBufferEntry {
+                relative_path: relative_path.to_string(),
+                absolute_path: project.join(relative_path).to_string_lossy().into_owned(),
+                language,
+                role,
+                baseline: FileBufferBaseline {
+                    hash: hash_text(source),
+                    modified_ms: 1,
+                    size: source.len() as u64,
+                    readonly: false,
+                },
+                baseline_text: source.to_string(),
+                draft: None,
+                revision: 1,
+            });
+        }
     }
 
     #[test]
@@ -1347,8 +1483,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 1,
                 directory_count: 4,

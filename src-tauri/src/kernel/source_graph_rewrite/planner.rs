@@ -212,6 +212,7 @@ fn plan_template_reference_workspace_mutation_with_graph(
                 store,
                 from_node,
                 &relation.kind,
+                &relation.label,
                 target,
                 &mut diagnostics,
             )?,
@@ -326,15 +327,14 @@ fn source_graph_diagnostics(graph: &SourceGraph) -> Vec<SourceGraphRewriteDiagno
             SourceDiagnosticSeverity::Warning => SourceGraphRewriteDiagnostic::warning(
                 "source_graph_warning",
                 diagnostic.file.clone(),
-                diagnostic.message.clone(),
+                serde_json::to_string(&diagnostic.diagnostic)
+                    .unwrap_or_else(|_| diagnostic.diagnostic.code.clone()),
             ),
             SourceDiagnosticSeverity::Error => SourceGraphRewriteDiagnostic::blocked(
                 "source_graph_error",
                 diagnostic.file.clone(),
-                format!(
-                    "SourceGraphRewrite blocat: Source Graph are diagnostic de eroare: {}",
-                    diagnostic.message
-                ),
+                serde_json::to_string(&diagnostic.diagnostic)
+                    .unwrap_or_else(|_| diagnostic.diagnostic.code.clone()),
             ),
         })
         .collect()
@@ -771,14 +771,14 @@ mod tests {
         assert!(plan.rewritten_references.iter().any(|rewrite| {
             rewrite.relative_path == "templates/index.html"
                 && rewrite.target_relative_path == "content/blog/post.md"
-                && rewrite.relation_kind == "content_data_load"
+                && rewrite.relation_kind == "data_file_load"
                 && rewrite.old_reference == "@/blog/post.md"
                 && rewrite.new_reference == "@/blog/articol.md"
         }));
         assert!(plan.rewritten_references.iter().any(|rewrite| {
             rewrite.relative_path == "templates/index.html"
                 && rewrite.target_relative_path == "content/blog/post.md"
-                && rewrite.relation_kind == "content_data_load"
+                && rewrite.relation_kind == "data_file_load"
                 && rewrite.old_reference == "content/blog/post.md"
                 && rewrite.new_reference == "content/blog/articol.md"
         }));
@@ -868,10 +868,41 @@ mod tests {
         assert!(plan.rewritten_references.iter().any(|rewrite| {
             rewrite.relative_path == "templates/index.html"
                 && rewrite.target_relative_path == "static/data/catalog.json"
-                && rewrite.relation_kind == "data_load"
+                && rewrite.relation_kind == "data_file_load"
                 && rewrite.old_reference == "static/data/catalog.json"
                 && rewrite.new_reference == "static/data/products.json"
         }));
+    }
+
+    #[test]
+    fn planner_canonicalizes_a_static_load_data_alias_to_avoid_future_shadowing() {
+        let root = zola_project("rewrite-load-data-static-alias");
+        write_text(&root, "static/data/catalog.json", "{}");
+        write_text(
+            &root,
+            "templates/index.html",
+            r#"{% set catalog = load_data(path="data/catalog.json") %}"#,
+        );
+        let store = store_with_files(
+            &root,
+            &[(
+                "templates/index.html",
+                r#"{% set catalog = load_data(path="data/catalog.json") %}"#,
+            )],
+        );
+
+        let plan = plan_template_reference_workspace_mutation(
+            &root,
+            &store,
+            SourceGraphRewriteOperation::Rename,
+            "static/data/catalog.json",
+            "static/data/products.json",
+        )
+        .unwrap();
+
+        assert!(plan.workspace_mutation.unwrap().changes[0]
+            .new_text
+            .contains(r#"load_data(path="static/data/products.json")"#));
     }
 
     #[test]

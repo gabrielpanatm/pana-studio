@@ -1,35 +1,69 @@
 <script lang="ts">
   import InspectorPane from "$lib/components/InspectorPane.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
+  import { getFontManager } from "$lib/project/io";
   import type { AppState } from "$lib/state/app.svelte";
-  import type { SaveState } from "$lib/types";
+  import type { GlobalStatusKind } from "$lib/status/global-status";
+  import type { InstalledFontVariationAxis } from "$lib/types";
 
-  let {
-    app,
-    setStatusSourceContext = () => {},
-  }: {
-    app: AppState;
-    setStatusSourceContext?: (
-      context: { label: string; value: string; openable?: boolean } | null,
-    ) => void;
-  } = $props();
+  let { app }: { app: AppState } = $props();
 
-  let cssFiles = $derived(app.scannedProject
-    ? app.scannedProject.files
-        .filter((file) => (file.kind === "CSS" || file.kind === "SCSS") && file.role === "style")
-        .map((file) => file.relativePath)
-    : []);
   const activityUsesFullWorkspace = $derived(
     app.applicationSurface !== "workbench"
       || (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
   );
+  let installedFontFamilies = $state<string[]>([]);
+  let installedFontAxes = $state<InstalledFontVariationAxis[]>([]);
+  let fontLoadSequence = 0;
+
+  $effect(() => {
+    const snapshot = app.projectWorkspaceSnapshot;
+    if (!snapshot) {
+      installedFontFamilies = [];
+      installedFontAxes = [];
+      return;
+    }
+    const requestId = ++fontLoadSequence;
+    const expectedRevision = snapshot.revision;
+    void getFontManager({
+      expectedProjectRoot: snapshot.projectRoot,
+      expectedSessionId: snapshot.runtimeSessionId,
+      expectedRevision,
+    }).then((manager) => {
+      if (
+        requestId !== fontLoadSequence
+        || app.projectWorkspaceSnapshot?.revision !== expectedRevision
+      ) return;
+      installedFontFamilies = manager.inventory.families
+        .filter((family) => family.registration.registered)
+        .map((family) => family.family);
+      const axes = manager.inventory.families
+        .filter((family) => family.registration.registered)
+        .flatMap((family) => family.files.flatMap((file) => (
+          file.axes.map((axis) => ({ family: family.family, ...axis }))
+        )));
+      installedFontAxes = axes.filter((axis, index) => axes.findIndex((candidate) => (
+        candidate.family === axis.family
+        && candidate.tag === axis.tag
+        && candidate.min === axis.min
+        && candidate.default === axis.default
+        && candidate.max === axis.max
+      )) === index);
+    }).catch(() => {
+      if (requestId === fontLoadSequence) {
+        installedFontFamilies = [];
+        installedFontAxes = [];
+      }
+    });
+  });
 </script>
 
 {#if !app.rightPaneCollapsed && !activityUsesFullWorkspace}
   <WorkspaceResizeHandle
     kind="right"
     active={app.activeResizeKind === "right"}
-    ariaLabel="Redimensioneaza panoul din dreapta"
+    ariaLabel={t("workbench-resize-right-panel")}
     onDrag={(event) => app.startResizeDrag("right", event)}
     onReset={() => app.resetResize("right")}
   />
@@ -42,29 +76,30 @@
     aria-busy={app.aiEditLeaseFrontendLockActive}
   >
     <InspectorPane
-      selectedElement={app.selectedElement}
+      inspectorSelectionSummary={app.inspectorSelectionSummary}
+      inspectorHtmlPhysicalFacts={app.inspectorHtmlPhysicalFacts}
+      inspectorBlockSelectionContext={app.inspectorBlockSelectionContext}
       projectRoot={app.sessionProjectRoot}
       runtimeSessionId={app.kernelProjectSessionId}
-      previewSelection={app.previewSelection}
-      sourceGraph={app.sourceGraph}
       selectedTemplateSourceNode={app.selectedTemplateSourceNode}
-      saveState={app.saveState}
+      selectedEditorNavigationNode={app.selectedEditorNavigationNode}
       targetCssFile={app.targetCssFile}
-      codeSelectedCssTarget={app.codeSelectedCssTarget}
+      selectionSnapshot={app.selectionSnapshot}
       cssSourceRevision={app.cssSourceRevision}
       activeRenderedTemplatePath={app.activeRenderedTemplatePath}
       previewDevice={app.previewDevice}
       refreshToken={app.refreshToken}
       jsRefreshToken={app.jsRefreshToken}
+      motionWorkspace={app.motionWorkspace}
       workspaceRevision={app.projectWorkspaceSnapshot?.revision ?? 0}
       previewRevision={app.activeCanvasIdentity?.previewRevision ?? ""}
       blockPropertiesHeight={app.applicationSettings?.blockPropertiesHeight ?? 220}
       blockPropertiesCollapsed={app.applicationSettings?.blockPropertiesCollapsed ?? false}
       cachebustAssets={app.cachebustAssets}
-      {cssFiles}
       projectFiles={app.scannedProject?.files ?? []}
-      setTargetCssFile={(path) => (app.targetCssFile = path)}
       scssVariables={app.scssVariables}
+      fontFamilies={installedFontFamilies}
+      {installedFontAxes}
       attributeValues={app.attributeValues}
       attributeStatus={app.attributeStatus}
       textContentValue={app.textContentValue}
@@ -88,10 +123,9 @@
       setImageSourceValue={(value) => (app.imageSourceValue = value)}
       applyZolaImageProcessingToHtml={(intent) => app.applyZolaImageProcessingToHtml(intent)}
       cancelHtmlAttributeDraft={(expectedContextKey) => app.cancelHtmlAttributeDraft(expectedContextKey)}
-      deleteHtmlElement={async () => {
-        await app.deleteHtmlElement();
+      enterTeraBoundary={async (scopeId) => {
+        await app.enterEditorNavigationScope(scopeId);
       }}
-      editSelectedTeraLayer={() => app.editSelectedTeraLayer()}
       deleteSelectedTeraNode={async () => {
         await app.deleteSelectedTeraNode();
       }}
@@ -99,22 +133,20 @@
       pendingTag={app.pendingTag}
       tagStatus={app.tagStatus}
       changeElementTag={(tag) => app.changeElementTag(tag)}
-      openSourceLocation={(source) => app.openSourceLocation(source)}
       onLivePropertiesChange={(sel, properties, viewport) => app.applyInspectorLiveProperties(sel, properties, viewport)}
       onCssWorkspaceMutationCommitted={(authority, liveEpoch) =>
         app.projectCommittedInspectorCssMutation(authority, liveEpoch)}
       onInspectorLivePropertiesRejected={(liveEpoch) => app.clearInspectorLiveProperties(liveEpoch)}
       injectPreviewCss={(css) => app.injectRawCss("pana-animation-preview", css)}
-      onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as SaveState)}
+      onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as GlobalStatusKind)}
       onPendingChange={(area, pending) => app.setInspectorPending(area, pending, "inspector-pane")}
-      onSourceContextChange={setStatusSourceContext}
       beforeInspectorTabChange={async (from, to) => {
         if (from === "js" && to !== "js") {
           await app.flushInteractiveEditorDrafts("template-switch");
         }
       }}
-      onInspectorTabChange={(tab) => { app.activeInspectorTab = tab; }}
-      onCssCodeTargetChange={(target) => app.setCssCodeRevealTarget(target)}
+      onInspectorTabChange={(tab) => app.selectInspectorTab(tab)}
+      onCssCodeTargetChange={(target) => app.selectCssFocusFromInspector(target)}
       getOpenCssRuleContext={(file, selector, viewport) =>
         app.cssRuleContextFromOpenSource(file, selector, viewport)}
       applyNativeBlockOption={(request) => app.applyNativeBlockOption(request)}

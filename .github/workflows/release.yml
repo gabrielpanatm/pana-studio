@@ -9,7 +9,7 @@ on:
       tag:
         description: Tagul existent pentru care se construiește release-ul
         required: true
-        default: v0.1.1
+        default: v0.1.2
         type: string
 
 permissions:

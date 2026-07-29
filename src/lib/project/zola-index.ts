@@ -30,8 +30,6 @@ export async function resolveZolaIndexTemplateFile(
   sourceCache: Record<string, string>,
   onCacheUpdate: (relativePath: string, cacheKey: string, source: string) => void,
 ): Promise<ProjectFile | null> {
-  if (!project.isZola) return null;
-
   const rootPage =
     project.files.find((file) => file.role === "page" && zolaRelativePath(file.relativePath) === "content/_index.md") ?? null;
 

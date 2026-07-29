@@ -18,17 +18,6 @@
     return element instanceof Element && element.hasAttribute(EMPTY_TERA_SLOT_ATTR);
   }
 
-  function closestTemplateGateSourceId(element) {
-    if (!(element instanceof Element)) return null;
-    var sourceElement = element.closest("[" + TEMPLATE_SOURCE_ID_ATTR + "]");
-    return sourceElement ? sourceElement.getAttribute(TEMPLATE_SOURCE_ID_ATTR) : null;
-  }
-
-  function belongsToClosedTeraGate(element) {
-    var sourceId = closestTemplateGateSourceId(element);
-    return Boolean(sourceId && !openTeraGateSourceIds[sourceId]);
-  }
-
   function isEmptyZoneContainer(element) {
     if (!(element instanceof Element)) return false;
     if (isEmptyTeraSlot(element)) return false;
@@ -45,7 +34,6 @@
 
   function isEmptyEditableElement(element) {
     if (!isEmptyZoneContainer(element)) return false;
-    if (belongsToClosedTeraGate(element)) return false;
     if (hasMeaningfulElementChild(element)) return false;
     return String(element.textContent || "").trim().length === 0;
   }

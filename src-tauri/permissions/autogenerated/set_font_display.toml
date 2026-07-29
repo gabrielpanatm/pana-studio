@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-font-display"
+description = "Enables the set_font_display command without any pre-configured scope."
+commands.allow = ["set_font_display"]
+
+[[permission]]
+identifier = "deny-set-font-display"
+description = "Denies the set_font_display command without any pre-configured scope."
+commands.deny = ["set_font_display"]

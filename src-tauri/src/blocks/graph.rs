@@ -5,13 +5,14 @@ use std::{
 
 use crate::{
     blocks::{native_block_contract_definition, native_block_provider_definitions},
+    localization::LocalizedDiagnostic,
     source_graph::model::{
         BlockDiagnostic, BlockGraph, BlockResolutionStatus, BlockSourceInstance,
         SourceDiagnosticSeverity, SourceGraph, SourceNodeKind,
     },
 };
 
-pub(crate) const BLOCK_GRAPH_SCHEMA_VERSION: u32 = 1;
+pub(crate) const BLOCK_GRAPH_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) fn build_block_graph(source_graph: &SourceGraph) -> BlockGraph {
     let definitions = native_block_provider_definitions()
@@ -42,9 +43,10 @@ pub(crate) fn build_block_graph(source_graph: &SourceGraph) -> BlockGraph {
             } else {
                 vec![BlockDiagnostic {
                     code: "unknown_native_block_provider".to_string(),
-                    message: format!(
-                        "Marcajul legacy `{provider_id}` nu corespunde niciunui provider de bloc nativ Rust."
-                    ),
+                    diagnostic: LocalizedDiagnostic::new(
+                        "blocks-diagnostic-unknown-native-provider",
+                    )
+                    .with_argument("provider", provider_id.clone()),
                     severity: SourceDiagnosticSeverity::Warning,
                     file: Some(node.file.clone()),
                     source_node_id: Some(node.id.clone()),
@@ -114,7 +116,9 @@ mod tests {
                 range: None,
                 parent: None,
                 children: Vec::new(),
-                capabilities: SourceCapabilities::code_only("test"),
+                capabilities: SourceCapabilities::code_only(
+                    crate::source_graph::model::SourceCapabilityReason::NativeBlockMarker,
+                ),
             }],
             relations: Vec::new(),
             diagnostics: Vec::new(),

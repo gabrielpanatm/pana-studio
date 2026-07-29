@@ -1,3 +1,5 @@
+import { t } from "$lib/i18n/runtime.svelte";
+
 export type LatestWinsAsyncQueueSnapshot = {
   pendingCount: number;
   inFlight: boolean;
@@ -51,7 +53,7 @@ export function createLatestWinsAsyncQueue<Task>(
 
   function enqueue(task: Task) {
     const key = options.key(task).trim();
-    if (!key) throw new Error("LatestWinsAsyncQueue a refuzat o cheie goală.");
+    if (!key) throw new Error(t("latest-wins-queue-empty-key"));
     const previous = pending.get(key);
     const mergeBase = previous
       ?? (activeTask?.key === key && activeTask.queued.generation === generation
@@ -151,7 +153,7 @@ export function createLatestWinsAsyncQueue<Task>(
       const details = Array.from(failures.entries())
         .map(([key, failed]) => `${key}: ${failed.error instanceof Error ? failed.error.message : String(failed.error)}`)
         .join("; ");
-      throw new Error(`Sincronizarea lucrărilor interactive a eșuat. ${details}`);
+      throw new Error(t("latest-wins-queue-flush-failed", { details }));
     }
   }
 

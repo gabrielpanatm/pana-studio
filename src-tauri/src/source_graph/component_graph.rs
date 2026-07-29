@@ -3,26 +3,30 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::source_graph::{
-    model::{
-        ComponentArgument, ComponentCapabilities, ComponentDataBinding, ComponentDefinition,
-        ComponentDefinitionKind, ComponentDependency, ComponentDependencyKind, ComponentDiagnostic,
-        ComponentGraph, ComponentInvocation, ComponentInvocationKind, ComponentOrigin,
-        ComponentParameter, ComponentResolutionStatus, SourceDiagnosticSeverity, SourceGraph,
-        SourceGraphTemplate, SourceNode, SourceNodeKind, SourceOrigin, SourceRelationKind,
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        model::{
+            ComponentArgument, ComponentCapabilities, ComponentDataBinding, ComponentDefinition,
+            ComponentDefinitionKind, ComponentDependency, ComponentDependencyKind,
+            ComponentDiagnostic, ComponentGraph, ComponentInvocation, ComponentInvocationKind,
+            ComponentOrigin, ComponentParameter, ComponentResolutionStatus,
+            SourceDiagnosticSeverity, SourceGraph, SourceGraphTemplate, SourceNode, SourceNodeKind,
+            SourceOrigin, SourceRelationKind,
+        },
+        tera_semantics::{
+            TeraSemanticCall, TeraSemanticDocument, TeraSemanticExpression, TeraSemanticNode,
+            TeraSemanticValue,
+        },
+        zola::{
+            collect_zola_runtime_uses, normalize_zola_template_reference,
+            ZolaTeraRuntimeAvailability, ZolaTeraRuntimeKind, PINNED_ZOLA_REVISION,
+        },
+        zola_shortcode::{ZolaShortcodeInvocation, ZolaShortcodeValue},
     },
-    tera_semantics::{
-        TeraSemanticCall, TeraSemanticDocument, TeraSemanticExpression, TeraSemanticNode,
-        TeraSemanticValue,
-    },
-    zola::{
-        collect_zola_runtime_uses, normalize_zola_template_reference, ZolaTeraRuntimeAvailability,
-        ZolaTeraRuntimeKind, PINNED_ZOLA_REVISION,
-    },
-    zola_shortcode::{ZolaShortcodeInvocation, ZolaShortcodeValue},
 };
 
-pub(crate) const COMPONENT_GRAPH_SCHEMA_VERSION: u32 = 1;
+pub(crate) const COMPONENT_GRAPH_SCHEMA_VERSION: u32 = 2;
 
 pub(crate) fn build_component_graph(source_graph: &SourceGraph) -> ComponentGraph {
     let mut builder = ComponentGraphBuilder::new(source_graph);
@@ -444,10 +448,8 @@ impl<'a> ComponentGraphBuilder<'a> {
                 if status == ComponentResolutionStatus::Unresolved {
                     invocation_diagnostics.push(component_diagnostic(
                         "unresolved_include",
-                        format!(
-                            "Niciun target al include-ului nu a fost rezolvat: {}.",
-                            group.targets.join(", ")
-                        ),
+                        LocalizedDiagnostic::new("components-diagnostic-unresolved-include")
+                            .with_argument("targets", group.targets.join(", ")),
                         SourceDiagnosticSeverity::Error,
                         Some(template.file.clone()),
                         source_node.map(|node| node.id.clone()),
@@ -526,9 +528,8 @@ impl<'a> ComponentGraphBuilder<'a> {
                 if status == ComponentResolutionStatus::Unresolved {
                     invocation_diagnostics.push(component_diagnostic(
                         "unresolved_macro_call",
-                        format!(
-                            "Apelul macro {target_reference} nu are o definiție activă rezolvată."
-                        ),
+                        LocalizedDiagnostic::new("components-diagnostic-unresolved-macro")
+                            .with_argument("reference", target_reference.clone()),
                         SourceDiagnosticSeverity::Error,
                         Some(template.file.clone()),
                         call_use.source_node_id.clone(),
@@ -695,7 +696,7 @@ impl<'a> ComponentGraphBuilder<'a> {
             left.code == right.code
                 && left.file == right.file
                 && left.source_node_id == right.source_node_id
-                && left.message == right.message
+                && left.diagnostic == right.diagnostic
         });
     }
 
@@ -831,10 +832,8 @@ fn project_shortcode_tree(
         if resolved.is_none() {
             diagnostics.push(component_diagnostic(
                 "unresolved_shortcode",
-                format!(
-                    "Shortcode-ul {} nu are templates/shortcodes/{}.html sau .md activ.",
-                    shortcode.name, shortcode.name
-                ),
+                LocalizedDiagnostic::new("components-diagnostic-unresolved-shortcode")
+                    .with_argument("name", shortcode.name.clone()),
                 SourceDiagnosticSeverity::Error,
                 Some(file.to_string()),
                 shortcode.source_node_id.clone(),
@@ -953,8 +952,8 @@ fn file_capabilities(editable: bool) -> ComponentCapabilities {
         can_rename: editable,
         can_extract: false,
         can_delete: editable,
-        reason: (!editable)
-            .then(|| "Definiția provine din temă; creează un override local.".to_string()),
+        reason_diagnostic: (!editable)
+            .then(|| LocalizedDiagnostic::new("components-capability-theme-definition-readonly")),
     }
 }
 
@@ -967,8 +966,8 @@ fn symbol_capabilities(editable: bool) -> ComponentCapabilities {
         can_rename: editable,
         can_extract: editable,
         can_delete: editable,
-        reason: (!editable)
-            .then(|| "Simbolul provine din temă; creează un override local.".to_string()),
+        reason_diagnostic: (!editable)
+            .then(|| LocalizedDiagnostic::new("components-capability-theme-symbol-readonly")),
     }
 }
 
@@ -1091,10 +1090,9 @@ fn zola_runtime_diagnostics_for_template(
         .map(|runtime| {
             component_diagnostic(
                 "zola_runtime_unavailable_in_shortcode",
-                format!(
-                    "`{}` este înregistrată de Zola numai după parsarea paginilor și secțiunilor; nu este disponibilă la randarea shortcode-urilor (revizia Zola {}).",
-                    runtime.name, PINNED_ZOLA_REVISION
-                ),
+                LocalizedDiagnostic::new("components-diagnostic-shortcode-runtime-unavailable")
+                    .with_argument("name", runtime.name)
+                    .with_argument("revision", PINNED_ZOLA_REVISION),
                 SourceDiagnosticSeverity::Warning,
                 Some(template.file.clone()),
                 Some(template.node_id.clone()),
@@ -1668,14 +1666,14 @@ fn root_identifier(identifier: &str) -> &str {
 
 fn component_diagnostic(
     code: impl Into<String>,
-    message: impl Into<String>,
+    diagnostic: LocalizedDiagnostic,
     severity: SourceDiagnosticSeverity,
     file: Option<String>,
     source_node_id: Option<String>,
 ) -> ComponentDiagnostic {
     ComponentDiagnostic {
         code: code.into(),
-        message: message.into(),
+        diagnostic,
         severity,
         file,
         source_node_id,
@@ -1839,7 +1837,8 @@ mod tests {
         }));
         assert!(shortcode.diagnostics.iter().any(|diagnostic| {
             diagnostic.code == "zola_runtime_unavailable_in_shortcode"
-                && diagnostic.message.contains("get_page")
+                && diagnostic.diagnostic.arguments.get("name")
+                    == Some(&serde_json::Value::String("get_page".to_string()))
         }));
         let index_template = components
             .definitions

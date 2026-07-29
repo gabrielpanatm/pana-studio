@@ -21,7 +21,7 @@ test("dashboardul și utilitarele dedicate activității Site sunt eliminate", (
   const terms = source("../src/lib/i18n/ui-terms.ts");
 
   assert.doesNotMatch(center, /SiteOverviewWorkspace|centerView === "site"/);
-  assert.doesNotMatch(rail, /UI_TERMS\.site|id:\s*"site"|IconSitemap/);
+  assert.doesNotMatch(rail, /UI_TERM_IDS\.site|id:\s*"site"|IconSitemap/);
   assert.doesNotMatch(terms, /^\s*site:\s*"Site",?$/m);
 });
 

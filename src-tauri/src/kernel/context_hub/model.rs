@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::ai_coordination::AiCoordinationSnapshot;
 
-pub const UI_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 2;
-pub const CONTEXT_HUB_SCHEMA_VERSION: u32 = 3;
+pub const UI_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 3;
+pub const CONTEXT_HUB_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,8 +37,7 @@ pub enum UiSourceLanguage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiProjectPresentation {
-    pub is_zola: bool,
-    pub is_empty: bool,
+    pub is_open: bool,
     pub preview_base_url: Option<String>,
     pub preview_warning: Option<String>,
 }
@@ -159,8 +158,6 @@ pub struct AiContextProject {
     pub root: Option<String>,
     pub session_id: Option<String>,
     pub is_open: bool,
-    pub is_zola: bool,
-    pub is_empty: bool,
     pub project_revision: Option<u64>,
     pub disk_generation: Option<u64>,
     pub preview_base_url: Option<String>,

@@ -32,7 +32,11 @@ import {
   type PreviewStructuralSessionLease,
 } from "$lib/kernel/preview-structural-lane";
 import { htmlPaletteInsertOptions } from "$lib/project/html-palette";
-import { createZolaImageIntent, resolveZolaImageSource } from "$lib/html/zola-image";
+import {
+  createZolaImageIntent,
+  resolveZolaImageSource,
+  zolaImageSourceFailureMessage,
+} from "$lib/html/zola-image";
 import { reconcilePageAssetContracts } from "$lib/page-assets/contract";
 import { isZolaTemplatePath, scannedCacheKey, zolaRelativePath } from "$lib/project/files";
 import {
@@ -42,9 +46,10 @@ import {
   executePreviewHtmlInsertDropIntent,
   executePreviewHtmlTextIntent,
   readProjectFile,
+  readProjectWorkspaceState,
 } from "$lib/project/io";
 import { committedDraftCanSettle } from "$lib/session/committed-draft-settlement";
-import { createDomPathSelector } from "$lib/preview/selection";
+import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
 import {
   formatSourceEditLocation,
   parseSourceEditLocation,
@@ -62,16 +67,17 @@ import type {
   ProjectFile,
   ProjectDiskManifest,
   ProjectScan,
-  SaveState,
-  SelectionInfo,
+  CoordinatedElementSelection,
   SourceEditLocation,
   SourceEditTarget,
   ZolaImagePresentation,
 } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import { errorMessage } from "$lib/util";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type HtmlActionsControllerHost = PreviewStructuralCanonicalProjectionHost & {
-  selectedElement: SelectionInfo | null;
+  coordinatedElementSelection: CoordinatedElementSelection | null;
   pageSections: { selector: string; tag: string; sourceId?: string | null; sourceLocation?: SourceEditLocation | null; sessionId?: string | null }[];
   structureStatus: string;
   canEditHtmlStructure: boolean;
@@ -100,10 +106,9 @@ export type HtmlActionsControllerHost = PreviewStructuralCanonicalProjectionHost
   ) => Promise<string | null>;
   resolveSourceEditTargetForSourceId: (sourceId: string | null | undefined) => SourceEditTarget | null;
   getPreviewDocument: () => Document | undefined;
-  pendingSelectionSelector: string | null;
   postPreviewMessage: (payload: Record<string, unknown>) => void;
   setHtmlPending: (area: HtmlPendingArea, pending: boolean) => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   loadScannedProjectFile: (file: ProjectFile) => Promise<void>;
 };
 
@@ -111,6 +116,8 @@ export type HtmlActionTarget = {
   selector: string;
   cssSelector?: string | null;
   tag: string;
+  selectionRevision?: number | null;
+  renderInstanceId?: string | null;
   sourceId?: string | null;
   templateSourceId?: string | null;
   sourceLocation?: SourceEditLocation | null;
@@ -119,7 +126,6 @@ export type HtmlActionTarget = {
   rawText?: string;
   attributes?: Readonly<Record<string, string>>;
   classes?: readonly string[];
-  parentSelector?: string | null;
   zolaImage?: ZolaImagePresentation | null;
 };
 
@@ -136,60 +142,71 @@ function freezeHtmlActionTarget(target: HtmlActionTarget): HtmlActionTarget {
 
 /** Captures selection/source identity before an operation can wait in the structural lane. */
 export function captureHtmlActionTarget(
-  target: SelectionInfo | EditorHtmlTarget | null | undefined,
+  target: CoordinatedElementSelection | EditorHtmlTarget | null | undefined,
 ): HtmlActionTarget | null {
   if (!target) return null;
+  if ("snapshot" in target) {
+    const observation = target.observation;
+    return freezeHtmlActionTarget({
+      selector: observation.domPath,
+      cssSelector: observation.cssSelector,
+      tag: observation.tag,
+      selectionRevision: target.snapshot.selectionRevision,
+      renderInstanceId: target.renderInstanceId,
+      sourceId: target.sourceNodeId,
+      templateSourceId: null,
+      sourceLocation: target.sourceLocation,
+      sessionId: target.snapshot.runtimeSessionId,
+      hasChildElements: observation.hasChildElements,
+      rawText: observation.rawText,
+      attributes: observation.attributes,
+      zolaImage: observation.zolaImage,
+      classes: observation.classes,
+    });
+  }
   if ("kind" in target) {
-    const selection = target.selection ?? null;
+    const observation = target.observation ?? null;
     const section = target.section ?? null;
     return freezeHtmlActionTarget({
       selector: target.selector,
-      cssSelector: selection?.cssSelector ?? null,
+      cssSelector: observation?.cssSelector ?? null,
       tag: target.tag,
-      sourceId: target.sourceId ?? selection?.sourceId ?? section?.sourceId ?? null,
+      selectionRevision: target.selectionRevision ?? null,
+      renderInstanceId: target.renderInstanceId ?? null,
+      sourceId: target.sourceId ?? section?.sourceId ?? null,
       templateSourceId:
         target.templateSourceId
-        ?? selection?.templateSourceId
         ?? section?.templateSourceId
         ?? null,
-      sourceLocation: selection?.sourceLocation ?? section?.sourceLocation ?? null,
-      sessionId: target.sessionId ?? selection?.sessionId ?? section?.sessionId ?? null,
-      hasChildElements: selection?.hasChildElements,
-      rawText: selection?.rawText,
-      attributes: selection?.attributes,
-      zolaImage: selection?.zolaImage ?? null,
-      classes: selection?.classes,
-      parentSelector: selection?.parentNode?.selector ?? null,
+      sourceLocation: target.sourceLocation ?? section?.sourceLocation ?? null,
+      sessionId: target.sessionId ?? section?.sessionId ?? null,
+      hasChildElements: observation?.hasChildElements,
+      rawText: observation?.rawText,
+      attributes: observation?.attributes,
+      zolaImage: observation?.zolaImage ?? null,
+      classes: observation?.classes,
     });
   }
-  return freezeHtmlActionTarget({
-    selector: target.domPath,
-    cssSelector: target.cssSelector,
-    tag: target.tag,
-    sourceId: target.sourceId,
-    templateSourceId: target.templateSourceId,
-    sourceLocation: target.sourceLocation,
-    sessionId: target.sessionId,
-    hasChildElements: target.hasChildElements,
-    rawText: target.rawText,
-    attributes: target.attributes,
-    zolaImage: target.zolaImage ?? null,
-    classes: target.classes,
-    parentSelector: target.parentNode?.selector ?? null,
-  });
+  return null;
 }
 
 function currentSelectionMatchesTarget(
   host: HtmlActionsControllerHost,
   target: HtmlActionTarget,
 ) {
-  const current = host.selectedElement;
+  const current = host.coordinatedElementSelection;
   if (!current) return false;
-  if (target.sessionId && current.sessionId) return target.sessionId === current.sessionId;
-  if (target.sourceId && current.sourceId) {
-    return target.sourceId === current.sourceId && target.selector === current.domPath;
+  if (
+    target.selectionRevision
+    && target.selectionRevision !== current.snapshot.selectionRevision
+  ) return false;
+  if (target.renderInstanceId && target.renderInstanceId !== current.renderInstanceId) return false;
+  if (target.sessionId && target.sessionId !== current.snapshot.runtimeSessionId) return false;
+  if (target.sourceId && current.sourceNodeId) {
+    return target.sourceId === current.sourceNodeId
+      && target.selector === current.observation.domPath;
   }
-  return target.selector === current.domPath;
+  return target.selector === current.observation.domPath;
 }
 
 function normalizedAttributeDraft(attributes: Readonly<EditableAttributes>) {
@@ -218,8 +235,9 @@ function blockedReceiptOutcome(
   fallback: string,
 ): EditorActionOutcome | null {
   if (receipt.status === "committed") return null;
-  const reason = previewStructuralBlockingDiagnostic(receipt)?.message
-    || receipt.message
+  const diagnostic = previewStructuralBlockingDiagnostic(receipt);
+  const reason = (diagnostic ? errorMessage(diagnostic.diagnostic) : "")
+    || errorMessage(receipt.messageDiagnostic)
     || fallback;
   return blockedAction(reason);
 }
@@ -232,13 +250,13 @@ function actionErrorOutcome(error: unknown): EditorActionOutcome {
 }
 
 function insertPositionLabel(position: PreviewInsertDropRequest["position"]) {
-  if (position === "before") return "înainte";
-  if (position === "after") return "după";
-  return "în interior";
+  if (position === "before") return t("html-actions-position-before");
+  if (position === "after") return t("html-actions-position-after");
+  return t("html-actions-position-inside");
 }
 
 function missingKernelLocationMessage(action: string) {
-  return `Nu pot executa ${action}: ținta nu are locație sursă unică pentru kernel.`;
+  return t("html-actions-location-missing", { action });
 }
 
 function projectSourceLocation(tpl: SourceEditLocation) {
@@ -278,22 +296,6 @@ async function collectIdentitySourceTexts(host: HtmlActionsControllerHost) {
   }
 
   return texts;
-}
-
-function parentSelectorFor(host: HtmlActionsControllerHost, target: HtmlActionTarget) {
-  const selector = target.selector;
-  const document = host.getPreviewDocument();
-  if (document) {
-    try {
-      const element = document.querySelector(selector);
-      if (element?.parentElement && element.parentElement !== document.body && element.parentElement !== document.documentElement) {
-        return createDomPathSelector(element.parentElement);
-      }
-    } catch {
-      // Fall through to selection metadata.
-    }
-  }
-  return target.parentSelector ?? null;
 }
 
 function sourceLocationAtOffset(file: string, sourceText: string, offset: number): SourceEditLocation {
@@ -463,7 +465,9 @@ async function executeSelectedHtmlAttributes(
       target.sourceId,
       target.sourceLocation,
     ) ?? activeHtmlSourceLocationForTarget(host, target);
-    if (!location) throw new Error(missingKernelLocationMessage("schimbarea atributelor"));
+    if (!location) {
+      throw new Error(missingKernelLocationMessage(t("html-actions-attributes-noun")));
+    }
 
     const receipt = await executePreviewHtmlAttributesIntent({
       intent: {
@@ -481,17 +485,17 @@ async function executeSelectedHtmlAttributes(
         ...(zolaImage ? { zolaImage } : {}),
         ...(nativeBlockOption ? { nativeBlockOption } : {}),
       },
-    }, previewStructuralCommandIdentity(lease));
+    }, previewStructuralCommandIdentity(lease, true));
 
     const blocked = blockedReceiptOutcome(
       receipt,
-      "HTML Attribute Engine-ul a blocat atributele.",
+      t("html-actions-attributes-engine-blocked"),
     );
     if (blocked) return blocked;
 
     const patch = requireCommittedPreviewStructuralPatch(
       receipt,
-      "HTML Attribute Engine-ul a blocat atributele.",
+      t("html-actions-attributes-engine-blocked"),
     );
     if (
       receipt.workspaceMutation
@@ -499,7 +503,7 @@ async function executeSelectedHtmlAttributes(
       && receipt.workspaceMutation.revisionAfter === receipt.workspaceMutation.revisionBefore
     ) {
       await project(patch, target);
-      return noopAction("Atributele coincid deja cu sesiunea proiectului.");
+      return noopAction(t("html-actions-attributes-already-match"));
     }
     await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
       cacheCommittedHtmlPatch(host, patch);
@@ -507,7 +511,7 @@ async function executeSelectedHtmlAttributes(
     });
     return committedAction();
   });
-  return result ?? cancelledAction("Aplicarea atributelor a fost anulată odată cu sesiunea structurală.");
+  return result ?? cancelledAction(t("html-actions-attributes-session-cancelled"));
 }
 
 export type ApplyNativeBlockOptionRequest = {
@@ -546,13 +550,15 @@ export async function applyNativeBlockOptionToHtml(
       },
     );
     if (result.status === "committed") {
-      host.setGlobalStatus("Proprietatea blocului a fost confirmată în ProjectWorkspace.", "unsaved");
+      host.setGlobalStatus(t("html-actions-block-property-confirmed"), "unsaved");
     }
     return result;
   } catch (error) {
     const outcome = actionErrorOutcome(error);
     host.setGlobalStatus(
-      `Eroare proprietate bloc: ${outcome.reason ?? outcome.status}`,
+      t("html-actions-block-property-failed", {
+        message: outcome.reason ?? outcome.status,
+      }),
       "error",
     );
     return outcome;
@@ -563,16 +569,16 @@ export async function applyZolaImageProcessingToHtml(
   host: HtmlActionsControllerHost,
   intent: ProjectZolaImageIntent,
 ): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target || target.tag !== "img") {
-    host.imageStatus = "Selectează un element <img> înainte de procesarea Zola.";
+    host.imageStatus = t("html-actions-zola-image-select");
     return blockedAction(host.imageStatus);
   }
 
   host.setHtmlPending("image", true);
   host.imageStatus = intent.enabled
-    ? "Se configurează resize_image prin Zola…"
-    : "Se elimină contractul resize_image…";
+    ? t("html-actions-zola-image-configuring")
+    : t("html-actions-zola-image-removing");
   try {
     const result = await executeSelectedHtmlAttributes(
       host,
@@ -581,8 +587,8 @@ export async function applyZolaImageProcessingToHtml(
       (_patch, capturedTarget) => {
         if (!currentSelectionMatchesTarget(host, capturedTarget)) return;
         host.imageStatus = intent.enabled
-          ? "Procesarea imaginii este administrată declarativ de Zola."
-          : "Procesarea Zola a fost eliminată, iar atributele originale au fost restaurate.";
+          ? t("html-actions-zola-image-managed")
+          : t("html-actions-zola-image-removed");
       },
       intent,
     );
@@ -590,8 +596,12 @@ export async function applyZolaImageProcessingToHtml(
     return result;
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.imageStatus = `Nu am putut actualiza procesarea Zola: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare imagine Zola: ${result.reason ?? result.status}`, "error");
+    host.imageStatus = t("html-actions-zola-image-failed", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-zola-image-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     host.setHtmlPending("image", false);
     return result;
   }
@@ -613,7 +623,7 @@ async function executeSelectedHtmlText(
       target.sourceId,
       target.sourceLocation,
     ) ?? activeHtmlSourceLocationForTarget(host, target);
-    if (!location) throw new Error(missingKernelLocationMessage("editarea textului"));
+    if (!location) throw new Error(missingKernelLocationMessage(t("html-actions-text-noun")));
 
     const receipt = await executePreviewHtmlTextIntent({
       intent: {
@@ -631,17 +641,17 @@ async function executeSelectedHtmlText(
       },
       deferCanonicalProjection: options.deferCanonicalProjection === true,
       editSessionId: options.editSessionId ?? null,
-    }, previewStructuralCommandIdentity(lease));
+    }, previewStructuralCommandIdentity(lease, true));
 
     const blocked = blockedReceiptOutcome(
       receipt,
-      "HTML Text Engine-ul a blocat textul.",
+      t("html-actions-text-engine-blocked"),
     );
     if (blocked) return blocked;
 
     const patch = requireCommittedPreviewStructuralPatch(
       receipt,
-      "HTML Text Engine-ul a blocat textul.",
+      t("html-actions-text-engine-blocked"),
     );
     if (
       !options.deferCanonicalProjection
@@ -650,11 +660,11 @@ async function executeSelectedHtmlText(
       && receipt.workspaceMutation.revisionAfter === receipt.workspaceMutation.revisionBefore
     ) {
       await project(patch, target);
-      return noopAction("Textul coincide deja cu sesiunea proiectului.");
+      return noopAction(t("html-actions-text-already-matches"));
     }
     if (options.deferCanonicalProjection) {
       if (!previewStructuralSessionLeaseMatches(host, lease)) {
-        return cancelledAction("Ciorna de text aparține unei sesiuni de previzualizare închise.");
+        return cancelledAction(t("html-actions-text-draft-session-closed"));
       }
       const mutation = receipt.workspaceMutation;
       if (
@@ -663,7 +673,7 @@ async function executeSelectedHtmlText(
         && mutation.revisionAfter === mutation.revisionBefore
       ) {
         await project(patch, target);
-        return noopAction("Ciorna de text coincide deja cu sesiunea proiectului.");
+        return noopAction(t("html-actions-text-draft-already-matches"));
       }
       if (
         !mutation?.changed
@@ -671,7 +681,37 @@ async function executeSelectedHtmlText(
         || !mutation.transactionId?.trim()
       ) {
         throw new Error(
-          "Confirmarea ciornei de text nu conține o tranziție validă a sesiunii proiectului.",
+          t("html-actions-text-draft-transition-invalid"),
+        );
+      }
+      try {
+        const snapshot = await readProjectWorkspaceState();
+        if (
+          !snapshot
+          || snapshot.projectRoot !== lease.projectRoot
+          || snapshot.runtimeSessionId !== lease.sessionId
+          || snapshot.revision !== mutation.revisionAfter
+        ) {
+          throw new Error(
+            t("html-actions-text-draft-revision-unconfirmed"),
+          );
+        }
+        await settleProjectWorkspaceMutation(host, {
+          projectRoot: lease.projectRoot,
+          runtimeSessionId: lease.sessionId,
+          mutation,
+          workspace: snapshot,
+        }, {
+          preferredRelativePath: patch.file,
+          refreshSourceGraph: false,
+          refreshScss: false,
+          projectPreview: false,
+          warningLabel: t("html-actions-text-draft-operation"),
+        });
+      } catch (error) {
+        host.setGlobalStatus(
+          t("html-actions-text-resync", { message: errorMessage(error) }),
+          "unsaved",
         );
       }
       cacheCommittedHtmlPatch(host, patch);
@@ -684,32 +724,31 @@ async function executeSelectedHtmlText(
     });
     return committedAction();
   });
-  return result ?? cancelledAction("Aplicarea textului a fost anulată odată cu sesiunea structurală.");
+  return result ?? cancelledAction(t("html-actions-text-session-cancelled"));
 }
 
 export async function deleteSelectedHtmlElement(
   host: HtmlActionsControllerHost,
   editorTarget: EditorHtmlTarget | null = null,
 ): Promise<EditorActionOutcome> {
-  const capturedTarget = captureHtmlActionTarget(editorTarget ?? host.selectedElement);
+  const capturedTarget = captureHtmlActionTarget(editorTarget ?? host.coordinatedElementSelection);
   try {
     const result = await runInPreviewStructuralLane(host, async (lease) => {
       const target = capturedTarget;
       if (!target) {
-        host.structureStatus = "Selectează un element înainte de ștergere.";
+        host.structureStatus = t("html-actions-delete-select");
         host.setGlobalStatus(host.structureStatus, "error");
         return blockedAction(host.structureStatus);
       }
 
       const targetSelector = target.selector;
-      const parentSelector = parentSelectorFor(host, target);
       const tpl = sourceLocationForSourceReference(host, target.sourceId, target.sourceLocation);
       const kernelTargetLocation = tpl ?? activeHtmlSourceLocationForTarget(host, target);
 
       if (!kernelTargetLocation) {
         const message = host.isActivePreviewHtmlSource
-          ? missingKernelLocationMessage("ștergerea")
-          : host.htmlSourceMutationBlockedReason || "Elementul nu are sursă HTML editabilă.";
+          ? missingKernelLocationMessage(t("html-actions-delete-noun"))
+          : host.htmlSourceMutationBlockedReason || t("html-actions-source-not-editable");
         host.structureStatus = message;
         host.setGlobalStatus(message, "error");
         return blockedAction(message);
@@ -728,30 +767,33 @@ export async function deleteSelectedHtmlElement(
           targetTag: target.tag,
           targetSelector,
         },
-      }, previewStructuralCommandIdentity(lease));
+      }, previewStructuralCommandIdentity(lease, true));
 
       const blocked = blockedReceiptOutcome(
         receipt,
-        "HTML Delete Engine-ul a blocat ștergerea.",
+        t("html-actions-delete-engine-blocked"),
       );
       if (blocked) return blocked;
 
       const patch = requireCommittedPreviewStructuralPatch(
         receipt,
-        "HTML Delete Engine-ul a blocat ștergerea.",
+        t("html-actions-delete-engine-blocked"),
       );
       await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
         cacheCommittedHtmlPatch(host, patch);
-        host.pendingSelectionSelector = parentSelector;
-        host.structureStatus = `Element <${target.tag}> șters și salvat prin kernel.`;
+        host.structureStatus = t("html-actions-deleted", { tag: target.tag });
       });
       return committedAction();
     });
-    return result ?? cancelledAction("Ștergerea a fost anulată odată cu sesiunea structurală.");
+    return result ?? cancelledAction(t("html-actions-delete-session-cancelled"));
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.structureStatus = `Nu am putut șterge elementul: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare ștergere: ${result.reason ?? result.status}`, "error");
+    host.structureStatus = t("html-actions-delete-failed", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-delete-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     return result;
   }
 }
@@ -760,17 +802,17 @@ export async function duplicateSelectedHtmlElement(
   host: HtmlActionsControllerHost,
   editorTarget: EditorHtmlTarget | null = null,
 ): Promise<EditorActionOutcome> {
-  const capturedTarget = captureHtmlActionTarget(editorTarget ?? host.selectedElement);
+  const capturedTarget = captureHtmlActionTarget(editorTarget ?? host.coordinatedElementSelection);
   try {
     const result = await runInPreviewStructuralLane(host, async (lease) => {
       const target = capturedTarget;
       if (!target) {
-        host.structureStatus = "Selectează un element înainte de duplicare.";
+        host.structureStatus = t("html-actions-duplicate-select");
         host.setGlobalStatus(host.structureStatus, "error");
         return blockedAction(host.structureStatus);
       }
       if (target.tag === "body" || target.tag === "html") {
-        host.structureStatus = "Elementul rădăcină nu poate fi duplicat.";
+        host.structureStatus = t("html-actions-root-cannot-duplicate");
         host.setGlobalStatus(host.structureStatus, "error");
         return blockedAction(host.structureStatus);
       }
@@ -780,8 +822,8 @@ export async function duplicateSelectedHtmlElement(
       const kernelSourceLocation = tpl ?? activeHtmlSourceLocationForTarget(host, target);
       if (!kernelSourceLocation) {
         const message = host.isActivePreviewHtmlSource
-          ? missingKernelLocationMessage("duplicarea")
-          : host.htmlSourceMutationBlockedReason || "Elementul nu are sursă HTML editabilă.";
+          ? missingKernelLocationMessage(t("html-actions-duplicate-noun"))
+          : host.htmlSourceMutationBlockedReason || t("html-actions-source-not-editable");
         host.structureStatus = message;
         host.setGlobalStatus(message, "error");
         return blockedAction(message);
@@ -800,29 +842,33 @@ export async function duplicateSelectedHtmlElement(
           sourceTag: target.tag,
           sourceSelector: targetSelector,
         },
-      }, previewStructuralCommandIdentity(lease));
+      }, previewStructuralCommandIdentity(lease, true));
 
       const blocked = blockedReceiptOutcome(
         receipt,
-        "HTML Duplicate Engine-ul a blocat duplicarea.",
+        t("html-actions-duplicate-engine-blocked"),
       );
       if (blocked) return blocked;
 
       const patch = requireCommittedPreviewStructuralPatch(
         receipt,
-        "HTML Duplicate Engine-ul a blocat duplicarea.",
+        t("html-actions-duplicate-engine-blocked"),
       );
       await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
         cacheCommittedHtmlPatch(host, patch);
-        host.structureStatus = `Element <${patch.tag}> duplicat prin kernel.`;
+        host.structureStatus = t("html-actions-duplicated", { tag: patch.tag });
       });
       return committedAction();
     });
-    return result ?? cancelledAction("Duplicarea a fost anulată odată cu sesiunea structurală.");
+    return result ?? cancelledAction(t("html-actions-duplicate-session-cancelled"));
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.structureStatus = `Nu am putut duplica elementul: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare duplicare: ${result.reason ?? result.status}`, "error");
+    host.structureStatus = t("html-actions-duplicate-failed", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-duplicate-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     return result;
   }
 }
@@ -838,13 +884,17 @@ export async function insertPaletteElementAtTarget(
       : null,
     element: Object.freeze({ ...request.element }),
   });
-  const capturedTarget = captureHtmlActionTarget(host.selectedElement);
+  const capturedTarget = captureHtmlActionTarget(host.coordinatedElementSelection);
   try {
     await runInPreviewStructuralLane(host, (lease) =>
       insertPaletteElementAtTargetInLane(host, capturedRequest, capturedTarget, lease));
   } catch (error) {
-    host.structureStatus = `Nu am putut adăuga elementul: ${errorMessage(error)}`;
-    host.setGlobalStatus(`Eroare inserare: ${errorMessage(error)}`, "error");
+    host.structureStatus = t("html-actions-insert-failed", {
+      message: errorMessage(error),
+    });
+    host.setGlobalStatus(t("html-actions-insert-error", {
+      message: errorMessage(error),
+    }), "error");
   }
 }
 
@@ -870,18 +920,18 @@ async function insertPaletteElementAtTargetInLane(
     sessionId: request.targetSessionId,
   });
   if (!host.canEditHtmlStructure && !targetLocation) {
-    host.structureStatus = "Comută pe Previzualizare ca să adaugi elemente vizual.";
+    host.structureStatus = t("html-actions-switch-preview");
     host.setGlobalStatus(host.structureStatus, "error");
     return;
   }
   if (request.position === "inside" && !canElementAcceptChildren(request.targetTag, htmlVoidTags)) {
-    host.structureStatus = "Destinația nu poate primi copii.";
+    host.structureStatus = t("html-actions-target-no-children");
     host.setGlobalStatus(host.structureStatus, "error");
     return;
   }
 
   if (!targetLocation) {
-    host.structureStatus = "Ținta nu are metadate template stabile. Inserarea este blocată pentru această zonă.";
+    host.structureStatus = t("html-actions-target-metadata-unstable");
     host.setGlobalStatus(host.structureStatus, "error");
     return;
   }
@@ -930,15 +980,22 @@ async function insertPaletteElementAtTargetInLane(
 
     const patch = requireCommittedPreviewStructuralPatch(
       receipt,
-      "HTML Insert Engine-ul a blocat inserarea.",
+      t("html-actions-insert-engine-blocked"),
     );
     await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, async () => {
       cacheCommittedHtmlPatch(host, patch);
-      host.structureStatus = `Element <${patch.tag}> adăugat ${label} și salvat prin kernel.`;
+      host.structureStatus = t("html-actions-inserted-saved", {
+        tag: patch.tag,
+        position: label,
+      });
     });
   } catch (error) {
-    host.structureStatus = `Nu am putut adăuga elementul: ${errorMessage(error)}`;
-    host.setGlobalStatus(`Eroare inserare: ${errorMessage(error)}`, "error");
+    host.structureStatus = t("html-actions-insert-failed", {
+      message: errorMessage(error),
+    });
+    host.setGlobalStatus(t("html-actions-insert-error", {
+      message: errorMessage(error),
+    }), "error");
   }
 }
 
@@ -961,9 +1018,9 @@ function validClassToken(value: string) {
 export async function generateClassForSelectedHtml(
   host: HtmlActionsControllerHost,
 ): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target) {
-    host.classStatus = "Selecteaza un element inainte sa generezi o clasa.";
+    host.classStatus = t("html-actions-class-select");
     return blockedAction(host.classStatus);
   }
   let sessionLease: PreviewStructuralSessionLease;
@@ -979,7 +1036,7 @@ export async function generateClassForSelectedHtml(
   const currentClasses = normalizeClassTokens(classEditorValue || target.classes?.join(" ") || "");
   const existing = currentClasses.find(generatedPanaClass);
   if (existing) {
-    host.classStatus = `Elementul are deja clasa generata ${existing}.`;
+    host.classStatus = t("html-actions-class-already-generated", { name: existing });
     return noopAction(host.classStatus);
   }
 
@@ -989,7 +1046,7 @@ export async function generateClassForSelectedHtml(
     ? { className: reusableDataAnim }
     : generateUniqueHtmlIdentity(target.tag, await collectIdentitySourceTexts(host));
   if (!previewStructuralSessionLeaseMatches(host, sessionLease)) {
-    return cancelledAction("Generarea clasei a fost anulată deoarece ProjectSession s-a schimbat.");
+    return cancelledAction(t("html-actions-class-session-cancelled"));
   }
   return await applyClassesToTarget(
     host,
@@ -1002,9 +1059,9 @@ export async function generateClassForSelectedHtml(
 export async function generateDataAnimForSelectedHtml(
   host: HtmlActionsControllerHost,
 ): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target) {
-    host.attributeStatus = "Selecteaza un element inainte sa generezi data-anim.";
+    host.attributeStatus = t("html-actions-data-anim-select");
     return blockedAction(host.attributeStatus);
   }
   let sessionLease: PreviewStructuralSessionLease;
@@ -1019,7 +1076,9 @@ export async function generateDataAnimForSelectedHtml(
   const classEditorValue = host.classEditorValue;
   const currentDataAnim = attributeValues["data-anim"]?.trim() ?? "";
   if (currentDataAnim) {
-    host.attributeStatus = `Elementul are deja data-anim="${currentDataAnim}".`;
+    host.attributeStatus = t("html-actions-data-anim-exists", {
+      value: currentDataAnim,
+    });
     return noopAction(host.attributeStatus);
   }
 
@@ -1028,7 +1087,7 @@ export async function generateDataAnimForSelectedHtml(
     ? { dataAnim: reusableClass }
     : generateUniqueHtmlIdentity(target.tag, await collectIdentitySourceTexts(host));
   if (!previewStructuralSessionLeaseMatches(host, sessionLease)) {
-    return cancelledAction("Generarea data-anim a fost anulată deoarece ProjectSession s-a schimbat.");
+    return cancelledAction(t("html-actions-data-anim-session-cancelled"));
   }
   return await applyAttributesToTarget(
     host,
@@ -1046,7 +1105,7 @@ export async function insertNodeRelative(
   position: InsertPosition,
   opts: { tag: string; className: string; text: string },
 ) {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   const capturedOptions = Object.freeze({ ...opts });
   const canEditHtmlStructure = host.canEditHtmlStructure;
   const canAddChild = host.canAddChildToSelectedElement;
@@ -1062,8 +1121,10 @@ export async function insertNodeRelative(
         lease,
       ));
   } catch (error) {
-    host.structureStatus = `Eroare: ${errorMessage(error)}`;
-    host.setGlobalStatus(`Eroare inserare: ${errorMessage(error)}`, "error");
+    host.structureStatus = t("html-actions-generic-error", { message: errorMessage(error) });
+    host.setGlobalStatus(t("html-actions-insert-error", {
+      message: errorMessage(error),
+    }), "error");
   }
 }
 
@@ -1077,15 +1138,15 @@ async function insertNodeRelativeInLane(
   lease: PreviewStructuralSessionLease,
 ) {
   if (!target) {
-    host.structureStatus = "Selecteaza un element inainte sa adaugi un nod nou.";
+    host.structureStatus = t("html-actions-insert-select");
     return;
   }
   if (!canEditHtmlStructure) {
-    host.structureStatus = "Comută pe Previzualizare sau pe codul HTML al paginii active.";
+    host.structureStatus = t("html-actions-switch-preview-or-code");
     return;
   }
   if (position === "child" && !canAddChild) {
-    host.structureStatus = "Elementul selectat nu poate primi copii.";
+    host.structureStatus = t("html-actions-selected-no-children");
     return;
   }
 
@@ -1120,28 +1181,39 @@ async function insertNodeRelativeInLane(
             tag: opts.tag,
             className: opts.className,
             text: opts.text,
-            label: `Element <${opts.tag}>`,
+            label: t("html-actions-element-label", { tag: opts.tag }),
           },
         },
-      }, previewStructuralCommandIdentity(lease));
+      }, previewStructuralCommandIdentity(lease, true));
 
       const patch = requireCommittedPreviewStructuralPatch(
         receipt,
-        "HTML Insert Engine-ul a blocat inserarea.",
+        t("html-actions-insert-engine-blocked"),
       );
       await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
         cacheCommittedHtmlPatch(host, patch);
-        const label = position === "before" ? "înainte" : position === "after" ? "după" : "ca fiu";
-        host.structureStatus = `Element <${patch.tag}> adăugat ${label} prin kernel.`;
+        const label = position === "before"
+          ? t("html-actions-position-before")
+          : position === "after"
+            ? t("html-actions-position-after")
+            : t("html-actions-position-child");
+        host.structureStatus = t("html-actions-inserted", {
+          tag: patch.tag,
+          position: label,
+        });
       });
     } catch (error) {
-      host.structureStatus = `Eroare: ${errorMessage(error)}`;
-      host.setGlobalStatus(`Eroare inserare: ${errorMessage(error)}`, "error");
+      host.structureStatus = t("html-actions-generic-error", {
+        message: errorMessage(error),
+      });
+      host.setGlobalStatus(t("html-actions-insert-error", {
+        message: errorMessage(error),
+      }), "error");
     }
     return;
   }
 
-  const message = missingKernelLocationMessage("inserarea");
+  const message = missingKernelLocationMessage(t("html-actions-insert-noun"));
   host.structureStatus = message;
   host.setGlobalStatus(message, "error");
 }
@@ -1150,20 +1222,20 @@ export async function applyImageSourceToHtml(
   host: HtmlActionsControllerHost,
   sourceOverride?: string,
 ): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target || target.tag !== "img") {
-    host.imageStatus = "Selecteaza o imagine inainte sa schimbi src.";
+    host.imageStatus = t("html-actions-image-select");
     return blockedAction(host.imageStatus);
   }
 
   const src = (sourceOverride ?? host.imageSourceValue).trim();
   host.imageSourceValue = src;
-  const zolaImage = host.selectedElement?.zolaImage ?? null;
+  const zolaImage = host.coordinatedElementSelection?.observation.zolaImage ?? null;
   if (zolaImage) {
     const source = resolveZolaImageSource(src, host.scannedProject?.files ?? []);
     if (!source.eligible) {
-      host.imageStatus = source.reason;
-      return blockedAction(source.reason);
+      host.imageStatus = zolaImageSourceFailureMessage(source.code);
+      return blockedAction(host.imageStatus);
     }
     return await applyZolaImageProcessingToHtml(host, createZolaImageIntent({
       enabled: true,
@@ -1177,7 +1249,7 @@ export async function applyImageSourceToHtml(
   }
   if ((target.attributes?.src ?? "").trim() === src) {
     host.setHtmlPending("image", false);
-    host.imageStatus = "Sursa imaginii nu are modificări de aplicat.";
+    host.imageStatus = t("html-actions-image-no-changes");
     return noopAction(host.imageStatus);
   }
   host.setHtmlPending("image", true);
@@ -1185,7 +1257,7 @@ export async function applyImageSourceToHtml(
     const result = await executeSelectedHtmlAttributes(host, target, { src: src || null }, (patch, capturedTarget) => {
       if (currentSelectionMatchesTarget(host, capturedTarget)) {
         host.imageSourceValue = src;
-        host.imageStatus = "Sursa imaginii a fost aplicată prin kernel.";
+        host.imageStatus = t("html-actions-image-applied");
       }
     });
     if (
@@ -1198,16 +1270,20 @@ export async function applyImageSourceToHtml(
     return result;
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.imageStatus = `Nu am putut aplica sursa imaginii: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare imagine: ${result.reason ?? result.status}`, "error");
+    host.imageStatus = t("html-actions-image-failed", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-image-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     return result;
   }
 }
 
 export async function applyClassesToHtml(host: HtmlActionsControllerHost): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target) {
-    host.classStatus = "Selecteaza un element inainte sa editezi clasele.";
+    host.classStatus = t("html-actions-classes-select");
     return blockedAction(host.classStatus);
   }
 
@@ -1232,7 +1308,7 @@ async function applyClassesToTarget(
   );
   if (submittedClasses === targetClasses) {
     host.setHtmlPending("classes", false);
-    host.classStatus = "Clasele nu au modificări de aplicat.";
+    host.classStatus = t("html-actions-classes-no-changes");
     return noopAction(host.classStatus);
   }
   if (options.markPending !== false) {
@@ -1251,7 +1327,7 @@ async function applyClassesToTarget(
           && committedDraftCanSettle(currentClasses, submittedClasses, baselineClasses)
         ) {
           host.classEditorValue = submittedClasses;
-          host.classStatus = "Clase aplicate prin kernel.";
+          host.classStatus = t("html-actions-classes-applied");
           submittedDraftProjected = true;
         }
         if (removedGeneratedClass && isZolaTemplatePath(patch.file)) {
@@ -1267,15 +1343,19 @@ async function applyClassesToTarget(
       host.setHtmlPending("classes", false);
     }
     if (!editorActionSucceeded(result)) {
-      const reason = result.reason ?? "Kernelul a refuzat schimbarea claselor.";
-      host.classStatus = `Clasele nu au fost aplicate: ${reason}`;
+      const reason = result.reason ?? t("html-actions-classes-kernel-refused");
+      host.classStatus = t("html-actions-classes-not-applied", { reason });
       host.setGlobalStatus(host.classStatus, "error");
     }
     return result;
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.classStatus = `Eroare: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare clase: ${result.reason ?? result.status}`, "error");
+    host.classStatus = t("html-actions-generic-error", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-classes-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     return result;
   }
 }
@@ -1295,9 +1375,9 @@ export async function applyAttributesToHtml(
   host: HtmlActionsControllerHost,
   attributeOverride: EditableAttributes | null = null,
 ): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target) {
-    host.attributeStatus = "Selecteaza un element inainte sa editezi atributele.";
+    host.attributeStatus = t("html-actions-attributes-select");
     return blockedAction(host.attributeStatus);
   }
 
@@ -1340,7 +1420,7 @@ async function applyAttributesToTarget(
         )
       ) {
         host.attributeValues = { ...attributeValues };
-        host.attributeStatus = "Atribute aplicate prin kernel.";
+        host.attributeStatus = t("html-actions-attributes-applied");
         submittedDraftProjected = true;
       }
       if (removedOrReplacedDataAnim && isZolaTemplatePath(patch.file)) {
@@ -1355,15 +1435,19 @@ async function applyAttributesToTarget(
       host.setHtmlPending("attributes", false);
     }
     if (!editorActionSucceeded(result)) {
-      const reason = result.reason ?? "Kernelul a refuzat schimbarea atributelor.";
-      host.attributeStatus = `Atributele nu au fost aplicate: ${reason}`;
+      const reason = result.reason ?? t("html-actions-attributes-kernel-refused");
+      host.attributeStatus = t("html-actions-attributes-not-applied", { reason });
       host.setGlobalStatus(host.attributeStatus, "error");
     }
     return result;
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.attributeStatus = `Eroare: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare atribute: ${result.reason ?? result.status}`, "error");
+    host.attributeStatus = t("html-actions-generic-error", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-attributes-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     return result;
   }
 }
@@ -1377,13 +1461,13 @@ export async function applyAttributesToCapturedHtmlTarget(
 }
 
 export async function applyTextContentToHtml(host: HtmlActionsControllerHost): Promise<EditorActionOutcome> {
-  const target = captureHtmlActionTarget(host.selectedElement);
+  const target = captureHtmlActionTarget(host.coordinatedElementSelection);
   if (!target) {
-    host.textStatus = "Selecteaza un element inainte sa editezi textul.";
+    host.textStatus = t("html-actions-text-select");
     return blockedAction(host.textStatus);
   }
   if (target.hasChildElements) {
-    host.textStatus = "Editarea textului e disponibila doar pentru elemente fara copii HTML.";
+    host.textStatus = t("html-actions-text-simple-only");
     return blockedAction(host.textStatus);
   }
   return await applyTextContentToCapturedHtmlTarget(
@@ -1403,7 +1487,7 @@ export async function applyTextContentToCapturedHtmlTarget(
   } = {},
 ): Promise<EditorActionOutcome> {
   if (target.hasChildElements) {
-    host.textStatus = "Editarea textului e disponibilă doar pentru elemente fără copii HTML.";
+    host.textStatus = t("html-actions-text-simple-only");
     return blockedAction(host.textStatus);
   }
   const selectionSourceKey =
@@ -1418,7 +1502,7 @@ export async function applyTextContentToCapturedHtmlTarget(
     host.textEditOriginalKey = null;
     host.textEditOriginalText = null;
     host.setHtmlPending("text", false);
-    host.textStatus = "Textul nu are modificari de aplicat.";
+    host.textStatus = t("html-actions-text-no-changes");
     return noopAction(host.textStatus);
   }
 
@@ -1430,8 +1514,8 @@ export async function applyTextContentToCapturedHtmlTarget(
         && host.textContentValue === committedText
       ) {
         host.textStatus = options.deferCanonicalProjection
-          ? "Text confirmat și recuperabil în sesiunea proiectului."
-          : "Text aplicat prin kernel.";
+          ? t("html-actions-text-confirmed-recoverable")
+          : t("html-actions-text-applied");
         if (!options.deferCanonicalProjection) {
           host.textEditOriginalKey = null;
           host.textEditOriginalText = null;
@@ -1450,8 +1534,12 @@ export async function applyTextContentToCapturedHtmlTarget(
     return result;
   } catch (error) {
     const result = actionErrorOutcome(error);
-    host.textStatus = `Eroare: ${result.reason ?? result.status}`;
-    host.setGlobalStatus(`Eroare text: ${result.reason ?? result.status}`, "error");
+    host.textStatus = t("html-actions-generic-error", {
+      message: result.reason ?? result.status,
+    });
+    host.setGlobalStatus(t("html-actions-text-error", {
+      message: result.reason ?? result.status,
+    }), "error");
     return result;
   }
 }

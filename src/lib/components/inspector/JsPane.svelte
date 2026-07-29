@@ -1,398 +1,127 @@
 <script lang="ts">
-  import type { PageJsConfig, PanaMotionConfig, SelectionInfo } from "$lib/types";
-  import { getPageJsWorkspaceState } from "$lib/project/io";
-  import { emptyPageJsConfig, normalizePageJsConfig } from "$lib/js/page-config";
+  import type { InspectorSelectionSummarySnapshot } from "$lib/types";
+  import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
   import MotionStudioPanel from "$lib/components/inspector/js/MotionStudioPanel.svelte";
-  import { normalizePageJsTemplatePath } from "$lib/js/page-path";
-  import { queuePageJsDraftSync } from "$lib/session/page-js-draft-sync";
-  import {
-    createPageJsRequestIdentity,
-    isPageJsRequestIdentityCurrent,
-    pageJsCommandPayload,
-  } from "$lib/session/page-js-command-session";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
-    selectedElement   = null,
-    projectRoot       = "",
-    runtimeSessionId  = "",
-    refreshToken      = 0,
-    onSwitchToHtml    = undefined as (() => void) | undefined,
+    selectionSummary = null,
+    dataAnim = null,
+    workspace,
+    onSwitchToHtml = undefined,
   }: {
-    selectedElement?: SelectionInfo | null;
-    projectRoot?: string;
-    runtimeSessionId?: string;
-    refreshToken?: number;
+    selectionSummary?: InspectorSelectionSummarySnapshot | null;
+    dataAnim?: string | null;
+    workspace: MotionWorkspaceState;
     onSwitchToHtml?: () => void;
   } = $props();
 
-  const templatePath = $derived.by(() => {
-    const canonicalPath = normalizePageJsTemplatePath(selectedElement?.sourceLocation?.file);
-    return canonicalPath || null;
-  });
-  const dataAnim = $derived(selectedElement?.attributes?.["data-anim"] ?? null);
-
-  type PageJsLoadState = "idle" | "loading" | "ready" | "error";
-
-  let config       = $state<PageJsConfig>(emptyPageJsConfig());
-  let baseConfig   = $state<PageJsConfig>(emptyPageJsConfig());
-  let pageJsLoadState = $state<PageJsLoadState>("idle");
-  let pageJsLoadError = $state("");
-  let readyTemplatePath: string | null = null;
-  let readyProjectRoot = "";
-  let readyRuntimeSessionId = "";
-  let readyRefreshToken: number | null = null;
-  let lastTplPath  = "";
-  let lastProjectRoot = "";
-  let lastRuntimeSessionId = "";
-  let lastHandledRefreshToken: number | null = null;
-  let loadSerial = 0;
-
-  $effect(() => {
-    const tpl = templatePath;
-    const targetProjectRoot = projectRoot;
-    const targetRuntimeSessionId = runtimeSessionId;
-    const nextPath = tpl ?? "";
-    if (
-      nextPath === lastTplPath
-      && targetProjectRoot === lastProjectRoot
-      && targetRuntimeSessionId === lastRuntimeSessionId
-    ) return;
-    lastTplPath = nextPath;
-    lastProjectRoot = targetProjectRoot;
-    lastRuntimeSessionId = targetRuntimeSessionId;
-    if (tpl && targetProjectRoot && targetRuntimeSessionId) {
-      void loadConfig(tpl, targetProjectRoot, targetRuntimeSessionId);
-    } else {
-      loadSerial += 1;
-      readyTemplatePath = null;
-      readyProjectRoot = "";
-      readyRuntimeSessionId = "";
-      readyRefreshToken = null;
-      pageJsLoadState = tpl ? "error" : "idle";
-      pageJsLoadError = tpl
-        ? "Sesiunea proiectului nu este disponibilă pentru citirea JavaScript-ului paginii."
-        : "";
-      baseConfig = emptyPageJsConfig();
-      config = emptyPageJsConfig();
-    }
-  });
-
-  $effect(() => {
-    const token = refreshToken;
-    const tpl = templatePath;
-    if (lastHandledRefreshToken === null) {
-      lastHandledRefreshToken = token;
-      return;
-    }
-    if (token === lastHandledRefreshToken) return;
-    lastHandledRefreshToken = token;
-    if (!tpl || tpl !== lastTplPath) return;
-    const targetProjectRoot = projectRoot;
-    const targetRuntimeSessionId = runtimeSessionId;
-    if (!targetProjectRoot || !targetRuntimeSessionId) return;
-    void loadConfig(tpl, targetProjectRoot, targetRuntimeSessionId);
-  });
-
-  $effect(() => {
-    return () => {
-      loadSerial += 1;
-      readyTemplatePath = null;
-      readyProjectRoot = "";
-      readyRuntimeSessionId = "";
-      readyRefreshToken = null;
-    };
-  });
-
-  async function loadConfig(
-    tpl: string,
-    targetProjectRoot = projectRoot,
-    targetRuntimeSessionId = runtimeSessionId,
-    targetRefreshToken = refreshToken,
-  ) {
-    const serial = ++loadSerial;
-    readyTemplatePath = null;
-    readyProjectRoot = "";
-    readyRuntimeSessionId = "";
-    readyRefreshToken = null;
-    pageJsLoadState = "loading";
-    pageJsLoadError = "";
-
-    let nextBaseConfig: PageJsConfig;
-    try {
-      const identity = createPageJsRequestIdentity(targetProjectRoot, targetRuntimeSessionId);
-      const receipt = await getPageJsWorkspaceState(tpl, identity);
-      if (
-        serial !== loadSerial
-        || templatePath !== tpl
-        || lastTplPath !== tpl
-        || refreshToken !== targetRefreshToken
-        || !isPageJsRequestIdentityCurrent(identity, projectRoot, runtimeSessionId)
-      ) return;
-      const workspaceState = pageJsCommandPayload(
-        receipt,
-        identity,
-        "Citirea JavaScript-ului paginii din Inspector",
-      );
-      nextBaseConfig = normalizePageJsConfig(workspaceState.accepted);
-      config = normalizePageJsConfig(workspaceState.current);
-    } catch (error) {
-      if (
-        serial !== loadSerial
-        || templatePath !== tpl
-        || lastTplPath !== tpl
-        || projectRoot !== targetProjectRoot
-        || runtimeSessionId !== targetRuntimeSessionId
-        || refreshToken !== targetRefreshToken
-      ) return;
-      pageJsLoadError = error instanceof Error ? error.message : String(error);
-      pageJsLoadState = "error";
-      return;
-    }
-    if (
-      serial !== loadSerial
-      || templatePath !== tpl
-      || lastTplPath !== tpl
-      || projectRoot !== targetProjectRoot
-      || runtimeSessionId !== targetRuntimeSessionId
-      || refreshToken !== targetRefreshToken
-    ) return;
-    baseConfig = nextBaseConfig;
-    readyTemplatePath = tpl;
-    readyProjectRoot = targetProjectRoot;
-    readyRuntimeSessionId = targetRuntimeSessionId;
-    readyRefreshToken = targetRefreshToken;
-    pageJsLoadState = "ready";
-  }
-
-  function isConfigReadyForTemplate(tpl: string | null): tpl is string {
-    return Boolean(
-      tpl
-      && pageJsLoadState === "ready"
-      && readyTemplatePath === tpl
-      && readyProjectRoot === projectRoot
-      && readyRuntimeSessionId === runtimeSessionId
-      && readyRefreshToken === refreshToken
-      && lastTplPath === tpl
-      && lastProjectRoot === projectRoot
-      && lastRuntimeSessionId === runtimeSessionId
-    );
-  }
-
-  function retryLoadConfig() {
-    const tpl = templatePath;
-    if (!tpl || tpl !== lastTplPath) return;
-    if (!projectRoot || !runtimeSessionId) return;
-    void loadConfig(tpl, projectRoot, runtimeSessionId);
-  }
-
-  function stageConfig(nextConfig: PageJsConfig) {
-    const targetPath = templatePath;
-    if (!isConfigReadyForTemplate(targetPath)) return;
-    const nextNormalized = normalizePageJsConfig(nextConfig);
-    config = nextNormalized;
-    queuePageJsDraftSync({
-      templatePath: targetPath,
-      baseConfig,
-      currentConfig: nextNormalized,
-      cachebustAssets: false,
-      source: "inspector.js",
-      coalesceKey: "page_js.motion",
-    });
-  }
-
-  function updateMotionConfig(motion: PanaMotionConfig) {
-    stageConfig({ ...config, version: 1, motion });
-  }
-
+  const templatePath = $derived(workspace.owner?.templatePath ?? null);
+  const hasElementSelection = $derived(
+    selectionSummary?.state === "resolved"
+      && (
+        selectionSummary.subjectKind === "htmlElement"
+        || selectionSummary.subjectKind === "runtimeElement"
+      ),
+  );
 </script>
 
 <div class="js-pane">
-  {#if !selectedElement}
-    <p class="jp-hint">Selectează un element din canvas pentru Motion.</p>
-
-  {:else if !dataAnim}
-    <p class="jp-hint">
-      Elementul selectat nu are atribut <code>data-anim</code>.<br>
-      Adaugă-l în tab-ul HTML pentru a configura Motion pe acest element.
-    </p>
-    {#if onSwitchToHtml}
-      <button type="button" class="jp-switch-btn" onclick={onSwitchToHtml}>
-        Mergi la tab HTML
-      </button>
-    {/if}
-
-  {:else if !templatePath}
-    <div class="jp-load-state">
-      <strong>JS indisponibil</strong>
-      <span>Elementul selectat nu are un template sursă activ.</span>
-    </div>
-
-  {:else if pageJsLoadState === "error"}
-    <div class="jp-load-state jp-load-error" role="alert">
-      <strong>JS-ul paginii nu a putut fi încărcat</strong>
-      <span>{pageJsLoadError || "Citirea configurației Motion a eșuat."}</span>
-      <button type="button" onclick={retryLoadConfig}>Reîncearcă</button>
-    </div>
-
-  {:else if !isConfigReadyForTemplate(templatePath)}
-    <div class="jp-load-state" aria-live="polite">
+  {#if !hasElementSelection}
+    <div class="jp-state">
       <strong>Motion</strong>
-      <span>Se citește JS-ul paginii curente…</span>
+      <span>{t("inspector-js-select-element")}</span>
     </div>
-
+  {:else if !dataAnim}
+    <div class="jp-state">
+      <strong>{t("inspector-js-no-motion-identity")}</strong>
+      <span>{t("inspector-js-add-data-anim-before")} <code>data-anim</code> {t("inspector-js-add-data-anim-after")}</span>
+      {#if onSwitchToHtml}
+        <button type="button" onclick={onSwitchToHtml}>{t("inspector-js-go-html")}</button>
+      {/if}
+    </div>
+  {:else if !templatePath}
+    <div class="jp-state jp-error">
+      <strong>{t("inspector-js-unavailable")}</strong>
+      <span>{t("inspector-js-no-active-template")}</span>
+    </div>
+  {:else if workspace.loadState === "error"}
+    <div class="jp-state jp-error" role="alert">
+      <strong>{t("inspector-js-motion-load-failed")}</strong>
+      <span>{workspace.error}</span>
+      <button type="button" onclick={() => { void workspace.reload(); }}>{t("inspector-js-retry")}</button>
+    </div>
+  {:else if workspace.loadState !== "ready"}
+    <div class="jp-state" aria-live="polite">
+      <strong>Motion v2</strong>
+      <span>{t("inspector-js-reading-rust")}</span>
+    </div>
   {:else}
-    <div class="jp-target-bar">
-      <span class="jp-target-label">data-anim</span>
-      <span class="jp-target-value">{dataAnim}</span>
+    <div class="jp-target">
+      <div>
+        <span>{t("inspector-js-element")}</span>
+        <strong>[data-anim="{dataAnim}"]</strong>
+      </div>
+      <small>Anime.js 4.4.1</small>
     </div>
-    <div class="jp-context-note">
-      <strong>Efecte element</strong>
-      <span>Elementul selectat primește efecte proprii; cronologia paginii rămâne sub previzualizare.</span>
-    </div>
-    <div class="jp-design-safe-note" role="status">
-      <strong>Editare sigură · JavaScript oprit</strong>
-      <span>Editarea și salvarea rămân active. Folosește deschiderea externă pentru execuția efectelor.</span>
-    </div>
-
-    <MotionStudioPanel
-      motion={config.motion}
-      dataAnim={dataAnim}
-      onChange={updateMotionConfig}
-    />
+    <MotionStudioPanel {workspace} {dataAnim} />
   {/if}
 </div>
 
 <style>
   .js-pane {
     display: flex;
-    flex-direction: column;
     min-width: 0;
+    flex-direction: column;
   }
 
-  .jp-hint {
-    margin: 16px 12px;
-    font-size: 12px;
-    color: var(--text-muted);
-    line-height: 1.6;
-    text-align: center;
-  }
-
-  .jp-hint code {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    color: var(--text);
-  }
-
-  .jp-switch-btn {
-    display: block;
-    margin: 0 12px 12px;
-    width: calc(100% - 24px);
-    min-height: 30px;
-    border: 1px solid var(--brand);
-    border-radius: 7px;
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-    font-size: 12px;
-    font-weight: 800;
-    cursor: pointer;
-  }
-
-  .jp-load-state {
+  .jp-state {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    margin: 16px 12px;
+    gap: 7px;
+    padding: 24px 14px;
+    text-align: center;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 11px;
     line-height: 1.45;
-    text-align: center;
   }
 
-  .jp-load-state strong {
-    color: var(--text);
-    font-size: 12px;
-  }
-
-  .jp-load-state button {
-    min-height: 28px;
-    padding: 0 12px;
-    border: 1px solid var(--brand);
-    border-radius: 6px;
-    background: var(--brand-soft);
+  .jp-state strong { color:var(--text); font-size:12px; }
+  .jp-state code { color:var(--brand-strong); }
+  .jp-state button {
+    min-height: 29px;
+    padding: 0 10px;
+    border: 1px solid color-mix(in srgb, var(--brand) 38%, var(--border-subtle));
+    border-radius: var(--radius-control);
     color: var(--brand-strong);
-    font-size: 12px;
-    font-weight: 900;
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
+    font-weight: 800;
     cursor: pointer;
   }
-
-  .jp-load-error span {
-    overflow-wrap: anywhere;
-  }
-
-  .jp-target-bar {
+  .jp-error span { color:var(--danger); overflow-wrap:anywhere; }
+  .jp-target {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-bottom: 1px solid var(--border-3);
-    background: var(--surface-3);
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-subtle);
+    background: transparent;
   }
-
-  .jp-target-label {
-    font-size: 12px;
-    font-weight: 800;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .jp-target-value {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-    font-weight: 800;
+  .jp-target > div { min-width:0; }
+  .jp-target span { display:block; color:var(--text-muted); font-size:11px; font-weight:650; }
+  .jp-target strong {
+    display: block;
+    overflow: hidden;
+    margin-top: 3px;
+    padding: 2px 5px;
+    border-radius: calc(var(--radius-control) - 3px);
     color: var(--brand-strong);
+    background: var(--code-bg);
+    text-overflow: ellipsis;
+    font: 11px "JetBrains Mono",monospace;
   }
-
-  .jp-context-note {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--border-3);
-    background: color-mix(in srgb, var(--brand-soft) 34%, var(--surface-2));
-  }
-
-  .jp-context-note strong {
-    font-size: 12px;
-    font-weight: 900;
-    color: var(--text);
-  }
-
-  .jp-context-note span {
-    font-size: 12px;
-    line-height: 1.35;
-    color: var(--text-muted);
-  }
-
-  .jp-design-safe-note {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 7px 12px;
-    border-bottom: 1px solid var(--border-3);
-    background: var(--surface-3);
-  }
-
-  .jp-design-safe-note strong {
-    color: var(--brand-strong);
-    font-size: 12px;
-    font-weight: 900;
-  }
-
-  .jp-design-safe-note span {
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.35;
-  }
+  .jp-target small { flex:0 0 auto; color:var(--text-muted); font-size:11px; }
 </style>

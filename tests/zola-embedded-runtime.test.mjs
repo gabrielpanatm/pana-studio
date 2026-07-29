@@ -46,7 +46,7 @@ test("official embedded crates are pinned to the audited Zola 0.22.1 revision", 
 });
 
 test("init, validation, build and quick tasks use only embedded engine contracts", () => {
-  const initializer = source("src-tauri/src/project/init.rs").split("#[cfg(test)]")[0];
+  const initializer = source("src-tauri/src/project/startup.rs").split("#[cfg(test)]")[0];
   const engine = source("src-tauri/src/zola_engine.rs");
   const build = source("src-tauri/src/deploy/zola.rs");
   const buildRuntime = build
@@ -57,8 +57,11 @@ test("init, validation, build and quick tasks use only embedded engine contracts
   const terminal = source("src/lib/terminal/runtime.ts");
   const terminalController = source("src/lib/state/terminal-quick-task-controller.ts");
 
-  assert.match(initializer, /apply_starter/);
-  assert.match(initializer, /ProjectBootstrapLease/);
+  assert.match(initializer, /apply_creation/);
+  assert.match(initializer, /ProjectCreationAuthority/);
+  assert.match(initializer, /run_zola_check/);
+  assert.match(initializer, /rollback_publication/);
+  assert.doesNotMatch(initializer, /ProjectBootstrapLease|zola_init/);
   assert.doesNotMatch(initializer, /std::process|Command::new|Stdio/);
   assert.match(engine, /static ZOLA_ENGINE_AUTHORITY: Mutex/);
   assert.match(build, /Site::new/);

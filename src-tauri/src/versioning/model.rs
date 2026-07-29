@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::{atomic::AtomicBool, Arc};
 
-use crate::kernel::project_workspace::ProjectWorkspaceSnapshot;
+use crate::{
+    kernel::project_workspace::ProjectWorkspaceSnapshot, localization::LocalizedDiagnostic,
+};
 
 pub const VERSIONING_SCHEMA_VERSION: u32 = 2;
 
@@ -364,7 +366,7 @@ pub struct VersionNetworkProgressEvent {
     pub operation_id: String,
     pub kind: VersionNetworkOperationKind,
     pub status: VersionNetworkOperationStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const FILE_BUFFER_STORE_SCHEMA_VERSION: u32 = 3;
+use crate::localization::LocalizedDiagnostic;
+
+pub const FILE_BUFFER_STORE_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug)]
 pub struct FileBufferStore {
@@ -140,6 +142,8 @@ pub struct FileBufferDiagnostic {
     pub severity: FileBufferDiagnosticSeverity,
     pub code: String,
     pub relative_path: Option<String>,
+    pub message_diagnostic: LocalizedDiagnostic,
+    #[serde(skip_serializing)]
     pub message: String,
 }
 
@@ -182,9 +186,12 @@ impl FileBufferDiagnostic {
         relative_path: Option<String>,
         message: impl Into<String>,
     ) -> Self {
+        let code = code.into();
+        let relative_path = relative_path;
         Self {
             severity: FileBufferDiagnosticSeverity::Warning,
-            code: code.into(),
+            message_diagnostic: file_buffer_message_diagnostic(&code, relative_path.as_deref()),
+            code,
             relative_path,
             message: message.into(),
         }
@@ -195,11 +202,36 @@ impl FileBufferDiagnostic {
         relative_path: Option<String>,
         message: impl Into<String>,
     ) -> Self {
+        let code = code.into();
+        let relative_path = relative_path;
         Self {
             severity: FileBufferDiagnosticSeverity::Error,
-            code: code.into(),
+            message_diagnostic: file_buffer_message_diagnostic(&code, relative_path.as_deref()),
+            code,
             relative_path,
             message: message.into(),
         }
     }
+}
+
+fn file_buffer_message_diagnostic(code: &str, relative_path: Option<&str>) -> LocalizedDiagnostic {
+    let message_code = match code {
+        "not_text_file" => "file-buffer-diagnostic-not-text",
+        "open_failed" => "file-buffer-diagnostic-open-failed",
+        "not_file" => "file-buffer-diagnostic-not-file",
+        "file_too_large" => "file-buffer-diagnostic-file-too-large",
+        "invalid_relative_path" => "file-buffer-diagnostic-invalid-path",
+        "unsafe_project_path" => "file-buffer-diagnostic-unsafe-path",
+        "unstable_during_read" => "file-buffer-diagnostic-unstable",
+        "read_text_failed" => "file-buffer-diagnostic-read-failed",
+        "max_files_reached" => "file-buffer-diagnostic-max-files",
+        "max_total_bytes_reached" => "file-buffer-diagnostic-max-total-bytes",
+        "saved_file_too_large" => "file-buffer-diagnostic-saved-file-too-large",
+        _ => "file-buffer-diagnostic-generic",
+    };
+    let mut diagnostic = LocalizedDiagnostic::new(message_code);
+    if let Some(path) = relative_path {
+        diagnostic = diagnostic.with_argument("path", path);
+    }
+    diagnostic
 }

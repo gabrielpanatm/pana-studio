@@ -1,4 +1,7 @@
 import { tick } from "svelte";
+import { SOURCE_LOADING_SENTINEL } from "$lib/editor-runtime/source-state";
+import { t } from "$lib/i18n/runtime.svelte";
+import type { PreviewRefreshReason } from "$lib/preview/controlled";
 import { openUrl as openExternalUrl } from "@tauri-apps/plugin-opener";
 import {
   resetFileBufferDraftSyncState,
@@ -8,7 +11,12 @@ import {
   resetPageJsDraftSyncState,
   setPageJsDraftSyncSession,
 } from "$lib/session/page-js-draft-sync";
-import { flushWorkspaceMutationInputs } from "$lib/session/workspace-mutation-coordinator";
+import {
+  flushWorkspaceMutationInputs,
+  settleProjectWorkspaceMutation,
+  type WorkspaceDerivedProjectionStatus,
+  type WorkspaceDerivedReconciliationOutcome,
+} from "$lib/session/workspace-mutation-coordinator";
 import { createDiskState, diskStateFromProjectScan, markDiskMutation, type DiskState } from "$lib/session/disk-state";
 import {
   closeProject,
@@ -17,8 +25,12 @@ import {
   createProjectContentPage,
   chooseProjectFolder,
   getScssVariables,
+  inspectStartupFolder,
   inspectProjectOpenRecovery,
   openProject,
+  planStartupCreation,
+  applyStartupCreation,
+  readStartupCreationCatalog,
   readFileBufferStore,
   readProjectAppConfig,
   readProjectFile,
@@ -39,7 +51,6 @@ import {
   type ProjectPreviewRequestIdentity,
   type ProjectPreviewStartReceipt,
   type TemplateWorkbenchPreviewRequest,
-  zolaInit,
 } from "$lib/project/io";
 import {
   planContentPageCreation,
@@ -56,6 +67,7 @@ import {
 } from "$lib/project/open-recovery";
 import {
   createProjectTransitionDecisionRequest,
+  localizedTransitionPolicyCopy,
   PROJECT_TRANSITION_BLOCKED_NOTIFICATION_ID,
   PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID,
   projectTransitionActionForContinuation,
@@ -70,18 +82,31 @@ import type {
   ProjectFile,
   ProjectOpenRecoveryDecisionInput,
   ProjectScan,
-  SaveState,
+    StartupCreationCatalog,
+    StartupCreationPlan,
+    StartupFlowSnapshot,
 	  ScssVariable,
-	  SelectionInfo,
 	  SourceEditLocation,
 	  SourceGraph,
+    ProjectWorkspaceSnapshot,
+    InspectorSelectionSummarySnapshot,
+    SelectionSnapshot,
+    HoverSnapshot,
     TemplateWorkbenchPlan,
 } from "$lib/types";
+import type {
+  GlobalStatusEscalationRequest,
+  GlobalStatusKind,
+} from "$lib/status/global-status";
 import { errorMessage } from "$lib/util";
 import {
   markProjectWorkspacePreviewPublished,
+  projectLatestProjectWorkspacePreview,
   resetProjectWorkspacePreviewCoordinator,
 } from "$lib/kernel/project-workspace-preview-coordinator";
+import {
+  isCanvasProjectionSurfaceUnavailableError,
+} from "$lib/state/preview-controller";
 import {
   requireCurrentKernelUndoRedoProjectionLease,
   type KernelUndoRedoProjectionLease,
@@ -91,7 +116,6 @@ import {
   previewStructuralSessionLeaseMatches,
   requireCurrentPreviewStructuralSession,
   runInPreviewStructuralLane,
-  type PreviewStructuralSessionLease,
 } from "$lib/kernel/preview-structural-lane";
 
 type OpenProjectRootOptions = {
@@ -134,7 +158,6 @@ function createEmptyHtmlPending(): Record<HtmlPendingArea, boolean> {
 }
 
 export type ProjectControllerHost = {
-  selectedClass: string;
   source: string;
   sourceCache: Record<string, string>;
   activeScannedPath: string | null;
@@ -150,14 +173,14 @@ export type ProjectControllerHost = {
   centerView: CenterView;
   templateWorkbenchPlan: TemplateWorkbenchPlan | null;
   templateWorkbenchPreferredPagePath: string | null;
+  templateWorkbenchPreferredRoute: string | null;
   templateWorkbenchActive: boolean;
   templateWorkbenchTarget: string | null;
   templateWorkbenchReturnPreviewPath: string | null;
   templateWorkbenchRequestSerial: number;
-  selectedPreviewElement: Element | null;
-  selectedElement: SelectionInfo | null;
-  lastMeaningfulSelectedElement: SelectionInfo | null;
-  lastSelectedImageElement: SelectionInfo | null;
+  selectionSnapshot: SelectionSnapshot | null;
+  inspectorSelectionSummary: InspectorSelectionSummarySnapshot | null;
+  hoverSnapshot: HoverSnapshot | null;
   overrideRules: Record<string, unknown>;
   variableOverrides: Record<string, string>;
   htmlPending: Record<HtmlPendingArea, boolean>;
@@ -167,13 +190,19 @@ export type ProjectControllerHost = {
   pendingTagOriginal: string | null;
   pendingTagSourceLocation: SourceEditLocation | null;
   tagStatus: string;
-  saveState: SaveState;
-  saveStatus: string;
   projectStatus: string;
   scannedProject: ProjectScan | null;
+  startupFlow: StartupFlowSnapshot;
+  startupCreationCatalog: StartupCreationCatalog | null;
+  startupCreationPlan: StartupCreationPlan | null;
+  startupSelectedOptionId: string | null;
+  startupPending: boolean;
+  startupError: string;
   projectOpenRecoveryDecisionRequest: ProjectOpenRecoveryDecisionRequest | null;
   projectTransitionDecisionRequest: ProjectTransitionDecisionRequest | null;
   sourceGraph: SourceGraph | null;
+  sourceGraphProjectionStatus: WorkspaceDerivedProjectionStatus;
+  sourceGraphWorkspaceRevision: number | null;
   diskState: DiskState;
   scssVariables: ScssVariable[];
   targetCssFile: string;
@@ -185,6 +214,7 @@ export type ProjectControllerHost = {
   aiReconciliationRecoveryReloadAuthorized?: boolean;
   projectSessionEpoch: number;
   projectWorkspaceMutationEpoch: number;
+  projectWorkspaceSnapshot: ProjectWorkspaceSnapshot | null;
   beginPreviewStructuralWriteBoundary: () => Promise<void>;
   endPreviewStructuralWriteBoundary: () => void;
   activeVersionPreview: unknown | null;
@@ -199,6 +229,8 @@ export type ProjectControllerHost = {
       skipDraftFlush?: boolean;
       deferPreviewRefresh?: boolean;
       activateTemplateWorkbench?: boolean;
+      preferredTemplatePagePath?: string | null;
+      preferredTemplateRoute?: string | null;
       syncWorkbench?: boolean;
     },
   ) => Promise<void>;
@@ -210,21 +242,30 @@ export type ProjectControllerHost = {
     options?: {
       deferPreviewRefresh?: boolean;
       minimumWorkspaceRevision?: number;
+      preferredRoute?: string | null;
       strict?: boolean;
     },
   ) => Promise<ProjectFile | null>;
   setSessionProjectRoot: (projectRoot?: string) => void;
   cancelPendingHtmlMutations: () => void;
-  clearPreviewSelection: (options?: { clearTemplateGate?: boolean; clearHtmlMarker?: boolean }) => void;
+  clearPreviewSelection: (options?: { clearCanvasOverlay?: boolean }) => void;
   clearHtmlPending: () => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  requestPreviewRefresh: (reason: "project-rescan" | "discard") => Promise<boolean>;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+  requestPreviewRefresh: (
+    reason: PreviewRefreshReason,
+  ) => Promise<boolean>;
   rescanCurrentProject: (
     preferredRelativePath?: string | null,
     options?: { strict?: boolean },
   ) => Promise<void>;
+  reconcileWorkspaceDerivedState: (
+    options: ReconcileWorkspaceDerivedStateOptions,
+  ) => Promise<WorkspaceDerivedReconciliationOutcome>;
   refreshRenderedPreviewDocument: () => Promise<boolean>;
   prepareCanvasProjectionNavigation: (plan: CanvasProjectionPlan) => Promise<void>;
+  hasMountedCanvasProjectionSurface?: () => boolean;
+  deferWorkspacePreviewProjection?: () => void;
+  markCanvasProjectionSurfaceCurrent?: () => void;
   reconcileTemplateWorkbenchPreviewDocument: (
     previewUrl: string,
     plan: CanvasProjectionPlan,
@@ -234,15 +275,13 @@ export type ProjectControllerHost = {
   cancelPreviewSync: () => void;
   resetPageSections?: () => void;
   refreshSourceGraph?: (options?: { strict?: boolean }) => Promise<void>;
+  refreshEditorNavigationSnapshot?: (
+    identity?: CanvasProjectionIdentity,
+    previewUrl?: string,
+  ) => Promise<void>;
   resetControlledPreviewState?: () => void;
   scheduleZolaValidation?: (reason?: "project-open") => void;
-  notify: (notification: {
-    id: string;
-    level: "info" | "warning" | "error";
-    title: string;
-    message: string;
-    actionLabel?: string | null;
-  }) => void;
+  escalateGlobalStatus: (notification: GlobalStatusEscalationRequest) => void;
   clearNotification: (id: string) => void;
   establishExternalDiskBaseline?: () => Promise<void>;
   startExternalDiskPolling?: () => void;
@@ -254,35 +293,104 @@ export type ProjectControllerHost = {
 
 export async function openProjectFolder(host: ProjectControllerHost) {
   console.info("[Pană Studio] openProjectFolder invoked");
-  if (!host.scannedProject) {
-    await host.reattachCurrentProjectSession?.();
-  }
-  host.projectStatus = "Alege un folder...";
-  host.setGlobalStatus("Alege un folder de proiect.", "saving");
+  host.startupError = "";
+  host.startupCreationPlan = null;
+  host.startupCreationCatalog = null;
+  host.startupSelectedOptionId = null;
   await tick();
   try {
     console.info("[Pană Studio] requesting project folder from dialog");
     const selected = await chooseProjectFolder();
     console.info("[Pană Studio] project folder dialog returned", selected);
     if (!selected || Array.isArray(selected)) {
-      host.projectStatus = "Alegerea folderului a fost anulată.";
-      host.setGlobalStatus("Alegerea folderului a fost anulată.", "restored");
       return;
     }
-    host.projectStatus = "Se scanează folderul ales și se pornește preview-ul local...";
-    host.setGlobalStatus(`Se deschide proiectul: ${selected}`, "saving");
+    host.startupPending = true;
     await tick();
-    await openProjectRoot(host, selected);
+    const startup = await inspectStartupFolder(selected);
+    host.startupFlow = startup;
+    const candidate = startup.candidate;
+    if (!candidate) return;
+    if (candidate.kind === "valid_project") {
+      await openProjectRoot(host, candidate.root);
+      return;
+    }
+    if (candidate.kind === "empty_directory") {
+      host.startupCreationCatalog = await readStartupCreationCatalog(candidate.snapshotToken);
+    }
   } catch (error) {
-    const message = `Deschiderea dosarului a eșuat: ${errorMessage(error)}`;
-    host.projectStatus = message;
-    host.setGlobalStatus(message, "error");
-    host.notify({
-      id: "project.open.error",
+    const message = errorMessage(error);
+    host.startupError = message;
+    host.escalateGlobalStatus({
+      id: "startup.folder.error",
       level: "error",
-      title: "Deschiderea proiectului a eșuat",
+      title: "Dosarul nu a putut fi inspectat",
       message,
     });
+  } finally {
+    host.startupPending = false;
+  }
+}
+
+export function selectStartupCreationOption(
+  host: ProjectControllerHost,
+  optionId: string,
+) {
+  if (!host.startupCreationCatalog?.options.some((option) => option.id === optionId)) return;
+  host.startupSelectedOptionId = optionId;
+  host.startupCreationPlan = null;
+  host.startupError = "";
+}
+
+export async function planStartupProject(host: ProjectControllerHost) {
+  const candidate = host.startupFlow.candidate;
+  const optionId = host.startupSelectedOptionId;
+  if (candidate?.kind !== "empty_directory" || !optionId) return;
+  host.startupPending = true;
+  host.startupError = "";
+  try {
+    host.startupCreationPlan = await planStartupCreation({
+      expectedSnapshotToken: candidate.snapshotToken,
+      optionId,
+    });
+  } catch (error) {
+    host.startupError = errorMessage(error);
+  } finally {
+    host.startupPending = false;
+  }
+}
+
+export function cancelStartupCreationPlan(host: ProjectControllerHost) {
+  host.startupCreationPlan = null;
+  host.startupError = "";
+}
+
+export async function applyStartupProject(host: ProjectControllerHost) {
+  const plan = host.startupCreationPlan;
+  if (!plan) return;
+  host.startupPending = true;
+  host.startupError = "";
+  try {
+    const receipt = await applyStartupCreation({
+      expectedSnapshotToken: plan.expectedSnapshotToken,
+      expectedPlanToken: plan.planToken,
+    });
+    host.startupFlow = receipt.startup;
+    host.startupCreationPlan = null;
+    host.startupCreationCatalog = null;
+    host.startupSelectedOptionId = null;
+    await openProjectRoot(host, receipt.projectRoot);
+  } catch (error) {
+    const message = errorMessage(error);
+    host.startupError = message;
+    host.escalateGlobalStatus({
+      id: "startup.creation.error",
+      level: "error",
+      title: "Proiectul nu a putut fi creat",
+      message,
+    });
+  } finally {
+    host.startupPending = false;
   }
 }
 
@@ -290,6 +398,7 @@ type FrontendProjectAttachmentMode = "open" | "reattach" | "reload";
 
 export type ProjectPreviewStartOutcome =
   | { status: "canonical"; projectSessionId: string }
+  | { status: "deferred"; projectSessionId: string }
   | { status: "degraded"; projectSessionId: string; message: string }
   | { status: "stale"; projectSessionId: string };
 
@@ -297,7 +406,7 @@ export type ProjectReloadOutcome =
   | {
       status: "completed";
       projectSessionId: string;
-      previewStatus: "canonical" | "degraded";
+      previewStatus: "canonical" | "deferred" | "degraded";
       message: string | null;
     }
   | { status: "cancelled"; projectSessionId: null; message: string }
@@ -309,10 +418,10 @@ type FrontendProjectAttachmentOptions = {
 
 function requireProjectAttachmentAuthority(project: ProjectScan) {
   if (!project.kernelSessionId?.trim()) {
-    throw new Error("ProjectScan nu conține identitatea runtime a ProjectSession.");
+    throw new Error(t("project-controller-scan-session-missing"));
   }
   if (!project.acceptedDiskManifest || !project.acceptedDiskGeneration) {
-    throw new Error("ProjectScan nu conține autoritatea AcceptedProjectDiskManifest.");
+    throw new Error(t("project-controller-scan-manifest-missing"));
   }
 }
 
@@ -336,35 +445,10 @@ async function projectPublishedSessionIntoFrontend(
   setFileBufferDraftSyncSession(project.root, host.kernelProjectSessionId);
   setPageJsDraftSyncSession(project.root, host.kernelProjectSessionId);
 
-  if (project.isEmpty) {
-    host.sourceGraph = null;
-    host.projectStatus = "Dosar gol. Poți inițializa un proiect web Pană Studio.";
-    host.setGlobalStatus(
-      mode === "reattach" ? "Sesiunea dosarului gol a fost reatașată." : "Dosar gol selectat.",
-      "restored",
-    );
-    host.clearNotification("project.not-zola");
-    host.resetExternalDiskState?.();
-    return null;
-  }
-
-  if (!project.isZola) {
-    host.sourceGraph = null;
-    host.projectStatus = "Acest dosar nu este un proiect Pană Studio valid.";
-    host.setGlobalStatus("Pană Studio așteaptă direct rădăcina unui proiect Zola.", "error");
-    host.notify({
-      id: "project.not-zola",
-      level: "warning",
-      title: "Dosarul nu este proiect Pană Studio",
-      message: "Alege dosarul care conține zola.toml și content/ sau un dosar gol pentru inițializare.",
-    });
-    host.resetExternalDiskState?.();
-    return null;
-  }
-
   const openPlan = planOpenedProject(project);
-  await host.refreshSourceGraph?.({ strict: true });
-  host.clearNotification("project.not-zola");
+  if (mode === "reload") {
+    await host.refreshSourceGraph?.({ strict: true });
+  }
 
   // Recovery and editable buffers are restored by ProjectWorkspace before the
   // frontend receives ProjectScan. The browser only rebuilds its projection.
@@ -374,7 +458,7 @@ async function projectPublishedSessionIntoFrontend(
     || fileBuffers.projectRoot !== project.root
     || fileBuffers.runtimeSessionId !== host.kernelProjectSessionId
   ) {
-    throw new Error("Sesiunea proiectului nu corespunde sesiunii Rust publicate.");
+    throw new Error(t("project-controller-session-mismatch"));
   }
   const dirtyWorkspacePaths = fileBuffers.files
     .filter((file) => file.dirty)
@@ -384,12 +468,14 @@ async function projectPublishedSessionIntoFrontend(
 
   host.projectStatus = openPlan.projectStatus;
   if (project.previewWarning) {
-    host.setGlobalStatus(`Previzualizare indisponibilă: ${project.previewWarning}`, "error");
-    host.notify({
+    host.escalateGlobalStatus({
       id: "project.preview.warning",
       level: "warning",
-      title: "Previzualizare indisponibilă",
+      title: t("project-controller-preview-unavailable-title"),
       message: project.previewWarning,
+      statusMessage: t("project-controller-preview-unavailable-detail", {
+        message: project.previewWarning,
+      }),
     });
   }
   if (openPlan.targetCssFile) host.targetCssFile = openPlan.targetCssFile;
@@ -416,19 +502,22 @@ async function projectPublishedSessionIntoFrontend(
   }
   if (mode === "reattach" && !project.previewWarning) {
     const detail = dirtyWorkspacePaths.length > 0
-      ? ` ${dirtyWorkspacePaths.length} fișier(e) nesalvat(e) au fost restaurate din ProjectWorkspace.`
+      ? ` ${t("project-controller-unsaved-restored", {
+          count: dirtyWorkspacePaths.length,
+        })}`
       : "";
     host.setGlobalStatus(
-      `Sesiunea Rust activă a fost reatașată.${detail}`,
+      `${t("project-controller-session-reattached")}${detail}`,
       restoredDirtySession ? "unsaved" : "restored",
     );
     host.clearNotification("project.preview.warning");
   } else if (!restoredDirtySession && !project.previewWarning) {
-    host.setGlobalStatus("Proiect încărcat din fișierele de pe disc.", "restored");
+    host.setGlobalStatus(t("project-controller-loaded-from-disk"), "restored");
     host.clearNotification("project.preview.warning");
   }
   host.scssVariables = await getScssVariables(
     createCssRequestIdentity(project.root, host.kernelProjectSessionId),
+    host.projectWorkspaceSnapshot?.revision,
   );
   host.resetExternalDiskState?.();
   await host.establishExternalDiskBaseline?.();
@@ -449,43 +538,25 @@ export async function reattachCurrentProjectSession(host: ProjectControllerHost)
     previewIdentity = await projectPublishedSessionIntoFrontend(host, project, "reattach");
     host.clearNotification("project.reattach.error");
   } catch (error) {
-    const message = `Reatașarea sesiunii Rust a eșuat: ${errorMessage(error)}`;
+    const message = t("project-controller-reattach-failed", {
+      message: errorMessage(error),
+    });
     host.projectStatus = message;
-    host.setGlobalStatus(message, "error");
-    host.notify({
+    host.escalateGlobalStatus({
       id: "project.reattach.error",
       level: "error",
-      title: "Sesiunea activă nu a putut fi reproiectată",
+      title: t("project-controller-reattach-failed-title"),
       message,
+      statusMessage: message,
     });
     throw error;
   } finally {
     host.endProjectTransitionFrontendLease?.();
   }
   if (previewIdentity) await startPreviewAfterOpen(host, previewIdentity);
+  await host.refreshSourceGraph?.({ strict: true });
   await host.restoreWorkbenchState?.();
   return true;
-}
-
-export async function initZolaProject(host: ProjectControllerHost, themeId: string) {
-  if (!host.scannedProject) return;
-  host.projectStatus = "Se inițializează proiectul web Pană Studio...";
-  host.setGlobalStatus("Se inițializează proiectul web Pană Studio...", "saving");
-  try {
-    await zolaInit(host.scannedProject.root, themeId);
-    await openProjectRoot(host, host.scannedProject.root);
-    host.setGlobalStatus("Proiect web Pană Studio inițializat.", "restored");
-  } catch (error) {
-    const message = `Init eșuat: ${errorMessage(error)}`;
-    host.projectStatus = message;
-    host.setGlobalStatus(message, "error");
-    host.notify({
-      id: "project.init.error",
-      level: "error",
-      title: "Inițializarea proiectului a eșuat",
-      message,
-    });
-  }
 }
 
 async function openProjectRoot(
@@ -529,25 +600,25 @@ async function openProjectRoot(
             options.operatorDecisionId ?? null,
           );
           host.projectOpenRecoveryDecisionRequest = request;
-          host.projectStatus = "Deschiderea așteaptă decizia pentru sesiunea recuperabilă veche.";
-          host.setGlobalStatus("Recovery incompatibil detectat pentru dosarul ales.", "idle");
-          host.notify({
+          host.projectStatus = t("project-controller-recovery-decision-pending");
+          host.escalateGlobalStatus({
             id: PROJECT_OPEN_RECOVERY_NOTIFICATION_ID,
             level: "warning",
-            title: "Sesiune recuperabilă incompatibilă",
-            message: `${assessment.diagnostic ?? "Dosarul ales nu mai corespunde sesiunii recuperabile."} Recovery-ul rămâne intact până la o alegere explicită.`,
+            title: t("project-controller-recovery-incompatible-title"),
+            message: t("project-controller-recovery-incompatible-message"),
+            statusMessage: t("project-controller-recovery-incompatible-status"),
           });
           host.endProjectTransitionFrontendLease?.();
           return;
         }
         if (suppliedToken !== assessment.assessmentToken) {
           throw new Error(
-            "Recovery-ul s-a schimbat după confirmare; verifică din nou alegerea.",
+            t("project-controller-recovery-changed"),
           );
         }
       } else if (options.recoveryDecision) {
         throw new Error(
-          "Decizia de abandonare nu mai corespunde recuperării inspectate.",
+          t("project-controller-recovery-decision-stale"),
         );
       }
     } catch (error) {
@@ -556,7 +627,7 @@ async function openProjectRoot(
     }
   } else if (options.recoveryDecision) {
     host.endProjectTransitionFrontendLease?.();
-    throw new Error("Reîncărcarea proiectului nu acceptă o decizie de recuperare de la deschidere.");
+    throw new Error(t("project-controller-reload-recovery-decision-invalid"));
   }
   try {
     await host.invalidateExternalReconcileForProjectTransition?.();
@@ -578,7 +649,7 @@ async function openProjectRoot(
   } catch (error) {
     if (rustSessionSwapped) {
       host.markWorkspaceProjectionRecoveryRequired?.(
-        "Nucleul a publicat proiectul, dar frontend-ul nu a terminat proiecția inițială.",
+        t("project-controller-initial-projection-incomplete"),
       );
     } else {
       host.resumeExternalMonitoringAfterFailedTransition?.();
@@ -588,6 +659,7 @@ async function openProjectRoot(
     host.endProjectTransitionFrontendLease?.();
   }
   if (previewIdentity) await startPreviewAfterOpen(host, previewIdentity);
+  await host.refreshSourceGraph?.({ strict: true });
   await host.restoreWorkbenchState?.();
 }
 
@@ -607,6 +679,7 @@ async function prepareProjectTransitionForTarget(
   const currentProjectRoot = host.scannedProject?.root ?? targetRoot;
   const action = projectTransitionActionForContinuation(targetRoot, currentProjectRoot, continuation);
   const policy = await readKernelProjectTransitionPolicy(action);
+  const policyCopy = localizedTransitionPolicyCopy(policy);
 
   if (policy.decision === "allow") return true;
 
@@ -618,26 +691,25 @@ async function prepareProjectTransitionForTarget(
       continuation,
     );
     host.projectTransitionDecisionRequest = request;
-    host.projectStatus = policy.message;
-    host.setGlobalStatus(policy.title, "idle");
-    host.notify({
+    host.projectStatus = policyCopy.message;
+    host.escalateGlobalStatus({
       id: PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID,
       level: "warning",
-      title: policy.title,
-      message: `${policy.message} ${policy.recommendedAction}`,
+      title: policyCopy.title,
+      message: `${policyCopy.message} ${policyCopy.recommendedAction}`,
     });
     return false;
   }
 
   host.projectTransitionDecisionRequest = null;
-  const message = `${policy.title}: ${policy.message} ${policy.recommendedAction}`;
+  const message = `${policyCopy.title}: ${policyCopy.message} ${policyCopy.recommendedAction}`;
   host.projectStatus = message;
-  host.setGlobalStatus(message, "error");
-  host.notify({
+  host.escalateGlobalStatus({
     id: PROJECT_TRANSITION_BLOCKED_NOTIFICATION_ID,
     level: "error",
-    title: policy.title,
+    title: policyCopy.title,
     message,
+    statusMessage: message,
   });
   return false;
 }
@@ -649,10 +721,10 @@ export async function continueProjectTransitionWithOperatorDecision(
 ) {
   const request = host.projectTransitionDecisionRequest;
   if (!request || request.id !== requestId) {
-    throw new Error("Decizia operator nu mai corespunde tranziției curente.");
+    throw new Error(t("project-transition-decision-expired"));
   }
-  host.projectStatus = "Se înregistrează decizia operator și se reia tranziția...";
-  host.setGlobalStatus("Se înregistrează decizia operatorului pentru tranziția proiectului.", "saving");
+  host.projectStatus = t("project-controller-recording-decision");
+  host.setGlobalStatus(t("project-controller-recording-decision-status"), "saving");
   try {
     const receipt = await recordProjectTransitionOperatorDecision(
       request.targetRoot,
@@ -675,14 +747,16 @@ export async function continueProjectTransitionWithOperatorDecision(
       await openProjectRoot(host, request.targetRoot, { operatorDecisionId: receipt.decision.id });
     }
   } catch (error) {
-    const message = `Tranziția proiectului nu poate continua: ${errorMessage(error)}`;
+    const message = t("project-controller-transition-cannot-continue", {
+      message: errorMessage(error),
+    });
     host.projectStatus = message;
-    host.setGlobalStatus(message, "error");
-    host.notify({
+    host.escalateGlobalStatus({
       id: PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID,
       level: "error",
-      title: "Tranziția proiectului a fost refuzată",
+      title: t("project-controller-transition-refused-title"),
       message,
+      statusMessage: message,
     });
     throw error;
   }
@@ -695,8 +769,8 @@ export function cancelProjectOpenRecoveryDecision(
   if (host.projectOpenRecoveryDecisionRequest?.id !== requestId) return;
   host.projectOpenRecoveryDecisionRequest = null;
   host.clearNotification(PROJECT_OPEN_RECOVERY_NOTIFICATION_ID);
-  host.projectStatus = "Deschiderea dosarului a fost anulată; recuperarea veche a fost păstrată.";
-  host.setGlobalStatus("Recovery păstrat. Dosarul nu a fost deschis.", "restored");
+  host.projectStatus = t("project-controller-open-cancelled-recovery-kept");
+  host.setGlobalStatus(t("project-controller-recovery-kept"), "restored");
 }
 
 export async function continueProjectOpenWithRecoveryAbandonment(
@@ -705,27 +779,29 @@ export async function continueProjectOpenWithRecoveryAbandonment(
 ) {
   const request = host.projectOpenRecoveryDecisionRequest;
   if (!request || request.id !== requestId) {
-    throw new Error("Decizia de recuperare nu mai corespunde deschiderii curente.");
+    throw new Error(t("project-controller-open-recovery-decision-stale"));
   }
   const decision = projectOpenRecoveryAbandonDecision(request);
   host.projectOpenRecoveryDecisionRequest = null;
   host.clearNotification(PROJECT_OPEN_RECOVERY_NOTIFICATION_ID);
-  host.projectStatus = "Se deschide dosarul actual fără drafturile sesiunii vechi...";
-  host.setGlobalStatus("Se aplică decizia explicită de abandonare a recuperării.", "saving");
+  host.projectStatus = t("project-controller-opening-without-recovery");
+  host.setGlobalStatus(t("project-controller-abandoning-recovery"), "saving");
   try {
     await openProjectRoot(host, request.targetRoot, {
       operatorDecisionId: request.operatorDecisionId,
       recoveryDecision: decision,
     });
   } catch (error) {
-    const message = `Dosarul nu a putut fi deschis după decizia de recovery: ${errorMessage(error)}`;
+    const message = t("project-controller-open-after-recovery-failed", {
+      message: errorMessage(error),
+    });
     host.projectStatus = message;
-    host.setGlobalStatus(message, "error");
-    host.notify({
+    host.escalateGlobalStatus({
       id: PROJECT_OPEN_RECOVERY_NOTIFICATION_ID,
       level: "error",
-      title: "Decizia de recuperare nu a putut fi aplicată",
+      title: t("project-controller-recovery-apply-failed-title"),
       message,
+      statusMessage: message,
     });
     throw error;
   }
@@ -742,7 +818,7 @@ export function isProjectPreviewRequestIdentityCurrent(
   identity: ProjectPreviewRequestIdentity,
 ) {
   return host.projectTransitionFrontendLeaseActive !== true
-    && host.scannedProject?.isZola === true
+    && host.scannedProject !== null
     && host.scannedProject.root === identity.expectedProjectRoot
     && host.sessionProjectRoot === identity.expectedProjectRoot
     && host.kernelProjectSessionId === identity.expectedSessionId;
@@ -764,7 +840,7 @@ export async function startPreviewAfterOpen(
     const rawReceipt = await dependencies.start(identity);
     if (!isProjectPreviewRequestIdentityCurrent(host, identity)) return stale();
     if (!rawReceipt) {
-      throw new Error("Previzualizarea Zola nu a publicat nicio generație Canvas.");
+      throw new Error(t("project-controller-preview-generation-missing"));
     }
     const receipt = requireProjectPreviewStartReceipt(identity, rawReceipt);
     startedPreviewUrl = receipt.url;
@@ -775,12 +851,24 @@ export async function startPreviewAfterOpen(
       previewBaseUrl: receipt.url,
       previewWarning: null,
     };
+    const canvasSurfaceMounted = host.hasMountedCanvasProjectionSurface?.() !== false;
     if (receipt.canvasProjection.phase === "prepared") {
-      canvasConfirmation = host.prepareCanvasProjectionNavigation(receipt.canvasProjection);
+      host.pendingCanvasProjection = receipt.canvasProjection;
+      host.previewWorkspaceRevision = receipt.canvasProjection.identity.previewRevision;
+      if (canvasSurfaceMounted) {
+        canvasConfirmation = host.prepareCanvasProjectionNavigation(receipt.canvasProjection);
+      } else {
+        host.deferWorkspacePreviewProjection?.();
+      }
     } else {
       host.pendingCanvasProjection = null;
       host.previewWorkspaceRevision = null;
       host.activeCanvasIdentity = { ...receipt.canvasProjection.identity };
+      void host.refreshEditorNavigationSnapshot?.(
+        receipt.canvasProjection.identity,
+        receipt.url,
+      );
+      if (!canvasSurfaceMounted) host.deferWorkspacePreviewProjection?.();
     }
     const activeFile = currentProject.files.find((file) => file.relativePath === host.activeScannedPath)
       ?? currentProject.files.find((file) => file.role === "page")
@@ -788,18 +876,43 @@ export async function startPreviewAfterOpen(
     if (activeFile && activeFile.role !== "template") {
       await host.loadScannedProjectFile(activeFile, { syncWorkbench: false });
     }
-    if (canvasConfirmation) {
+    if (
+      host.previewSrc === "about:blank"
+      || receipt.canvasProjection.phase === "prepared"
+    ) {
       const revision = receipt.canvasProjection.identity.previewRevision;
       const mountedUrl = host.previewSrc === "about:blank" ? null : new URL(host.previewSrc);
-      if (mountedUrl?.searchParams.get("__pana_preview_revision") !== revision) {
+      if (
+        !mountedUrl
+        || (
+          receipt.canvasProjection.phase === "prepared"
+          && mountedUrl.searchParams.get("__pana_preview_revision") !== revision
+        )
+      ) {
         const fallbackPage = currentProject.files.find((file) => file.role === "page") ?? null;
         if (!fallbackPage) {
-          throw new Error("Canvas-ul staged nu are nicio rută Zola care poate fi montată.");
+          throw new Error(t("project-controller-canvas-route-missing"));
         }
         host.previewSrc = host.previewUrlForScannedFile(fallbackPage);
         host.activePreviewPath = fallbackPage.relativePath;
         host.previewDocumentMarkup = null;
       }
+    }
+    if (!canvasConfirmation && receipt.canvasProjection.phase === "prepared") {
+      host.pendingCanvasProjection = null;
+      host.previewWorkspaceRevision = null;
+      if (!isProjectPreviewRequestIdentityCurrent(host, identity)) return stale();
+      host.clearNotification("project.preview.warning");
+      host.setGlobalStatus(
+        t("project-controller-preview-running-canvas-paused"),
+        "restored",
+      );
+      return {
+        status: "deferred",
+        projectSessionId: identity.expectedSessionId,
+      };
+    }
+    if (canvasConfirmation) {
       await canvasConfirmation;
       canvasConfirmation = null;
       host.previewWorkspaceRevision = null;
@@ -812,6 +925,18 @@ export async function startPreviewAfterOpen(
       receipt.workspaceRevision,
       receipt.canvasProjection,
     );
+    if (!canvasSurfaceMounted) {
+      host.clearNotification("project.preview.warning");
+      host.setGlobalStatus(
+        t("project-controller-preview-running-canvas-paused"),
+        "restored",
+      );
+      return {
+        status: "deferred",
+        projectSessionId: identity.expectedSessionId,
+      };
+    }
+    host.markCanvasProjectionSurfaceCurrent?.();
     if (activeFile?.role === "template") {
       await host.loadScannedProjectFile(activeFile, {
         strict: true,
@@ -821,18 +946,37 @@ export async function startPreviewAfterOpen(
       });
     }
     host.clearNotification("project.preview.warning");
-    host.setGlobalStatus("Previzualizare Zola pornită.", "restored");
+    host.setGlobalStatus(t("project-controller-preview-started"), "restored");
     host.scheduleZolaValidation?.("project-open");
     return {
       status: "canonical",
       projectSessionId: identity.expectedSessionId,
     };
   } catch (error) {
-    host.resetControlledPreviewState?.();
     if (canvasConfirmation) await canvasConfirmation.catch(() => undefined);
     if (!isProjectPreviewRequestIdentityCurrent(host, identity)) return stale();
     const currentProject = host.scannedProject;
     if (!currentProject) return stale();
+    if (isCanvasProjectionSurfaceUnavailableError(error)) {
+      host.pendingCanvasProjection = null;
+      host.previewWorkspaceRevision = null;
+      host.deferWorkspacePreviewProjection?.();
+      host.scannedProject = {
+        ...currentProject,
+        previewBaseUrl: startedPreviewUrl ?? currentProject.previewBaseUrl,
+        previewWarning: null,
+      };
+      host.clearNotification("project.preview.warning");
+      host.setGlobalStatus(
+        t("project-controller-preview-running-canvas-paused"),
+        "restored",
+      );
+      return {
+        status: "deferred",
+        projectSessionId: identity.expectedSessionId,
+      };
+    }
+    host.resetControlledPreviewState?.();
     const message = errorMessage(error);
     host.scannedProject = {
       ...currentProject,
@@ -842,13 +986,13 @@ export async function startPreviewAfterOpen(
       previewBaseUrl: startedPreviewUrl ?? currentProject.previewBaseUrl,
       previewWarning: message,
     };
-    host.notify({
+    host.escalateGlobalStatus({
       id: "project.preview.warning",
       level: "warning",
-      title: "Previzualizare indisponibilă",
+      title: t("project-controller-preview-unavailable-title"),
       message,
+      statusMessage: t("project-controller-preview-unavailable-detail", { message }),
     });
-    host.setGlobalStatus(`Previzualizare indisponibilă: ${message}`, "error");
     return {
       status: "degraded",
       projectSessionId: identity.expectedSessionId,
@@ -868,23 +1012,26 @@ export function resetProjectScopedState(
   host.resetControlledPreviewState?.();
   host.resetPageSections?.();
   host.sourceGraph = null;
+  host.sourceGraphProjectionStatus = "deferred";
+  host.sourceGraphWorkspaceRevision = null;
   host.sourceCache = {};
   host.templateWorkbenchPlan = null;
   host.templateWorkbenchPreferredPagePath = null;
+  host.templateWorkbenchPreferredRoute = null;
   host.templateWorkbenchActive = false;
   host.templateWorkbenchTarget = null;
   host.templateWorkbenchReturnPreviewPath = null;
   host.templateWorkbenchRequestSerial += 1;
-  host.clearPreviewSelection({ clearTemplateGate: true, clearHtmlMarker: true });
-  host.lastMeaningfulSelectedElement = null;
-  host.lastSelectedImageElement = null;
+  host.clearPreviewSelection({ clearCanvasOverlay: true });
+  host.selectionSnapshot = null;
+  host.inspectorSelectionSummary = null;
+  host.hoverSnapshot = null;
   host.overrideRules = {};
   host.variableOverrides = {};
   host.htmlPending = createEmptyHtmlPending();
   host.resetInspectorPendingSources();
   host.inspectorPending = createEmptyInspectorPending();
-  host.saveState = "idle";
-  host.saveStatus = "Nicio modificare salvata in aceasta sesiune.";
+  host.setGlobalStatus(t("project-controller-no-session-save"), "idle");
   host.cachebustAssets = false;
   host.diskState = createDiskState();
   host.activeVersionPreview = null;
@@ -901,28 +1048,292 @@ export async function rescanCurrentProject(
   await host.beginProjectTransitionFrontendLease?.();
   try {
     await flushProjectDraftsBeforeTransition();
-    await projectCurrentProjectRescan(host, preferredRelativePath, options, undefined, false);
+    await projectCurrentProjectRescan(host, preferredRelativePath, options);
   } finally {
     host.endProjectTransitionFrontendLease?.();
   }
 }
 
-/**
- * Projects a committed structural mutation while its per-session FIFO lane is
- * still held. This path deliberately does not acquire ProjectTransition and
- * does not flush drafts, because either action would drain/re-enter the same
- * structural lane and deadlock the operation that owns it.
- */
-export async function rescanCurrentProjectWithinStructuralLane(
+export type ReconcileWorkspaceDerivedStateOptions = {
+  expectedProjectRoot: string;
+  expectedSessionId: string;
+  expectedWorkspaceRevision: number;
+  topologyChanged: boolean;
+  preferredRelativePath?: string | null;
+  refreshSourceGraph?: boolean;
+  refreshScss?: boolean;
+};
+
+function derivedProjectionOutcome(
+  workspaceRevision: number,
+): WorkspaceDerivedReconciliationOutcome {
+  return {
+    workspaceRevision,
+    topology: "current",
+    sourceGraph: "current",
+    scss: "current",
+    warnings: [],
+  };
+}
+
+function derivedProjectionSessionStatus(
   host: ProjectControllerHost,
-  lease: PreviewStructuralSessionLease,
-  preferredRelativePath: string | null = host.activeScannedPath,
-  options: { strict?: boolean; deferPreviewRefresh?: boolean } = {},
+  options: Pick<
+    ReconcileWorkspaceDerivedStateOptions,
+    "expectedProjectRoot" | "expectedSessionId" | "expectedWorkspaceRevision"
+  >,
+): "current" | "superseded" {
+  if (
+    host.sessionProjectRoot !== options.expectedProjectRoot
+    || host.kernelProjectSessionId !== options.expectedSessionId
+  ) {
+    return "superseded";
+  }
+  const revision = host.projectWorkspaceSnapshot?.revision;
+  if (revision === undefined || revision === options.expectedWorkspaceRevision) return "current";
+  if (revision > options.expectedWorkspaceRevision) return "superseded";
+  throw new Error(
+    t("project-controller-derived-revision-mismatch", {
+      expected: options.expectedWorkspaceRevision,
+      actual: revision,
+    }),
+  );
+}
+
+function supersedeDerivedProjection(
+  outcome: WorkspaceDerivedReconciliationOutcome,
 ) {
-  const requireCurrent = () => requireCurrentPreviewStructuralSession(host, lease);
-  requireCurrent();
-  await projectCurrentProjectRescan(host, preferredRelativePath, options, requireCurrent, true);
-  requireCurrent();
+  outcome.topology = "superseded";
+  outcome.sourceGraph = "superseded";
+  outcome.scss = "superseded";
+  return outcome;
+}
+
+type WorkspaceDerivedReconciliationRequest = {
+  host: ProjectControllerHost;
+  options: ReconcileWorkspaceDerivedStateOptions;
+  resolve: (outcome: WorkspaceDerivedReconciliationOutcome) => void;
+  reject: (error: unknown) => void;
+};
+
+type WorkspaceDerivedReconciliationLane = {
+  activeOptions: ReconcileWorkspaceDerivedStateOptions | null;
+  pending: WorkspaceDerivedReconciliationRequest | null;
+  running: boolean;
+};
+
+const workspaceDerivedReconciliationLanes = new Map<
+  string,
+  WorkspaceDerivedReconciliationLane
+>();
+
+function workspaceDerivedReconciliationKey(
+  options: ReconcileWorkspaceDerivedStateOptions,
+) {
+  return `${options.expectedProjectRoot}\u0000${options.expectedSessionId}`;
+}
+
+function supersededDerivedProjectionFor(
+  options: ReconcileWorkspaceDerivedStateOptions,
+) {
+  return supersedeDerivedProjection(
+    derivedProjectionOutcome(options.expectedWorkspaceRevision),
+  );
+}
+
+function mergeWorkspaceDerivedReconciliationOptions(
+  previous: ReconcileWorkspaceDerivedStateOptions | null,
+  next: ReconcileWorkspaceDerivedStateOptions,
+): ReconcileWorkspaceDerivedStateOptions {
+  if (!previous) return next;
+  return {
+    ...next,
+    topologyChanged: previous.topologyChanged || next.topologyChanged,
+    refreshSourceGraph: (previous.refreshSourceGraph ?? true)
+      || (next.refreshSourceGraph ?? true),
+    refreshScss: (previous.refreshScss ?? true) || (next.refreshScss ?? true),
+  };
+}
+
+async function drainWorkspaceDerivedReconciliationLane(
+  key: string,
+  lane: WorkspaceDerivedReconciliationLane,
+) {
+  if (lane.running) return;
+  lane.running = true;
+  try {
+    while (lane.pending) {
+      const request = lane.pending;
+      lane.pending = null;
+      lane.activeOptions = request.options;
+      try {
+        request.resolve(
+          await runWorkspaceDerivedStateReconciliation(
+            request.host,
+            request.options,
+          ),
+        );
+      } catch (error) {
+        request.reject(error);
+      } finally {
+        lane.activeOptions = null;
+      }
+    }
+  } finally {
+    lane.running = false;
+    if (!lane.pending && workspaceDerivedReconciliationLanes.get(key) === lane) {
+      workspaceDerivedReconciliationLanes.delete(key);
+    } else if (lane.pending) {
+      void drainWorkspaceDerivedReconciliationLane(key, lane);
+    }
+  }
+}
+
+/**
+ * Rebuilds replaceable frontend projections for one already-committed Rust
+ * revision. It deliberately performs no draft flush, Project Transition or
+ * Preview publication.
+ */
+export async function reconcileWorkspaceDerivedState(
+  host: ProjectControllerHost,
+  options: ReconcileWorkspaceDerivedStateOptions,
+): Promise<WorkspaceDerivedReconciliationOutcome> {
+  const key = workspaceDerivedReconciliationKey(options);
+  let lane = workspaceDerivedReconciliationLanes.get(key);
+  if (!lane) {
+    lane = { activeOptions: null, pending: null, running: false };
+    workspaceDerivedReconciliationLanes.set(key, lane);
+  }
+
+  if (
+    (lane.activeOptions?.expectedWorkspaceRevision ?? -1)
+      > options.expectedWorkspaceRevision
+    || (lane.pending?.options.expectedWorkspaceRevision ?? -1)
+      > options.expectedWorkspaceRevision
+  ) {
+    return supersededDerivedProjectionFor(options);
+  }
+
+  const mergedOptions = mergeWorkspaceDerivedReconciliationOptions(
+    lane.pending?.options ?? lane.activeOptions,
+    options,
+  );
+  if (lane.pending) {
+    lane.pending.resolve(supersededDerivedProjectionFor(lane.pending.options));
+  }
+
+  return new Promise<WorkspaceDerivedReconciliationOutcome>((resolve, reject) => {
+    lane!.pending = {
+      host,
+      options: mergedOptions,
+      resolve,
+      reject,
+    };
+    void drainWorkspaceDerivedReconciliationLane(key, lane!);
+  });
+}
+
+async function runWorkspaceDerivedStateReconciliation(
+  host: ProjectControllerHost,
+  options: ReconcileWorkspaceDerivedStateOptions,
+): Promise<WorkspaceDerivedReconciliationOutcome> {
+  const outcome = derivedProjectionOutcome(options.expectedWorkspaceRevision);
+  const current = () => (
+    derivedProjectionSessionStatus(host, options) === "current"
+  );
+  if (!current()) return supersedeDerivedProjection(outcome);
+
+  if (options.topologyChanged) {
+    const currentProject = host.scannedProject;
+    if (!currentProject) {
+      outcome.topology = "deferred";
+    } else {
+      try {
+        const scanned = await scanProject(options.expectedProjectRoot);
+        if (!current()) return supersedeDerivedProjection(outcome);
+        if (
+          scanned.root !== options.expectedProjectRoot
+          || scanned.kernelSessionId !== options.expectedSessionId
+          || typeof scanned.workspaceRevision !== "number"
+          || !Number.isSafeInteger(scanned.workspaceRevision)
+        ) {
+          throw new Error(
+            t("project-controller-scan-revision-identity-missing"),
+          );
+        }
+        if (scanned.workspaceRevision !== options.expectedWorkspaceRevision) {
+          if ((scanned.workspaceRevision ?? -1) > options.expectedWorkspaceRevision) {
+            return supersedeDerivedProjection(outcome);
+          }
+          throw new Error(
+            t("project-controller-scan-revision-mismatch", {
+              actual: scanned.workspaceRevision,
+              expected: options.expectedWorkspaceRevision,
+            }),
+          );
+        }
+        const project = preservePreviewBaseUrl(scanned, currentProject);
+        host.scannedProject = project;
+        host.diskState = diskStateFromProjectScan(project, host.diskState);
+        host.projectStatus = planOpenedProject(project).projectStatus;
+        const nextFile = selectProjectFileAfterScan(
+          project,
+          options.preferredRelativePath ?? host.activeScannedPath,
+        );
+        if (nextFile) {
+          await host.loadScannedProjectFile(nextFile, {
+            strict: true,
+            skipDraftFlush: true,
+            deferPreviewRefresh: true,
+          });
+          if (!current()) return supersedeDerivedProjection(outcome);
+        }
+      } catch (error) {
+        outcome.topology = current() ? "degraded" : "superseded";
+        outcome.warnings.push(
+          t("project-controller-navigation-resync", { message: errorMessage(error) }),
+        );
+      }
+    }
+  }
+
+  if (options.refreshSourceGraph ?? true) {
+    try {
+      if (host.refreshSourceGraph) {
+        await host.refreshSourceGraph({ strict: true });
+      } else {
+        throw new Error(t("project-controller-source-graph-unavailable"));
+      }
+      if (!current()) return supersedeDerivedProjection(outcome);
+    } catch (error) {
+      outcome.sourceGraph = current() ? "degraded" : "superseded";
+      outcome.warnings.push(
+        t("project-controller-source-graph-preserved", { message: errorMessage(error) }),
+      );
+    }
+  }
+
+  if (options.refreshScss ?? true) {
+    try {
+      const variables = await getScssVariables(
+        createCssRequestIdentity(
+          options.expectedProjectRoot,
+          options.expectedSessionId,
+        ),
+        options.expectedWorkspaceRevision,
+      );
+      if (!current()) return supersedeDerivedProjection(outcome);
+      host.scssVariables = variables;
+    } catch (error) {
+      outcome.scss = current() ? "degraded" : "superseded";
+      outcome.warnings.push(
+        t("project-controller-scss-preserved", { message: errorMessage(error) }),
+      );
+    }
+  }
+
+  host.startExternalDiskPolling?.();
+  return outcome;
 }
 
 /**
@@ -940,10 +1351,10 @@ export async function rescanCurrentProjectWithinKernelUndoRedoLease(
   const requireCurrent = () => requireCurrentKernelUndoRedoProjectionLease(
     host,
     lease,
-    "Reproiectarea structurală Undo/Redo",
+    t("project-controller-history-reprojection"),
   );
   requireCurrent();
-  await projectCurrentProjectRescan(host, preferredRelativePath, options, requireCurrent, true);
+  await projectCurrentProjectRescan(host, preferredRelativePath, options, requireCurrent);
   requireCurrent();
 }
 
@@ -951,53 +1362,52 @@ async function projectCurrentProjectRescan(
   host: ProjectControllerHost,
   preferredRelativePath: string | null,
   options: { strict?: boolean; deferPreviewRefresh?: boolean },
-  requireProjectionCurrent: (() => void) | undefined,
-  skipDraftFlush: boolean,
+  requireProjectionCurrent: (() => void) | undefined = undefined,
 ) {
   const requireCurrent = () => requireProjectionCurrent?.();
   requireCurrent();
   const currentProject = host.scannedProject;
   if (!currentProject) return;
-  const scanned = await scanProject(currentProject.root);
+  const expectedWorkspaceRevision = host.projectWorkspaceSnapshot?.revision ?? 0;
+  const reconciliation = await reconcileWorkspaceDerivedState(host, {
+    expectedProjectRoot: host.sessionProjectRoot,
+    expectedSessionId: host.kernelProjectSessionId,
+    expectedWorkspaceRevision,
+    topologyChanged: true,
+    preferredRelativePath,
+    refreshSourceGraph: true,
+    refreshScss: true,
+  });
   requireCurrent();
-  const project = preservePreviewBaseUrl(scanned, currentProject);
-  host.scannedProject = project;
-  host.diskState = diskStateFromProjectScan(project, host.diskState);
-  host.projectStatus = planOpenedProject(project).projectStatus;
-  const nextFile = selectProjectFileAfterScan(project, preferredRelativePath);
-  if (nextFile) {
-    await host.loadScannedProjectFile(nextFile, {
-      strict: options.strict,
-      skipDraftFlush,
-      deferPreviewRefresh: true,
-    });
-    requireCurrent();
+  if (
+    options.strict
+    && (
+      reconciliation.topology === "degraded"
+      || reconciliation.sourceGraph === "degraded"
+      || reconciliation.scss === "degraded"
+      || reconciliation.topology === "deferred"
+      || reconciliation.sourceGraph === "deferred"
+      || reconciliation.scss === "deferred"
+      || reconciliation.topology === "superseded"
+      || reconciliation.sourceGraph === "superseded"
+      || reconciliation.scss === "superseded"
+    )
+  ) {
+    throw new Error(
+      reconciliation.warnings.join(" ")
+        || t("project-controller-strict-rescan-unconfirmed"),
+    );
   }
-  if (host.refreshSourceGraph) {
-    await host.refreshSourceGraph({ strict: options.strict });
-    requireCurrent();
-  } else if (options.strict) {
-    throw new Error("Rescan-ul strict nu poate confirma proiecția Source Graph.");
-  }
-  const cssIdentity = createCssRequestIdentity(
-    host.sessionProjectRoot,
-    host.kernelProjectSessionId,
-  );
-  const nextScssVariables = options.strict
-    ? await getScssVariables(cssIdentity)
-    : await getScssVariables(cssIdentity).catch(() => host.scssVariables);
-  requireCurrent();
-  host.scssVariables = nextScssVariables;
   if (!options.deferPreviewRefresh) {
     host.refreshToken += 1;
     const previewRefreshed = await host.requestPreviewRefresh("project-rescan");
     requireCurrent();
     if (options.strict && !previewRefreshed) {
-      throw new Error("Previzualizarea nu a confirmat proiecția rescanării stricte.");
+      throw new Error(t("project-controller-strict-rescan-preview-unconfirmed"));
     }
   }
   host.startExternalDiskPolling?.();
-  host.setGlobalStatus("Structura proiectului a fost rescannată fără a reconstrui sesiunea Rust.", "restored");
+  host.setGlobalStatus(t("project-controller-structure-rescanned"), "restored");
 }
 
 export async function discardSessionAndReloadFromDisk(
@@ -1017,7 +1427,7 @@ export function captureBrowserPreviewRequestIdentity(
   const runtimeSessionId = host.kernelProjectSessionId.trim();
   const expectedDiskGeneration = host.scannedProject?.acceptedDiskGeneration;
   if (
-    !host.scannedProject?.isZola
+    !host.scannedProject
     || !projectRoot
     || !runtimeSessionId
     || host.sessionProjectRoot.trim() !== projectRoot
@@ -1041,7 +1451,7 @@ export function isBrowserPreviewRequestIdentityCurrent(
   identity: BrowserPreviewRequestIdentity,
 ) {
   return host.scannedProject?.root === identity.expectedProjectRoot
-    && host.scannedProject.isZola
+    && host.scannedProject !== null
     && host.scannedProject.acceptedDiskGeneration === identity.expectedDiskGeneration
     && host.sessionProjectRoot === identity.expectedProjectRoot
     && host.kernelProjectSessionId === identity.expectedSessionId;
@@ -1052,26 +1462,26 @@ export async function openCurrentProjectInBrowser(
   dependencies: BrowserPreviewDependencies = browserPreviewDependencies,
   options: BrowserPreviewOpenOptions = {},
 ) {
-  if (!host.scannedProject?.isZola) {
-    host.setGlobalStatus("Deschide un proiect Zola valid înainte de browser preview.", "error");
+  if (!host.scannedProject) {
+    host.setGlobalStatus(t("project-controller-browser-project-required"), "error");
     return;
   }
 
   const identity = captureBrowserPreviewRequestIdentity(host);
   if (!identity) {
     host.setGlobalStatus(
-      "Browser preview cere un ProjectSession activ și coerent cu proiectul curent.",
+      t("project-controller-browser-session-required"),
       "error",
     );
     return;
   }
 
-  host.setGlobalStatus("Se randă generația salvată cu motorul Zola pentru Source Browser...", "saving");
+  host.setGlobalStatus(t("project-controller-browser-rendering"), "saving");
   try {
     const receipt = await dependencies.start(identity);
     if (!isBrowserPreviewRequestIdentityCurrent(host, identity)) return;
     if (!receipt) {
-      host.setGlobalStatus("Browser preview indisponibil pentru proiectul curent.", "error");
+      host.setGlobalStatus(t("project-controller-browser-unavailable"), "error");
       return;
     }
     if (
@@ -1080,7 +1490,7 @@ export async function openCurrentProjectInBrowser(
       || receipt.acceptedDiskGeneration !== identity.expectedDiskGeneration
     ) {
       throw new Error(
-        "Rust a returnat un browser preview pentru altă instanță ProjectSession sau altă generație AcceptedDisk.",
+        t("project-controller-browser-receipt-mismatch"),
       );
     }
     // No await is allowed between this final UI CAS and dispatching the opener
@@ -1091,31 +1501,31 @@ export async function openCurrentProjectInBrowser(
     await dependencies.openUrl(targetUrl);
     if (!isBrowserPreviewRequestIdentityCurrent(host, identity)) return;
     host.clearNotification("project.browser-preview.warning");
-    host.setGlobalStatus(`Source Browser deschis din generația salvată: ${targetUrl}`, "restored");
+    host.setGlobalStatus(t("project-controller-browser-opened", { url: targetUrl }), "restored");
   } catch (error) {
     if (!isBrowserPreviewRequestIdentityCurrent(host, identity)) return;
-    const message = `Browser preview indisponibil: ${errorMessage(error)}`;
-    host.notify({
+    const message = t("project-controller-browser-failed", { message: errorMessage(error) });
+    host.escalateGlobalStatus({
       id: "project.browser-preview.warning",
       level: "warning",
-      title: "Browser preview indisponibil",
+      title: t("project-controller-browser-unavailable-title"),
       message,
+      statusMessage: message,
     });
-    host.setGlobalStatus(message, "error");
   }
 }
 
 export function sourceBrowserUrlForRoute(baseUrl: string, requestedRoute?: string | null) {
   const route = requestedRoute?.trim() || "/";
   if (!route.startsWith("/") || route.startsWith("//")) {
-    throw new Error("Ruta Source Browser trebuie să fie un path local absolut.");
+    throw new Error(t("project-controller-browser-path-absolute"));
   }
   if (route === "/") return baseUrl;
 
   const base = new URL(baseUrl);
   const target = new URL(route, `${base.origin}/`);
   if (target.origin !== base.origin || target.pathname.startsWith("/__pana_source/")) {
-    throw new Error("Ruta Source Browser a încercat să părăsească pagina publică a proiectului.");
+    throw new Error(t("project-controller-browser-path-escaped"));
   }
   return target.toString();
 }
@@ -1154,8 +1564,8 @@ export async function closeCurrentProject(
     return false;
   }
 
-  host.projectStatus = "Se închide proiectul curent...";
-  host.setGlobalStatus("Se închide proiectul curent.", "saving");
+  host.projectStatus = t("project-controller-closing");
+  host.setGlobalStatus(t("project-controller-closing"), "saving");
   let rustSessionClosed = false;
   try {
     await closeProject(options.operatorDecisionId ?? undefined);
@@ -1169,7 +1579,7 @@ export async function closeCurrentProject(
     host.activePreviewPath = "about:blank";
     host.previewWorkspaceRevision = null;
     host.previewDocumentMarkup = null;
-    host.projectStatus = "Niciun proiect deschis.";
+    host.projectStatus = t("project-controller-no-project");
     host.projectOpenRecoveryDecisionRequest = null;
     host.projectTransitionDecisionRequest = null;
     host.clearNotification(PROJECT_OPEN_RECOVERY_NOTIFICATION_ID);
@@ -1177,11 +1587,13 @@ export async function closeCurrentProject(
     host.clearNotification(PROJECT_TRANSITION_BLOCKED_NOTIFICATION_ID);
     host.clearNotification("project.preview.warning");
     host.clearNotification("project.not-zola");
-    host.setGlobalStatus("Proiectul curent a fost închis.", "restored");
+    host.setGlobalStatus(t("project-controller-closed"), "restored");
     return true;
   } catch (error) {
     if (!rustSessionClosed) host.resumeExternalMonitoringAfterFailedTransition?.();
-    const message = `Închiderea proiectului a eșuat: ${errorMessage(error)}`;
+    const message = t("project-controller-close-failed", {
+      message: errorMessage(error),
+    });
     host.projectStatus = message;
     host.setGlobalStatus(message, "error");
     if (detachedProjectRoot) throw error;
@@ -1203,7 +1615,7 @@ async function reloadCurrentProjectFromDisk(
     return {
       status: "cancelled",
       projectSessionId: null,
-      message: "Nu există un proiect care poate fi reîncărcat.",
+      message: t("project-controller-reload-no-project"),
     };
   }
   const projectRoot = host.scannedProject.root;
@@ -1233,18 +1645,20 @@ async function reloadCurrentProjectFromDisk(
     return {
       status: "cancelled",
       projectSessionId: null,
-      message: "Tranziția proiectului nu a autorizat reîncărcarea.",
+      message: t("project-controller-reload-not-authorized"),
     };
   }
 
   const isDiscard = options.mode === "discard";
   host.projectStatus = isDiscard
-    ? "Se aruncă sesiunea nesalvată și se reîncarcă proiectul de pe disc..."
-    : "Se șterge sesiunea curentă și se reîncarcă proiectul de pe disc...";
-  host.saveState = "saving";
-  host.saveStatus = isDiscard
-    ? "Se revine la starea fișierelor de pe disc..."
-    : "Se reconstruiește sesiunea proiectului de pe disc...";
+    ? t("project-controller-reload-discarding")
+    : t("project-controller-reload-purging");
+  host.setGlobalStatus(
+    isDiscard
+      ? t("project-controller-reload-restoring-disk")
+      : t("project-controller-reload-rebuilding"),
+    "saving",
+  );
   let rustSessionSwapped = false;
   let publishedProjectSessionId: string | null = null;
   let previewIdentity: ProjectPreviewRequestIdentity | null = null;
@@ -1272,14 +1686,14 @@ async function reloadCurrentProjectFromDisk(
     attachmentFailure = errorMessage(error);
     if (rustSessionSwapped) {
       host.markWorkspaceProjectionRecoveryRequired?.(
-        "Nucleul a publicat sesiunea reîncărcată, dar proiecția surselor nu a ajuns la o stare terminală.",
+        t("project-controller-reload-projection-incomplete"),
       );
     } else {
       host.resumeExternalMonitoringAfterFailedTransition?.();
     }
     const message = isDiscard
-      ? `Revenirea la disk a eșuat: ${attachmentFailure}`
-      : `Purge eșuat: ${attachmentFailure}`;
+      ? t("project-controller-reload-discard-failed", { message: attachmentFailure })
+      : t("project-controller-reload-purge-failed", { message: attachmentFailure });
     host.projectStatus = message;
     host.setGlobalStatus(message, "error");
   } finally {
@@ -1298,13 +1712,13 @@ async function reloadCurrentProjectFromDisk(
       status: "completed",
       projectSessionId: publishedProjectSessionId ?? host.kernelProjectSessionId,
       previewStatus: "degraded",
-      message: "Sesiunea nu are o suprafață de previzualizare Zola.",
+      message: t("project-controller-reload-preview-missing"),
     };
   }
 
   const previewOutcome = await startPreviewAfterOpen(host, previewIdentity);
   if (previewOutcome.status === "stale") {
-    const message = "Proiecția de previzualizare a fost înlocuită de altă sesiune de proiect.";
+    const message = t("project-controller-reload-preview-superseded");
     host.setGlobalStatus(message, "error");
     return {
       status: "failed",
@@ -1316,8 +1730,8 @@ async function reloadCurrentProjectFromDisk(
   if (previewOutcome.status === "canonical") {
     host.setGlobalStatus(
       isDiscard
-        ? "Sesiunea salvată automat a fost aruncată. Sursele și previzualizarea provin de pe disc."
-        : "Curățare completă: sursele și previzualizarea au fost reconstruite de pe disc.",
+        ? t("project-controller-reload-discard-complete")
+        : t("project-controller-reload-purge-complete"),
       "restored",
     );
   }
@@ -1340,9 +1754,7 @@ function resetProjectSessionState(host: ProjectControllerHost, shouldResetHistor
   host.setSessionProjectRoot(projectRoot);
   if (shouldResetHistory) {
   }
-  host.clearPreviewSelection({ clearTemplateGate: true, clearHtmlMarker: true });
-  host.lastMeaningfulSelectedElement = null;
-  host.lastSelectedImageElement = null;
+  host.clearPreviewSelection({ clearCanvasOverlay: true });
   host.previewDocumentMarkup = null;
   host.browserPreviewRoute = "/";
   host.refreshToken += 1;
@@ -1353,7 +1765,7 @@ export async function createContentPageFromInput(
   input: { title: string; slug?: string | null; section?: string | null },
 ): Promise<string | null> {
   if (!host.scannedProject) {
-    host.projectStatus = "Crearea de pagini este disponibila doar pentru un proiect Zola real.";
+    host.projectStatus = t("project-controller-page-project-required");
     return null;
   }
   const pagePlan = planContentPageCreation(input.title, host.activeScannedPath, {
@@ -1368,25 +1780,44 @@ export async function createContentPageFromInput(
     host.projectStatus = pagePlan.creatingStatus;
     try {
       const identity = previewStructuralCommandIdentity(lease);
-      const receipt = await createProjectContentPage({
-        section: pagePlan.section,
-        slug: pagePlan.slug,
-        title: pagePlan.title,
-      }, identity);
+      let receipt: Awaited<ReturnType<typeof createProjectContentPage>>;
+      try {
+        receipt = await createProjectContentPage({
+          section: pagePlan.section,
+          slug: pagePlan.slug,
+          title: pagePlan.title,
+        }, identity);
+      } catch (error) {
+        if (!previewStructuralSessionLeaseMatches(host, lease)) return null;
+        host.projectStatus = t("project-controller-page-create-failed", {
+          message: errorMessage(error),
+        });
+        return null;
+      }
       requireCurrentPreviewStructuralSession(host, lease);
       const relativePath = receipt.relativePath;
       if (!relativePath) {
-        throw new Error("Receipt-ul creării paginii nu conține path-ul rezultat.");
+        throw new Error(t("project-controller-page-path-missing"));
       }
+
+      const settlement = await settleProjectWorkspaceMutation(host, receipt, {
+        preferredRelativePath: relativePath,
+        warningLabel: t("project-controller-page-create-operation"),
+      });
       requireCurrentPreviewStructuralSession(host, lease);
-      await rescanCurrentProjectWithinStructuralLane(host, lease, relativePath, { strict: true });
-      requireCurrentPreviewStructuralSession(host, lease);
-      host.saveState = "unsaved";
-      host.saveStatus = `Pagina nouă este în sesiune: ${relativePath}. Ctrl+S persistă pe disc.`;
+      host.setGlobalStatus(
+        t("project-controller-page-created-save", { path: relativePath }),
+        "unsaved",
+      );
+      host.projectStatus = settlement.warnings.length > 0
+        ? t("project-controller-page-created-resync")
+        : t("project-controller-page-created", { path: relativePath });
       return relativePath;
     } catch (error) {
       if (!previewStructuralSessionLeaseMatches(host, lease)) return null;
-      host.projectStatus = `Nu am putut crea pagina: ${errorMessage(error)}`;
+      host.projectStatus = t("project-controller-page-create-failed", {
+        message: errorMessage(error),
+      });
       return null;
     }
   });
@@ -1400,6 +1831,8 @@ export async function loadScannedProjectFile(
     skipDraftFlush?: boolean;
     deferPreviewRefresh?: boolean;
     activateTemplateWorkbench?: boolean;
+    preferredTemplatePagePath?: string | null;
+    preferredTemplateRoute?: string | null;
   } = {},
 ) {
   if (!host.scannedProject) return;
@@ -1410,7 +1843,7 @@ export async function loadScannedProjectFile(
   if (!projectLoadLeaseMatches(host, expectedRoot, expectedSessionId, expectedSessionEpoch)) return;
   const loadPlan = planScannedProjectFileLoad(file);
   host.activeScannedPath = file.relativePath;
-  host.source = "Se incarca fisierul...";
+  host.source = SOURCE_LOADING_SENTINEL;
   host.centerView = loadPlan.centerView;
 
   if (loadPlan.isPreviewPage) {
@@ -1419,29 +1852,30 @@ export async function loadScannedProjectFile(
     }
     host.templateWorkbenchPlan = null;
     host.templateWorkbenchPreferredPagePath = null;
+    host.templateWorkbenchPreferredRoute = null;
     host.previewSrc = host.previewUrlForScannedFile(file);
     host.activePreviewPath = file.relativePath;
     host.browserPreviewRoute = file.previewPath ?? "/";
-    host.clearPreviewSelection({ clearTemplateGate: true, clearHtmlMarker: true });
-    host.lastMeaningfulSelectedElement = null;
-    host.lastSelectedImageElement = null;
     host.previewDocumentMarkup = null;
     host.cancelPreviewSync();
   }
 
   if (loadPlan.isTemplateFile) {
     if (options.activateTemplateWorkbench !== false) {
-      clearTemplateFileSelection(host);
       await host.updateTemplateWorkbenchContext(
         host.scannedProject,
         file,
-        host.templateWorkbenchPreferredPagePath,
+        options.preferredTemplatePagePath !== undefined
+          ? options.preferredTemplatePagePath
+          : host.templateWorkbenchPreferredPagePath,
         {
           deferPreviewRefresh: options.deferPreviewRefresh,
+          preferredRoute: options.preferredTemplateRoute !== undefined
+            ? options.preferredTemplateRoute
+            : host.templateWorkbenchPreferredRoute,
           strict: options.strict,
         },
       );
-      clearTemplateFileSelection(host);
     }
   } else if (!loadPlan.isPreviewPage) {
     if (!loadPlan.isTemplateFile && host.templateWorkbenchActive) {
@@ -1449,6 +1883,7 @@ export async function loadScannedProjectFile(
     }
     host.templateWorkbenchPlan = null;
     host.templateWorkbenchPreferredPagePath = null;
+    host.templateWorkbenchPreferredRoute = null;
   }
 
   const cachedSource = host.sourceCache[loadPlan.cacheKey];
@@ -1477,7 +1912,10 @@ export async function loadScannedProjectFile(
       !projectLoadLeaseMatches(host, expectedRoot, expectedSessionId, expectedSessionEpoch)
     ) return;
     if (options.strict) throw error;
-    host.source = `Nu am putut incarca ${file.relativePath}: ${errorMessage(error)}`;
+    host.source = t("project-controller-file-load-failed", {
+      path: file.relativePath,
+      message: errorMessage(error),
+    });
   }
 }
 
@@ -1490,13 +1928,6 @@ function projectLoadLeaseMatches(
   return host.scannedProject?.root === expectedRoot
     && host.kernelProjectSessionId === expectedSessionId
     && host.projectSessionEpoch === expectedSessionEpoch;
-}
-
-function clearTemplateFileSelection(host: ProjectControllerHost) {
-  host.clearPreviewSelection({ clearTemplateGate: true, clearHtmlMarker: true });
-  host.selectedPreviewElement = null;
-  host.lastMeaningfulSelectedElement = null;
-  host.lastSelectedImageElement = null;
 }
 
 type TemplateWorkbenchUiLease = {
@@ -1519,10 +1950,10 @@ function captureTemplateWorkbenchUiLease(
   );
   const templatePath = templateFile.relativePath.trim();
   if (!templatePath) {
-    throw new Error("Context de template cere un template Zola explicit.");
+    throw new Error(t("project-controller-template-required"));
   }
   if (project.root !== identity.expectedProjectRoot) {
-    throw new Error("Context de template a refuzat un ProjectScan din altă sesiune.");
+    throw new Error(t("project-controller-template-scan-session-mismatch"));
   }
   host.templateWorkbenchRequestSerial += 1;
   return {
@@ -1552,6 +1983,35 @@ function templateWorkbenchUiLeaseMatches(
     && host.activeScannedPath === lease.templatePath;
 }
 
+function normalizedTemplateContextPath(path: string | null | undefined) {
+  return path?.trim().replaceAll("\\", "/").replace(/^\.\/+/, "") ?? "";
+}
+
+function canvasProjectionIdentityMatches(
+  left: CanvasProjectionIdentity,
+  right: CanvasProjectionIdentity,
+) {
+  return left.projectRoot === right.projectRoot
+    && left.runtimeSessionId === right.runtimeSessionId
+    && left.workspaceRevision === right.workspaceRevision
+    && left.transactionId === right.transactionId
+    && left.previewRevision === right.previewRevision;
+}
+
+async function synchronizeActiveCanvasSurfaceRoute(
+  host: ProjectControllerHost,
+  previewUrl: string,
+  expectedIdentity?: CanvasProjectionIdentity,
+) {
+  const identity = host.activeCanvasIdentity;
+  if (!identity) return;
+  if (expectedIdentity && !canvasProjectionIdentityMatches(identity, expectedIdentity)) {
+    throw new Error(t("project-controller-template-receipt-mismatch"));
+  }
+  host.activeCanvasUrl = previewUrl;
+  await host.refreshEditorNavigationSnapshot?.(identity, previewUrl);
+}
+
 export async function updateTemplateWorkbenchContext(
   host: ProjectControllerHost,
   project: ProjectScan,
@@ -1560,6 +2020,7 @@ export async function updateTemplateWorkbenchContext(
   options: {
     deferPreviewRefresh?: boolean;
     minimumWorkspaceRevision?: number;
+    preferredRoute?: string | null;
     strict?: boolean;
   } = {},
 ) {
@@ -1575,7 +2036,7 @@ export async function updateTemplateWorkbenchContext(
       || workspace.runtimeSessionId !== lease.identity.expectedSessionId
     ) {
       throw new Error(
-        "Contextul de template nu a putut captura revizia sesiunii active a proiectului.",
+        t("project-controller-template-session-revision-missing"),
       );
     }
     const minimumRevision = options.minimumWorkspaceRevision;
@@ -1583,11 +2044,14 @@ export async function updateTemplateWorkbenchContext(
       minimumRevision !== undefined
       && (!Number.isSafeInteger(minimumRevision) || minimumRevision < 0)
     ) {
-      throw new Error("Context de template a primit o revizie minimă invalidă.");
+      throw new Error(t("project-controller-template-min-revision-invalid"));
     }
     if (minimumRevision !== undefined && workspace.revision < minimumRevision) {
       throw new Error(
-        `ProjectWorkspace este la revizia ${workspace.revision}, sub revizia minimă ${minimumRevision} cerută de Context de template.`,
+        t("project-controller-template-revision-too-old", {
+          actual: workspace.revision,
+          minimum: minimumRevision,
+        }),
       );
     }
 
@@ -1596,6 +2060,7 @@ export async function updateTemplateWorkbenchContext(
       expectedWorkspaceRevision: workspace.revision,
       templatePath: lease.templatePath,
       preferredPagePath,
+      preferredRoute: options.preferredRoute ?? null,
     };
     const receipt = await projectTemplateWorkbenchPreview(request);
     if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;
@@ -1611,7 +2076,25 @@ export async function updateTemplateWorkbenchContext(
       || receipt.plan.activeTemplate.file !== lease.templatePath
     ) {
       throw new Error(
-        "Context de template a primit un receipt pentru altă revizie, sesiune sau sursă.",
+        t("project-controller-template-receipt-mismatch"),
+      );
+    }
+    const requestedContextPath = normalizedTemplateContextPath(preferredPagePath);
+    if (
+      requestedContextPath
+      && normalizedTemplateContextPath(receipt.plan.selectedContext?.pageFile) !== requestedContextPath
+    ) {
+      throw new Error(
+        t("project-controller-template-page-unconfirmed", { path: requestedContextPath }),
+      );
+    }
+    const requestedRoute = options.preferredRoute?.trim() ?? "";
+    if (
+      requestedRoute
+      && normalizedTemplateContextPath(receipt.plan.selectedRoute?.url) !== normalizedTemplateContextPath(requestedRoute)
+    ) {
+      throw new Error(
+        t("project-controller-template-route-unconfirmed", { route: requestedRoute }),
       );
     }
 
@@ -1622,7 +2105,8 @@ export async function updateTemplateWorkbenchContext(
     host.templateWorkbenchTarget = lease.templatePath;
     host.templateWorkbenchPlan = receipt.plan;
     host.templateWorkbenchPreferredPagePath = receipt.plan.selectedContext?.pageFile ?? null;
-    host.activePreviewPath = `Context de template: ${lease.templatePath}`;
+    host.templateWorkbenchPreferredRoute = receipt.plan.selectedRoute?.url ?? null;
+    host.activePreviewPath = lease.templatePath;
     host.previewDocumentMarkup = null;
     if (receipt.canvasProjection.phase === "prepared") {
       const reconciled = await host.reconcileTemplateWorkbenchPreviewDocument(
@@ -1631,7 +2115,7 @@ export async function updateTemplateWorkbenchContext(
       );
       if (!reconciled) {
         throw new Error(
-          "Context de template nu a confirmat candidatul Canvas al aceleiași revizii.",
+          t("project-controller-template-canvas-unconfirmed"),
         );
       }
     } else {
@@ -1639,10 +2123,28 @@ export async function updateTemplateWorkbenchContext(
       if (!options.deferPreviewRefresh) await host.refreshRenderedPreviewDocument();
     }
     if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;
-    host.setGlobalStatus(
-      `Context de template activ: ${receipt.plan.activeTemplate.name}.`,
-      "restored",
+    await synchronizeActiveCanvasSurfaceRoute(
+      host,
+      receipt.previewUrl,
+      receipt.canvasProjection.identity,
     );
+    if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;
+    const contextStatus = receipt.plan.selectedContext
+      ? t("project-controller-template-context-active-page", {
+        name: receipt.plan.activeTemplate.name,
+        title: receipt.plan.selectedContext.pageTitle,
+        url: receipt.plan.selectedContext.pageUrl,
+      })
+      : receipt.plan.selectedRoute
+        ? t("project-controller-template-context-active-route", {
+          name: receipt.plan.activeTemplate.name,
+          label: receipt.plan.selectedRoute.label,
+          url: receipt.plan.selectedRoute.url,
+        })
+        : t("project-controller-template-context-active", {
+          name: receipt.plan.activeTemplate.name,
+        });
+    host.setGlobalStatus(contextStatus, "restored");
     const selectedPageFile = receipt.plan.selectedContext?.pageFile ?? null;
     return selectedPageFile
       ? project.files.find(
@@ -1652,7 +2154,9 @@ export async function updateTemplateWorkbenchContext(
   } catch (error) {
     if (!templateWorkbenchUiLeaseMatches(host, lease)) return null;
     if (options.strict) throw error;
-    host.setGlobalStatus(`Context de template indisponibil: ${errorMessage(error)}`, "error");
+    host.setGlobalStatus(t("project-controller-template-context-unavailable", {
+      message: errorMessage(error),
+    }), "error");
     return null;
   }
 }
@@ -1669,6 +2173,7 @@ export async function exitTemplateWorkbench(
   host.templateWorkbenchReturnPreviewPath = null;
   host.templateWorkbenchPlan = null;
   host.templateWorkbenchPreferredPagePath = null;
+  host.templateWorkbenchPreferredRoute = null;
   host.previewDocumentMarkup = null;
   const returnPage = returnPath
     ? host.scannedProject?.files.find((file) => file.relativePath === returnPath && file.role === "page")
@@ -1688,5 +2193,8 @@ export async function exitTemplateWorkbench(
       await host.refreshRenderedPreviewDocument();
     }
   }
-  host.setGlobalStatus("Context de template închis. Previzualizarea site-ului este activă.", "idle");
+  if (host.previewSrc && host.previewSrc !== "about:blank") {
+    await synchronizeActiveCanvasSurfaceRoute(host, host.previewSrc);
+  }
+  host.setGlobalStatus(t("project-controller-template-closed"), "idle");
 }

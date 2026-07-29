@@ -32,7 +32,7 @@ function host(overrides = {}) {
   return {
     sessionProjectRoot: "/project",
     kernelProjectSessionId: "session:a",
-    scannedProject: { isZola: true },
+    scannedProject: {},
     previewWorkspaceRevision: null,
     pendingCanvasProjection: null,
     canvasSurfaceAvailable: true,
@@ -86,11 +86,11 @@ test("one coordinator projects, publishes and deduplicates a workspace revision"
     throw new Error(`Comandă IPC neașteptată: ${command}`);
   });
 
-  await projectLatestProjectWorkspacePreview(target, {
+  const published = await projectLatestProjectWorkspacePreview(target, {
     reason: "workspace-mutation",
     requestedPaths: ["templates/index.html", "templates/index.html", ""],
   });
-  await projectLatestProjectWorkspacePreview(target, { reason: "workspace-mutation" });
+  const cached = await projectLatestProjectWorkspacePreview(target, { reason: "workspace-mutation" });
 
   assert.deepEqual(calls, [{
     expectedProjectRoot: "/project",
@@ -100,6 +100,8 @@ test("one coordinator projects, publishes and deduplicates a workspace revision"
   }]);
   assert.equal(target.previewWorkspaceRevision, "preview-7");
   assert.deepEqual(target.refreshes, ["workspace-mutation"]);
+  assert.deepEqual(published, { status: "published", workspaceRevision: 7 });
+  assert.deepEqual(cached, { status: "already_current", workspaceRevision: 7 });
 });
 
 test("cache-ul Preview deduplică numai cu dovada exactă a tranzacției Canvas", async () => {
@@ -133,7 +135,7 @@ test("cache-ul Preview deduplică numai cu dovada exactă a tranzacției Canvas"
       expectedWorkspaceRevision: 7,
       expectedWorkspaceTransactionId: "workspace-străin",
     }),
-    /nu dovedește tranzacția așteptată a sesiunii proiectului/,
+    /does not prove the expected project-session transaction/,
   );
   assert.equal(projections, 1);
 });
@@ -225,10 +227,11 @@ test("a late projection from a replaced same-root runtime has zero UI effects", 
   await Promise.resolve();
   target.kernelProjectSessionId = "session:b";
   gate.resolve();
-  await projection;
+  const outcome = await projection;
 
   assert.equal(target.previewWorkspaceRevision, null);
   assert.deepEqual(target.refreshes, []);
+  assert.deepEqual(outcome, { status: "superseded", workspaceRevision: null });
 });
 
 test("minimum revision and receipt identity are fail-closed", async () => {
@@ -246,14 +249,37 @@ test("minimum revision and receipt identity are fail-closed", async () => {
       reason: "workspace-mutation",
       minimumWorkspaceRevision: 6,
     }),
-    /sub revizia minimă cerută/,
+    /below the required minimum revision/,
   );
   await assert.rejects(
     projectLatestProjectWorkspacePreview(target, { reason: "workspace-mutation" }),
-    /altă revizie ProjectWorkspace/,
+    /another ProjectWorkspace revision/,
   );
   assert.equal(target.previewWorkspaceRevision, null);
   assert.deepEqual(target.refreshes, []);
+});
+
+test("an exact mutation projection becomes superseded when Rust already published a newer revision", async () => {
+  const target = host();
+  let projectionCalls = 0;
+  mockIPC((command) => {
+    if (command === "read_project_workspace_state") return snapshot(8);
+    if (command === "project_project_workspace_preview") {
+      projectionCalls += 1;
+      throw new Error("Revizia depășită nu trebuie proiectată.");
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  const outcome = await projectLatestProjectWorkspacePreview(target, {
+    reason: "workspace-mutation",
+    minimumWorkspaceRevision: 7,
+    expectedWorkspaceRevision: 7,
+    expectedWorkspaceTransactionId: "tx-7",
+  });
+
+  assert.deepEqual(outcome, { status: "superseded", workspaceRevision: 8 });
+  assert.equal(projectionCalls, 0);
 });
 
 test("a preview revision published during session start is already settled", async () => {
@@ -335,6 +361,29 @@ test("an exact receipt-bound projection consumes the derived mutation timer", as
   assert.deepEqual(target.refreshes, ["workspace-mutation"]);
 });
 
+test("an event received after its exact receipt cannot project the revision twice", async () => {
+  const projectedRevisions = [];
+  const target = host();
+  mockIPC((command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(19);
+    if (command === "project_project_workspace_preview") {
+      projectedRevisions.push(args.input.expectedWorkspaceRevision);
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  await projectLatestProjectWorkspacePreview(target, {
+    reason: "workspace-mutation",
+    minimumWorkspaceRevision: 19,
+  });
+  scheduleProjectWorkspaceDerivedPreviewProjection(target, "workspace-mutation", 19);
+  await new Promise((resolve) => setTimeout(resolve, 180));
+
+  assert.deepEqual(projectedRevisions, [19]);
+  assert.deepEqual(target.refreshes, ["workspace-mutation"]);
+});
+
 test("a direct structural projection restores the active Template Workbench at the canonical revision", async () => {
   const workbenchRevisions = [];
   const target = host({
@@ -384,7 +433,7 @@ test("an unmounted Canvas defers the workspace revision and projects it once a s
     throw new Error(`Comandă IPC neașteptată: ${command}`);
   });
 
-  await projectLatestProjectWorkspacePreview(target, {
+  const deferredOutcome = await projectLatestProjectWorkspacePreview(target, {
     reason: "workspace-mutation",
     minimumWorkspaceRevision: 16,
     requestedPaths: ["content/despre.md", "templates/despre.html"],
@@ -395,9 +444,10 @@ test("an unmounted Canvas defers the workspace revision and projects it once a s
   assert.deepEqual(workbenchRevisions, []);
   assert.deepEqual(target.refreshes, []);
   assert.equal(target.previewWorkspaceRevision, null);
+  assert.deepEqual(deferredOutcome, { status: "deferred", workspaceRevision: 16 });
 
   target.canvasSurfaceAvailable = true;
-  await projectLatestProjectWorkspacePreview(target, {
+  const publishedOutcome = await projectLatestProjectWorkspacePreview(target, {
     reason: "manual",
     minimumWorkspaceRevision: 16,
   });
@@ -407,6 +457,40 @@ test("an unmounted Canvas defers the workspace revision and projects it once a s
   assert.deepEqual(workbenchRevisions, [16]);
   assert.deepEqual(target.refreshes, []);
   assert.equal(target.previewWorkspaceRevision, "preview-16");
+  assert.deepEqual(publishedOutcome, { status: "published", workspaceRevision: 16 });
+});
+
+test("a replaced Canvas generation cannot publish the ACK of the previous surface", async () => {
+  const projectedRevisions = [];
+  const target = host({
+    canvasSurfaceGeneration: 3,
+    async requestWorkspaceProjectionPreviewRefresh() {
+      this.canvasSurfaceGeneration = 4;
+      return true;
+    },
+  });
+  mockIPC((command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(18);
+    if (command === "project_project_workspace_preview") {
+      projectedRevisions.push(args.input.expectedWorkspaceRevision);
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  const deferredOutcome = await projectLatestProjectWorkspacePreview(target, {
+    reason: "workspace-mutation",
+  });
+  assert.deepEqual(deferredOutcome, { status: "deferred", workspaceRevision: 18 });
+  assert.equal(target.pendingCanvasProjection, null);
+  assert.equal(target.previewWorkspaceRevision, null);
+
+  target.requestWorkspaceProjectionPreviewRefresh = async () => true;
+  const publishedOutcome = await projectLatestProjectWorkspacePreview(target, {
+    reason: "session-refresh",
+  });
+  assert.deepEqual(projectedRevisions, [18, 18]);
+  assert.deepEqual(publishedOutcome, { status: "published", workspaceRevision: 18 });
 });
 
 test("Template Workbench uses the canonical preview command with one exact workspace revision", async () => {

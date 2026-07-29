@@ -6,11 +6,15 @@ import {
   createCssRequestIdentity,
   cssRequestIdentityMatches,
   getScssVariables,
+  resolveCssInspectorContext,
   setCssRuleAtViewport,
   setScssVariable,
 } from "$lib/project/io";
 import { hashFileBufferText } from "$lib/session/file-buffer-draft-sync";
-import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/types";
+import {
+  CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+  PROJECT_WORKSPACE_SCHEMA_VERSION,
+} from "$lib/types";
 
 if (!globalThis.window) globalThis.window = globalThis;
 
@@ -44,6 +48,7 @@ function mutation(identity, overrides = {}) {
   return {
     projectRoot: identity.expectedProjectRoot,
     runtimeSessionId: identity.expectedSessionId,
+    workspaceRevision: 5,
     payload: null,
     authority: {
       schemaVersion: 2,
@@ -133,7 +138,9 @@ test("CSS mutation rejects stale and internally inconsistent authority", async (
   );
 
   clearMocks();
-  mockIPC(() => mutation(identity, { revisionAfter: 7 }));
+  const inconsistentRevision = mutation(identity, { revisionAfter: 7 });
+  inconsistentRevision.workspaceRevision = 7;
+  mockIPC(() => inconsistentRevision);
   await assert.rejects(
     setScssVariable("sass/site.scss", "accent", "blue", identity),
     /\[css_invalid_authority_receipt\]/,
@@ -149,6 +156,125 @@ test("CSS mutation rejects stale and internally inconsistent authority", async (
   );
 });
 
+test("Inspector CSS mutation forwards the captured semantic selection identity", async () => {
+  const identity = createCssRequestIdentity(projectRoot, runtimeA);
+  const expectedSelection = {
+    selectionRevision: 17,
+    editorNodeId: "editor:hero",
+    sourceNodeId: "source:hero",
+    renderInstanceId: "render:hero",
+  };
+  mockIPC((command, args) => {
+    assert.equal(command, "set_css_rule_at_viewport");
+    assert.deepEqual(args.expectedSelection, expectedSelection);
+    return mutation(identity);
+  });
+
+  await setCssRuleAtViewport({
+    relativePath: "sass/site.scss",
+    selector: ".hero",
+    properties: { color: "red" },
+    viewport: "desktop",
+    expectedSelection,
+  }, identity);
+});
+
+test("CSS inspector resolution is bound to one workspace and semantic selection revision", async () => {
+  const identity = createCssRequestIdentity(projectRoot, runtimeA);
+  const expectedSelection = {
+    selectionRevision: 17,
+    editorNodeId: "editor:hero",
+    sourceNodeId: "source:hero",
+    renderInstanceId: "render:hero",
+  };
+  const ruleContext = {
+    file: "sass/site.scss",
+    selector: ".hero",
+    viewport: "desktop",
+    resolvedBreakpoint: null,
+    baseRules: [{ property: "color", value: "red" }],
+    viewportRules: [{ property: "color", value: "red" }],
+    hasBaseRule: true,
+    hasViewportRule: true,
+  };
+  const target = {
+    file: "sass/site.scss",
+    selector: ".hero",
+    targetKind: "existing",
+    exists: true,
+    linked: false,
+    href: null,
+    templatePath: "templates/index.html",
+    pageOwned: false,
+    reason: "existing",
+  };
+  mockIPC((command, args) => {
+    assert.equal(command, "resolve_css_inspector_context");
+    assert.deepEqual(args, {
+      templatePath: "templates/index.html",
+      selector: ".hero",
+      viewport: "desktop",
+      fallbackFile: "sass/site.scss",
+      expectedWorkspaceRevision: 4,
+      expectedSelection,
+      identity,
+    });
+    return {
+      projectRoot,
+      runtimeSessionId: runtimeA,
+      workspaceRevision: 4,
+      payload: {
+        schemaVersion: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+        selectionRevision: 17,
+        selector: ".hero",
+        viewport: "desktop",
+        state: "existing",
+        target,
+        ruleContext,
+        candidates: [{ file: "sass/site.scss", ruleContext }],
+      },
+    };
+  });
+
+  const resolution = await resolveCssInspectorContext({
+    templatePath: "templates/index.html",
+    selector: ".hero",
+    viewport: "desktop",
+    fallbackFile: "sass/site.scss",
+    expectedWorkspaceRevision: 4,
+    expectedSelection,
+  }, identity);
+  assert.equal(resolution.target.file, "sass/site.scss");
+
+  clearMocks();
+  mockIPC(() => ({
+    projectRoot,
+    runtimeSessionId: runtimeA,
+    workspaceRevision: 4,
+    payload: {
+      schemaVersion: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+      selectionRevision: 18,
+      selector: ".hero",
+      viewport: "desktop",
+      state: "existing",
+      target,
+      ruleContext,
+      candidates: [{ file: "sass/site.scss", ruleContext }],
+    },
+  }));
+  await assert.rejects(
+    resolveCssInspectorContext({
+      templatePath: "templates/index.html",
+      selector: ".hero",
+      viewport: "desktop",
+      fallbackFile: "sass/site.scss",
+      expectedWorkspaceRevision: 4,
+      expectedSelection,
+    }, identity),
+    /\[css_inspector_invalid_receipt\]/,
+  );
+});
+
 test("CSS identity distinguishes same-root runtime replacements", () => {
   const identity = createCssRequestIdentity(projectRoot, runtimeA);
   assert.equal(cssRequestIdentityMatches(identity, projectRoot, runtimeA), true);
@@ -161,6 +287,6 @@ test("CSS panel presents session staging and Save as the only disk boundary", ()
     new URL("../src/lib/components/InspectorPane.svelte", import.meta.url),
     "utf8",
   );
-  assert.match(source, /este în sesiunea proiectului — Ctrl\+S persistă pe disc/);
+  assert.match(source, /t\("inspector-css-session-saved"/);
   assert.doesNotMatch(source, /acceptedDiskGeneration|acceptedManifest|InternalWriteEvidence/);
 });

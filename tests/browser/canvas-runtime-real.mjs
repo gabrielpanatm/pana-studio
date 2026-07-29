@@ -12,10 +12,8 @@ const bridgeParts = [
   "01_dom_structure.js",
   "02_css_inspection.js",
   "03_overlay_geometry.js",
-  "04_html_selection.js",
-  "05_template_gate.js",
+  "03_canvas_agent.js",
   "06_empty_zones.js",
-  "06_preview_hover.js",
   "07_drag_drop.js",
   "08_inspector_shell.js",
   "09_design_safe_surface.js",
@@ -74,7 +72,7 @@ const initialDocument = `<!doctype html>
       data-pana-canvas-workspace-revision="1"
       data-pana-canvas-transaction-id="canvas_active_browser_real">
   <head><link rel="stylesheet" href="${oldCss}"></head>
-  <body><main><h1 id="probe" data-pana-source-id="source-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" href="/servicii">Servicii</a></main>
+  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/servicii">Servicii</a></main>
   <script>
     window.addEventListener("error", function (event) {
       window.parent.postMessage({source:"pana-browser-harness",type:"child-error",message:String(event.message || "error"),line:event.lineno,column:event.colno}, "*");
@@ -95,7 +93,7 @@ const canonicalDocument = `<!doctype html>
       data-pana-canvas-workspace-transaction-id="workspace-browser-real-107"
       data-pana-canvas-transaction-id="${identity.transactionId}">
   <head><link rel="stylesheet" href="${nextCss}"></head>
-  <body><main><h1 id="probe" data-pana-source-id="source-title">After</h1><a id="nav-probe" data-pana-source-id="source-nav" href="/despre">Servicii</a></main></body>
+  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">After</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/despre">Servicii</a></main></body>
 </html>`;
 
 const interactiveDocument = `<!doctype html>
@@ -113,7 +111,17 @@ const interactiveDocument = `<!doctype html>
     </section>
     <script>${escapeInlineScript(blockRuntime)}</script>
     <script>${escapeInlineScript(interactiveRuntime)}</script>
-    <script>window.PanaBlockRuntime.installPageConfig({blocks:[{id:"accordion"}],motion:{items:[{id:"motion-1"}]}});</script>
+    <script>window.PanaBlockRuntime.installPageConfig({
+      version:2,
+      blocks:[{id:"accordion"}],
+      motion:{
+        schemaVersion:2,
+        animeVersion:"4.4.1",
+        interactions:[{id:"motion-1"}],
+        behaviors:[],
+        customCode:[]
+      }
+    });</script>
   </body>
 </html>`;
 
@@ -132,6 +140,7 @@ const harness = `<!doctype html>
   const interactiveDocument = ${htmlJson(interactiveDocument)};
   const identity = ${JSON.stringify(identity)};
   const messages = [];
+  const canvasAgentMessages = [];
   const interactiveMessages = [];
   const childDiagnostics = [];
   const colors = [];
@@ -181,9 +190,30 @@ const harness = `<!doctype html>
     });
   }
 
+  function waitForCanvasAgentMessage(predicate, timeoutMs = 12000) {
+    return new Promise((resolve, reject) => {
+      const existing = canvasAgentMessages.find(predicate);
+      if (existing) return resolve(existing);
+      const timeout = setTimeout(() => {
+        window.removeEventListener("message", listener);
+        reject(new Error("canvas agent message timeout"));
+      }, timeoutMs);
+      function listener(event) {
+        if (event.source !== frame.contentWindow || !predicate(event.data)) return;
+        clearTimeout(timeout);
+        window.removeEventListener("message", listener);
+        resolve(event.data);
+      }
+      window.addEventListener("message", listener);
+    });
+  }
+
   window.addEventListener("message", (event) => {
     if (event.source === frame.contentWindow && event.data?.source === "pana-studio-preview") {
       messages.push(event.data);
+    }
+    if (event.source === frame.contentWindow && event.data?.source === "pana-studio-canvas-agent") {
+      canvasAgentMessages.push(event.data);
     }
     if (event.source === interactiveFrame.contentWindow && event.data?.source === "pana-studio-interactive") {
       interactiveMessages.push(event.data);
@@ -205,6 +235,332 @@ const harness = `<!doctype html>
     const ready = await waitForMessage((data) => data?.type === "ready");
     if (ready.canvasPhaseReceipts?.map((entry) => entry.phase).join(",") !== "resourcesReady,committed,styledReady") {
       throw new Error("boot phase sequence mismatch");
+    }
+    const agentReady = await waitForCanvasAgentMessage((data) => data?.type === "agentReady");
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "activate-canvas-interaction-agent",
+      schemaVersion: 2,
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      lastAcceptedSequence: 0,
+      selection: true
+    }, "*");
+    const agentActivated = await waitForCanvasAgentMessage((data) =>
+      data?.type === "agentActivated"
+    );
+    if (
+      agentActivated.agentInstanceId !== agentReady.agentInstanceId
+      || agentActivated.documentEpoch !== 1
+    ) {
+      throw new Error("CanvasAgent activation acknowledgement mismatch");
+    }
+    result.textContent = "canvas-agent-native-hover";
+    document.title = "AGENT_HOVER_WAIT";
+    const agentHover = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture" && data.gesture === "pointerMove"
+    );
+    if (
+      agentHover.documentEpoch !== 1
+      || agentHover.hitPath?.[0]?.kind !== "renderInstance"
+      || agentHover.hitPath?.[0]?.id !== "render-title"
+    ) {
+      throw new Error("trusted CanvasAgent hover hit path mismatch");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "hover",
+      targetKind: "htmlElement",
+      editorNodeId: "editor_render:render-title",
+      gestureSequence: agentHover.gestureSequence,
+      actions: { canEnterBoundary: false },
+      projection: {
+        primaryRenderInstanceId: "render-title",
+        renderInstanceIds: ["render-title"],
+        boundaryInstanceId: null
+      }
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const hoverOverlay = frame.contentDocument.getElementById(
+      "pana-studio-canvas-agent-hover"
+    );
+    if (!hoverOverlay || hoverOverlay.style.display !== "block") {
+      throw new Error("CanvasAgent did not project the Rust-owned hover overlay target");
+    }
+    result.textContent = "canvas-agent-native-click";
+    document.title = "AGENT_WAIT";
+    const agentClick = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture" && data.gesture === "click"
+    );
+    if (
+      agentClick.documentEpoch !== 1
+      || agentClick.hitPath?.[0]?.kind !== "renderInstance"
+      || agentClick.hitPath?.[0]?.id !== "render-title"
+    ) {
+      throw new Error("trusted CanvasAgent hit path mismatch");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "selection",
+      targetKind: "htmlElement",
+      editorNodeId: "editor_render:render-title",
+      gestureSequence: agentClick.gestureSequence,
+      selectionRevision: 41,
+      actions: { canEnterBoundary: false },
+      projection: {
+        primaryRenderInstanceId: "render-title",
+        renderInstanceIds: ["render-title"],
+        boundaryInstanceId: null
+      }
+    }, "*");
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "inspect-canvas-interaction-target",
+      schemaVersion: 2,
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      inspectionRequestId: "inspection:1:click",
+      renderInstanceId: "render-title"
+    }, "*");
+    const inspection = await waitForCanvasAgentMessage((data) =>
+      data?.type === "domInspection"
+        && data.inspectionRequestId === "inspection:1:click"
+    );
+    if (
+      inspection.renderInstanceId !== "render-title"
+      || inspection.observation?.tag !== "h1"
+      || "sourceId" in inspection.observation
+      || "templateSourceId" in inspection.observation
+      || inspection.observation?.attributes?.["data-pana-source-id"]
+    ) {
+      throw new Error("CanvasAgent leaked semantic authority into DOM inspection");
+    }
+    const agentOverlay = frame.contentDocument.getElementById(
+      "pana-studio-canvas-agent-selection"
+    );
+    if (!agentOverlay || agentOverlay.style.display !== "block") {
+      throw new Error("CanvasAgent did not project the Rust-owned overlay target");
+    }
+    result.textContent = "canvas-agent-native-drag";
+    document.title = "AGENT_DRAG_WAIT";
+    const dragStart = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture" && data.gesture === "dragStart"
+    );
+    const dragOver = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture"
+        && data.gesture === "dragOver"
+        && data.gestureSequence > dragStart.gestureSequence
+        && data.hitPath?.[0]?.id === "render-nav"
+    );
+    if (
+      dragStart.hitPath?.[0]?.id !== "render-title"
+      || !dragStart.drag?.sessionId
+      || dragStart.drag.position !== null
+      || dragOver.drag?.sessionId !== dragStart.drag.sessionId
+      || !["before", "after", "inside"].includes(dragOver.drag?.position)
+      || dragOver.hitPath?.[0]?.id !== "render-nav"
+    ) {
+      throw new Error("trusted CanvasAgent drag contract mismatch");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "drag",
+      targetKind: "htmlElement",
+      editorNodeId: "editor_render:render-nav",
+      gestureSequence: dragOver.gestureSequence,
+      dragSessionId: dragOver.drag.sessionId,
+      dragPosition: dragOver.drag.position,
+      dragPermission: {
+        state: "pending"
+      },
+      projection: {
+        primaryRenderInstanceId: "render-nav",
+        renderInstanceIds: ["render-nav"],
+        boundaryInstanceId: null
+      }
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const dragIndicator = frame.contentDocument.getElementById(
+      "pana-studio-canvas-agent-drag"
+    );
+    const dragAxis = dragIndicator?.getAttribute("data-pana-drag-axis");
+    const navRect = frame.contentDocument.getElementById("nav-probe")?.getBoundingClientRect();
+    const indicatorRect = dragIndicator?.getBoundingClientRect();
+    if (
+      !dragIndicator
+      || dragIndicator.style.display !== "block"
+      || dragIndicator.getAttribute("data-pana-drag-position") !== dragOver.drag.position
+      || dragIndicator.getAttribute("data-pana-drag-permission") !== "pending"
+      || !navRect
+      || !indicatorRect
+    ) {
+      throw new Error("CanvasAgent did not render the Rust-projected drag indicator");
+    }
+    if (dragOver.drag.position === "inside") {
+      if (
+        Math.abs(indicatorRect.left - navRect.left) > 2
+        || Math.abs(indicatorRect.top - navRect.top) > 2
+        || Math.abs(indicatorRect.width - navRect.width) > 2
+        || Math.abs(indicatorRect.height - navRect.height) > 2
+      ) {
+        throw new Error("inside drag indicator geometry mismatch");
+      }
+    } else if (dragAxis === "horizontal") {
+      const expectedX = dragOver.drag.position === "before" ? navRect.left : navRect.right;
+      if (Math.abs(indicatorRect.left + 1 - expectedX) > 2 || indicatorRect.width !== 3) {
+        throw new Error("horizontal drag edge indicator geometry mismatch");
+      }
+    } else {
+      const expectedY = dragOver.drag.position === "before" ? navRect.top : navRect.bottom;
+      if (Math.abs(indicatorRect.top + 1 - expectedY) > 2 || indicatorRect.height !== 3) {
+        throw new Error("vertical drag edge indicator geometry mismatch");
+      }
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "drag",
+      targetKind: "htmlElement",
+      editorNodeId: "editor_render:render-nav",
+      gestureSequence: dragOver.gestureSequence,
+      dragSessionId: dragOver.drag.sessionId,
+      dragPosition: dragOver.drag.position,
+      dragPermission: {
+        state: "blocked"
+      },
+      projection: {
+        primaryRenderInstanceId: "render-nav",
+        renderInstanceIds: ["render-nav"],
+        boundaryInstanceId: null
+      }
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const blockedIndicatorColor = dragOver.drag.position === "inside"
+      ? dragIndicator.style.borderColor
+      : dragIndicator.style.background;
+    if (
+      dragIndicator.getAttribute("data-pana-drag-permission") !== "blocked"
+      || blockedIndicatorColor !== "rgb(220, 38, 38)"
+    ) {
+      throw new Error("CanvasAgent did not project the blocked Rust move verdict");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "drag",
+      targetKind: "htmlElement",
+      editorNodeId: "editor_render:render-nav",
+      gestureSequence: dragOver.gestureSequence,
+      dragSessionId: dragOver.drag.sessionId,
+      dragPosition: dragOver.drag.position,
+      dragPermission: {
+        state: "allowed"
+      },
+      projection: {
+        primaryRenderInstanceId: "render-nav",
+        renderInstanceIds: ["render-nav"],
+        boundaryInstanceId: null
+      }
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const allowedIndicatorColor = dragOver.drag.position === "inside"
+      ? dragIndicator.style.borderColor
+      : dragIndicator.style.background;
+    if (
+      dragIndicator.getAttribute("data-pana-drag-permission") !== "allowed"
+      || allowedIndicatorColor !== "rgb(21, 128, 61)"
+    ) {
+      throw new Error("CanvasAgent did not project the allowed Rust move verdict");
+    }
+    result.textContent = "canvas-agent-native-drop";
+    document.title = "AGENT_DROP_WAIT";
+    const drop = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture"
+        && data.gesture === "drop"
+        && data.gestureSequence > dragOver.gestureSequence
+    );
+    if (
+      drop.drag?.sessionId !== dragStart.drag.sessionId
+      || !["before", "after", "inside"].includes(drop.drag?.position)
+      || drop.hitPath?.[0]?.id !== "render-nav"
+    ) {
+      throw new Error("trusted CanvasAgent drop contract mismatch");
+    }
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+    if (dragIndicator.style.display !== "none") {
+      throw new Error("CanvasAgent drag indicator survived pointer release");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "selection",
+      targetKind: "teraBoundary",
+      editorNodeId: "editor_boundary:hero",
+      gestureSequence: drop.gestureSequence,
+      selectionRevision: 42,
+      actions: { canEnterBoundary: true },
+      projection: {
+        primaryRenderInstanceId: "render-nav",
+        renderInstanceIds: ["render-nav"],
+        boundaryInstanceId: "boundary-hero"
+      }
+    }, "*");
+    result.textContent = "canvas-agent-native-action";
+    document.title = "AGENT_ACTION_WAIT";
+    const boundaryAction = await waitForCanvasAgentMessage((data) =>
+      data?.type === "action" && data.action === "enterBoundary"
+    );
+    if (
+      boundaryAction.selectionRevision !== 42
+      || boundaryAction.editorNodeId !== "editor_boundary:hero"
+      || boundaryAction.actionSequence <= drop.gestureSequence
+    ) {
+      throw new Error("CanvasAgent boundary action was not tied to the Rust projection");
+    }
+    document.title = "RUNNING";
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "set-application-appearance",
+      accent: "#c2410c",
+      textOnAccent: "#ffffff"
+    }, "*");
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+      const style = frame.contentDocument.documentElement.style;
+      if (
+        style.getPropertyValue("--pana-studio-accent") === "#c2410c"
+        && style.getPropertyValue("--pana-studio-text-on-accent") === "#ffffff"
+      ) break;
+    }
+    const previewRootStyle = frame.contentDocument.documentElement.style;
+    if (
+      previewRootStyle.getPropertyValue("--pana-studio-accent") !== "#c2410c"
+      || previewRootStyle.getPropertyValue("--pana-studio-text-on-accent") !== "#ffffff"
+    ) {
+      throw new Error("application appearance was not propagated to the preview bridge");
     }
     const persistentDocument = frame.contentDocument;
     frame.contentWindow.requestAnimationFrame(sampleColor);
@@ -373,7 +729,6 @@ const harness = `<!doctype html>
       type: "replace-document",
       previewRevision: 1000,
       html: canonicalDocument,
-      selector: "#probe",
       liveCss: "",
       canvasIdentity: identity
     }, "*");
@@ -386,6 +741,49 @@ const harness = `<!doctype html>
     const phases = canonicalAck.canvasPhaseReceipts?.map((entry) => entry.phase) ?? [];
     if (phases.join(",") !== "resourcesReady,committed,styledReady") {
       throw new Error("canonical phase sequence mismatch: " + phases.join(","));
+    }
+    const reconciledRootStyle = frame.contentDocument.documentElement.style;
+    if (
+      reconciledRootStyle.getPropertyValue("--pana-studio-accent") !== "#c2410c"
+      || reconciledRootStyle.getPropertyValue("--pana-studio-text-on-accent") !== "#ffffff"
+    ) {
+      throw new Error("canonical reconcile lost the cached application appearance");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "selection",
+      targetKind: "htmlElement",
+      editorNodeId: "editor_render:render-title",
+      gestureSequence: agentClick.gestureSequence,
+      selectionRevision: 43,
+      actions: { canEnterBoundary: false },
+      projection: {
+        primaryRenderInstanceId: "render-title",
+        renderInstanceIds: ["render-title"],
+        boundaryInstanceId: null
+      }
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const reconciledSelectionOverlay = frame.contentDocument.getElementById(
+      "pana-studio-canvas-agent-selection"
+    );
+    const reconciledSelectionBorder = reconciledSelectionOverlay
+      ? frame.contentWindow.getComputedStyle(reconciledSelectionOverlay).borderColor
+      : "";
+    if (
+      !reconciledSelectionOverlay
+      || reconciledSelectionOverlay.style.display !== "block"
+      || reconciledSelectionBorder !== "rgb(194, 65, 12)"
+    ) {
+      throw new Error(
+        "canonical reconcile did not preserve the application accent on the selection outline: "
+          + reconciledSelectionBorder
+      );
     }
     if (frame.contentDocument.getElementById("probe")?.textContent !== "Live draft") {
       throw new Error("canonical reconcile clobbered the active live text draft");
@@ -428,7 +826,6 @@ const harness = `<!doctype html>
       type: "replace-document",
       previewRevision: 1002,
       html: canonicalDocument,
-      selector: "#probe",
       liveCss: "",
       canvasIdentity: identity
     }, "*");
@@ -478,7 +875,12 @@ const harness = `<!doctype html>
     if (interactiveReady.previewRevision !== "interactive-browser-real") {
       throw new Error("interactive ready revision mismatch");
     }
-    if (configReceipt.blockCount !== 1 || configReceipt.motionItemCount !== 1) {
+    if (
+      configReceipt.blockCount !== 1
+      || configReceipt.motionInteractionCount !== 1
+      || configReceipt.motionBehaviorCount !== 0
+      || configReceipt.motionCustomCodeCount !== 0
+    ) {
       throw new Error("PageJsConfig lifecycle receipt mismatch");
     }
     if (!domSnapshot.nodes?.some((node) => node.sourceId === "source-accordion")) {
@@ -521,8 +923,8 @@ const harness = `<!doctype html>
     if (triggers[0].getAttribute("aria-expanded") !== "true") {
       throw new Error("interactive lifecycle dispose leaked a listener");
     }
-    if (interactiveWindow.__panaMotionGraphConfig?.items?.length !== 1) {
-      throw new Error("MotionGraph was not derived from PageJsConfig in the interactive realm");
+    if (interactiveWindow.__panaMotionV2Config?.interactions?.length !== 1) {
+      throw new Error("Motion v2 was not derived from PageJsConfig in the interactive realm");
     }
     if (interactiveMessages.some((message) => message.type === "lifecycle-error")) {
       throw new Error("interactive lifecycle emitted an error");
@@ -538,14 +940,22 @@ const harness = `<!doctype html>
       sameDocument: true,
       interactiveNodes: domSnapshot.nodes.length,
       interactiveLifecycle: "mount/reconcile/dispose",
-      motionItems: interactiveWindow.__panaMotionGraphConfig.items.length
+      motionInteractions: interactiveWindow.__panaMotionV2Config.interactions.length,
+      canvasAgentHover: "trusted-hover",
+      canvasAgentGesture: "trusted-click",
+      canvasAgentDrag: "trusted-drag",
+      canvasAgentDragIndicator: "rust-projected",
+      canvasAgentBoundaryAction: "rust-projected",
+      canvasAgentInspection: "physical-only",
     });
   }
 
   run().catch((error) => finish(false, {
     error: String(error?.message || error) + "\\n" + String(error?.stack || ""),
+    stage: result.textContent,
     childDiagnostics,
-    previewMessageTypes: messages.map((message) => message.type)
+    previewMessageTypes: messages.map((message) => message.type),
+    canvasAgentMessageTypes: canvasAgentMessages.map((message) => message.type)
   }));
 })();
 <\/script></body></html>`;
@@ -630,11 +1040,174 @@ try {
   });
 
   let title = "";
+  let canvasAgentHovered = false;
+  let canvasAgentClicked = false;
+  let canvasAgentDragged = false;
+  let canvasAgentDropReleased = false;
+  let canvasAgentActionClicked = false;
   for (let attempt = 0; attempt < 400; attempt += 1) {
     title = await webdriver(`/session/${sessionId}/execute/sync`, {
       method: "POST",
       body: JSON.stringify({ script: "return document.title", args: [] }),
     });
+    if (title === "AGENT_HOVER_WAIT" && !canvasAgentHovered) {
+      canvasAgentHovered = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      const probeElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#probe" }),
+      });
+      await webdriver(`/session/${sessionId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions: [{
+            type: "pointer",
+            id: "canvas-hover-mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              { type: "pointerMove", duration: 0, origin: probeElement, x: 0, y: 0 },
+            ],
+          }],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
+    if (title === "AGENT_WAIT" && !canvasAgentClicked) {
+      canvasAgentClicked = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      const probeElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#probe" }),
+      });
+      await webdriver(`/session/${sessionId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions: [{
+            type: "pointer",
+            id: "canvas-mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              { type: "pointerMove", duration: 0, origin: probeElement, x: 0, y: 0 },
+              { type: "pointerDown", button: 0 },
+              { type: "pointerUp", button: 0 },
+            ],
+          }],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
+    if (title === "AGENT_DRAG_WAIT" && !canvasAgentDragged) {
+      canvasAgentDragged = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      const probeElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#probe" }),
+      });
+      const navElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#nav-probe" }),
+      });
+      await webdriver(`/session/${sessionId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions: [{
+            type: "pointer",
+            id: "canvas-drag-mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              { type: "pointerMove", duration: 0, origin: probeElement, x: 0, y: 0 },
+              { type: "pointerDown", button: 0 },
+              { type: "pointerMove", duration: 250, origin: navElement, x: 0, y: 0 },
+            ],
+          }],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
+    if (title === "AGENT_DROP_WAIT" && !canvasAgentDropReleased) {
+      canvasAgentDropReleased = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      await webdriver(`/session/${sessionId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions: [{
+            type: "pointer",
+            id: "canvas-drag-mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              { type: "pointerUp", button: 0 },
+            ],
+          }],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
+    if (title === "AGENT_ACTION_WAIT" && !canvasAgentActionClicked) {
+      canvasAgentActionClicked = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      const actionElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({
+          using: "css selector",
+          value: "[data-pana-canvas-agent-action='enterBoundary']",
+        }),
+      });
+      await webdriver(`/session/${sessionId}/element/${actionElement["element-6066-11e4-a52e-4f735466cecf"]}/click`, {
+        method: "POST",
+        body: "{}",
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
     if (title === "PASS" || title === "FAIL") break;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
   }

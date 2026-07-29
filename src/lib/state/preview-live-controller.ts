@@ -1,4 +1,5 @@
 import type { ScssVariable } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type InspectorCssDraft = {
   selector: string;
@@ -199,7 +200,6 @@ export function clearInspectorLiveProperties(
     type: "set-live-style-css",
     id: INSPECTOR_LIVE_STYLE_ID,
     css: "",
-    refreshSelection: false,
   });
   return true;
 }
@@ -229,9 +229,8 @@ export function injectRawCss(host: PreviewLiveControllerHost, id: string, css: s
     type: "set-live-style-css",
     id,
     css,
-    refreshSelection: false,
   });
-  if (css.trim()) host.markPreviewLive?.("Previzualizare live CSS actualizată.");
+  if (css.trim()) host.markPreviewLive?.(t("preview-live-css-updated"));
 }
 
 export function restoreLiveCssLayersToPreview(host: PreviewLiveControllerHost) {
@@ -245,7 +244,6 @@ export function restoreLiveCssLayersToPreview(host: PreviewLiveControllerHost) {
       type: "set-live-style-css",
       id,
       css,
-      refreshSelection: false,
     });
   }
 }

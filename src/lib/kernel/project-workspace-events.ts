@@ -29,8 +29,9 @@ function validNotice(value: unknown): value is ProjectWorkspaceMutationNotice {
 
 /**
  * Rust emits this event only after the authoritative ProjectWorkspace recovery
- * snapshot is durable. Frontend consumers may invalidate derived views, but
- * they never infer or mutate workspace state from the event payload.
+ * snapshot is durable and the live workspace candidate has been published.
+ * Frontend consumers may invalidate derived views, but they never infer or
+ * mutate workspace state from the event payload.
  */
 export function subscribeProjectWorkspaceMutations(
   listener: ProjectWorkspaceMutationListener,

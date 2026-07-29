@@ -16,7 +16,7 @@ test("structured editor recovery stays visible and non-retryable in UI copy", ()
 
   assert.match(message, /^RECOVERY_REQUIRED \[command-save-42, domain_effect\]:/);
   assert.match(message, /Commitul este vizibil/);
-  assert.match(message, /Nu repeta operația automat\.$/);
+  assert.match(message, /Do not retry automatically\.$/);
   assert.doesNotMatch(message, /\[object Object\]/);
 });
 

@@ -54,7 +54,6 @@ function host(overrides = {}) {
     externalDiskCheckGeneration: 0,
     scannedProject: {
       root: "/project",
-      isZola: true,
       kernelSessionId: "session:runtime",
       acceptedDiskGeneration: 3,
       acceptedDiskManifest: manifest(),
@@ -70,7 +69,7 @@ function host(overrides = {}) {
     scssVariables: [],
     globalDirtyState: { dirty: false },
     projectStatus: "",
-    notify(notification) { notifications.push(notification); },
+    escalateGlobalStatus(notification) { notifications.push(notification); },
     clearNotification(id) { cleared.push(id); },
     quiesceExternalReconcileInteractions() {},
     async waitForExternalReconcileInteractionLock() {},
@@ -185,11 +184,11 @@ test("external reconcile manifest advances only for applied or noop Rust receipt
   );
   assert.throws(
     () => acceptedExternalReconcileManifest({ ...base, status: "blocked" }, "/project"),
-    /nu poate avansa baseline-ul/,
+    /cannot advance the external baseline/,
   );
   assert.throws(
     () => acceptedExternalReconcileManifest({ ...base, acceptedDiskGeneration: null }, "/project"),
-    /generația AcceptedDisk terminală/,
+    /terminal AcceptedDisk generation/,
   );
 });
 

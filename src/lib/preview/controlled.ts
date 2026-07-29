@@ -52,8 +52,8 @@ export function createControlledPreviewState(): ControlledPreviewState {
   return {
     freshness: "idle",
     validation: "idle",
-    message: "Previzualizare pregătită.",
-    validationMessage: "Zola nevalidat în această sesiune.",
+    message: t("controlled-preview-ready"),
+    validationMessage: t("controlled-preview-zola-unvalidated-session"),
     lastLiveAt: null,
     lastSavedAt: null,
     lastRefreshAt: null,
@@ -65,7 +65,7 @@ export function createControlledPreviewState(): ControlledPreviewState {
 
 export function markPreviewLive(
   state: ControlledPreviewState,
-  message = "Previzualizare live actualizată de Pană Studio.",
+  message = t("controlled-preview-live-updated"),
 ): ControlledPreviewState {
   return {
     ...state,
@@ -77,7 +77,7 @@ export function markPreviewLive(
 
 export function markPreviewSaved(
   state: ControlledPreviewState,
-  message = "Fișiere salvate pe disc. Previzualizarea live rămâne activă.",
+  message = t("controlled-preview-saved-live"),
 ): ControlledPreviewState {
   return {
     ...state,
@@ -106,7 +106,9 @@ export function markPreviewCanonical(
   return {
     ...state,
     freshness: "canonical",
-    message: `Randare Zola reîmprospătată: ${previewRefreshReasonShortLabel(reason)}.`,
+    message: t("controlled-preview-canonical", {
+      reason: previewRefreshReasonShortLabel(reason),
+    }),
     lastRefreshAt: Date.now(),
     refreshReason: reason,
   };
@@ -133,7 +135,7 @@ export function markZolaQueued(
   return {
     ...state,
     validation: "queued",
-    validationMessage: "Validarea Zola este programată.",
+    validationMessage: t("controlled-preview-zola-queued"),
     validationReason: reason,
   };
 }
@@ -145,7 +147,7 @@ export function markZolaRunning(
   return {
     ...state,
     validation: "running",
-    validationMessage: "Motorul Zola embedded validează proiectul.",
+    validationMessage: t("controlled-preview-zola-running"),
     validationReason: reason,
   };
 }
@@ -153,7 +155,7 @@ export function markZolaRunning(
 export function markZolaValid(
   state: ControlledPreviewState,
   reason: ZolaValidationReason,
-  message = "Validarea Zola embedded a trecut.",
+  message = t("controlled-preview-zola-passed"),
 ): ControlledPreviewState {
   return {
     ...state,
@@ -178,69 +180,36 @@ export function markZolaInvalid(
   };
 }
 
-export function previewFreshnessLabel(state: ControlledPreviewState) {
-  switch (state.freshness) {
-    case "live":
-      return "Previzualizare live";
-    case "saved":
-      return "Salvat pe disc";
-    case "refreshing":
-      return "Reîmprospătare Zola";
-    case "canonical":
-      return "Randare Zola";
-    case "stale":
-      return "Previzualizare nevalidată";
-    case "error":
-      return "Eroare de previzualizare";
-    default:
-      return "Previzualizare";
-  }
-}
-
-export function zolaValidationLabel(state: ControlledPreviewState) {
-  switch (state.validation) {
-    case "queued":
-      return "Zola în coadă";
-    case "running":
-      return "Zola validează";
-    case "valid":
-      return "Zola valid";
-    case "invalid":
-      return "Zola invalid";
-    case "error":
-      return "Zola eroare";
-    default:
-      return "Zola nevalidat";
-  }
-}
-
 export function previewRefreshReasonShortLabel(reason: PreviewRefreshReason) {
   switch (reason) {
     case "manual":
-      return "manual";
+      return t("controlled-preview-reason-manual");
     case "session-refresh":
-      return "sesiune";
+      return t("controlled-preview-reason-session");
     case "project-rescan":
-      return "proiect";
+      return t("controlled-preview-reason-project");
     case "discard":
-      return "disc";
+      return t("controlled-preview-reason-disk");
     case "external-change":
-      return "schimbări externe";
+      return t("controlled-preview-reason-external");
     case "workspace-mutation":
-      return "sesiune";
+      return t("controlled-preview-reason-session");
     case "tera-structural":
       return "Tera";
     case "html-structural":
       return "HTML";
     case "history-restore":
-      return "istoric";
+      return t("controlled-preview-reason-history");
     case "after-save":
-      return "după salvare";
+      return t("controlled-preview-reason-after-save");
     default:
-      return "necunoscut";
+      return t("controlled-preview-reason-unknown");
   }
 }
 
 function previewRefreshReasonLabel(reason: PreviewRefreshReason) {
-  return `Se reîmprospătează randarea Zola (${previewRefreshReasonShortLabel(reason)}).`;
+  return t("controlled-preview-refreshing", {
+    reason: previewRefreshReasonShortLabel(reason),
+  });
 }
+import { t } from "$lib/i18n/runtime.svelte";

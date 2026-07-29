@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     kernel::file_buffer_store::{FileBufferDiagnostic, FileBufferDiagnosticSeverity},
+    localization::LocalizedDiagnostic,
     project_model::model::{
         ProjectModel, ProjectModelDiagnosticSeverity, ProjectModelFile, ProjectModelFileKind,
     },
@@ -36,8 +37,8 @@ pub fn build_project_audit(
                 },
                 category: AuditCategory::Build,
                 code: "project_model".to_string(),
-                title: "ProjectModel".to_string(),
-                message: diagnostic.message.clone(),
+                title_diagnostic: LocalizedDiagnostic::new("audit-title-project-model"),
+                message_diagnostic: diagnostic.diagnostic.clone(),
                 file: diagnostic.file.clone(),
                 range: diagnostic.range.clone(),
             },
@@ -55,8 +56,8 @@ pub fn build_project_audit(
                 },
                 category: AuditCategory::References,
                 code: "source_graph".to_string(),
-                title: "Referință de proiect".to_string(),
-                message: diagnostic.message.clone(),
+                title_diagnostic: LocalizedDiagnostic::new("audit-title-project-reference"),
+                message_diagnostic: diagnostic.diagnostic.clone(),
                 file: diagnostic.file.clone(),
                 range: diagnostic.range.clone(),
             },
@@ -74,8 +75,8 @@ pub fn build_project_audit(
                 },
                 category: AuditCategory::Workspace,
                 code: diagnostic.code.clone(),
-                title: "Fișier omis din workspace".to_string(),
-                message: diagnostic.message.clone(),
+                title_diagnostic: LocalizedDiagnostic::new("audit-title-workspace-file"),
+                message_diagnostic: diagnostic.message_diagnostic.clone(),
                 file: diagnostic.relative_path.clone(),
                 range: None,
             },
@@ -102,7 +103,11 @@ pub fn build_project_audit(
                     .map(|range| range.line)
                     .cmp(&right.range.as_ref().map(|range| range.line))
             })
-            .then_with(|| left.message.cmp(&right.message))
+            .then_with(|| {
+                left.message_diagnostic
+                    .code
+                    .cmp(&right.message_diagnostic.code)
+            })
     });
 
     let affected_files = diagnostics
@@ -159,8 +164,8 @@ fn audit_template(
                     AuditSeverity::Warning,
                     AuditCategory::Accessibility,
                     "image_missing_alt",
-                    "Imagine fără text alternativ",
-                    "Elementul <img> nu declară atributul alt. Folosește alt gol numai pentru imagini decorative.",
+                    "audit-image-missing-alt-title",
+                    "audit-image-missing-alt-message",
                     file,
                     start,
                     end,
@@ -182,8 +187,8 @@ fn audit_template(
                     AuditSeverity::Warning,
                     AuditCategory::Accessibility,
                     "html_missing_lang",
-                    "Limba documentului lipsește",
-                    "Elementul <html> trebuie să declare lang pentru cititoare de ecran și motoare de căutare.",
+                    "audit-html-missing-lang-title",
+                    "audit-html-missing-lang-message",
                     file,
                     start,
                     end,
@@ -201,8 +206,8 @@ fn audit_template(
                 AuditSeverity::Warning,
                 AuditCategory::Seo,
                 "document_missing_title",
-                "Titlul documentului lipsește",
-                "Template-ul conține <head>, dar nu declară un element <title>.",
+                "audit-document-missing-title-title",
+                "audit-document-missing-title-message",
                 file,
                 start,
                 start.saturating_add(5),
@@ -226,8 +231,8 @@ fn audit_content(
                 severity: AuditSeverity::Warning,
                 category: AuditCategory::Seo,
                 code: "content_missing_title".to_string(),
-                title: "Pagina nu are title".to_string(),
-                message: "Frontmatter-ul paginii nu declară un titlu explicit.".to_string(),
+                title_diagnostic: LocalizedDiagnostic::new("audit-content-missing-title-title"),
+                message_diagnostic: LocalizedDiagnostic::new("audit-content-missing-title-message"),
                 file: Some(file.relative_path.clone()),
                 range: Some(range_at(&file.contents, 0, 0)),
             },
@@ -241,8 +246,12 @@ fn audit_content(
                 severity: AuditSeverity::Info,
                 category: AuditCategory::Seo,
                 code: "content_missing_description".to_string(),
-                title: "Meta description lipsește".to_string(),
-                message: "Adaugă description în frontmatter pentru un rezumat controlat în rezultatele de căutare.".to_string(),
+                title_diagnostic: LocalizedDiagnostic::new(
+                    "audit-content-missing-description-title",
+                ),
+                message_diagnostic: LocalizedDiagnostic::new(
+                    "audit-content-missing-description-message",
+                ),
                 file: Some(file.relative_path.clone()),
                 range: Some(range_at(&file.contents, 0, 0)),
             },
@@ -272,11 +281,9 @@ fn audit_unused_assets(
                 severity: AuditSeverity::Info,
                 category: AuditCategory::Assets,
                 code: "asset_without_usage".to_string(),
-                title: "Asset fără utilizare cunoscută".to_string(),
-                message: format!(
-                    "Source Graph nu a găsit nicio referință către {}.",
-                    asset.logical_path
-                ),
+                title_diagnostic: LocalizedDiagnostic::new("audit-asset-without-usage-title"),
+                message_diagnostic: LocalizedDiagnostic::new("audit-asset-without-usage-message")
+                    .with_argument("path", asset.logical_path.clone()),
                 file: Some(asset.file.clone()),
                 range: None,
             },
@@ -288,8 +295,8 @@ struct AuditCandidate {
     severity: AuditSeverity,
     category: AuditCategory,
     code: String,
-    title: String,
-    message: String,
+    title_diagnostic: LocalizedDiagnostic,
+    message_diagnostic: LocalizedDiagnostic,
     file: Option<String>,
     range: Option<SourceRange>,
 }
@@ -299,8 +306,8 @@ fn candidate_at(
     severity: AuditSeverity,
     category: AuditCategory,
     code: &str,
-    title: &str,
-    message: &str,
+    title_code: &'static str,
+    message_code: &'static str,
     file: &ProjectModelFile,
     start: usize,
     end: usize,
@@ -309,8 +316,8 @@ fn candidate_at(
         severity,
         category,
         code: code.to_string(),
-        title: title.to_string(),
-        message: message.to_string(),
+        title_diagnostic: LocalizedDiagnostic::new(title_code),
+        message_diagnostic: LocalizedDiagnostic::new(message_code),
         file: Some(file.relative_path.clone()),
         range: Some(range_at(&file.contents, start, end)),
     }
@@ -326,11 +333,13 @@ fn push_unique(
         .as_ref()
         .map(|range| range.line)
         .unwrap_or(0);
+    let message_key = serde_json::to_string(&candidate.message_diagnostic)
+        .unwrap_or_else(|_| candidate.message_diagnostic.code.clone());
     let key = format!(
         "{}\u{0}{}\u{0}{}",
         candidate.file.as_deref().unwrap_or("project"),
         line,
-        candidate.message
+        message_key
     );
     if !seen.insert(key) {
         return;
@@ -339,14 +348,14 @@ fn push_unique(
     candidate.code.hash(&mut hasher);
     candidate.file.hash(&mut hasher);
     line.hash(&mut hasher);
-    candidate.message.hash(&mut hasher);
+    message_key.hash(&mut hasher);
     diagnostics.push(AuditDiagnostic {
         id: format!("audit:{:016x}", hasher.finish()),
         severity: candidate.severity,
         category: candidate.category,
         code: candidate.code,
-        title: candidate.title,
-        message: candidate.message,
+        title_diagnostic: candidate.title_diagnostic,
+        message_diagnostic: candidate.message_diagnostic,
         file: candidate.file,
         range: candidate.range,
     });

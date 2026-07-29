@@ -1,24 +1,34 @@
 use std::collections::{HashMap, HashSet};
 
-use super::types::{NativeBlockRuntimeEntry, PageJsConfig};
+use super::{
+    motion_model::MotionDocument,
+    types::{NativeBlockRuntimeEntry, PageJsConfig},
+};
 
 pub fn parse_page_js(content: &str) -> PageJsConfig {
     let mut blocks: Vec<NativeBlockRuntimeEntry> = Vec::new();
     let mut block_ids: HashSet<String> = HashSet::new();
     let mut version: Option<u32> = None;
-    let mut motion: Option<serde_json::Value> = None;
+    let mut motion: Option<MotionDocument> = None;
 
     for raw_line in content.lines() {
         let line = raw_line.trim();
 
         if let Some(rest) = line.strip_prefix("// @pana-motion ") {
             if let Ok(payload) = serde_json::from_str::<serde_json::Value>(rest) {
-                version = payload
-                    .get("version")
-                    .and_then(serde_json::Value::as_u64)
-                    .map(|value| value as u32)
-                    .or(Some(1));
-                motion = payload.get("motion").cloned();
+                motion = payload
+                    .get("motion")
+                    .cloned()
+                    .and_then(|motion| MotionDocument::from_value(motion).ok());
+                if motion.is_some() {
+                    version = Some(2);
+                } else {
+                    version = payload
+                        .get("version")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|value| value as u32)
+                        .or(Some(1));
+                }
             }
             continue;
         }
@@ -72,12 +82,16 @@ mod tests {
     fn parses_motion_metadata() {
         let config = parse_page_js(
             r#"(function () {
-  // @pana-motion {"version":1,"motion":{"schemaVersion":1,"animeVersion":"4.4.1","items":[{"id":"animation-a","type":"animation"}]}}
+  // @pana-motion {"version":1,"motion":{"schemaVersion":1,"animeVersion":"4.4.1","items":[{"id":"animation-a","type":"animation","target":{"dataAnim":"hero"},"properties":[{"id":"opacity","property":"opacity","category":"css","value":{"mode":"fromTo","from":0,"to":1}}]}]}}
 })();"#,
         );
-        assert_eq!(config.version, Some(1));
+        assert_eq!(config.version, Some(2));
         assert!(config.has_motion_items());
         assert!(config.uses_anime());
+        assert_eq!(
+            config.motion.as_ref().map(|motion| motion.schema_version),
+            Some(2)
+        );
     }
 
     #[test]

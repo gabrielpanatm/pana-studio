@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-startup-creation"
+description = "Enables the apply_startup_creation command without any pre-configured scope."
+commands.allow = ["apply_startup_creation"]
+
+[[permission]]
+identifier = "deny-apply-startup-creation"
+description = "Denies the apply_startup_creation command without any pre-configured scope."
+commands.deny = ["apply_startup_creation"]

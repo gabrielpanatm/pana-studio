@@ -1,7 +1,6 @@
 use crate::kernel::project_state::model::KernelProjectStateSnapshot;
 
 use super::{
-    evidence::{action_context, transition_evidence},
     KernelProjectTransitionAction, KernelProjectTransitionDecision, KernelProjectTransitionPolicy,
     KernelProjectTransitionReason, KERNEL_PROJECT_TRANSITION_POLICY_SCHEMA_VERSION,
 };
@@ -11,9 +10,6 @@ pub(super) fn policy(
     project_state: &KernelProjectStateSnapshot,
     decision: KernelProjectTransitionDecision,
     reason: KernelProjectTransitionReason,
-    title: &str,
-    message: &str,
-    recommended_action: &str,
 ) -> KernelProjectTransitionPolicy {
     KernelProjectTransitionPolicy {
         schema_version: KERNEL_PROJECT_TRANSITION_POLICY_SCHEMA_VERSION,
@@ -26,10 +22,6 @@ pub(super) fn policy(
         session_id: project_state.session_id.clone(),
         requires_operator_confirmation: decision == KernelProjectTransitionDecision::Confirm,
         blocks_transition: decision != KernelProjectTransitionDecision::Allow,
-        title: title.to_string(),
-        message: format!("{} {}", action_context(action), message),
-        evidence: transition_evidence(project_state),
-        recommended_action: recommended_action.to_string(),
         workspace_dirty_resource_count: project_state.workspace_dirty_resource_count,
         workspace_revision: project_state.workspace_revision,
         workspace_undo_count: project_state.workspace_undo_count,

@@ -1,9 +1,19 @@
+import { CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION } from "$lib/types";
 import type {
-  CssProperty,
-  CssRuleContext,
+  CssInspectorContextResolution,
   CssMutationCommandReceipt,
   EditableStyles,
   FontInventory,
+  FontManagerSnapshot,
+  FontDeliveryMutationReceipt,
+  FontFamilyRemovalPlan,
+  FontFamilyRemovalReceipt,
+  FontPreviewAsset,
+  FontRoleAssignmentReceipt,
+  FontRoleId,
+  GoogleFontInstallReceipt,
+  LocalFontImportPlan,
+  LocalFontImportReceipt,
   FileBufferChangeSetInput,
   FileBufferChangeSetResult,
   FileBufferCommandReceipt,
@@ -12,13 +22,12 @@ import type {
   FileBufferRequestIdentity,
   FileBufferStoreSnapshot,
   FileBufferTextSnapshot,
+  GoogleFontAxis,
   GoogleFontCatalogFamily,
-  GoogleFontDownloadResult,
   ThemeStyleCatalogSnapshot,
   ThemeStyleDraftPreview,
   ThemeStylePropertyInput,
   ThemeStyleTargetSnapshot,
-  PageCssTarget,
   PageCssCleanupResult,
   PageCssWriteResult,
   UiContextProjection,
@@ -27,9 +36,25 @@ import type {
   CodexMcpStatus,
   ComponentMutationApplyReceipt,
   ComponentMutationInput,
+  CanvasInteractionBindingReceipt,
+  CanvasInteractionIdentity,
+  CanvasInteractionReceipt,
+  CanvasInteractionResolveInput,
+  SelectionCoordinatorSnapshot,
+  SelectionIntent,
+  SelectionMutationIdentity,
+  SelectionObservationInput,
+  SelectionObservationReceipt,
   DataMutationApplyReceipt,
   DataMutationInput,
   DataNodeEditorSnapshot,
+  DesignTokenCatalogSnapshot,
+  EditorNavigationSnapshot,
+  EditScopeGrant,
+  EditorMoveCommitInput,
+  EditorMoveExecutionReceipt,
+  EditorMovePlan,
+  EditorMovePlanInput,
   BlockRuntimeSnapshot,
   UiBlockGraphSnapshot,
   EditTransitionReceipt,
@@ -53,8 +78,8 @@ import type {
   PreviewHtmlDuplicateExecutionInput,
   PreviewHtmlDuplicateExecutionReceipt,
   PageJsConfig,
-  MotionTimelineStepTimingInput,
-  MotionTimelineStepTimingReceipt,
+  MotionPageMutationInput,
+  MotionPageMutationReceipt,
   PreviewHtmlInsertDropExecutionInput,
   PreviewHtmlInsertDropExecutionReceipt,
   PageJsDraftStageInput,
@@ -64,29 +89,27 @@ import type {
   PageJsCommandReceipt,
   PageJsWorkspaceState,
   PageJsRequestIdentity,
-  PreviewLayerDropExecutionInput,
-  PreviewLayerDropExecutionReceipt,
   PreviewProjectionIntentInput,
   PreviewProjectionIntentReceipt,
-  PreviewTemplateEditPermissionInput,
-  PreviewTemplateEditPermissionReceipt,
   PreviewTeraDeleteExecutionInput,
   PreviewTeraDeleteExecutionReceipt,
   PreviewTeraInsertDropExecutionInput,
   PreviewTeraInsertDropExecutionReceipt,
-  PreviewTeraMoveDropExecutionInput,
-  PreviewTeraMoveDropExecutionReceipt,
   PreviewStructuralCommandIdentity,
   ProjectAppConfig,
   ProjectDiskManifest,
-  ProjectHtmlMoveIntent,
-  ProjectHtmlMovePlan,
   ProjectAuditSnapshot,
   ProjectModelSnapshot,
   TemplateWorkbenchPlan,
   ProjectOpenRecoveryAssessment,
   ProjectOpenRecoveryDecisionInput,
   ProjectScan,
+  StartupCreationApplyRequest,
+  StartupCreationCatalog,
+  StartupCreationPlan,
+  StartupCreationPlanRequest,
+  StartupCreationReceipt,
+  StartupFlowSnapshot,
   ProjectSessionSnapshot,
   ProjectWorkspaceHistoryIdentity,
   ProjectWorkspaceIdentity,
@@ -99,7 +122,6 @@ import type {
   ThemePlan,
   ThemePlanRequest,
   ProjectWorkspaceUndoRedoCommandReceipt,
-  WorkspaceHistorySnapshot,
   KernelDiskConflictSnapshot,
   KernelExternalDiskReconcileInput,
   KernelExternalDiskReconcileReceipt,
@@ -128,14 +150,24 @@ import type {
   RecoveryCoordinatorScan,
   ScssVariable,
   SourceGraph,
+  SourceGraphProjectionReceipt,
+  TaxonomyCatalogSnapshot,
+  TaxonomyMutationApplyReceipt,
+  TaxonomyMutationInput,
+  TaxonomyMutationPlan,
   TemplateCatalogSnapshot,
+  CreateSemanticTemplateInput,
   CreateTemplateInput,
+  CreateTemplateCollectionInput,
   DeleteTemplateInput,
   DuplicateTemplateInput,
   OverrideThemeTemplateInput,
   RenameTemplateInput,
+  SetTemplateAssignmentInput,
+  SetTemplateParentInput,
   ZolaProjectSettings,
   UiQuiescenceAcknowledgement,
+  WorkspaceCatalogProjectionReceipt,
   VersionDiffInput,
   VersionDiffReceipt,
   VersionHistoryPage,
@@ -160,15 +192,33 @@ import type {
   VersionRestoreRecoveryScan,
 } from "$lib/types";
 import {
+  GLOBAL_STATUS_SCHEMA_VERSION,
+  type GlobalStatusInput,
+  type GlobalStatusSnapshot,
+} from "$lib/status/global-status";
+import {
   DESIGN_CLASS_INVENTORY_SCHEMA_VERSION,
   DESIGN_CLASS_RENAME_SCHEMA_VERSION,
+  CANVAS_INTERACTION_SCHEMA_VERSION,
+  SELECTION_COORDINATOR_SCHEMA_VERSION,
   PROJECT_AUDIT_SCHEMA_VERSION,
   PROJECT_WORKSPACE_SCHEMA_VERSION,
+  TAXONOMY_CATALOG_SCHEMA_VERSION,
+  TAXONOMY_MUTATION_SCHEMA_VERSION,
   TEMPLATE_CATALOG_SCHEMA_VERSION,
+  EDITOR_NAVIGATION_SCHEMA_VERSION,
+  EDIT_SCOPE_GRANT_SCHEMA_VERSION,
+  EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
+  EDITOR_MOVE_PLAN_SCHEMA_VERSION,
 } from "$lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { t } from "$lib/i18n/runtime.svelte";
+
+function schemaMismatch(resource: string, actual: number, expected: number) {
+  return new Error(t("io-schema-mismatch", { resource, actual, expected }));
+}
 
 export function openProject(
   path: string,
@@ -468,18 +518,25 @@ export function normalizePreviewProjectionIntent(
   return invoke<PreviewProjectionIntentReceipt>("normalize_preview_projection_intent", { input, identity });
 }
 
-export function executePreviewTemplateEditIntent(
-  input: PreviewTemplateEditPermissionInput,
-  identity: PreviewStructuralCommandIdentity,
-): Promise<PreviewTemplateEditPermissionReceipt> {
-  return invoke<PreviewTemplateEditPermissionReceipt>("execute_preview_template_edit_intent", { input, identity });
+export function publishKernelGlobalStatus(
+  input: GlobalStatusInput,
+): Promise<GlobalStatusSnapshot> {
+  return invoke<GlobalStatusSnapshot>("publish_global_status", {
+    input: {
+      ...input,
+      schemaVersion: GLOBAL_STATUS_SCHEMA_VERSION,
+    },
+  });
 }
 
-export function executePreviewLayerDropIntent(
-  input: PreviewLayerDropExecutionInput,
-  identity: PreviewStructuralCommandIdentity,
-): Promise<PreviewLayerDropExecutionReceipt> {
-  return invoke<PreviewLayerDropExecutionReceipt>("execute_preview_layer_drop_intent", { input, identity });
+export function resolveKernelGlobalStatus(
+  key: string,
+): Promise<GlobalStatusSnapshot> {
+  return invoke<GlobalStatusSnapshot>("resolve_global_status", { key });
+}
+
+export function readKernelGlobalStatus(): Promise<GlobalStatusSnapshot> {
+  return invoke<GlobalStatusSnapshot>("read_global_status");
 }
 
 export function executePreviewHtmlInsertDropIntent(
@@ -538,13 +595,6 @@ export function executePreviewTeraInsertDropIntent(
   return invoke<PreviewTeraInsertDropExecutionReceipt>("execute_preview_tera_insert_drop_intent", { input, identity });
 }
 
-export function executePreviewTeraMoveDropIntent(
-  input: PreviewTeraMoveDropExecutionInput,
-  identity: PreviewStructuralCommandIdentity,
-): Promise<PreviewTeraMoveDropExecutionReceipt> {
-  return invoke<PreviewTeraMoveDropExecutionReceipt>("execute_preview_tera_move_drop_intent", { input, identity });
-}
-
 export function planNativeBlockContract(
   input: NativeBlockContractInput,
 ): Promise<NativeBlockContractPlan> {
@@ -586,8 +636,12 @@ export function importProjectAsset(
   );
 }
 
-export function readFileBufferStore(): Promise<FileBufferStoreSnapshot | null> {
-  return invoke<FileBufferStoreSnapshot | null>("read_file_buffer_store");
+export async function readFileBufferStore(): Promise<FileBufferStoreSnapshot | null> {
+  const snapshot = await invoke<FileBufferStoreSnapshot | null>("read_file_buffer_store");
+  if (snapshot && snapshot.schemaVersion !== 4) {
+    throw schemaMismatch("FileBufferStore", snapshot.schemaVersion, 4);
+  }
+  return snapshot;
 }
 
 export function readRecoveryCoordinator(): Promise<RecoveryCoordinatorScan | null> {
@@ -740,10 +794,6 @@ export function readProjectWorkspaceState(): Promise<ProjectWorkspaceSnapshot | 
   return invoke<ProjectWorkspaceSnapshot | null>("read_project_workspace_state");
 }
 
-export function readProjectWorkspaceHistory(): Promise<WorkspaceHistorySnapshot | null> {
-  return invoke<WorkspaceHistorySnapshot | null>("read_project_workspace_history");
-}
-
 export function saveProjectWorkspace(
   identity: ProjectWorkspaceIdentity,
 ): Promise<ProjectWorkspaceSaveReceipt> {
@@ -816,43 +866,93 @@ async function invokeBoundFileBuffer<T>(
 ): Promise<T> {
   if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
     throw new Error(
-      "[file_buffer_identity_invalid] FileBufferStore cere root-ul și runtime session ID.",
+      t("io-file-buffer-identity-invalid"),
     );
   }
   const receipt = await invoke<FileBufferCommandReceipt<T>>(command, args);
   if (
     receipt.projectRoot !== identity.expectedProjectRoot
     || receipt.runtimeSessionId !== identity.expectedSessionId
+    || !Number.isSafeInteger(receipt.workspaceRevision)
+    || receipt.workspaceRevision < 0
   ) {
     throw new Error(
-      `[file_buffer_stale_receipt] FileBufferStore a returnat receipt stale pentru ${command}: `
-        + `așteptat ${identity.expectedProjectRoot}/${identity.expectedSessionId}, `
-        + `primit ${receipt.projectRoot}/${receipt.runtimeSessionId}.`,
+      t("io-file-buffer-stale-receipt", {
+        command,
+        expectedRoot: identity.expectedProjectRoot,
+        expectedSession: identity.expectedSessionId,
+        actualRoot: receipt.projectRoot,
+        actualSession: receipt.runtimeSessionId,
+      }),
     );
   }
   return receipt.payload;
 }
 
 export async function chooseProjectFolder(): Promise<string | null> {
+  // The project chooser deliberately starts from the current account home on
+  // every invocation. No previous project path is persisted or reused.
   const defaultPath = await homeDir().catch(() => undefined);
   const selected = await openDialog({
     directory: true,
     defaultPath,
     multiple: false,
-    title: "Deschide dosar proiect",
+    title: t("io-dialog-open-project"),
   });
   if (!selected || Array.isArray(selected)) return null;
   return selected;
+}
+
+export function readStartupFlow(): Promise<StartupFlowSnapshot> {
+  return invoke<StartupFlowSnapshot>("read_startup_flow");
+}
+
+export function inspectStartupFolder(path: string): Promise<StartupFlowSnapshot> {
+  return invoke<StartupFlowSnapshot>("inspect_startup_folder", { path });
+}
+
+export function readStartupCreationCatalog(
+  expectedSnapshotToken: string,
+): Promise<StartupCreationCatalog> {
+  return invoke<StartupCreationCatalog>("read_startup_creation_catalog", {
+    expectedSnapshotToken,
+  });
+}
+
+export function planStartupCreation(
+  request: StartupCreationPlanRequest,
+): Promise<StartupCreationPlan> {
+  return invoke<StartupCreationPlan>("plan_startup_creation", { request });
+}
+
+export function applyStartupCreation(
+  request: StartupCreationApplyRequest,
+): Promise<StartupCreationReceipt> {
+  return invoke<StartupCreationReceipt>("apply_startup_creation", { request });
 }
 
 export async function chooseAssetFile(): Promise<string | null> {
   const selected = await openDialog({
     directory: false,
     multiple: false,
-    title: "Alege resursa pentru import",
+    title: t("io-dialog-import-asset"),
   });
   if (!selected || Array.isArray(selected)) return null;
   return selected;
+}
+
+export async function chooseFontFiles(): Promise<string[]> {
+  const selected = await openDialog({
+    directory: false,
+    multiple: true,
+    title: t("io-dialog-import-fonts"),
+    filters: [{
+      name: t("io-dialog-web-fonts"),
+      extensions: ["woff2", "woff", "ttf", "otf"],
+    }],
+  });
+  if (!selected) return [];
+  return Array.isArray(selected) ? selected : [selected];
 }
 
 export function scanProject(path: string): Promise<ProjectScan> {
@@ -861,31 +961,141 @@ export function scanProject(path: string): Promise<ProjectScan> {
 
 export function readSourceGraph(
   identity: PreviewStructuralCommandIdentity,
-): Promise<SourceGraph> {
+): Promise<SourceGraphProjectionReceipt> {
   if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
     return Promise.reject(new Error(
-      "[source_graph_identity_invalid] Source Graph cere ProjectRoot și runtime session ID.",
+      t("io-source-graph-identity-invalid"),
     ));
   }
-  return invoke<SourceGraph>("read_source_graph", { identity });
+  return invoke<SourceGraphProjectionReceipt>("read_source_graph", { identity });
 }
 
 export function readTemplateCatalog(
   identity: PreviewStructuralCommandIdentity,
+  expectedWorkspaceRevision?: number,
 ): Promise<TemplateCatalogSnapshot> {
   if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
     return Promise.reject(new Error(
-      "[template_catalog_identity_invalid] Catalogul șabloanelor cere ProjectRoot și runtime session ID.",
+      t("io-template-catalog-identity-invalid"),
     ));
   }
-  return invoke<TemplateCatalogSnapshot>("read_template_catalog", { identity }).then((snapshot) => {
+  return invoke<WorkspaceCatalogProjectionReceipt<TemplateCatalogSnapshot>>(
+    "read_template_catalog",
+    { identity },
+  ).then((receipt) => {
+    requireWorkspaceCatalogProjectionReceipt(
+      "templates",
+      identity,
+      expectedWorkspaceRevision,
+      receipt,
+    );
+    const snapshot = receipt.catalog;
     if (snapshot.schemaVersion !== TEMPLATE_CATALOG_SCHEMA_VERSION) {
-      throw new Error(
-        `Catalog șabloane incompatibil: ${snapshot.schemaVersion}; așteptat ${TEMPLATE_CATALOG_SCHEMA_VERSION}.`,
+      throw schemaMismatch(
+        t("io-resource-template-catalog"),
+        snapshot.schemaVersion,
+        TEMPLATE_CATALOG_SCHEMA_VERSION,
       );
     }
     return snapshot;
   });
+}
+
+export function readTaxonomyCatalog(
+  identity: PreviewStructuralCommandIdentity,
+  expectedWorkspaceRevision?: number,
+): Promise<TaxonomyCatalogSnapshot> {
+  if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
+    return Promise.reject(new Error(
+      t("io-taxonomy-catalog-identity-invalid"),
+    ));
+  }
+  return invoke<WorkspaceCatalogProjectionReceipt<TaxonomyCatalogSnapshot>>(
+    "read_taxonomy_catalog",
+    { identity },
+  ).then((receipt) => {
+    requireWorkspaceCatalogProjectionReceipt(
+      "taxonomies",
+      identity,
+      expectedWorkspaceRevision,
+      receipt,
+    );
+    const snapshot = receipt.catalog;
+    if (snapshot.schemaVersion !== TAXONOMY_CATALOG_SCHEMA_VERSION) {
+      throw schemaMismatch(
+        t("io-resource-taxonomy-catalog"),
+        snapshot.schemaVersion,
+        TAXONOMY_CATALOG_SCHEMA_VERSION,
+      );
+    }
+    return snapshot;
+  });
+}
+
+function requireWorkspaceCatalogProjectionReceipt<T>(
+  kind: "templates" | "taxonomies",
+  identity: PreviewStructuralCommandIdentity,
+  expectedWorkspaceRevision: number | undefined,
+  receipt: WorkspaceCatalogProjectionReceipt<T>,
+) {
+  const resource = kind === "templates"
+    ? t("io-resource-template-catalog")
+    : t("io-resource-taxonomy-catalog");
+  if (
+    receipt.projectRoot !== identity.expectedProjectRoot
+    || receipt.runtimeSessionId !== identity.expectedSessionId
+    || !Number.isSafeInteger(receipt.workspaceRevision)
+    || receipt.workspaceRevision < 0
+  ) {
+    throw new Error(t("io-workspace-catalog-identity-invalid", { resource }));
+  }
+  if (
+    expectedWorkspaceRevision !== undefined
+    && receipt.workspaceRevision !== expectedWorkspaceRevision
+  ) {
+    throw new Error(
+      t("io-workspace-catalog-revision-mismatch", {
+        resource,
+        actual: receipt.workspaceRevision,
+        expected: expectedWorkspaceRevision,
+      }),
+    );
+  }
+}
+
+export async function planTaxonomyMutation(
+  input: TaxonomyMutationInput,
+  identity: FileBufferRequestIdentity,
+): Promise<TaxonomyMutationPlan> {
+  const plan = await invoke<TaxonomyMutationPlan>("plan_taxonomy_mutation", { input, identity });
+  if (plan.schemaVersion !== TAXONOMY_MUTATION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      t("io-resource-taxonomy-plan"),
+      plan.schemaVersion,
+      TAXONOMY_MUTATION_SCHEMA_VERSION,
+    );
+  }
+  return plan;
+}
+
+export async function applyTaxonomyMutation(
+  input: TaxonomyMutationInput,
+  expectedPlanId: string,
+  identity: FileBufferRequestIdentity,
+): Promise<TaxonomyMutationApplyReceipt> {
+  const receipt = await invoke<TaxonomyMutationApplyReceipt>("apply_taxonomy_mutation", {
+    input,
+    expectedPlanId,
+    identity,
+  });
+  if (receipt.plan.schemaVersion !== TAXONOMY_MUTATION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      t("io-resource-taxonomy-receipt"),
+      receipt.plan.schemaVersion,
+      TAXONOMY_MUTATION_SCHEMA_VERSION,
+    );
+  }
+  return receipt;
 }
 
 export function readProjectModel(draftSources?: Record<string, string>): Promise<ProjectModelSnapshot> {
@@ -895,11 +1105,456 @@ export function readProjectModel(draftSources?: Record<string, string>): Promise
   return invoke<ProjectModelSnapshot>("read_project_model");
 }
 
+export async function readEditorNavigationSnapshot(
+  identity: CanvasProjectionIdentity,
+  route: string,
+  activeDocumentPath: string | null,
+  previewContextRenderInstanceId: string | null = null,
+): Promise<EditorNavigationSnapshot> {
+  const snapshot = await invoke<EditorNavigationSnapshot>(
+    "read_editor_navigation_snapshot",
+    {
+      input: {
+        identity,
+        route,
+        activeDocumentPath,
+        previewContextRenderInstanceId,
+      },
+    },
+  );
+  if (snapshot.schemaVersion !== EDITOR_NAVIGATION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "EditorNavigationSnapshot",
+      snapshot.schemaVersion,
+      EDITOR_NAVIGATION_SCHEMA_VERSION,
+    );
+  }
+  if (
+    snapshot.identity.projectRoot !== identity.projectRoot
+    || snapshot.identity.runtimeSessionId !== identity.runtimeSessionId
+    || snapshot.identity.workspaceRevision !== identity.workspaceRevision
+    || snapshot.identity.transactionId !== identity.transactionId
+    || snapshot.identity.previewRevision !== identity.previewRevision
+  ) {
+    throw new Error("EditorNavigationSnapshot a întors altă identitate Canvas.");
+  }
+  if (
+    activeDocumentPath
+    && snapshot.focusedView
+    && snapshot.focusedView.activeDocumentPath !== activeDocumentPath
+  ) {
+    throw new Error("EditorNavigationSnapshot a întors alt document activ.");
+  }
+  return snapshot;
+}
+
+export async function bindCanvasInteractionAgent(
+  identity: CanvasInteractionIdentity,
+  activeDocumentPath: string | null,
+  previewContextRenderInstanceId: string | null = null,
+): Promise<CanvasInteractionBindingReceipt> {
+  const receipt = await invoke<CanvasInteractionBindingReceipt>(
+    "bind_canvas_interaction_agent",
+    {
+      input: {
+        schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+        identity,
+        activeDocumentPath,
+        previewContextRenderInstanceId,
+      },
+    },
+  );
+  if (receipt.schemaVersion !== CANVAS_INTERACTION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "CanvasInteractionBindingReceipt",
+      receipt.schemaVersion,
+      CANVAS_INTERACTION_SCHEMA_VERSION,
+    );
+  }
+  if (
+    !sameCanvasInteractionIdentity(receipt.identity, identity)
+    || !Number.isSafeInteger(receipt.lastAcceptedSequence)
+    || receipt.lastAcceptedSequence < 0
+    || (
+      receipt.activeDocumentPath !== null
+      && typeof receipt.activeDocumentPath !== "string"
+    )
+  ) {
+    throw new Error("CanvasAgent a întors alt binding sau o secvență invalidă.");
+  }
+  return receipt;
+}
+
+export async function resolveCanvasInteractionIntent(
+  input: CanvasInteractionResolveInput,
+): Promise<CanvasInteractionReceipt> {
+  const receipt = await invoke<CanvasInteractionReceipt>(
+    "resolve_canvas_interaction_intent",
+    { input },
+  );
+  if (receipt.schemaVersion !== CANVAS_INTERACTION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "CanvasInteractionReceipt",
+      receipt.schemaVersion,
+      CANVAS_INTERACTION_SCHEMA_VERSION,
+    );
+  }
+  if (
+    !sameCanvasInteractionIdentity(receipt.identity, input.request.identity)
+    || receipt.gestureSequence !== input.request.gestureSequence
+    || receipt.gesture !== input.request.gesture
+  ) {
+    throw new Error("CanvasInteractionReceipt nu aparține gestului solicitat.");
+  }
+  const expectedDragPosition = receipt.status === "resolved"
+    && input.request.gesture === "dragOver"
+    ? input.request.drag?.position ?? null
+    : null;
+  if (receipt.dragPosition !== expectedDragPosition) {
+    throw new Error(
+      "CanvasInteractionReceipt a întors o proiecție drag incompatibilă cu gestul.",
+    );
+  }
+  return receipt;
+}
+
+export async function applySelectionIntent(
+  identity: CanvasProjectionIdentity,
+  route: string,
+  activeDocumentPath: string | null,
+  previewContextRenderInstanceId: string | null,
+  intent: SelectionIntent,
+): Promise<SelectionCoordinatorSnapshot> {
+  const receipt = await invoke<SelectionCoordinatorSnapshot>(
+    "apply_selection_intent",
+    {
+      input: {
+        schemaVersion: SELECTION_COORDINATOR_SCHEMA_VERSION,
+        identity,
+        route,
+        activeDocumentPath,
+        previewContextRenderInstanceId,
+        intent,
+      },
+    },
+  );
+  requireSelectionCoordinatorSnapshot(receipt, identity);
+  return receipt;
+}
+
+export async function readSelectionSnapshot(
+  identity: CanvasProjectionIdentity,
+  route: string,
+  activeDocumentPath: string | null,
+  previewContextRenderInstanceId: string | null,
+): Promise<SelectionCoordinatorSnapshot> {
+  const receipt = await invoke<SelectionCoordinatorSnapshot>(
+    "read_selection_snapshot",
+    {
+      input: {
+        schemaVersion: SELECTION_COORDINATOR_SCHEMA_VERSION,
+        identity,
+        route,
+        activeDocumentPath,
+        previewContextRenderInstanceId,
+      },
+    },
+  );
+  requireSelectionCoordinatorSnapshot(receipt, identity);
+  return receipt;
+}
+
+export async function acceptSelectionObservation(
+  input: SelectionObservationInput,
+): Promise<SelectionObservationReceipt> {
+  const receipt = await invoke<SelectionObservationReceipt>(
+    "accept_selection_observation",
+    { input },
+  );
+  if (
+    receipt.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
+    || receipt.selectionRevision !== input.selectionRevision
+    || receipt.documentEpoch !== input.documentEpoch
+    || receipt.renderInstanceId !== input.renderInstanceId
+    || !sameCanvasProjectionIdentity(receipt.canvasIdentity, input.canvasIdentity)
+  ) {
+    throw new Error("SelectionObservation nu aparține selecției solicitate.");
+  }
+  requireInspectorSelectionSummary(
+    receipt.inspectorSummary,
+    input.canvasIdentity,
+    input.selectionRevision,
+  );
+  if (
+    receipt.inspectorSummary.documentEpoch !== input.documentEpoch
+    || receipt.inspectorSummary.renderInstanceId !== input.renderInstanceId
+    || receipt.inspectorSummary.state !== "resolved"
+  ) {
+    throw new Error("InspectorSelectionSummary nu confirmă faptele fizice solicitate.");
+  }
+  return receipt;
+}
+
+function requireSelectionCoordinatorSnapshot(
+  receipt: SelectionCoordinatorSnapshot,
+  identity: CanvasProjectionIdentity,
+) {
+  if (
+    receipt.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
+    || receipt.selection.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
+  ) {
+    throw schemaMismatch(
+      "SelectionCoordinator",
+      receipt.schemaVersion,
+      SELECTION_COORDINATOR_SCHEMA_VERSION,
+    );
+  }
+  if (
+    receipt.selection.projectRoot !== identity.projectRoot
+    || receipt.selection.runtimeSessionId !== identity.runtimeSessionId
+    || !sameCanvasProjectionIdentity(receipt.selection.canvasIdentity, identity)
+    || !Number.isSafeInteger(receipt.selection.selectionRevision)
+    || receipt.selection.selectionRevision <= 0
+  ) {
+    throw new Error("SelectionCoordinator a întors altă sesiune sau o revizie invalidă.");
+  }
+  const selection = receipt.selection;
+  requireInspectorSelectionSummary(
+    receipt.inspectorSummary,
+    identity,
+    selection.selectionRevision,
+  );
+  const expectedInspectorStates = {
+    cleared: new Set(["empty"]),
+    resolved: new Set(["resolving", "resolved", "uninspectable"]),
+    notRendered: new Set(["notRendered"]),
+    ambiguous: new Set(["ambiguous"]),
+  } satisfies Record<
+    SelectionCoordinatorSnapshot["selection"]["resolution"],
+    Set<string>
+  >;
+  if (
+    (selection.resolution === "resolved" && (!selection.subject || !selection.anchor))
+    || (selection.resolution === "cleared" && (selection.subject || selection.anchor))
+    || !expectedInspectorStates[selection.resolution].has(receipt.inspectorSummary.state)
+    || (
+      selection.projections.preview.primaryRenderInstanceId
+      && !selection.projections.preview.renderInstanceIds.includes(
+        selection.projections.preview.primaryRenderInstanceId,
+      )
+    )
+  ) {
+    throw new Error("SelectionCoordinator a întors o proiecție semantică inconsistentă.");
+  }
+  if (
+    receipt.hover
+    && (
+      receipt.hover.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
+      || !sameCanvasProjectionIdentity(receipt.hover.canvasIdentity, identity)
+      || !Number.isSafeInteger(receipt.hover.hoverRevision)
+      || receipt.hover.hoverRevision <= 0
+      || !Number.isSafeInteger(receipt.hover.documentEpoch)
+      || receipt.hover.documentEpoch <= 0
+    )
+  ) {
+    throw new Error("SelectionCoordinator a întors un HoverSnapshot invalid.");
+  }
+}
+
+function requireInspectorSelectionSummary(
+  summary: SelectionCoordinatorSnapshot["inspectorSummary"],
+  identity: CanvasProjectionIdentity,
+  selectionRevision: number,
+) {
+  const states = new Set([
+    "empty",
+    "resolving",
+    "resolved",
+    "notRendered",
+    "ambiguous",
+    "uninspectable",
+  ]);
+  const reasons = new Set([
+    "noSelection",
+    "awaitingPhysicalFacts",
+    "selectionNotRendered",
+    "selectionAmbiguous",
+    "inspectionDisabled",
+    "missingRenderInstance",
+  ]);
+  if (
+    !summary
+    || summary.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
+    || summary.projectRoot !== identity.projectRoot
+    || summary.runtimeSessionId !== identity.runtimeSessionId
+    || summary.selectionRevision !== selectionRevision
+    || !sameCanvasProjectionIdentity(summary.canvasIdentity, identity)
+    || !states.has(summary.state)
+    || (
+      summary.documentEpoch !== null
+      && (!Number.isSafeInteger(summary.documentEpoch) || summary.documentEpoch <= 0)
+    )
+    || !Array.isArray(summary.classes)
+    || !Array.isArray(summary.diagnostics)
+    || summary.classes.some((className) => (
+      typeof className !== "string"
+      || className.length === 0
+      || /\s|[\u0000-\u001f\u007f]/u.test(className)
+    ))
+    || (
+      summary.reason !== null
+      && !reasons.has(summary.reason)
+    )
+    || summary.diagnostics.some((diagnostic) => (
+      !diagnostic
+      || !reasons.has(diagnostic.code)
+      || typeof diagnostic.message !== "string"
+      || diagnostic.message.length === 0
+    ))
+  ) {
+    throw new Error("InspectorSelectionSummary a întors altă selecție sau o stare invalidă.");
+  }
+  if (
+    (summary.state === "empty" && (
+      summary.subjectKind !== null
+      || summary.selector !== null
+      || summary.classes.length > 0
+    ))
+    || (summary.state === "resolved" && summary.subjectKind === null)
+    || (summary.state === "resolved" && summary.reason !== null)
+    || (summary.state !== "resolved" && summary.reason === null)
+    || (summary.reason === null && summary.diagnostics.length > 0)
+    || (summary.reason !== null && summary.diagnostics[0]?.code !== summary.reason)
+  ) {
+    throw new Error("InspectorSelectionSummary conține o proiecție inconsistentă.");
+  }
+}
+
+function sameCanvasProjectionIdentity(
+  left: CanvasProjectionIdentity,
+  right: CanvasProjectionIdentity,
+) {
+  return left.projectRoot === right.projectRoot
+    && left.runtimeSessionId === right.runtimeSessionId
+    && left.workspaceRevision === right.workspaceRevision
+    && left.transactionId === right.transactionId
+    && left.previewRevision === right.previewRevision;
+}
+
+function sameCanvasInteractionIdentity(
+  left: CanvasInteractionIdentity,
+  right: CanvasInteractionIdentity,
+) {
+  return left.route === right.route
+    && left.documentEpoch === right.documentEpoch
+    && left.agentInstanceId === right.agentInstanceId
+    && left.canvas.projectRoot === right.canvas.projectRoot
+    && left.canvas.runtimeSessionId === right.canvas.runtimeSessionId
+    && left.canvas.workspaceRevision === right.canvas.workspaceRevision
+    && left.canvas.transactionId === right.canvas.transactionId
+    && left.canvas.previewRevision === right.canvas.previewRevision;
+}
+
+export async function requestEditorEditScope(
+  identity: CanvasProjectionIdentity,
+  route: string,
+  activeDocumentPath: string,
+  scopeId: string,
+  previewContextRenderInstanceId: string | null = null,
+): Promise<EditScopeGrant> {
+  const grant = await invoke<EditScopeGrant>("request_editor_edit_scope", {
+    input: {
+      identity,
+      route,
+      activeDocumentPath,
+      previewContextRenderInstanceId,
+      scopeId,
+    },
+  });
+  if (grant.schemaVersion !== EDIT_SCOPE_GRANT_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "EditScopeGrant",
+      grant.schemaVersion,
+      EDIT_SCOPE_GRANT_SCHEMA_VERSION,
+    );
+  }
+  if (
+    grant.projectRoot !== identity.projectRoot
+    || grant.runtimeSessionId !== identity.runtimeSessionId
+    || grant.workspaceRevision !== identity.workspaceRevision
+    || grant.previewRevision !== identity.previewRevision
+    || grant.canvasTransactionId !== identity.transactionId
+    || grant.scopeId !== scopeId
+    || grant.activeDocumentPath !== activeDocumentPath
+  ) {
+    throw new Error("EditScopeGrant a întors alt context Canvas.");
+  }
+  return grant;
+}
+
+export async function planEditorMove(
+  input: EditorMovePlanInput,
+): Promise<EditorMovePlan> {
+  const plan = await invoke<EditorMovePlan>("plan_editor_move", { input });
+  if (plan.schemaVersion !== EDITOR_MOVE_PLAN_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "PlanEditorMove",
+      plan.schemaVersion,
+      EDITOR_MOVE_PLAN_SCHEMA_VERSION,
+    );
+  }
+  if (
+    plan.identity.projectRoot !== input.identity.projectRoot
+    || plan.identity.runtimeSessionId !== input.identity.runtimeSessionId
+    || plan.identity.workspaceRevision !== input.identity.workspaceRevision
+    || plan.identity.transactionId !== input.identity.transactionId
+    || plan.identity.previewRevision !== input.identity.previewRevision
+    || plan.sourceNodeId !== input.sourceNodeId
+    || plan.targetNodeId !== input.targetNodeId
+    || plan.position !== input.position
+    || plan.activeDocumentPath !== input.activeDocumentPath
+  ) {
+    throw new Error("PlanEditorMove a întors altă intenție sau identitate Canvas.");
+  }
+  if (plan.allowed !== Boolean(plan.token && plan.operation)) {
+    throw new Error("PlanEditorMove a întors o stare permis/refuz inconsistentă.");
+  }
+  return plan;
+}
+
+export async function commitEditorMove(
+  input: EditorMoveCommitInput,
+): Promise<EditorMoveExecutionReceipt> {
+  const receipt = await invoke<EditorMoveExecutionReceipt>(
+    "commit_editor_move",
+    { input },
+  );
+  if (receipt.schemaVersion !== EDITOR_MOVE_EXECUTION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "EditorMoveExecutionReceipt",
+      receipt.schemaVersion,
+      EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
+    );
+  }
+  if (receipt.planToken !== input.planToken) {
+    throw new Error("EditorMoveExecutionReceipt aparține altui plan.");
+  }
+  if (
+    receipt.projectRoot !== input.identity.projectRoot
+    || receipt.runtimeSessionId !== input.identity.runtimeSessionId
+  ) {
+    throw new Error("EditorMoveExecutionReceipt aparține altei sesiuni.");
+  }
+  return receipt;
+}
+
 export async function readProjectAudit(): Promise<ProjectAuditSnapshot> {
   const snapshot = await invoke<ProjectAuditSnapshot>("read_project_audit");
   if (snapshot.schemaVersion !== PROJECT_AUDIT_SCHEMA_VERSION) {
-    throw new Error(
-      `Audit schema incompatibilă: ${snapshot.schemaVersion}; așteptat ${PROJECT_AUDIT_SCHEMA_VERSION}.`,
+    throw schemaMismatch(
+      t("io-resource-project-audit"),
+      snapshot.schemaVersion,
+      PROJECT_AUDIT_SCHEMA_VERSION,
     );
   }
   return snapshot;
@@ -908,8 +1563,10 @@ export async function readProjectAudit(): Promise<ProjectAuditSnapshot> {
 export async function readDesignClassInventory(): Promise<DesignClassInventorySnapshot> {
   const snapshot = await invoke<DesignClassInventorySnapshot>("read_design_class_inventory");
   if (snapshot.schemaVersion !== DESIGN_CLASS_INVENTORY_SCHEMA_VERSION) {
-    throw new Error(
-      `Design Class schema incompatibilă: ${snapshot.schemaVersion}; așteptat ${DESIGN_CLASS_INVENTORY_SCHEMA_VERSION}.`,
+    throw schemaMismatch(
+      t("io-resource-design-class"),
+      snapshot.schemaVersion,
+      DESIGN_CLASS_INVENTORY_SCHEMA_VERSION,
     );
   }
   return snapshot;
@@ -938,8 +1595,10 @@ export async function renameDesignClass(
     identity,
   });
   if (receipt.schemaVersion !== DESIGN_CLASS_RENAME_SCHEMA_VERSION) {
-    throw new Error(
-      `Design Class rename schema incompatibilă: ${receipt.schemaVersion}; așteptat ${DESIGN_CLASS_RENAME_SCHEMA_VERSION}.`,
+    throw schemaMismatch(
+      t("io-resource-design-class-rename"),
+      receipt.schemaVersion,
+      DESIGN_CLASS_RENAME_SCHEMA_VERSION,
     );
   }
   return receipt;
@@ -951,28 +1610,39 @@ export function cancelPublishOperation(
   return invoke<PublishOperationCancelReceipt>("cancel_publish_operation", { identity });
 }
 
-export function resolveTemplateWorkbenchPlan(
-  input: { templatePath: string; preferredPagePath?: string | null },
+export async function resolveTemplateWorkbenchPlan(
+  input: {
+    templatePath: string;
+    preferredPagePath?: string | null;
+    preferredRoute?: string | null;
+  },
   identity: PreviewStructuralCommandIdentity,
 ): Promise<TemplateWorkbenchPlan> {
-  return invoke<TemplateWorkbenchPlan>("resolve_template_workbench_plan", { input, identity });
-}
-
-export function planProjectHtmlMove(
-  intent: ProjectHtmlMoveIntent,
-  draftSources: Record<string, string> = {},
-): Promise<ProjectHtmlMovePlan> {
-  return invoke<ProjectHtmlMovePlan>("plan_project_html_move", { intent, draftSources });
+  const plan = await invoke<TemplateWorkbenchPlan>(
+    "resolve_template_workbench_plan",
+    { input, identity },
+  );
+  if (plan.schemaVersion !== 4) {
+    throw schemaMismatch("Template Workbench", plan.schemaVersion, 4);
+  }
+  return plan;
 }
 
 export function readCurrentProjectDiskManifest(): Promise<ProjectDiskManifest> {
   return invoke<ProjectDiskManifest>("read_current_project_disk_manifest");
 }
 
-export function reconcileCleanExternalProjectFiles(
+export async function reconcileCleanExternalProjectFiles(
   input: KernelExternalDiskReconcileInput,
 ): Promise<KernelExternalDiskReconcileReceipt> {
-  return invoke<KernelExternalDiskReconcileReceipt>("reconcile_clean_external_project_files", { input });
+  const receipt = await invoke<KernelExternalDiskReconcileReceipt>(
+    "reconcile_clean_external_project_files",
+    { input },
+  );
+  if (receipt.schemaVersion !== 2) {
+    throw schemaMismatch("External disk reconcile", receipt.schemaVersion, 2);
+  }
+  return receipt;
 }
 
 export function createProjectContentPage(options: {
@@ -1002,6 +1672,28 @@ export function createTemplate(
   return invokeWorkspaceEntryMutation("workspace_create_template", { input, identity }, identity);
 }
 
+export function createSemanticTemplate(
+  input: CreateSemanticTemplateInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_create_semantic_template",
+    { input, identity },
+    identity,
+  );
+}
+
+export function createTemplateCollection(
+  input: CreateTemplateCollectionInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_create_template_collection",
+    { input, identity },
+    identity,
+  );
+}
+
 export function duplicateTemplate(
   input: DuplicateTemplateInput,
   identity: FileBufferRequestIdentity,
@@ -1027,6 +1719,28 @@ export function renameTemplate(
   return invokeWorkspaceEntryMutation("workspace_rename_template", { input, identity }, identity);
 }
 
+export function setTemplateParent(
+  input: SetTemplateParentInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_set_template_parent",
+    { input, identity },
+    identity,
+  );
+}
+
+export function setTemplateAssignment(
+  input: SetTemplateAssignmentInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_set_template_assignment",
+    { input, identity },
+    identity,
+  );
+}
+
 export function deleteTemplate(
   input: DeleteTemplateInput,
   identity: FileBufferRequestIdentity,
@@ -1044,9 +1758,11 @@ export async function applyComponentMutation(
     identity,
   });
   requireProjectFileReceiptIdentity(receipt.workspace, identity, "apply_component_mutation");
-  if (receipt.plan.schemaVersion !== 1) {
-    throw new Error(
-      `Plan de componentă incompatibil: ${receipt.plan.schemaVersion}; așteptat 1.`,
+  if (receipt.plan.schemaVersion !== 2) {
+    throw schemaMismatch(
+      t("io-resource-component-plan"),
+      receipt.plan.schemaVersion,
+      2,
     );
   }
   return receipt;
@@ -1063,8 +1779,10 @@ export async function applyDataMutation(
   });
   requireProjectFileReceiptIdentity(receipt.workspace, identity, "apply_data_mutation");
   if (receipt.plan.schemaVersion !== 1) {
-    throw new Error(
-      `Plan de date incompatibil: ${receipt.plan.schemaVersion}; așteptat 1.`,
+    throw schemaMismatch(
+      t("io-resource-data-plan"),
+      receipt.plan.schemaVersion,
+      1,
     );
   }
   return receipt;
@@ -1082,7 +1800,7 @@ export async function readDataNodeEditor(
     identity,
   });
   if (snapshot.schemaVersion !== 1 || snapshot.file !== file || snapshot.nodeId !== nodeId) {
-    throw new Error("Snapshot-ul nodului TOML nu corespunde selecției curente.");
+    throw new Error(t("io-data-node-selection-mismatch"));
   }
   return snapshot;
 }
@@ -1095,11 +1813,11 @@ export async function readBlockRuntimeSnapshot(
     identity,
   });
   if (
-    snapshot.schemaVersion !== 1
+    snapshot.schemaVersion !== 2
     || snapshot.projectRoot !== identity.expectedProjectRoot
     || snapshot.runtimeSessionId !== identity.expectedSessionId
   ) {
-    throw new Error("Snapshot-ul blocurilor din CanvasGraph nu aparține sesiunii curente.");
+    throw new Error(t("io-block-runtime-session-mismatch"));
   }
   return snapshot;
 }
@@ -1112,11 +1830,11 @@ export async function readUiBlockGraph(
     identity,
   });
   if (
-    snapshot.schemaVersion !== 1
+    snapshot.schemaVersion !== 2
     || snapshot.projectRoot !== identity.expectedProjectRoot
     || snapshot.runtimeSessionId !== identity.expectedSessionId
   ) {
-    throw new Error("UiBlockGraph nu aparține sesiunii curente.");
+    throw new Error(t("io-ui-block-graph-session-mismatch"));
   }
   return snapshot;
 }
@@ -1125,45 +1843,10 @@ export function readProjectFile(relativePath: string): Promise<string> {
   return invoke<string>("read_project_file", { relativePath });
 }
 
-export function semanticMoveProjectEntry(
-  sourceRelativePath: string,
-  targetDirectory: string,
-  identity: FileBufferRequestIdentity,
-): Promise<WorkspaceEntryMutationReceipt> {
-  return invokeWorkspaceEntryMutation(
-    "workspace_move_project_entry",
-    { sourceRelativePath, targetDirectory, identity },
-    identity,
-  );
-}
-
-export function semanticRenameProjectEntry(
-  sourceRelativePath: string,
-  newName: string,
-  identity: FileBufferRequestIdentity,
-): Promise<WorkspaceEntryMutationReceipt> {
-  return invokeWorkspaceEntryMutation(
-    "workspace_rename_project_entry",
-    { sourceRelativePath, newName, identity },
-    identity,
-  );
-}
-
-export function trashProjectEntry(
-  relativePath: string,
-  identity: FileBufferRequestIdentity,
-): Promise<WorkspaceEntryMutationReceipt> {
-  return invokeWorkspaceEntryMutation(
-    "workspace_delete_project_entry",
-    { relativePath, identity },
-    identity,
-  );
-}
-
 function requireProjectFileRequestIdentity(identity: FileBufferRequestIdentity) {
   if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
     throw new Error(
-      "[project_file_identity_invalid] Operația de fișier cere root-ul și runtime session ID.",
+      t("io-project-file-identity-invalid"),
     );
   }
 }
@@ -1178,9 +1861,13 @@ export function requireProjectFileReceiptIdentity(
     || receipt.runtimeSessionId !== identity.expectedSessionId
   ) {
     throw new Error(
-      `[project_file_stale_receipt] Receipt stale pentru ${operation}: `
-        + `așteptat ${identity.expectedProjectRoot}/${identity.expectedSessionId}, `
-        + `primit ${receipt.projectRoot}/${receipt.runtimeSessionId}.`,
+      t("io-project-file-stale-receipt", {
+        operation,
+        expectedRoot: identity.expectedProjectRoot,
+        expectedSession: identity.expectedSessionId,
+        actualRoot: receipt.projectRoot,
+        actualSession: receipt.runtimeSessionId,
+      }),
     );
   }
 }
@@ -1270,7 +1957,8 @@ export type PreviewRuntimeEventKind =
   | "interactive_js_restarted"
   | "interactive_js_failed"
   | "canvas_patch_rolled_back"
-  | "canvas_fallback";
+  | "canvas_fallback"
+  | "canvas_ack_timeout";
 
 export type PreviewRuntimeEventInput = {
   schemaVersion: 1;
@@ -1303,6 +1991,7 @@ export type TemplateWorkbenchPreviewRequest = ProjectPreviewRequestIdentity & {
   expectedWorkspaceRevision: number;
   templatePath: string;
   preferredPagePath: string | null;
+  preferredRoute: string | null;
 };
 export type TemplateWorkbenchPreviewReceipt = {
   plan: TemplateWorkbenchPlan;
@@ -1329,7 +2018,7 @@ export function createProjectPreviewRequestIdentity(
   const expectedProjectRoot = projectRoot.trim();
   const expectedSessionId = runtimeSessionId.trim();
   if (!expectedProjectRoot || !expectedSessionId) {
-    throw new Error("Spațiul de previzualizare cere rădăcina și identitatea Rust a sesiunii proiectului.");
+    throw new Error(t("io-preview-identity-invalid"));
   }
   return { expectedProjectRoot, expectedSessionId };
 }
@@ -1361,9 +2050,7 @@ export function requireProjectPreviewStartReceipt(
     ))
     || (plan.phase !== "prepared" && plan.phase !== "canonicalVerified")
   ) {
-    throw new Error(
-      "Rust a pornit previzualizarea pentru altă revizie Canvas sau altă sesiune a proiectului.",
-    );
+    throw new Error(t("io-preview-start-receipt-mismatch"));
   }
   return receipt;
 }
@@ -1390,9 +2077,9 @@ export function requireProjectPreviewMutationReceipt(
       || receipt.canvasProjection.phase !== "prepared"
     ))
   ) {
-    throw new Error(
-      `Preview workspace a returnat un receipt ${receipt.operation} pentru altă revizie ProjectWorkspace sau ProjectSession.`,
-    );
+    throw new Error(t("workspace-preview-receipt-mismatch", {
+      operation: receipt.operation,
+    }));
   }
   return receipt;
 }
@@ -1450,7 +2137,7 @@ export function createCssRequestIdentity(
   const expectedProjectRoot = projectRoot.trim();
   const expectedSessionId = runtimeSessionId.trim();
   if (!expectedProjectRoot || !expectedSessionId) {
-    throw new Error("CSS/SCSS cere ProjectRoot și runtimeSessionId active.");
+    throw new Error(t("io-css-identity-invalid"));
   }
   return { expectedProjectRoot, expectedSessionId };
 }
@@ -1468,19 +2155,38 @@ async function invokeBoundCss<T>(
   command: string,
   args: Record<string, unknown>,
   identity: CssRequestIdentity,
+  expectedWorkspaceRevision?: number,
 ): Promise<T> {
   if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
-    throw new Error("[css_identity_invalid] CSS/SCSS cere root-ul și runtime session ID.");
+    throw new Error(t("io-css-identity-invalid"));
   }
   const receipt = await invoke<FileBufferCommandReceipt<T>>(command, { ...args, identity });
   if (
     receipt.projectRoot !== identity.expectedProjectRoot
     || receipt.runtimeSessionId !== identity.expectedSessionId
+    || !Number.isSafeInteger(receipt.workspaceRevision)
+    || receipt.workspaceRevision < 0
   ) {
     throw new Error(
-      `[css_stale_receipt] ${command} a returnat receipt pentru altă ProjectSession: `
-        + `așteptat ${identity.expectedProjectRoot}/${identity.expectedSessionId}, `
-        + `primit ${receipt.projectRoot}/${receipt.runtimeSessionId}.`,
+      t("io-css-stale-receipt", {
+        command,
+        expectedRoot: identity.expectedProjectRoot,
+        expectedSession: identity.expectedSessionId,
+        actualRoot: receipt.projectRoot,
+        actualSession: receipt.runtimeSessionId,
+      }),
+    );
+  }
+  if (
+    expectedWorkspaceRevision !== undefined
+    && receipt.workspaceRevision !== expectedWorkspaceRevision
+  ) {
+    throw new Error(
+      t("io-css-workspace-revision-mismatch", {
+        command,
+        actual: receipt.workspaceRevision,
+        expected: expectedWorkspaceRevision,
+      }),
     );
   }
   return receipt.payload;
@@ -1492,17 +2198,20 @@ async function invokeBoundCssMutation<T>(
   identity: CssRequestIdentity,
 ): Promise<CssMutationCommandReceipt<T>> {
   if (!identity.expectedProjectRoot.trim() || !identity.expectedSessionId.trim()) {
-    throw new Error("[css_identity_invalid] CSS/SCSS cere root-ul și runtime session ID.");
+    throw new Error(t("io-css-identity-invalid"));
   }
   const receipt = await invoke<CssMutationCommandReceipt<T>>(command, { ...args, identity });
   if (
     receipt.projectRoot !== identity.expectedProjectRoot
     || receipt.runtimeSessionId !== identity.expectedSessionId
+    || !Number.isSafeInteger(receipt.workspaceRevision)
+    || receipt.workspaceRevision < 0
+    || receipt.workspaceRevision !== receipt.authority.revisionAfter
     || receipt.authority.projectRoot !== identity.expectedProjectRoot
     || receipt.authority.sessionId !== identity.expectedSessionId
   ) {
     throw new Error(
-      `[css_stale_receipt] ${command} a returnat receipt pentru altă ProjectSession.`,
+      t("io-css-foreign-session-receipt", { command }),
     );
   }
   const authority = receipt.authority;
@@ -1512,7 +2221,7 @@ async function invokeBoundCssMutation<T>(
     || !Array.isArray(authority.removedFiles)
     || !Array.isArray(authority.documents)
   ) {
-    throw new Error(`[css_invalid_authority_receipt] ${command} nu conține manifestele CSS schema 2.`);
+    throw new Error(t("io-css-authority-manifests-invalid", { command }));
   }
   const sortedTouched = [...new Set(authority.touchedFiles)].sort();
   const projectedPaths = [
@@ -1531,7 +2240,7 @@ async function invokeBoundCssMutation<T>(
     || JSON.stringify(projectedPaths) !== JSON.stringify(authority.touchedFiles)
     || JSON.stringify(documentPaths) !== JSON.stringify(authority.touchedFiles)
   ) {
-    throw new Error(`[css_invalid_authority_receipt] ${command} a returnat un receipt de sesiune invalid.`);
+    throw new Error(t("io-css-authority-receipt-invalid", { command }));
   }
   if (
     authority.status === "noop"
@@ -1544,7 +2253,7 @@ async function invokeBoundCssMutation<T>(
       || authority.workspaceMutation !== null
     )
   ) {
-    throw new Error(`[css_invalid_authority_receipt] ${command} noop a declarat efecte.`);
+    throw new Error(t("io-css-authority-noop-effects", { command }));
   }
   if (
     authority.status === "staged"
@@ -1559,17 +2268,17 @@ async function invokeBoundCssMutation<T>(
       || JSON.stringify(authority.workspaceMutation.touchedFiles) !== JSON.stringify(authority.touchedFiles)
     )
   ) {
-    throw new Error(`[css_invalid_authority_receipt] ${command} staged nu are confirmarea exactă ProjectWorkspace.`);
+    throw new Error(t("io-css-authority-staged-mismatch", { command }));
   }
   if (authority.status !== "noop" && authority.status !== "staged") {
-    throw new Error(`[css_invalid_authority_receipt] ${command} are status necunoscut.`);
+    throw new Error(t("io-css-authority-status-invalid", { command }));
   }
   for (const projection of authority.documents) {
     const written = authority.writtenFiles.find((file) => file.relativePath === projection.relativePath);
     const removed = authority.removedFiles.includes(projection.relativePath);
     if (projection.snapshot === null) {
       if (!removed || written) {
-        throw new Error(`[css_invalid_authority_receipt] ${command} are o proiecție de ștergere inconsistentă.`);
+        throw new Error(t("io-css-authority-delete-projection-invalid", { command }));
       }
       continue;
     }
@@ -1588,20 +2297,46 @@ async function invokeBoundCssMutation<T>(
       || file.revision !== snapshot.revision
       || file.dirty !== snapshot.dirty
     ) {
-      throw new Error(`[css_invalid_authority_receipt] ${command} nu leagă textul de snapshotul FileBuffer exact.`);
+      throw new Error(t("io-css-authority-file-buffer-mismatch", { command }));
     }
   }
   return receipt;
 }
 
-export function getScssVariables(identity: CssRequestIdentity): Promise<ScssVariable[]> {
-  return invokeBoundCss<ScssVariable[]>("get_scss_variables", {}, identity);
+export function getScssVariables(
+  identity: CssRequestIdentity,
+  expectedWorkspaceRevision?: number,
+): Promise<ScssVariable[]> {
+  return invokeBoundCss<ScssVariable[]>(
+    "get_scss_variables",
+    {},
+    identity,
+    expectedWorkspaceRevision,
+  );
+}
+
+export function readDesignTokenCatalog(
+  identity: CssRequestIdentity,
+  expectedWorkspaceRevision?: number,
+): Promise<DesignTokenCatalogSnapshot> {
+  return invokeBoundCss<DesignTokenCatalogSnapshot>(
+    "read_design_token_catalog",
+    {},
+    identity,
+    expectedWorkspaceRevision,
+  );
 }
 
 export function readThemeStyleCatalog(
   identity: CssRequestIdentity,
+  expectedWorkspaceRevision?: number,
 ): Promise<ThemeStyleCatalogSnapshot> {
-  return invokeBoundCss<ThemeStyleCatalogSnapshot>("read_theme_style_catalog", {}, identity);
+  return invokeBoundCss<ThemeStyleCatalogSnapshot>(
+    "read_theme_style_catalog",
+    {},
+    identity,
+    expectedWorkspaceRevision,
+  );
 }
 
 export function previewThemeStyleDraft(
@@ -1614,6 +2349,7 @@ export function previewThemeStyleDraft(
     "preview_theme_style_draft",
     { targetId, properties, expectedWorkspaceRevision },
     identity,
+    expectedWorkspaceRevision,
   );
 }
 
@@ -1634,16 +2370,122 @@ export function getFontInventory(): Promise<FontInventory> {
   return invoke<FontInventory>("get_font_inventory");
 }
 
+export function getFontManager(
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontManagerSnapshot> {
+  return invoke<FontManagerSnapshot>("get_font_manager", { identity });
+}
+
+export function getFontPreviewAsset(
+  file: string,
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontPreviewAsset> {
+  return invoke<FontPreviewAsset>("get_font_preview_asset", { file, identity });
+}
+
+export function assignFontRole(
+  roleId: FontRoleId,
+  family: string,
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontRoleAssignmentReceipt> {
+  return invoke<FontRoleAssignmentReceipt>("assign_font_role", {
+    roleId,
+    family,
+    identity,
+  });
+}
+
+export function setFontDisplay(
+  family: string,
+  display: "auto" | "block" | "swap" | "fallback" | "optional",
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontDeliveryMutationReceipt> {
+  return invoke<FontDeliveryMutationReceipt>("set_font_display", {
+    family,
+    display,
+    identity,
+  });
+}
+
+export function setFontPreload(
+  file: string,
+  enabled: boolean,
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontDeliveryMutationReceipt> {
+  return invoke<FontDeliveryMutationReceipt>("set_font_preload", {
+    file,
+    enabled,
+    identity,
+  });
+}
+
+export function planFontFamilyRemoval(
+  family: string,
+  directory: string,
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontFamilyRemovalPlan> {
+  return invoke<FontFamilyRemovalPlan>("plan_font_family_removal", {
+    family,
+    directory,
+    identity,
+  });
+}
+
+export function removeFontFamily(
+  family: string,
+  directory: string,
+  expectedPlanToken: string,
+  identity: ProjectWorkspaceIdentity,
+): Promise<FontFamilyRemovalReceipt> {
+  return invoke<FontFamilyRemovalReceipt>("remove_font_family", {
+    family,
+    directory,
+    expectedPlanToken,
+    identity,
+  });
+}
+
 export function downloadGoogleFontFamily(
   family: string,
   weights: number[],
+  styles: string[],
   variable: boolean,
-): Promise<GoogleFontDownloadResult> {
-  return invoke<GoogleFontDownloadResult>("download_google_font_family", { family, weights, variable });
+  axes: GoogleFontAxis[],
+  characterSet: string | null,
+  identity: ProjectWorkspaceIdentity,
+): Promise<GoogleFontInstallReceipt> {
+  return invoke<GoogleFontInstallReceipt>("download_google_font_family", {
+    family,
+    weights,
+    styles,
+    variable,
+    axes,
+    characterSet,
+    identity,
+  });
 }
 
 export function searchGoogleFonts(query: string, limit = 40, offset = 0): Promise<GoogleFontCatalogFamily[]> {
   return invoke<GoogleFontCatalogFamily[]>("search_google_fonts", { query, limit, offset });
+}
+
+export function planLocalFontImport(
+  sourcePaths: string[],
+  identity: ProjectWorkspaceIdentity,
+): Promise<LocalFontImportPlan> {
+  return invoke<LocalFontImportPlan>("plan_local_font_import", { sourcePaths, identity });
+}
+
+export function applyLocalFontImport(
+  sourcePaths: string[],
+  expectedPlanToken: string,
+  identity: ProjectWorkspaceIdentity,
+): Promise<LocalFontImportReceipt> {
+  return invoke<LocalFontImportReceipt>("apply_local_font_import", {
+    sourcePaths,
+    expectedPlanToken,
+    identity,
+  });
 }
 
 export function setScssVariable(
@@ -1668,63 +2510,73 @@ export function createScssVariable(
   );
 }
 
-export function getClassRules(
-  relativePath: string,
-  selector: string,
-  identity: CssRequestIdentity,
-): Promise<CssProperty[]> {
-  return invokeBoundCss<CssProperty[]>("get_class_rules", { relativePath, selector }, identity);
-}
-
 export type CssViewport = "desktop" | "tablet" | "mobile";
 
-export function getClassRulesAtViewport(
-  relativePath: string,
-  selector: string,
-  viewport: CssViewport,
-  identity: CssRequestIdentity,
-): Promise<CssProperty[]> {
-  return invokeBoundCss<CssProperty[]>(
-    "get_class_rules_at_viewport",
-    { relativePath, selector, viewport },
-    identity,
-  );
-}
-
-export function getCssRuleContext(
-  relativePath: string,
-  selector: string,
-  viewport: CssViewport,
-  identity: CssRequestIdentity,
-): Promise<CssRuleContext> {
-  return invokeBoundCss<CssRuleContext>(
-    "get_css_rule_context",
-    { relativePath, selector, viewport },
-    identity,
-  );
-}
-
-export function findClassInScss(
-  selector: string,
-  scssFiles: string[],
-  identity: CssRequestIdentity,
-): Promise<{ file: string; rules: CssProperty[] } | null> {
-  return invokeBoundCss("find_class_in_scss", { selector, scssFiles }, identity);
-}
-
-export function resolvePageCssTarget(options: {
+export async function resolveCssInspectorContext(options: {
   templatePath: string | null;
   selector: string;
-  scssFiles: string[];
+  viewport: CssViewport;
   fallbackFile: string | null;
-}, identity: CssRequestIdentity): Promise<PageCssTarget> {
-  return invokeBoundCss<PageCssTarget>("resolve_page_css_target", options, identity);
+  expectedWorkspaceRevision: number;
+  expectedSelection: SelectionMutationIdentity;
+}, identity: CssRequestIdentity): Promise<CssInspectorContextResolution> {
+  const resolution = await invokeBoundCss<CssInspectorContextResolution>(
+    "resolve_css_inspector_context",
+    options,
+    identity,
+    options.expectedWorkspaceRevision,
+  );
+  const expectedRevision = options.expectedSelection.selectionRevision;
+  if (
+    resolution.schemaVersion !== CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION
+    || resolution.selectionRevision !== expectedRevision
+    || resolution.selector !== options.selector.trim()
+    || resolution.viewport !== options.viewport
+    || !["existing", "creation", "ambiguous"].includes(resolution.state)
+    || !Array.isArray(resolution.candidates)
+  ) {
+    throw new Error("[css_inspector_invalid_receipt] Rust a returnat o rezoluție CSS inconsistentă.");
+  }
+  for (const candidate of resolution.candidates) {
+    if (
+      !candidate.file
+      || candidate.ruleContext.file !== candidate.file
+      || candidate.ruleContext.selector !== resolution.selector
+      || candidate.ruleContext.viewport !== resolution.viewport
+    ) {
+      throw new Error("[css_inspector_invalid_receipt] Candidatul CSS nu corespunde rezoluției.");
+    }
+  }
+  if (resolution.state === "ambiguous") {
+    if (
+      resolution.target !== null
+      || resolution.ruleContext !== null
+      || resolution.candidates.length < 2
+    ) {
+      throw new Error("[css_inspector_invalid_receipt] Ambiguitatea CSS nu este completă.");
+    }
+    return resolution;
+  }
+  if (
+    !resolution.target
+    || !resolution.ruleContext
+    || resolution.target.file !== resolution.ruleContext.file
+    || resolution.target.selector !== resolution.selector
+    || resolution.ruleContext.selector !== resolution.selector
+    || resolution.ruleContext.viewport !== resolution.viewport
+    || (resolution.state === "existing" && resolution.candidates.length !== 1)
+    || (resolution.state === "creation" && resolution.candidates.length > 1)
+  ) {
+    throw new Error("[css_inspector_invalid_receipt] Ținta CSS nu corespunde contextului atomic.");
+  }
+  return resolution;
 }
 
 export function setCssRule(options: {
   relativePath: string;
   selector: string;
   properties: Partial<Record<keyof EditableStyles | string, string>>;
+  expectedSelection?: SelectionMutationIdentity | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<void>> {
   return invokeBoundCssMutation<void>("set_css_rule", options, identity);
 }
@@ -1734,6 +2586,7 @@ export function setCssRuleAtViewport(options: {
   selector: string;
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
+  expectedSelection?: SelectionMutationIdentity | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<void>> {
   return invokeBoundCssMutation<void>("set_css_rule_at_viewport", options, identity);
 }
@@ -1745,6 +2598,7 @@ export function setPageCssRuleAtViewport(options: {
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
   cachebustAssets: boolean;
+  expectedSelection?: SelectionMutationIdentity | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<PageCssWriteResult>> {
   return invokeBoundCssMutation<PageCssWriteResult>("set_page_css_rule_at_viewport", options, identity);
 }
@@ -1842,10 +2696,21 @@ export function clearPageJsDraft(
   });
 }
 
-export function applyMotionTimelineStepTiming(
-  input: MotionTimelineStepTimingInput,
-): Promise<MotionTimelineStepTimingReceipt> {
-  return invoke("apply_motion_timeline_step_timing", { input });
+export async function applyMotionMutation(
+  input: MotionPageMutationInput,
+): Promise<MotionPageMutationReceipt> {
+  const receipt = await invoke<MotionPageMutationReceipt>("apply_motion_mutation", { input });
+  if (
+    receipt.mutation.schemaVersion !== 3
+    || (receipt.mutation.transaction && receipt.mutation.transaction.schemaVersion !== 3)
+  ) {
+    throw schemaMismatch(
+      "Motion mutation",
+      receipt.mutation.schemaVersion,
+      3,
+    );
+  }
+  return receipt;
 }
 
 export function saveZolaBaseUrl(url: string): Promise<void> {
@@ -1869,10 +2734,6 @@ export function applyThemeChange(
   return invoke<ThemeApplyReceipt>("apply_theme_change", {
     request: { plan, expectedPlanToken },
   });
-}
-
-export function zolaInit(path: string, themeId: string): Promise<string> {
-  return invoke<string>("zola_init", { path, themeId });
 }
 
 export function zolaBuild(): Promise<string> {

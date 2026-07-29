@@ -1,6 +1,7 @@
 use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
+    collections::{BTreeMap, HashMap, HashSet},
+    fs,
+    path::{Path, PathBuf},
 };
 
 mod asset;
@@ -17,11 +18,12 @@ mod template;
 
 use crate::{
     kernel::project_workspace::WorkspaceProjectionLease,
+    localization::LocalizedDiagnostic,
     project::{is_zola_project, zola_project_root},
     source_graph::{
         model::{
             SourceDiagnosticSeverity, SourceGraph, SourceGraphAsset, SourceGraphDataFile,
-            SourceGraphScript, SourceGraphStyle, SourceGraphTemplate,
+            SourceGraphScript, SourceGraphStyle, SourceGraphTemplate, SourcePageKind,
         },
         scan::{
             asset::scan_asset,
@@ -45,6 +47,7 @@ use crate::{
             style::{scan_style, style_scope_for_file},
             template::scan_template,
         },
+        zola::{parse_zola_content_frontmatter, zola_content_page_kind},
     },
     zola_theme::{active_theme_from_source, ZolaThemeResolver},
 };
@@ -113,6 +116,23 @@ fn build_source_graph_internal(
     };
     let active_theme = theme_resolver.active_theme().map(str::to_string);
     let mut builder = SourceGraphBuilder::new(&root, &zola_root, active_theme.clone());
+    let output_root = match crate::source_graph::zola::resolve_zola_output_root(
+        &root,
+        &zola_root,
+        projected_config.map(String::as_str),
+    ) {
+        Ok(path) => Some(path),
+        Err(error) => {
+            builder.add_diagnostic(
+                SourceDiagnosticSeverity::Warning,
+                LocalizedDiagnostic::new("source-graph-output-root-failed")
+                    .with_argument("details", error),
+                None,
+                None,
+            );
+            None
+        }
+    };
 
     let is_zola = match workspace_projection {
         Some(_) => projected_config.is_some(),
@@ -121,7 +141,7 @@ fn build_source_graph_internal(
     if !is_zola {
         builder.add_diagnostic(
             SourceDiagnosticSeverity::Warning,
-            "Proiectul curent nu pare să fie un proiect Zola valid.",
+            LocalizedDiagnostic::new("source-graph-not-zola-project"),
             None,
             None,
         );
@@ -301,6 +321,73 @@ fn build_source_graph_internal(
         ));
     }
 
+    let data_context = crate::source_graph::zola::ZolaDataResolutionContext {
+        project_root: &root,
+        zola_root: &zola_root,
+        active_theme: active_theme.as_deref(),
+        output_root: output_root.as_deref(),
+        projected_sources: draft_sources,
+        deleted_sources,
+        exact_workspace_projection: workspace_projection.is_some(),
+    };
+    let mut resolved_data_files = BTreeMap::new();
+    for path in data_file_paths {
+        match crate::source_graph::zola::conventional_zola_data_file(&data_context, path) {
+            Ok(candidate) => {
+                resolved_data_files.insert(candidate.file.clone(), candidate);
+            }
+            Err(error) => builder.add_diagnostic(
+                SourceDiagnosticSeverity::Warning,
+                LocalizedDiagnostic::new("source-graph-conventional-data-invalid")
+                    .with_argument("details", error),
+                None,
+                None,
+            ),
+        }
+    }
+    for template in &templates {
+        for load_path in &template.data_loads {
+            match crate::source_graph::zola::resolve_zola_load_data_file(&data_context, load_path) {
+                Ok(Some(candidate)) => {
+                    if let Some(existing) = resolved_data_files.get_mut(&candidate.file) {
+                        for reference in candidate.load_paths {
+                            if !existing.load_paths.contains(&reference) {
+                                existing.load_paths.push(reference);
+                            }
+                        }
+                    } else {
+                        resolved_data_files.insert(candidate.file.clone(), candidate);
+                    }
+                }
+                Ok(None) => builder.add_diagnostic(
+                    SourceDiagnosticSeverity::Warning,
+                    LocalizedDiagnostic::new("source-graph-load-data-missing")
+                        .with_argument("path", load_path.clone()),
+                    Some(template.file.clone()),
+                    None,
+                ),
+                Err(error) => builder.add_diagnostic(
+                    SourceDiagnosticSeverity::Warning,
+                    LocalizedDiagnostic::new("source-graph-load-data-unresolved")
+                        .with_argument("path", load_path.clone())
+                        .with_argument("details", error),
+                    Some(template.file.clone()),
+                    None,
+                ),
+            }
+        }
+    }
+    for candidate in resolved_data_files.values_mut() {
+        candidate.load_paths.sort();
+        candidate.load_paths.dedup();
+    }
+    let promoted_data_paths = resolved_data_files
+        .values()
+        .map(|candidate| candidate.path.clone())
+        .collect::<HashSet<_>>();
+    asset_files.retain(|path| !promoted_data_paths.contains(path));
+    theme_asset_files.retain(|path| !promoted_data_paths.contains(path));
+
     let mut styles = Vec::new();
     for path in style_files {
         styles.push(scan_style(
@@ -342,16 +429,8 @@ fn build_source_graph_internal(
         ));
     }
     let mut data_files = Vec::new();
-    for path in data_file_paths {
-        data_files.push(scan_data_file(
-            &root,
-            &zola_root,
-            &path,
-            crate::source_graph::model::SourceOrigin::Local,
-            None,
-            draft_sources,
-            &mut builder,
-        ));
+    for candidate in resolved_data_files.into_values() {
+        data_files.push(scan_data_file(candidate, draft_sources, &mut builder));
     }
 
     let template_node_by_name = template_node_map(&templates);
@@ -365,7 +444,26 @@ fn build_source_graph_internal(
         .iter()
         .map(|asset| (asset.file.clone(), asset.node_id.clone()))
         .collect();
-    let asset_node_by_reference = asset_reference_map(&assets);
+    let mut asset_node_by_reference = asset_reference_map(&assets);
+    for data_file in &data_files {
+        if !matches!(
+            data_file.location,
+            crate::source_graph::model::SourceDataLocation::Static
+                | crate::source_graph::model::SourceDataLocation::Theme
+        ) {
+            continue;
+        }
+        for reference in data_file
+            .load_paths
+            .iter()
+            .chain(std::iter::once(&data_file.logical_path))
+        {
+            let normalized = crate::source_graph::zola::normalize_static_asset_reference(reference);
+            asset_node_by_reference
+                .entry(normalized)
+                .or_insert_with(|| data_file.node_id.clone());
+        }
+    }
     let data_file_node_by_reference = data_file_reference_map(&data_files);
     add_template_relations(
         &templates,
@@ -382,12 +480,17 @@ fn build_source_graph_internal(
     );
     add_template_asset_relations(&templates, &asset_node_by_reference, &mut builder);
 
+    let section_page_templates =
+        collect_section_page_templates(&root, &zola_root, &content_files, draft_sources);
     let mut pages = Vec::new();
     for path in content_files {
+        let inherited_page_template =
+            inherited_page_template(&zola_root, &path, &section_page_templates);
         pages.push(scan_content_page(
             &root,
             &zola_root,
             &path,
+            inherited_page_template,
             &template_node_by_name,
             &template_by_name,
             &style_by_file,
@@ -479,10 +582,13 @@ fn build_source_graph_internal(
             origin: data_file.origin,
             theme_name: data_file.theme_name,
             logical_path: data_file.logical_path,
+            load_paths: data_file.load_paths,
+            location: data_file.location,
             node_id: data_file.node_id,
             format: data_file.format,
             parse_error: data_file.parse_error,
             nodes: data_file.nodes,
+            capabilities: data_file.capabilities,
         })
         .collect();
     let mut structured_documents = Vec::new();
@@ -527,25 +633,81 @@ fn build_source_graph_internal(
     );
     graph.component_graph = crate::source_graph::component_graph::build_component_graph(&graph);
     graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
-    let read_errors = graph
+    let read_error = graph
         .diagnostics
         .iter()
         .filter(|diagnostic| matches!(diagnostic.severity, SourceDiagnosticSeverity::Error))
-        .map(|diagnostic| {
-            diagnostic
-                .file
-                .as_ref()
-                .map(|file| format!("{file}: {}", diagnostic.message))
-                .unwrap_or_else(|| diagnostic.message.clone())
-        })
-        .collect::<Vec<_>>();
-    if !read_errors.is_empty() {
-        return Err(format!(
-            "Source Graph a refuzat snapshotul cu erori de citire: {}",
-            read_errors.join(" | ")
-        ));
+        .next();
+    if let Some(read_error) = read_error {
+        return Err(serde_json::to_string(&read_error.diagnostic)
+            .unwrap_or_else(|_| read_error.diagnostic.code.clone()));
     }
     Ok(graph)
+}
+
+#[derive(Clone, Debug)]
+struct SectionPageTemplateBinding {
+    directory: PathBuf,
+    template: String,
+}
+
+fn collect_section_page_templates(
+    project_root: &Path,
+    zola_root: &Path,
+    content_files: &[PathBuf],
+    draft_sources: &HashMap<String, String>,
+) -> Vec<SectionPageTemplateBinding> {
+    content_files
+        .iter()
+        .filter(|path| {
+            matches!(
+                zola_content_page_kind(zola_root, path),
+                SourcePageKind::Home | SourcePageKind::Section
+            )
+        })
+        .filter_map(|path| {
+            let file = relative_project_path(project_root, path);
+            let source = draft_sources
+                .get(&file)
+                .cloned()
+                .or_else(|| fs::read_to_string(path).ok())?;
+            let template = parse_zola_content_frontmatter(&source).page_template?;
+            Some(SectionPageTemplateBinding {
+                directory: content_directory(zola_root, path)?,
+                template,
+            })
+        })
+        .collect()
+}
+
+fn inherited_page_template<'a>(
+    zola_root: &Path,
+    page_path: &Path,
+    bindings: &'a [SectionPageTemplateBinding],
+) -> Option<&'a str> {
+    if !matches!(
+        zola_content_page_kind(zola_root, page_path),
+        SourcePageKind::Page
+    ) {
+        return None;
+    }
+    let page_directory = content_directory(zola_root, page_path)?;
+    bindings
+        .iter()
+        .filter(|binding| {
+            binding.directory.as_os_str().is_empty()
+                || page_directory.starts_with(&binding.directory)
+        })
+        .max_by_key(|binding| binding.directory.components().count())
+        .map(|binding| binding.template.as_str())
+}
+
+fn content_directory(zola_root: &Path, content_path: &Path) -> Option<PathBuf> {
+    content_path
+        .strip_prefix(zola_root.join("content"))
+        .ok()?
+        .parent()
+        .map(Path::to_path_buf)
 }
 
 fn add_workspace_manifest_only_paths(
@@ -659,6 +821,44 @@ mod tests {
                 && node.kind == SourceNodeKind::Html
                 && node.label == "<section .hero>"
         }));
+    }
+
+    #[test]
+    fn source_graph_resolves_a_draft_only_load_data_target_outside_date() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
+        fs::write(root.join("templates/index.html"), "<main>Inițial</main>").unwrap();
+        let drafts = HashMap::from([
+            (
+                "templates/index.html".to_string(),
+                r#"{% set site = load_data(path="content/site.toml") %}"#.to_string(),
+            ),
+            (
+                "content/site.toml".to_string(),
+                "titlu = \"Draft\"\n".to_string(),
+            ),
+        ]);
+
+        let graph = build_source_graph_with_drafts(&root, &drafts).unwrap();
+        let data_file = graph
+            .data_files
+            .iter()
+            .find(|data_file| data_file.file == "content/site.toml")
+            .unwrap();
+        assert_eq!(
+            data_file.location,
+            crate::source_graph::model::SourceDataLocation::Content
+        );
+        assert!(data_file.capabilities.can_edit_visual);
+        assert!(data_file
+            .nodes
+            .iter()
+            .any(|node| node.value_preview.as_deref() == Some("Draft")));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -860,6 +1060,11 @@ mod tests {
         )
         .unwrap();
         fs::write(
+            root.join("content/blog/post.md"),
+            "+++\ntitle = \"Post\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
             root.join("templates/section.html"),
             "<h1>{{ section.title }}</h1>",
         )
@@ -887,6 +1092,19 @@ mod tests {
             relation.kind == SourceRelationKind::SectionPageTemplate
                 && relation.from == section.content_node_id
                 && Some(&relation.to) == section.page_template_node_id.as_ref()
+        }));
+        let post = graph
+            .pages
+            .iter()
+            .find(|page| page.file == "content/blog/post.md")
+            .unwrap();
+        assert_eq!(post.frontmatter_template, None);
+        assert_eq!(post.resolved_template.as_deref(), Some("blog/page.html"));
+        assert!(post.template_node_id.is_some());
+        assert!(graph.relations.iter().any(|relation| {
+            relation.kind == SourceRelationKind::PageTemplate
+                && relation.from == post.content_node_id
+                && Some(&relation.to) == post.template_node_id.as_ref()
         }));
     }
 
@@ -964,7 +1182,10 @@ mod tests {
         assert!(!graph
             .diagnostics
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("css/site.css")));
+            .any(
+                |diagnostic| serde_json::to_string(&diagnostic.diagnostic.arguments)
+                    .is_ok_and(|arguments| arguments.contains("css/site.css"))
+            ));
     }
 
     #[test]
@@ -1021,9 +1242,9 @@ mod tests {
             .find(|asset| asset.logical_path == "css/site.css")
             .unwrap();
         let data = graph
-            .assets
+            .data_files
             .iter()
-            .find(|asset| asset.logical_path == "data/catalog.json")
+            .find(|data_file| data_file.file == "static/data/catalog.json")
             .unwrap();
         let image = graph
             .assets
@@ -1038,6 +1259,10 @@ mod tests {
         assert!(template
             .data_loads
             .contains(&"static/data/catalog.json".to_string()));
+        assert!(!graph
+            .assets
+            .iter()
+            .any(|asset| asset.file == "static/data/catalog.json"));
         assert!(template
             .image_metadata
             .contains(&"static/img/hero.png".to_string()));
@@ -1060,7 +1285,7 @@ mod tests {
                 && relation.to == stylesheet.node_id
         }));
         assert!(graph.relations.iter().any(|relation| {
-            relation.kind == SourceRelationKind::DataLoad
+            relation.kind == SourceRelationKind::DataFileLoad
                 && relation.from == template.node_id
                 && relation.to == data.node_id
         }));
@@ -1150,6 +1375,217 @@ mod tests {
     }
 
     #[test]
+    fn load_data_catalog_resolves_the_complete_zola_search_domain() {
+        let root = unique_test_dir();
+        for directory in [
+            "content/blog",
+            "templates",
+            "date",
+            "data",
+            "static/data",
+            "generated/site",
+            "themes/demo/templates",
+            "themes/demo/static/data",
+        ] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+        }
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = \"http://example.test\"\ntheme = \"demo\"\noutput_dir = \"generated/site\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
+        fs::write(
+            root.join("date/nefolosit.toml"),
+            "titlu = \"Convențional\"\n",
+        )
+        .unwrap();
+        fs::write(root.join("catalog.toml"), "titlu = \"Rădăcină\"\n").unwrap();
+        fs::write(root.join("arbitrar.json"), r#"{"unused":true}"#).unwrap();
+        fs::write(root.join("static/data/catalog.json"), r#"{"static":true}"#).unwrap();
+        fs::write(root.join("content/blog/tabel.csv"), "id,nume\n1,Test\n").unwrap();
+        fs::write(root.join("generated/site/cache.yaml"), "cache: true\n").unwrap();
+        fs::write(
+            root.join("themes/demo/static/data/tema.xml"),
+            "<date><titlu>Temă</titlu></date>",
+        )
+        .unwrap();
+        fs::write(root.join("data/precedenta.json"), r#"{"root":true}"#).unwrap();
+        fs::write(
+            root.join("static/data/precedenta.json"),
+            r#"{"static":true}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            r#"
+{% set root = load_data(path="catalog.toml") %}
+{% set static = load_data(path="data/catalog.json") %}
+{% set content = load_data(path="content/blog/tabel.csv") %}
+{% set output = load_data(path="cache.yaml") %}
+{% set precedence = load_data(path="data/precedenta.json") %}
+{% set missing = load_data(path="missing.json") %}
+{% set dynamic = load_data(path=data_path) %}
+{% set remote = load_data(url="https://example.test/catalog.json") %}
+<a href="{{ get_url(path="catalog.toml") }}">Nu este asset static</a>
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("themes/demo/templates/partial.html"),
+            r#"{% set theme_data = load_data(path="data/tema.xml") %}"#,
+        )
+        .unwrap();
+
+        let graph = build_source_graph(&root).unwrap();
+
+        let by_file = graph
+            .data_files
+            .iter()
+            .map(|data_file| (data_file.file.as_str(), data_file))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            by_file["date/nefolosit.toml"].location,
+            crate::source_graph::model::SourceDataLocation::Date
+        );
+        assert!(by_file["date/nefolosit.toml"]
+            .load_paths
+            .contains(&"date/nefolosit.toml".to_string()));
+        assert_eq!(
+            by_file["catalog.toml"].location,
+            crate::source_graph::model::SourceDataLocation::Project
+        );
+        assert!(by_file["catalog.toml"].capabilities.can_edit_visual);
+        assert_eq!(
+            by_file["static/data/catalog.json"].location,
+            crate::source_graph::model::SourceDataLocation::Static
+        );
+        assert!(
+            !by_file["static/data/catalog.json"]
+                .capabilities
+                .can_edit_visual
+        );
+        assert_eq!(
+            by_file["content/blog/tabel.csv"].location,
+            crate::source_graph::model::SourceDataLocation::Content
+        );
+        assert_eq!(
+            by_file["generated/site/cache.yaml"].location,
+            crate::source_graph::model::SourceDataLocation::Output
+        );
+        assert!(
+            !by_file["generated/site/cache.yaml"]
+                .capabilities
+                .can_open_in_code
+        );
+        assert_eq!(
+            by_file["themes/demo/static/data/tema.xml"].location,
+            crate::source_graph::model::SourceDataLocation::Theme
+        );
+        assert_eq!(
+            by_file["themes/demo/static/data/tema.xml"].origin,
+            SourceOrigin::Theme
+        );
+        assert!(
+            !by_file["themes/demo/static/data/tema.xml"]
+                .capabilities
+                .can_open_in_code
+        );
+        assert!(!by_file.contains_key("static/data/precedenta.json"));
+        assert!(by_file.contains_key("data/precedenta.json"));
+        assert!(!by_file.contains_key("zola.toml"));
+        assert!(!by_file.contains_key("arbitrar.json"));
+        assert!(!graph
+            .assets
+            .iter()
+            .any(|asset| asset.file == "static/data/catalog.json"));
+        assert!(!graph.relations.iter().any(|relation| {
+            relation.kind == SourceRelationKind::AssetUrl
+                && relation.to == by_file["catalog.toml"].node_id
+        }));
+        assert_eq!(
+            graph
+                .relations
+                .iter()
+                .filter(|relation| relation.kind == SourceRelationKind::DataFileLoad)
+                .count(),
+            6
+        );
+        assert!(graph
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.diagnostic.code == "source-graph-dynamic-load-data"));
+        assert!(!graph.diagnostics.iter().any(|diagnostic| {
+            serde_json::to_string(&diagnostic.diagnostic.arguments)
+                .is_ok_and(|arguments| arguments.contains("https://example.test/catalog.json"))
+        }));
+        assert!(graph
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.diagnostic.code == "source-graph-load-data-missing"
+                    && diagnostic.diagnostic.arguments.get("path")
+                        == Some(&serde_json::Value::String("missing.json".to_string()))
+            ));
+        let stable_graph = build_source_graph(&root).unwrap();
+        assert_eq!(
+            stable_graph
+                .data_files
+                .iter()
+                .find(|data_file| data_file.file == "static/data/catalog.json")
+                .map(|data_file| data_file.node_id.as_str()),
+            Some(by_file["static/data/catalog.json"].node_id.as_str())
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn load_data_catalog_marks_an_external_output_target_read_only() {
+        let root = unique_test_dir();
+        let output_name = format!(
+            "pana-source-graph-output-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let output = root.parent().unwrap().join(&output_name);
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            format!("base_url = '/'\noutput_dir = '../{output_name}'\n"),
+        )
+        .unwrap();
+        fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            r#"{% set cache = load_data(path="cache.json") %}"#,
+        )
+        .unwrap();
+        fs::write(output.join("cache.json"), r#"{"generated":true}"#).unwrap();
+
+        let graph = build_source_graph(&root).unwrap();
+        let data_file = graph
+            .data_files
+            .iter()
+            .find(|data_file| data_file.file == "@output/cache.json")
+            .unwrap();
+        assert_eq!(
+            data_file.location,
+            crate::source_graph::model::SourceDataLocation::Output
+        );
+        assert!(!data_file.capabilities.can_open_in_code);
+        assert!(!data_file.capabilities.can_edit_visual);
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(output).unwrap();
+    }
+
+    #[test]
     fn zola_content_files_create_load_data_relations() {
         let root = unique_test_dir();
         fs::create_dir_all(root.join("content/blog")).unwrap();
@@ -1181,20 +1617,24 @@ mod tests {
             .iter()
             .find(|template| template.name == "index.html")
             .unwrap();
-        let page = graph
-            .pages
+        let data_file = graph
+            .data_files
             .iter()
-            .find(|page| page.file == "content/blog/post.md")
+            .find(|data_file| data_file.file == "content/blog/post.md")
             .unwrap();
 
         assert!(template.data_loads.contains(&"@/blog/post.md".to_string()));
         assert!(template
             .data_loads
             .contains(&"content/blog/post.md".to_string()));
+        assert_eq!(
+            data_file.location,
+            crate::source_graph::model::SourceDataLocation::Content
+        );
         assert!(graph.relations.iter().any(|relation| {
-            relation.kind == SourceRelationKind::ContentDataLoad
+            relation.kind == SourceRelationKind::DataFileLoad
                 && relation.from == template.node_id
-                && relation.to == page.content_node_id
+                && relation.to == data_file.node_id
         }));
     }
 
@@ -1399,9 +1839,9 @@ mod tests {
         assert!(partial.is_partial);
         assert!(partial.blocks.is_empty());
         assert!(graph.diagnostics.iter().any(|diagnostic| {
-            diagnostic
-                .message
-                .contains("Partialul partials/cta.html conține block Tera")
+            diagnostic.diagnostic.code == "source-graph-partial-block-invalid"
+                && diagnostic.diagnostic.arguments.get("name")
+                    == Some(&serde_json::Value::String("partials/cta.html".to_string()))
         }));
         assert!(!graph.nodes.iter().any(|node| {
             node.file.ends_with("templates/partials/cta.html") && node.kind == SourceNodeKind::Block

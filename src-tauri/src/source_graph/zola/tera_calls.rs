@@ -110,6 +110,22 @@ pub(crate) fn parse_zola_path_calls(source: &str) -> Vec<TeraZolaPathCall> {
     calls
 }
 
+pub(crate) fn count_dynamic_zola_load_data_paths(source: &str) -> usize {
+    let mut count = 0;
+    for item in parse_tera_items(source) {
+        if item.kind != TeraItemKind::Node
+            || matches!(
+                item.node_kind,
+                Some(SourceNodeKind::TeraComment | SourceNodeKind::Raw)
+            )
+        {
+            continue;
+        }
+        count += count_dynamic_path_arguments(source, item.start, item.end, "load_data");
+    }
+    count
+}
+
 fn collect_zola_path_calls(
     source: &str,
     start: usize,
@@ -151,6 +167,65 @@ fn collect_zola_path_calls(
         }
         index = call_end;
     }
+}
+
+fn count_dynamic_path_arguments(
+    source: &str,
+    start: usize,
+    end: usize,
+    function_name: &str,
+) -> usize {
+    let bytes = source.as_bytes();
+    let mut count = 0;
+    let mut index = start;
+    while index < end && index < bytes.len() {
+        if is_quote(bytes[index]) {
+            index = skip_string(bytes, index, end).unwrap_or(end);
+            continue;
+        }
+        if !identifier_at(source, index, end, function_name) {
+            index += 1;
+            continue;
+        }
+        let cursor = skip_ascii_whitespace(bytes, index + function_name.len(), end);
+        if cursor >= end || bytes.get(cursor) != Some(&b'(') {
+            index += function_name.len();
+            continue;
+        }
+        let Some(call_end) = matching_paren_end(bytes, cursor, end) else {
+            index += function_name.len();
+            continue;
+        };
+        let arguments_end = call_end.saturating_sub(1);
+        if named_argument_exists(source, cursor + 1, arguments_end, "path")
+            && named_string_argument(source, cursor + 1, arguments_end, "path").is_none()
+        {
+            count += 1;
+        }
+        index = call_end;
+    }
+    count
+}
+
+fn named_argument_exists(source: &str, start: usize, end: usize, argument: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = start;
+    while index < end && index < bytes.len() {
+        if is_quote(bytes[index]) {
+            index = skip_string(bytes, index, end).unwrap_or(end);
+            continue;
+        }
+        if !identifier_at(source, index, end, argument) {
+            index += 1;
+            continue;
+        }
+        let cursor = skip_ascii_whitespace(bytes, index + argument.len(), end);
+        if cursor < end && bytes.get(cursor) == Some(&b'=') {
+            return true;
+        }
+        index += argument.len();
+    }
+    false
 }
 
 fn identifier_at(source: &str, start: usize, end: usize, identifier: &str) -> bool {
@@ -353,6 +428,19 @@ mod tests {
                 && call.path == "static/img/hero.png"
                 && source[call.path_start..call.path_end] == call.path
         }));
+    }
+
+    #[test]
+    fn distinguishes_dynamic_load_data_paths_from_url_and_literal_calls() {
+        let source = r#"
+{% set local = load_data(path=data_path) %}
+{% set remote = load_data(url="https://example.test/data.json") %}
+{% set inline = load_data(literal='{"ok":true}', format="json") %}
+{% set static = load_data(path="date/site.toml") %}
+{# load_data(path=ignored) #}
+{% raw %}{{ load_data(path=ignored_raw) }}{% endraw %}
+"#;
+        assert_eq!(count_dynamic_zola_load_data_paths(source), 1);
     }
 
     #[test]

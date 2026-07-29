@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use sha2::{Digest, Sha256};
 use tauri_utils::html::{parse, serialize_node, NodeRef};
@@ -14,6 +16,8 @@ use crate::{
 const MAX_PREVIEW_HTML_BYTES: usize = 8 * 1024 * 1024;
 #[cfg(test)]
 const TEST_PREVIEW_PROXY_PORT: u16 = 4173;
+#[cfg(test)]
+const CANVAS_AGENT_SCRIPT: &str = include_str!("bridge/03_canvas_agent.js");
 
 const BRIDGE_SCRIPT: &str = concat!(
     include_str!("bridge/00_bootstrap.js"),
@@ -23,10 +27,8 @@ const BRIDGE_SCRIPT: &str = concat!(
     include_str!("bridge/01_dom_structure.js"),
     include_str!("bridge/02_css_inspection.js"),
     include_str!("bridge/03_overlay_geometry.js"),
-    include_str!("bridge/04_html_selection.js"),
-    include_str!("bridge/05_template_gate.js"),
+    include_str!("bridge/03_canvas_agent.js"),
     include_str!("bridge/06_empty_zones.js"),
-    include_str!("bridge/06_preview_hover.js"),
     include_str!("bridge/07_drag_drop.js"),
     include_str!("bridge/08_inspector_shell.js"),
     include_str!("bridge/09_design_safe_surface.js"),
@@ -41,6 +43,7 @@ const INTERACTIVE_RUNTIME_SCRIPT: &str = include_str!("interactive_runtime.js");
 pub(crate) enum PreviewHtmlSurface {
     Editor,
     Visitor,
+    Motion,
     Interactive,
 }
 
@@ -48,14 +51,52 @@ pub(crate) enum PreviewHtmlSurface {
 pub(crate) struct PreparedDesignSafeHtml {
     pub editor: String,
     pub visitor: String,
+    pub motion: String,
     pub interactive: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedInitialPreviewHtml {
+    pub editor: String,
+    pub visitor: String,
+    source: String,
+    preview_revision: String,
+}
+
+impl PreparedInitialPreviewHtml {
+    pub(crate) fn surface(&self, surface: PreviewHtmlSurface) -> Result<Cow<'_, str>, String> {
+        match surface {
+            PreviewHtmlSurface::Editor => Ok(Cow::Borrowed(&self.editor)),
+            PreviewHtmlSurface::Visitor => Ok(Cow::Borrowed(&self.visitor)),
+            PreviewHtmlSurface::Motion => {
+                prepare_motion_document(&self.source, &self.preview_revision).map(Cow::Owned)
+            }
+            PreviewHtmlSurface::Interactive => {
+                prepare_interactive_document(&self.source, &self.preview_revision).map(Cow::Owned)
+            }
+        }
+    }
 }
 
 pub(crate) fn bind_canvas_identity_to_editor_html(
     prepared: &mut PreparedDesignSafeHtml,
     identity: &CanvasProjectionIdentity,
 ) -> Result<(), String> {
-    let document = parse(prepared.editor.clone());
+    bind_canvas_identity_to_editor_document(&mut prepared.editor, identity)
+}
+
+pub(crate) fn bind_canvas_identity_to_initial_preview_html(
+    prepared: &mut PreparedInitialPreviewHtml,
+    identity: &CanvasProjectionIdentity,
+) -> Result<(), String> {
+    bind_canvas_identity_to_editor_document(&mut prepared.editor, identity)
+}
+
+fn bind_canvas_identity_to_editor_document(
+    editor: &mut String,
+    identity: &CanvasProjectionIdentity,
+) -> Result<(), String> {
+    let document = parse(editor.clone());
     let html = document.select_first("html").map_err(|_| {
         "Documentul Editare sigură nu are root pentru identitatea Canvas.".to_string()
     })?;
@@ -77,7 +118,7 @@ pub(crate) fn bind_canvas_identity_to_editor_html(
         identity.transaction_id.clone(),
     );
     drop(attributes);
-    prepared.editor = String::from_utf8(serialize_node(&document)).map_err(|error| {
+    *editor = String::from_utf8(serialize_node(&document)).map_err(|error| {
         format!("Documentul Editare sigură nu a putut lega identitatea Canvas: {error}")
     })?;
     Ok(())
@@ -99,6 +140,14 @@ impl PreviewHtmlSurface {
             Self::Visitor => {
                 "script-src 'none'; script-src-elem 'none'; script-src-attr 'none'".to_string()
             }
+            Self::Motion => {
+                let hash = interactive_runtime_csp_hash();
+                format!(
+                    "script-src http://127.0.0.1:{preview_proxy_port} 'sha256-{hash}'; \
+                     script-src-elem http://127.0.0.1:{preview_proxy_port} 'sha256-{hash}'; \
+                     script-src-attr 'none'"
+                )
+            }
             Self::Interactive => format!(
                 "script-src http://127.0.0.1:{preview_proxy_port} 'unsafe-inline' 'unsafe-eval' blob:; \
                  script-src-elem http://127.0.0.1:{preview_proxy_port} 'unsafe-inline' blob:; \
@@ -115,7 +164,7 @@ impl PreviewHtmlSurface {
         // style directives; script execution is restricted to the exact
         // SHA-256 bridge hash (or completely disabled for Visitor).
         let runtime_policy = match self {
-            Self::Interactive => format!(
+            Self::Motion | Self::Interactive => format!(
                 "connect-src {preview_asset_origin}; worker-src {preview_asset_origin} blob:;"
             ),
             Self::Editor | Self::Visitor => "connect-src 'none'; worker-src 'none';".to_string(),
@@ -162,8 +211,115 @@ pub(crate) fn prepare_design_safe_html(
             PreviewHtmlSurface::Visitor,
             Some(preview_revision),
         )?,
+        motion: prepare_motion_document(html, preview_revision)?,
         interactive: prepare_interactive_document(html, preview_revision)?,
     })
+}
+
+/// Prepares only the surfaces required by the initial visual workspace.
+/// Motion and Interactive are derived from the retained exact source only if
+/// the user requests those modes, avoiding two full DOM parses per route at
+/// project open.
+pub(crate) fn prepare_initial_preview_html(
+    html: &str,
+    preview_revision: &str,
+) -> Result<PreparedInitialPreviewHtml, String> {
+    require_preview_html_input(html, preview_revision)?;
+    Ok(PreparedInitialPreviewHtml {
+        editor: sanitize_design_safe_document(
+            html,
+            PreviewHtmlSurface::Editor,
+            Some(preview_revision),
+        )?,
+        visitor: sanitize_design_safe_document(
+            html,
+            PreviewHtmlSurface::Visitor,
+            Some(preview_revision),
+        )?,
+        source: html.to_string(),
+        preview_revision: preview_revision.to_string(),
+    })
+}
+
+fn require_preview_html_input(html: &str, preview_revision: &str) -> Result<(), String> {
+    if html.len() > MAX_PREVIEW_HTML_BYTES {
+        return Err(format!(
+            "Documentul HTML de preview depășește limita de {} bytes.",
+            MAX_PREVIEW_HTML_BYTES
+        ));
+    }
+    if preview_revision.trim().is_empty() {
+        return Err("Documentul Preview persistent cere o revizie nenulă.".to_string());
+    }
+    Ok(())
+}
+
+fn prepare_motion_document(html: &str, preview_revision: &str) -> Result<String, String> {
+    let source_document = parse(html.to_string());
+    let script_sources = source_document
+        .select("script[src]")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|script| script.attributes.borrow().get("src").map(str::to_string))
+        .filter(|source| is_motion_runtime_script(source))
+        .collect::<Vec<_>>();
+
+    sanitize_document_tree(&source_document);
+    revision_local_resource_urls(&source_document, preview_revision);
+    let html = source_document.select_first("html").map_err(|_| {
+        "Documentul Previzualizare Motion nu are element html normalizat.".to_string()
+    })?;
+    html.attributes
+        .borrow_mut()
+        .insert("data-pana-preview-revision", preview_revision.to_string());
+    html.attributes
+        .borrow_mut()
+        .insert("data-pana-motion-preview", "true".to_string());
+    append_motion_scripts(&source_document, &script_sources, preview_revision)?;
+    append_interactive_runtime(&source_document, false)?;
+    String::from_utf8(serialize_node(&source_document)).map_err(|error| {
+        format!("Documentul Previzualizare Motion nu a putut fi serializat: {error}")
+    })
+}
+
+fn is_motion_runtime_script(source: &str) -> bool {
+    let path = source.trim().split('?').next().unwrap_or_default();
+    if !path.starts_with("/js/")
+        || !path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_'))
+    {
+        return false;
+    }
+    path == "/js/anime.min.js"
+        || (path.starts_with("/js/pana-")
+            && path.ends_with(".js")
+            && !path.trim_start_matches("/js/").contains('/'))
+}
+
+fn append_motion_scripts(
+    document: &NodeRef,
+    sources: &[String],
+    preview_revision: &str,
+) -> Result<(), String> {
+    let body = document
+        .select_first("body")
+        .map_err(|_| "Documentul Previzualizare Motion nu are un element body.".to_string())?;
+    for source in sources {
+        let revised = revise_resource_url(source, preview_revision);
+        let script_document = parse(format!(
+            "<!doctype html><html><body><script src=\"{revised}\" defer></script></body></html>"
+        ));
+        let script = script_document
+            .select_first("script")
+            .map_err(|_| "Scriptul canonic Motion nu a putut fi construit.".to_string())?
+            .as_node()
+            .clone();
+        script.detach();
+        body.as_node().append(script);
+    }
+    Ok(())
 }
 
 fn prepare_interactive_document(html: &str, preview_revision: &str) -> Result<String, String> {
@@ -176,7 +332,7 @@ fn prepare_interactive_document(html: &str, preview_revision: &str) -> Result<St
     html.attributes
         .borrow_mut()
         .insert("data-pana-preview-revision", preview_revision.to_string());
-    append_interactive_runtime(&document)?;
+    append_interactive_runtime(&document, true)?;
     String::from_utf8(serialize_node(&document)).map_err(|error| {
         format!("Documentul Previzualizare interactivă nu a putut fi serializat: {error}")
     })
@@ -201,7 +357,10 @@ fn remove_authored_content_security_policy(document: &NodeRef) {
     }
 }
 
-fn append_interactive_runtime(document: &NodeRef) -> Result<(), String> {
+fn append_interactive_runtime(
+    document: &NodeRef,
+    include_block_runtime: bool,
+) -> Result<(), String> {
     let runtime_document = parse(format!(
         "<!doctype html><html><body><script id=\"pana-block-runtime\">{NATIVE_BLOCK_RUNTIME_SCRIPT}</script><script id=\"pana-interactive-runtime\">{INTERACTIVE_RUNTIME_SCRIPT}</script></body></html>"
     ));
@@ -226,7 +385,9 @@ fn append_interactive_runtime(document: &NodeRef) -> Result<(), String> {
     let body = document
         .select_first("body")
         .map_err(|_| "Documentul Previzualizare interactivă nu are body normalizat.".to_string())?;
-    body.as_node().append(block_runtime);
+    if include_block_runtime {
+        body.as_node().append(block_runtime);
+    }
     body.as_node().append(runtime);
     Ok(())
 }
@@ -410,6 +571,10 @@ fn bridge_csp_hash() -> String {
     BASE64_STANDARD.encode(Sha256::digest(BRIDGE_SCRIPT.as_bytes()))
 }
 
+fn interactive_runtime_csp_hash() -> String {
+    BASE64_STANDARD.encode(Sha256::digest(INTERACTIVE_RUNTIME_SCRIPT.as_bytes()))
+}
+
 fn build_html_response(
     status_line: String,
     response_headers: Vec<(String, String)>,
@@ -452,7 +617,8 @@ mod tests {
 
     use super::{
         bind_canvas_identity_to_editor_html, bridge_csp_hash, build_prepared_design_safe_response,
-        prepare_design_safe_html, PreviewHtmlSurface, BRIDGE_SCRIPT, INTERACTIVE_RUNTIME_SCRIPT,
+        interactive_runtime_csp_hash, prepare_design_safe_html, prepare_initial_preview_html,
+        PreviewHtmlSurface, BRIDGE_SCRIPT, CANVAS_AGENT_SCRIPT, INTERACTIVE_RUNTIME_SCRIPT,
         MAX_PREVIEW_HTML_BYTES, TEST_PREVIEW_PROXY_PORT,
     };
 
@@ -462,6 +628,33 @@ mod tests {
             .position(|window| window == b"\r\n\r\n")
             .expect("response headers");
         std::str::from_utf8(&response[..split]).expect("UTF-8 response headers")
+    }
+
+    #[test]
+    fn initial_preview_defers_optional_surfaces_without_changing_their_documents() {
+        let source = r#"<!doctype html><html><head>
+            <link rel="stylesheet" href="/site.css">
+            <script src="/js/pana-index.js"></script>
+        </head><body><main onclick="window.authored=true">Preview</main></body></html>"#;
+        let eager = prepare_design_safe_html(source, "lazy-equivalence").unwrap();
+        let initial = prepare_initial_preview_html(source, "lazy-equivalence").unwrap();
+
+        assert_eq!(initial.editor, eager.editor);
+        assert_eq!(initial.visitor, eager.visitor);
+        assert_eq!(
+            initial
+                .surface(PreviewHtmlSurface::Motion)
+                .unwrap()
+                .as_ref(),
+            eager.motion
+        );
+        assert_eq!(
+            initial
+                .surface(PreviewHtmlSurface::Interactive)
+                .unwrap()
+                .as_ref(),
+            eager.interactive
+        );
     }
 
     #[test]
@@ -647,6 +840,69 @@ mod tests {
     }
 
     #[test]
+    fn motion_surface_keeps_only_generated_motion_scripts_and_bridge() {
+        let source = r#"<!doctype html><html><head>
+            <script>while(true){}</script>
+            <script src="/manual.js"></script>
+            <script src="/js/anime.min.js"></script>
+            <script src="/js/pana-index.js"></script>
+        </head><body onload="window.authored=true">
+            <a href="javascript:alert(1)">Run</a>
+        </body></html>"#;
+        let prepared = prepare_design_safe_html(source, "motion-9").unwrap();
+        let document = parse(prepared.motion.clone());
+        let scripts = document
+            .select("script")
+            .expect("script selector")
+            .collect::<Vec<_>>();
+        let sources = scripts
+            .iter()
+            .filter_map(|script| script.attributes.borrow().get("src").map(str::to_string))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            sources,
+            vec![
+                "/js/anime.min.js?__pana_preview_revision=motion-9",
+                "/js/pana-index.js?__pana_preview_revision=motion-9",
+            ]
+        );
+        assert_eq!(
+            scripts.last().unwrap().as_node().text_contents(),
+            INTERACTIVE_RUNTIME_SCRIPT
+        );
+        assert!(!prepared.motion.contains("while(true)"));
+        assert!(!prepared.motion.contains("/manual.js"));
+        assert!(!prepared.motion.contains("onload="));
+        assert!(!prepared.motion.contains("javascript:"));
+        assert!(!prepared.motion.contains("pana-block-runtime"));
+
+        let response = build_prepared_design_safe_response(
+            "HTTP/1.1 200 OK",
+            "text/html; charset=utf-8",
+            &prepared.motion,
+            PreviewHtmlSurface::Motion,
+            TEST_PREVIEW_PROXY_PORT,
+        )
+        .unwrap();
+        let script_directive = response_headers(&response)
+            .split(';')
+            .find(|directive| directive.trim_start().starts_with("script-src "))
+            .expect("motion script-src directive")
+            .trim();
+        assert_eq!(
+            script_directive,
+            format!(
+                "script-src http://127.0.0.1:{} 'sha256-{}'",
+                TEST_PREVIEW_PROXY_PORT,
+                interactive_runtime_csp_hash()
+            )
+        );
+        assert!(!script_directive.contains("unsafe-inline"));
+        assert!(!script_directive.contains("unsafe-eval"));
+    }
+
+    #[test]
     fn confirmed_upstream_revision_is_injected_on_the_normalized_html_root() {
         let prepared =
             prepare_design_safe_html("<main>Rendered Tera output</main>", "generation-42").unwrap();
@@ -713,6 +969,21 @@ mod tests {
     }
 
     #[test]
+    fn canvas_agent_transports_only_physical_hits_and_is_inactive_until_bound() {
+        assert!(CANVAS_AGENT_SCRIPT.contains("var canvasAgentSelectionEnabled = false"));
+        assert!(CANVAS_AGENT_SCRIPT.contains("isTrustedPreviewGesture(event)"));
+        assert!(CANVAS_AGENT_SCRIPT.contains("event.composedPath()"));
+        assert!(CANVAS_AGENT_SCRIPT.contains("data-pana-render-instance-id"));
+        assert!(CANVAS_AGENT_SCRIPT.contains("kind: \"renderInstance\""));
+        assert!(CANVAS_AGENT_SCRIPT.contains("gestureSequence"));
+        assert!(!CANVAS_AGENT_SCRIPT.contains("SOURCE_ID_ATTR"));
+        assert!(!CANVAS_AGENT_SCRIPT.contains("TEMPLATE_SOURCE_ID_ATTR"));
+        assert!(!CANVAS_AGENT_SCRIPT.contains("templateHtmlEditSourceId"));
+        assert!(!CANVAS_AGENT_SCRIPT.contains("sourceId:"));
+        assert!(!CANVAS_AGENT_SCRIPT.contains("canSelectHtml"));
+    }
+
+    #[test]
     fn internal_bridge_reapplies_design_safe_policy_to_live_dom_inputs() {
         assert!(BRIDGE_SCRIPT.contains("function sanitizeDesignSafeTree(root)"));
         assert!(BRIDGE_SCRIPT.contains("sanitizeDesignSafeTree(nextDocument)"));
@@ -760,12 +1031,10 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("event.isTrusted === true"));
 
         for guarded_path in [
-            "function handlePreviewPointerDown(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
-            "function handlePreviewPointerMove(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
-            "function handlePreviewHoverPointerMove(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
-            "function handlePreviewPointerUp(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
+            "function emitCanvasAgentGesture(event, gesture, emptyHitPath, overrideHitPath, drag) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
+            "function scheduleCanvasAgentPointerGesture(event, gesture, drag) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
+            "function handleCanvasAgentPointerMove(event) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
             "function handlePreviewShortcut(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
-            "function openPreviewContextMenuFromEvent(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
         ] {
             assert!(
                 BRIDGE_SCRIPT.contains(guarded_path),
@@ -773,12 +1042,12 @@ mod tests {
             );
         }
 
-        // Template edit, Delete/Backspace, pointerdown feedback and selection
-        // click use anonymous listeners; keep all of them behind the same
-        // bridge-local gate as well.
+        // Boundary actions, Delete/Backspace, pointerdown, click and context
+        // menu use anonymous listeners; all remain behind the bridge-local
+        // provenance gate.
         assert!(
             BRIDGE_SCRIPT
-                .matches("if (!isTrustedPreviewGesture(event)) return;")
+                .matches("isTrustedPreviewGesture(event)")
                 .count()
                 >= 10
         );

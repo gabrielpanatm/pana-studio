@@ -1,16 +1,19 @@
 use std::{collections::HashMap, path::Path};
 
-use crate::source_graph::{
-    model::{
-        SourceCapabilities, SourceNodeKind, SourceOrigin, SourceStructuredDocument,
-        SourceStructuredDocumentKind,
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        model::{
+            SourceCapabilities, SourceCapabilityReason, SourceNodeKind, SourceOrigin,
+            SourceStructuredDocument, SourceStructuredDocumentKind,
+        },
+        scan::{
+            builder::SourceGraphBuilder,
+            data_file::project_data_nodes_into_source_graph,
+            files::{read_source, relative_project_path},
+        },
+        structured_data::parse_lossless_toml,
     },
-    scan::{
-        builder::SourceGraphBuilder,
-        data_file::project_data_nodes_into_source_graph,
-        files::{read_source, relative_project_path},
-    },
-    structured_data::parse_lossless_toml,
 };
 
 pub(super) fn scan_structured_toml_document(
@@ -29,9 +32,7 @@ pub(super) fn scan_structured_toml_document(
         structured_document_label(&kind).to_string(),
         None,
         None,
-        SourceCapabilities::code_only(
-            "Configurație Zola structurată lossless; mutațiile sunt validate în Rust.",
-        ),
+        SourceCapabilities::code_only(SourceCapabilityReason::StructuredConfig),
     );
     let source = read_source(path, &file, draft_sources, builder);
     let (mut nodes, parse_error) = match parse_lossless_toml(&source, &file) {
@@ -39,7 +40,8 @@ pub(super) fn scan_structured_toml_document(
         Err(error) => {
             builder.add_diagnostic(
                 crate::source_graph::model::SourceDiagnosticSeverity::Error,
-                format!("Configurație TOML invalidă: {error}"),
+                LocalizedDiagnostic::new("source-graph-config-toml-invalid")
+                    .with_argument("details", error.clone()),
                 Some(file.clone()),
                 None,
             );

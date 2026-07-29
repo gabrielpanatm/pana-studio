@@ -1,8 +1,11 @@
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
-import type { SaveState, SourceEditLocation, SourceEditTarget } from "$lib/types";
+import type { SourceEditLocation, SourceEditTarget } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import type { DropPosition } from "$lib/ui/drag";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PreviewInsertDropRequest = {
+  targetRenderInstanceId: string | null;
   targetSelector: string;
   targetSessionId: string | null;
   targetSourceId: string | null;
@@ -16,11 +19,11 @@ export type PreviewInsertDropRequest = {
 
 export type PreviewInsertControllerHost = {
   insertPaletteElementAtTarget: (request: PreviewInsertDropRequest) => Promise<void>;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   resolveSourceEditTargetForSourceId?: (sourceId: string | null | undefined) => SourceEditTarget | null;
-  previewDropGateStatus?: (target: {
-    targetSourceId?: string | null;
-    targetTemplateSourceId?: string | null;
+  previewDropTargetStatus?: (target: {
+    targetRenderInstanceId?: string | null;
+    targetBoundarySourceId?: string | null;
   }) => { allowed: boolean; message?: string };
 };
 
@@ -73,6 +76,7 @@ export async function handlePreviewInsertDrop(
   payload: unknown,
 ) {
   const data = payload as Record<string, unknown>;
+  const targetRenderInstanceId = stringValue(data.targetRenderInstanceId) || null;
   const targetSelector = stringValue(data.targetSelector);
   const targetSessionId = stringValue(data.targetSessionId) || null;
   const targetSourceId = stringValue(data.targetSourceId) || null;
@@ -90,17 +94,25 @@ export async function handlePreviewInsertDrop(
   const element = paletteElementValue(data.element);
 
   if (!targetSelector || !targetTag || !position || !element) {
-    host.setGlobalStatus("Drop invalid pentru element HTML.", "error");
+    host.setGlobalStatus(t("preview-drop-html-invalid"), "error");
     return;
   }
 
-  const gate = host.previewDropGateStatus?.({ targetSourceId, targetTemplateSourceId });
-  if (gate && !gate.allowed) {
-    host.setGlobalStatus(gate.message || "Drop blocat de gate-ul Tera.", "error");
+  const targetStatus = host.previewDropTargetStatus?.({
+    targetRenderInstanceId,
+    targetBoundarySourceId:
+      targetKind === "empty-tera-slot" ? targetTemplateSourceId : null,
+  });
+  if (targetStatus && !targetStatus.allowed) {
+    host.setGlobalStatus(
+      targetStatus.message || t("preview-drop-navigation-target-blocked"),
+      "error",
+    );
     return;
   }
 
   await host.insertPaletteElementAtTarget({
+    targetRenderInstanceId,
     targetSelector,
     targetSessionId,
     targetSourceId,

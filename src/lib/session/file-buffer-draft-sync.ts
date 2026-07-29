@@ -4,6 +4,7 @@ import {
   readFileBufferText,
   setFileBufferDraft,
 } from "$lib/project/io";
+import { t } from "$lib/i18n/runtime.svelte";
 import type { FileBufferRequestIdentity } from "$lib/types";
 import type {
   FileBufferFileSnapshot,
@@ -212,7 +213,7 @@ function captureSyncLease(relativePath: string): FileBufferDraftSyncLease | null
   }
   failures.set(`unbound\u0000${relativePath}`, {
     relativePath,
-    message: "[file_buffer_identity_invalid] FileBuffer draft sync nu are o sesiune activă.",
+    message: t("file-buffer-sync-session-missing"),
   });
   return null;
 }
@@ -236,10 +237,11 @@ function acceptContinuousFrontendTransition(
   failures.set(key, {
     relativePath,
     sticky: true,
-    message: `[file_buffer_frontend_discontinuity] Coada FileBuffer a refuzat o tranziție `
-      + `necontinuă pentru ${relativePath}: hash-ul ultimei destinații frontend `
-      + `(${hashFileBufferText(expectedBefore)}) diferă de baza noului eveniment `
-      + `(${hashFileBufferText(beforeText)}). Textul nou a rămas numai în editor; Save este blocat.`,
+    message: t("file-buffer-sync-frontend-discontinuity", {
+      path: relativePath,
+      expectedHash: hashFileBufferText(expectedBefore),
+      actualHash: hashFileBufferText(beforeText),
+    }),
   });
   console.warn(
     "[Pană Studio] FileBufferStore frontend continuity failed",
@@ -274,7 +276,7 @@ export async function flushFileBufferDraftSync(options: { throwOnFailure?: boole
     const details = Array.from(failures.values())
       .map(({ relativePath, message }) => `${relativePath}: ${message}`)
       .join("; ");
-    throw new Error(`FileBufferStore nu a putut sincroniza drafturile active. ${details}`);
+    throw new Error(t("file-buffer-sync-failures", { details }));
   }
 }
 
@@ -314,7 +316,7 @@ export function reanchorFileBufferDraftSyncCursor(
     || !/^[0-9a-f]{16}$/.test(cursor.hash)
   ) {
     throw new Error(
-      `[file_buffer_invalid_cursor] Cursorul FileBuffer pentru ${relativePath} este invalid.`,
+      t("file-buffer-sync-invalid-cursor", { path: relativePath }),
     );
   }
   const key = taskKey({ ...activeSession, generation: syncGeneration }, relativePath);
@@ -337,8 +339,7 @@ export function rebaseFileBufferDraftSyncProjection(
   const key = taskKey({ ...activeSession, generation: syncGeneration }, relativePath);
   if (pending.has(key) || drainPromise) {
     throw new Error(
-      `[file_buffer_history_rebase_pending] Proiecția FileBuffer pentru ${relativePath} `
-        + "nu poate fi rebazată cât timp coada de drafturi este activă.",
+      t("file-buffer-sync-history-rebase-pending", { path: relativePath }),
     );
   }
 
@@ -349,8 +350,10 @@ export function rebaseFileBufferDraftSyncProjection(
 
   if (snapshot.relativePath !== relativePath) {
     throw new Error(
-      `[file_buffer_invalid_history_projection] Snapshot-ul pentru ${relativePath} `
-        + `declară path-ul ${snapshot.relativePath}.`,
+      t("file-buffer-sync-history-path-mismatch", {
+        path: relativePath,
+        actualPath: snapshot.relativePath,
+      }),
     );
   }
   const calculatedHash = hashFileBufferText(snapshot.text);
@@ -362,9 +365,14 @@ export function rebaseFileBufferDraftSyncProjection(
     || snapshot.revision < 0
   ) {
     throw new Error(
-      `[file_buffer_invalid_history_projection] Snapshot-ul pentru ${relativePath} `
-        + `are hash/bytes/revision ${snapshot.hash}/${snapshot.bytes}/${snapshot.revision}, `
-        + `dar textul confirmă ${calculatedHash}/${calculatedBytes}.`,
+      t("file-buffer-sync-history-metadata-mismatch", {
+        path: relativePath,
+        hash: snapshot.hash,
+        bytes: snapshot.bytes,
+        revision: snapshot.revision,
+        calculatedHash,
+        calculatedBytes,
+      }),
     );
   }
 
@@ -450,14 +458,21 @@ async function applyFullDraftTask(task: FileBufferFullDraftSyncTask): Promise<bo
   if (previousCursor && previousCursor.hash !== current.hash) {
     throw fullDraftSyncConflict(
       task.relativePath,
-      `bufferul a avansat de la revision/hash ${previousCursor.revision}/${previousCursor.hash} `
-        + `la ${currentCursor.revision}/${currentCursor.hash}.`,
+      t("file-buffer-sync-buffer-advanced", {
+        previousRevision: previousCursor.revision,
+        previousHash: previousCursor.hash,
+        revision: currentCursor.revision,
+        hash: currentCursor.hash,
+      }),
     );
   }
   if (current.hash !== taskBaseHash) {
     throw fullDraftSyncConflict(
       task.relativePath,
-      `sincronizarea a observat hash ${current.hash}, diferit de baza frontend ${taskBaseHash}.`,
+      t("file-buffer-sync-base-hash-mismatch", {
+        hash: current.hash,
+        baseHash: taskBaseHash,
+      }),
     );
   }
 
@@ -489,8 +504,12 @@ async function applyClearDraftTask(task: FileBufferFullDraftSyncTask): Promise<b
   if (previousCursor && !sameCursor(previousCursor, currentCursor) && current.dirty) {
     throw fullDraftSyncConflict(
       task.relativePath,
-      `clear-ul stale a observat revision/hash ${currentCursor.revision}/${currentCursor.hash}, `
-        + `dar ultima stare confirmată era ${previousCursor.revision}/${previousCursor.hash}.`,
+      t("file-buffer-sync-clear-stale", {
+        revision: currentCursor.revision,
+        hash: currentCursor.hash,
+        previousRevision: previousCursor.revision,
+        previousHash: previousCursor.hash,
+      }),
     );
   }
 
@@ -519,8 +538,10 @@ function sameCursor(left: FileBufferSyncCursor, right: FileBufferSyncCursor) {
 function requireReadReceiptPath(task: FileBufferDraftSyncTask, relativePath: string) {
   if (relativePath !== task.relativePath) {
     throw new Error(
-      `[file_buffer_invalid_receipt] FileBufferStore a returnat path ${relativePath} `
-        + `pentru requestul ${task.relativePath}.`,
+      t("file-buffer-sync-receipt-path-mismatch", {
+        actualPath: relativePath,
+        path: task.relativePath,
+      }),
     );
   }
 }
@@ -536,9 +557,14 @@ function requireReadReceipt(task: FileBufferDraftSyncTask, snapshot: FileBufferT
     || snapshot.revision < 0
   ) {
     throw new Error(
-      `[file_buffer_invalid_receipt] Read pentru ${task.relativePath} are metadata inconsistentă: `
-        + `hash/bytes/revision ${snapshot.hash}/${snapshot.bytes}/${snapshot.revision}, `
-        + `calculate ${calculatedHash}/${calculatedBytes}.`,
+      t("file-buffer-sync-read-metadata-mismatch", {
+        path: task.relativePath,
+        hash: snapshot.hash,
+        bytes: snapshot.bytes,
+        revision: snapshot.revision,
+        calculatedHash,
+        calculatedBytes,
+      }),
     );
   }
 }
@@ -558,9 +584,15 @@ function requireSetReceipt(
     || snapshot.revision <= expectation.revision
   ) {
     throw new Error(
-      `[file_buffer_invalid_receipt] Set draft pentru ${task.relativePath} nu confirmă starea cerută: `
-        + `așteptat hash/bytes ${desiredHash}/${desiredBytes} de la revizia ${expectation.revision}, `
-        + `primit ${snapshot.currentHash}/${snapshot.currentBytes}/${snapshot.revision}.`,
+      t("file-buffer-sync-set-receipt-mismatch", {
+        path: task.relativePath,
+        expectedHash: desiredHash,
+        expectedBytes: desiredBytes,
+        expectedRevision: expectation.revision,
+        actualHash: snapshot.currentHash,
+        actualBytes: snapshot.currentBytes,
+        actualRevision: snapshot.revision,
+      }),
     );
   }
 }
@@ -578,16 +610,20 @@ function requireClearReceipt(
     || snapshot.revision < expectation.revision
   ) {
     throw new Error(
-      `[file_buffer_invalid_receipt] Clear draft pentru ${task.relativePath} nu confirmă `
-        + `un buffer curat la sau după revizia ${expectation.revision}.`,
+      t("file-buffer-sync-clear-receipt-mismatch", {
+        path: task.relativePath,
+        expectedRevision: expectation.revision,
+      }),
     );
   }
 }
 
 function fullDraftSyncConflict(relativePath: string, diagnostic: string) {
   return new Error(
-    `[file_buffer_draft_cas_conflict] FileBufferStore a blocat mutația full-draft/clear `
-      + `pentru ${relativePath}; suprascrierea fără CAS este interzisă. ${diagnostic}`,
+    t("file-buffer-sync-full-draft-conflict", {
+      path: relativePath,
+      diagnostic,
+    }),
   );
 }
 
@@ -602,7 +638,10 @@ async function applyChangeSetTask(task: FileBufferChangeSetDraftSyncTask): Promi
     throw changeSetSyncError(
       task.relativePath,
       "conflict",
-      `hash-ul textului frontend (${taskBaseHash}) nu corespunde bufferului confirmat (${base.hash}).`,
+      t("file-buffer-sync-frontend-hash-mismatch", {
+        frontendHash: taskBaseHash,
+        confirmedHash: base.hash,
+      }),
     );
   }
 
@@ -629,7 +668,10 @@ async function applyChangeSetTask(task: FileBufferChangeSetDraftSyncTask): Promi
       throw changeSetSyncError(
         task.relativePath,
         "sync_failed",
-        `${message} Revalidarea bufferului a eșuat: ${refreshMessage}`,
+        t("file-buffer-sync-revalidation-failed", {
+          message,
+          refreshMessage,
+        }),
       );
     }
 
@@ -637,7 +679,11 @@ async function applyChangeSetTask(task: FileBufferChangeSetDraftSyncTask): Promi
       throw changeSetSyncError(
         task.relativePath,
         "conflict",
-        `${message} Bufferul a avansat la revizia ${current.revision}, cu un hash diferit (${current.hash}).`,
+        t("file-buffer-sync-buffer-revision-advanced", {
+          message,
+          revision: current.revision,
+          hash: current.hash,
+        }),
       );
     }
 
@@ -650,7 +696,7 @@ async function applyChangeSetTask(task: FileBufferChangeSetDraftSyncTask): Promi
       throw changeSetSyncError(
         task.relativePath,
         classifyChangeSetFailure(retryMessage),
-        `Reîncercarea CAS unică a eșuat: ${retryMessage}`,
+        t("file-buffer-sync-cas-retry-failed", { message: retryMessage }),
       );
     }
   }
@@ -685,17 +731,10 @@ function isStaleSessionDiagnostic(diagnostic: string) {
 }
 
 function classifyChangeSetFailure(diagnostic: string): FileBufferChangeSetFailureKind {
-  if (diagnostic.includes("revizia așteptată") || diagnostic.includes("hash-ul de bază")) {
+  if (diagnostic.includes("[file_buffer_changeset_conflict]")) {
     return "conflict";
   }
-  if (
-    diagnostic.includes("range")
-    || diagnostic.includes("UTF-16")
-    || diagnostic.includes("se suprapun")
-    || diagnostic.includes("path gol")
-    || diagnostic.includes("draftul rezultat")
-    || diagnostic.includes("peste limita")
-  ) {
+  if (diagnostic.includes("[file_buffer_changeset_invalid]")) {
     return "invalid_change_set";
   }
   return "sync_failed";
@@ -706,9 +745,17 @@ function changeSetSyncError(
   failureKind: FileBufferChangeSetFailureKind,
   diagnostic: string,
 ) {
+  const localizedDiagnostic = failureKind === "conflict"
+    ? t("file-buffer-sync-changeset-conflict")
+    : failureKind === "invalid_change_set"
+      ? t("file-buffer-sync-changeset-invalid")
+      : diagnostic;
   return new Error(
-    `FileBufferStore a blocat sincronizarea change-set pentru ${relativePath} `
-      + `(${failureKind}); fallback-ul full-draft fără CAS este interzis. ${diagnostic}`,
+    t("file-buffer-sync-changeset-blocked", {
+      path: relativePath,
+      kind: failureKind,
+      diagnostic: localizedDiagnostic,
+    }),
   );
 }
 

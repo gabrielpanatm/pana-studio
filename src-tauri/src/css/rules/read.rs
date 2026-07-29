@@ -5,23 +5,6 @@ use crate::css::rules::{
     selector::{locate_exact_rule_block, locate_rule_block},
 };
 
-pub fn find_class_in_sources(
-    style_files: impl IntoIterator<Item = String>,
-    selector: &str,
-    mut read_source: impl FnMut(&str) -> Result<Option<String>, String>,
-) -> Result<Option<(String, Vec<CssProperty>)>, String> {
-    for relative_path in style_files {
-        let Some(source) = read_source(&relative_path)? else {
-            continue;
-        };
-        let rules = get_class_rules(&source, selector);
-        if !rules.is_empty() {
-            return Ok(Some((relative_path, rules)));
-        }
-    }
-    Ok(None)
-}
-
 pub fn get_class_rules(source: &str, selector: &str) -> Vec<CssProperty> {
     let Some((_, _, content_start, content_end, _)) = locate_rule_block(source, selector) else {
         return Vec::new();
@@ -34,6 +17,10 @@ pub fn get_class_rules(source: &str, selector: &str) -> Vec<CssProperty> {
             value: declaration.value,
         })
         .collect()
+}
+
+pub fn has_class_rule(source: &str, selector: &str) -> bool {
+    locate_rule_block(source, selector).is_some()
 }
 
 pub fn get_exact_rule_properties(source: &str, selector: &str) -> Option<Vec<CssProperty>> {
@@ -59,4 +46,12 @@ pub fn get_class_rules_in_media(
     };
 
     get_class_rules(&source[block_start..block_end], selector)
+}
+
+pub fn has_class_rule_in_media(source: &str, media_query: &str, selector: &str) -> bool {
+    let Some((block_start, block_end)) = locate_media_block(source, media_query) else {
+        return false;
+    };
+
+    has_class_rule(&source[block_start..block_end], selector)
 }

@@ -32,7 +32,9 @@ pub use recovery::{
     WriteAuthorityRecoveryResolutionReceipt, WriteAuthorityRecoveryScan,
 };
 pub use registry::{known_write_declarations, WriteDeclaration};
-pub(crate) use root_authority::{ActiveProjectReadLease, CodexConfigLease, ProjectBootstrapLease};
+pub(crate) use root_authority::{
+    ActiveProjectReadLease, CodexConfigLease, ProjectCreationAuthority,
+};
 pub use root_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
 
 static ZOLA_ARTIFACT_PUBLICATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);

@@ -10,6 +10,7 @@ import type {
   SourceNodeKind,
   SourceRelationKind,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export function sourceNodeById(graph: SourceGraph | null): Map<string, SourceGraphNode> {
   return new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
@@ -126,72 +127,76 @@ export function initialSourceNodeIdForPath(
 
 export function sourceNodeKindLabel(kind: SourceNodeKind): string {
   const labels: Record<SourceNodeKind, string> = {
-    page: "Pagină",
-    template: "Template",
-    partial: "Partial",
-    style: "Stil",
-    script: "Script",
-    asset: "Asset",
-    dataFile: "Date",
-    dataTable: "Tabel de date",
-    dataArray: "Listă de date",
-    dataValue: "Valoare",
-    dataComment: "Comentariu de date",
-    configFile: "Configurație",
-    html: "HTML",
-    blockMarker: "Bloc nativ",
-    macroCall: "Apel macro",
-    functionCall: "Apel funcție",
-    shortcode: "Shortcode",
-    extends: "Extends",
-    block: "Block",
-    include: "Include",
-    import: "Import",
-    macro: "Macro",
-    for: "For",
-    if: "If",
-    elif: "Else if",
-    else: "Else",
-    set: "Set",
-    setGlobal: "Set global",
-    filter: "Filtru",
-    break: "Break",
-    continue: "Continue",
-    super: "Super",
-    teraVariable: "Variabilă",
-    teraComment: "Comentariu",
-    raw: "Raw",
-    tera: "Tera",
+    page: t("source-view-kind-page"),
+    template: t("source-view-kind-template"),
+    partial: t("source-view-kind-partial"),
+    style: t("source-view-kind-style"),
+    script: t("source-view-kind-script"),
+    asset: t("source-view-kind-asset"),
+    dataFile: t("source-view-kind-data-file"),
+    dataTable: t("source-view-kind-data-table"),
+    dataArray: t("source-view-kind-data-array"),
+    dataValue: t("source-view-kind-data-value"),
+    dataComment: t("source-view-kind-data-comment"),
+    configFile: t("source-view-kind-config-file"),
+    html: t("source-view-kind-html"),
+    blockMarker: t("source-view-kind-block-marker"),
+    macroCall: t("source-view-kind-macro-call"),
+    functionCall: t("source-view-kind-function-call"),
+    shortcode: t("source-view-kind-shortcode"),
+    extends: t("source-view-kind-extends"),
+    block: t("source-view-kind-block"),
+    include: t("source-view-kind-include"),
+    import: t("source-view-kind-import"),
+    macro: t("source-view-kind-macro"),
+    for: t("source-view-kind-for"),
+    if: t("source-view-kind-if"),
+    elif: t("source-view-kind-elif"),
+    else: t("source-view-kind-else"),
+    set: t("source-view-kind-set"),
+    setGlobal: t("source-view-kind-set-global"),
+    filter: t("source-view-kind-filter"),
+    break: t("source-view-kind-break"),
+    continue: t("source-view-kind-continue"),
+    super: t("source-view-kind-super"),
+    teraVariable: t("source-view-kind-tera-variable"),
+    teraComment: t("source-view-kind-tera-comment"),
+    raw: t("source-view-kind-raw"),
+    tera: t("source-view-kind-tera"),
   };
   return labels[kind];
 }
 
 export function sourceOriginLabel(origin: "local" | "theme", themeName?: string | null): string {
-  if (origin === "theme") return themeName ? `Theme: ${themeName}` : "Theme";
-  return "Local";
+  if (origin === "theme") {
+    return themeName
+      ? t("source-view-origin-theme-name", { name: themeName })
+      : t("source-view-origin-theme");
+  }
+  return t("source-view-origin-local");
 }
 
 export function sourceRelationKindLabel(kind: SourceRelationKind): string {
   const labels: Record<SourceRelationKind, string> = {
-    pageTemplate: "template",
-    sectionPageTemplate: "template pagini secțiune",
+    pageTemplate: t("source-view-relation-page-template"),
+    sectionPageTemplate: t("source-view-relation-section-template"),
     getsPage: "get_page",
     getsSection: "get_section",
-    internalContentLink: "link intern",
+    internalContentLink: t("source-view-relation-internal-link"),
     assetUrl: "asset URL",
     assetHash: "asset hash",
     dataLoad: "load_data",
-    dataFileLoad: "load_data data",
-    contentDataLoad: "load_data content",
+    dataFileLoad: t("source-view-relation-data-file-load"),
+    contentDataLoad: t("source-view-relation-content-data-load"),
     imageMetadata: "get_image_metadata",
     imageResize: "resize_image",
-    extends: "extinde",
-    includes: "include",
-    imports: "importă",
-    definesBlock: "definește block",
-    overridesBlock: "suprascrie block",
-    usesStyle: "stil",
-    usesScript: "script",
+    extends: t("source-view-relation-extends"),
+    includes: t("source-view-relation-includes"),
+    imports: t("source-view-relation-imports"),
+    definesBlock: t("source-view-relation-defines-block"),
+    overridesBlock: t("source-view-relation-overrides-block"),
+    usesStyle: t("source-view-relation-style"),
+    usesScript: t("source-view-relation-script"),
   };
   return labels[kind];
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 use crate::{
     blocks::{plan_native_block_contract, NativeBlockContractRequest},
@@ -21,16 +21,6 @@ pub(crate) struct PreviewStructuralWrite {
     pub(crate) file: String,
     pub(crate) contents: String,
     pub(crate) coalesce_key: Option<String>,
-}
-
-pub(crate) fn source_texts_from_store(
-    store: &crate::kernel::file_buffer_store::FileBufferStore,
-) -> HashMap<String, String> {
-    store
-        .files
-        .iter()
-        .map(|(path, entry)| (path.clone(), entry.current_text().to_string()))
-        .collect()
 }
 
 impl PreviewStructuralWrite {
@@ -882,8 +872,6 @@ mod tests {
                 unix_inode: Some("1".to_string()),
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 2,
                 directory_count: 2,

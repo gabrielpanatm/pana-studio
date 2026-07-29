@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
@@ -11,7 +11,7 @@ use crate::{
         project_workspace::{
             commit_project_workspace_session_mutation, ProjectWorkspace, ProjectWorkspaceIdentity,
             ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot, WorkspaceMutationMetadata,
-            WorkspaceResourceDelete, WorkspaceResourceMutation,
+            WorkspaceResourceMutation,
         },
     },
     project::{build_content_page_draft_with_active_theme, zola_project_root},
@@ -93,60 +93,6 @@ pub(crate) fn finish_mutation(
     })
 }
 
-fn require_text_resource(
-    workspace: &ProjectWorkspace,
-    relative_path: &str,
-) -> Result<String, String> {
-    workspace.documents.text_for(relative_path).ok_or_else(|| {
-        format!(
-            "ProjectWorkspace poate muta, redenumi sau șterge numai resurse text urmărite; {} nu este o astfel de resursă.",
-            relative_path
-        )
-    })
-}
-
-fn require_destination_available(
-    workspace: &ProjectWorkspace,
-    source: &str,
-    destination: &str,
-) -> Result<(), String> {
-    if source == destination {
-        return Err("Operația de fișier nu schimbă path-ul resursei.".to_string());
-    }
-    if workspace.documents.files.contains_key(destination) {
-        return Err(format!(
-            "ProjectWorkspace a blocat operația: destinația {} există deja în sesiune.",
-            destination
-        ));
-    }
-    Ok(())
-}
-
-fn stage_move(
-    workspace: &mut ProjectWorkspace,
-    source: String,
-    destination: String,
-    label: &str,
-    source_label: &str,
-) -> Result<ProjectWorkspaceMutationReceipt, String> {
-    let contents = require_text_resource(workspace, &source)?;
-    require_destination_available(workspace, &source, &destination)?;
-    workspace.stage_composite_changes(
-        &current_workspace_identity(workspace),
-        mutation_metadata(label, source_label),
-        vec![WorkspaceResourceMutation {
-            relative_path: destination,
-            contents,
-            create_only: false,
-        }],
-        vec![WorkspaceResourceDelete {
-            relative_path: source,
-        }],
-        None,
-        now_ms(),
-    )
-}
-
 #[tauri::command(async)]
 pub fn workspace_create_project_text_file(
     relative_path: String,
@@ -170,111 +116,6 @@ pub fn workspace_create_project_text_file(
                 contents,
                 create_only: true,
             }],
-            now_ms(),
-        )
-    })
-}
-
-#[tauri::command(async)]
-pub fn workspace_move_project_entry(
-    source_relative_path: String,
-    target_directory: String,
-    identity: FileBufferRequestIdentity,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<WorkspaceEntryMutationReceipt, String> {
-    let source = normalize_project_relative_path(&source_relative_path)?;
-    let target_directory = target_directory.trim().replace('\\', "/");
-    let target_directory = if target_directory.is_empty() {
-        String::new()
-    } else {
-        normalize_project_relative_path(&target_directory)?
-    };
-    let file_name = Path::new(&source)
-        .file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .ok_or_else(|| "Path-ul sursă nu are nume de fișier.".to_string())?;
-    let destination = if target_directory.is_empty() {
-        file_name
-    } else {
-        format!("{target_directory}/{file_name}")
-    };
-    let (_root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
-    let workspace = slot
-        .as_mut()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    let receipt_path = destination.clone();
-    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
-        stage_move(
-            candidate,
-            source,
-            destination,
-            "Mutare fișier",
-            "files.move",
-        )
-    })
-}
-
-#[tauri::command(async)]
-pub fn workspace_rename_project_entry(
-    source_relative_path: String,
-    new_name: String,
-    identity: FileBufferRequestIdentity,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<WorkspaceEntryMutationReceipt, String> {
-    let source = normalize_project_relative_path(&source_relative_path)?;
-    let normalized_name = normalize_project_relative_path(new_name.trim())?;
-    if Path::new(&normalized_name).components().count() != 1 {
-        return Err("Redenumirea cere un singur nume, fără directoare.".to_string());
-    }
-    let destination = Path::new(&source)
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .map(|parent| {
-            format!(
-                "{}/{}",
-                parent.to_string_lossy().replace('\\', "/"),
-                normalized_name
-            )
-        })
-        .unwrap_or(normalized_name);
-    let (_root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
-    let workspace = slot
-        .as_mut()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    let receipt_path = destination.clone();
-    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
-        stage_move(
-            candidate,
-            source,
-            destination,
-            "Redenumire fișier",
-            "files.rename",
-        )
-    })
-}
-
-#[tauri::command(async)]
-pub fn workspace_delete_project_entry(
-    relative_path: String,
-    identity: FileBufferRequestIdentity,
-    app: AppHandle,
-    state: State<AppState>,
-) -> Result<WorkspaceEntryMutationReceipt, String> {
-    let relative_path = normalize_project_relative_path(&relative_path)?;
-    let (_root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
-    let workspace = slot
-        .as_mut()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    let receipt_path = relative_path.clone();
-    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
-        require_text_resource(candidate, &relative_path)?;
-        candidate.stage_resource_changes(
-            &current_workspace_identity(candidate),
-            mutation_metadata("Ștergere fișier", "files.delete"),
-            Vec::new(),
-            vec![WorkspaceResourceDelete { relative_path }],
             now_ms(),
         )
     })

@@ -1,157 +1,136 @@
 <script lang="ts">
-  import {
-    previewFreshnessLabel,
-    zolaValidationLabel,
-    type ControlledPreviewState,
-  } from "$lib/preview/controlled";
-  import type { SaveState } from "$lib/types";
-  import type { AiCoordinationSnapshot } from "$lib/types";
-  import type { CanvasPatchPerformanceSnapshot } from "$lib/editor-runtime/preview-runtime";
-  import AiEditAuthorityIndicator from "$lib/components/ai/AiEditAuthorityIndicator.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
+  import type { WorkbenchSourceStatus } from "$lib/source-provenance";
+  import type { GlobalStatusEvent } from "$lib/status/global-status";
 
   let {
-    saveState = "idle",
-    saveStatus = "",
-    controlledPreview = undefined,
-    canvasPatchPerformance = undefined,
-    sourceLabel = "",
-    sourceValue = "",
-    sourceOpenable = false,
-    aiCoordinationSnapshot = null,
-    externalReconciling = false,
-    projectionRecoveryRequired = false,
+    globalStatus = null,
+    sourceStatus = null,
     openSource = () => {},
   }: {
-    saveState?: SaveState;
-    saveStatus?: string;
-    controlledPreview?: ControlledPreviewState;
-    canvasPatchPerformance?: CanvasPatchPerformanceSnapshot;
-    sourceLabel?: string;
-    sourceValue?: string;
-    sourceOpenable?: boolean;
-    aiCoordinationSnapshot?: AiCoordinationSnapshot | null;
-    externalReconciling?: boolean;
-    projectionRecoveryRequired?: boolean;
+    globalStatus?: GlobalStatusEvent | null;
+    sourceStatus?: WorkbenchSourceStatus | null;
     openSource?: () => void | Promise<void>;
   } = $props();
-
-  const previewLabel = $derived(controlledPreview ? previewFreshnessLabel(controlledPreview) : "");
-  const zolaLabel = $derived(controlledPreview ? zolaValidationLabel(controlledPreview) : "");
 </script>
 
 <div
   class="status-bar"
-  class:unsaved={saveState === "unsaved"}
-  class:saving={saveState === "saving"}
-  class:saved={saveState === "saved"}
-  class:restored={saveState === "restored"}
-  class:error={saveState === "error"}
-  role="status"
-  aria-live="polite"
+  class:status-info={globalStatus?.severity === "info"}
+  class:status-success={globalStatus?.severity === "success"}
+  class:status-warning={globalStatus?.severity === "warning"}
+  class:status-error={globalStatus?.severity === "error"}
+  class:status-blocking={globalStatus?.severity === "blocking"}
+  class:status-active={globalStatus?.phase === "active"}
 >
-  <div class="status-left" title={saveStatus || undefined}>
+  <div
+    class="status-content"
+    title={globalStatus?.detail ?? globalStatus?.message}
+    role="status"
+    aria-live="polite"
+  >
     <span class="dot"></span>
-    {#if saveState !== "idle" && saveStatus}
-      <span class="text">{saveStatus}</span>
+    {#if globalStatus}
+      <span class="text">{globalStatus.message}</span>
     {:else}
       <span class="text idle">Pană Studio</span>
     {/if}
   </div>
 
-  <div class="status-right">
-    <AiEditAuthorityIndicator
-      snapshot={aiCoordinationSnapshot}
-      {externalReconciling}
-      {projectionRecoveryRequired}
-    />
-    {#if controlledPreview}
-      <span
-        class={`preview-chip preview-${controlledPreview.freshness}`}
-        title={controlledPreview.message}
+  {#if sourceStatus}
+    {#if sourceStatus.openable}
+      <button
+        type="button"
+        class="selection-source"
+        title={t("context-menu-open-code")}
+        aria-label={`${t("context-menu-open-code")}: ${sourceStatus.value}`}
+        onclick={() => { void openSource(); }}
       >
-        {previewLabel}
-      </span>
-      <span
-        class={`preview-chip zola-${controlledPreview.validation}`}
-        title={controlledPreview.validationMessage}
-      >
-        {zolaLabel}
+        <span class="source-label">{sourceStatus.label}</span>
+        <span class="source-path">{sourceStatus.value}</span>
+      </button>
+    {:else}
+      <span class="selection-source readonly" title={sourceStatus.value}>
+        <span class="source-label">{sourceStatus.label}</span>
+        <span class="source-path">{sourceStatus.value}</span>
       </span>
     {/if}
-    {#if canvasPatchPerformance && canvasPatchPerformance.sampleCount > 0}
-      <span
-        class:patch-budget-ok={canvasPatchPerformance.budgetMet === true}
-        class:patch-budget-failed={canvasPatchPerformance.budgetMet === false}
-        class="preview-chip patch-performance"
-        title={`CanvasPatch receipt→commit · n=${canvasPatchPerformance.sampleCount} · p50=${canvasPatchPerformance.receiptToCommitP50Ms?.toFixed(1) ?? "—"} ms · max=${canvasPatchPerformance.receiptToCommitMaxMs?.toFixed(1) ?? "—"} ms · bridge p95=${canvasPatchPerformance.bridgeCommitP95Ms?.toFixed(1) ?? "—"} ms`}
-      >
-        Patch p95 {canvasPatchPerformance.receiptToCommitP95Ms?.toFixed(1) ?? "—"} ms
-      </span>
-    {/if}
-    {#if sourceValue}
-      {#if sourceOpenable}
-        <button type="button" class="source-chip" title="Deschide sursa" onclick={() => { void openSource(); }}>
-          <span class="source-label">{sourceLabel}</span>
-          <span class="source-path">{sourceValue}</span>
-        </button>
-      {:else}
-        <span class="source-chip readonly" title={sourceValue}>
-          <span class="source-label">{sourceLabel}</span>
-          <span class="source-path">{sourceValue}</span>
-        </span>
-      {/if}
-    {/if}
-  </div>
+  {/if}
 </div>
 
 <style>
   .status-bar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto);
     align-items: center;
-    gap: 10px;
-    padding: 0 10px;
-    height: 36px;
+    gap: 8px;
+    padding: 0 8px;
+    height: 26px;
     flex-shrink: 0;
+    border-bottom: 1px solid var(--skeuo-edge-highlight);
     border-top: 1px solid var(--border);
-    background: var(--surface-panel);
+    background: var(--material-panel);
+    box-shadow: 0 -1px 2px var(--skeuo-shade-soft);
     font-size: var(--font-meta);
     font-weight: 500;
     color: var(--text-muted);
     user-select: none;
   }
 
-  .status-left,
-  .status-right {
+  .status-content {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     min-width: 0;
   }
 
-  .status-left {
-    display: flex;
+  .selection-source {
+    display: inline-flex;
     align-items: center;
-    gap: 6px;
+    justify-self: end;
+    gap: 4px;
+    max-width: min(48vw, 520px);
+    min-width: 0;
+    height: 20px;
+    padding: 0 6px;
+    border: 1px solid var(--border-3);
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-control);
+    font: inherit;
+    white-space: nowrap;
   }
 
-  .status-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    justify-content: flex-end;
+  button.selection-source {
+    cursor: pointer;
+  }
+
+  button.selection-source:hover {
+    color: var(--text);
+    border-color: var(--brand);
+  }
+
+  button.selection-source:focus-visible {
+    outline: 2px solid var(--focus-ring, var(--brand));
+    outline-offset: 1px;
+  }
+
+  .selection-source.readonly {
+    opacity: 0.72;
+  }
+
+  .source-label {
+    flex-shrink: 0;
+    color: var(--brand-strong);
+    font-weight: 700;
+  }
+
+  .source-path {
+    min-width: 0;
     overflow: hidden;
-  }
-
-  .status-right > :global(.ai-authority) {
-    flex: 0 1 auto;
-  }
-
-  .patch-performance.patch-budget-ok {
-    color: var(--success, #0f766e);
-    border-color: color-mix(in srgb, currentColor 35%, var(--border));
-  }
-
-  .patch-performance.patch-budget-failed {
-    color: var(--danger, #dc2626);
-    border-color: color-mix(in srgb, currentColor 35%, var(--border));
+    text-overflow: ellipsis;
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   }
 
   .dot {
@@ -168,117 +147,25 @@
     text-overflow: ellipsis;
   }
 
-  .source-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    max-width: 100%;
-    min-width: 0;
-    min-height: 22px;
-    padding: 0 6px;
-    border: 1px solid var(--border-3);
-    border-radius: var(--radius-control);
-    color: var(--text-muted);
-    background: var(--surface-raised);
-    font-size: var(--font-meta);
-    white-space: nowrap;
-  }
-
-  .preview-chip {
-    display: inline-flex;
-    align-items: center;
-    flex-shrink: 0;
-    max-width: 118px;
-    height: 22px;
-    padding: 0 6px;
-    border: 1px solid var(--border-3);
-    border-radius: var(--radius-control);
-    overflow: hidden;
-    color: var(--text-muted);
-    background: var(--surface-raised);
-    font-size: var(--font-meta);
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
-  .preview-live,
-  .preview-saved {
-    border-color: color-mix(in srgb, var(--success) 44%, var(--border-3));
-    color: var(--success);
-  }
-
-  .preview-refreshing,
-  .zola-running,
-  .zola-queued {
-    border-color: color-mix(in srgb, var(--info) 44%, var(--border-3));
-    color: var(--info);
-  }
-
-  .preview-canonical,
-  .zola-valid {
-    border-color: color-mix(in srgb, var(--success) 44%, var(--border-3));
-    color: var(--success);
-  }
-
-  .preview-stale,
-  .zola-idle {
-    border-color: color-mix(in srgb, var(--warning) 38%, var(--border-3));
-    color: var(--warning);
-  }
-
-  .preview-error,
-  .zola-invalid,
-  .zola-error {
-    border-color: color-mix(in srgb, var(--danger) 48%, var(--border-3));
-    color: var(--danger);
-  }
-
-  button.source-chip {
-    min-height: 32px;
-    cursor: pointer;
-  }
-
-  button.source-chip:hover {
-    color: var(--text);
-    border-color: var(--brand);
-  }
-
-  .source-label {
-    flex-shrink: 0;
-    color: var(--brand-strong);
-    font-weight: 650;
-  }
-
-  .source-path {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  }
-
   .text.idle {
     opacity: 0.4;
-    font-size: 12px;
+    font-size: 11px;
     letter-spacing: 0.04em;
   }
 
-  .unsaved .dot { background: var(--warning); }
-  .unsaved      { color: var(--warning); }
+  .status-info .dot,
+  .status-active .dot { background: var(--info); }
+  .status-info,
+  .status-active { color: var(--info); }
 
-  .saving .dot  { background: var(--info); }
-  .saving       { color: var(--info); }
+  .status-success .dot { background: var(--success); }
+  .status-success { color: var(--success); }
 
-  .saved .dot   { background: var(--success); }
-  .saved        { color: var(--success); }
+  .status-warning .dot { background: var(--warning); }
+  .status-warning { color: var(--warning); }
 
-  .restored .dot { background: var(--info); }
-  .restored      { color: var(--info); }
-
-  .error .dot   { background: var(--danger); }
-  .error        { color: var(--danger); }
-
-  button:focus-visible {
-    outline: 2px solid var(--focus-ring, var(--brand));
-    outline-offset: 2px;
-  }
+  .status-error .dot,
+  .status-blocking .dot { background: var(--danger); }
+  .status-error,
+  .status-blocking { color: var(--danger); }
 </style>

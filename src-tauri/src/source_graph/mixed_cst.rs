@@ -163,10 +163,15 @@ struct TeraIsland<'a> {
 }
 
 fn next_root_boundary(source: &str, cursor: usize, islands: &[TeraIsland<'_>]) -> usize {
+    let search_start = source
+        .get(cursor..)
+        .and_then(|rest| rest.chars().next())
+        .map(|character| cursor + character.len_utf8())
+        .unwrap_or(source.len());
     let next_html = source
-        .get(cursor + 1..)
+        .get(search_start..)
         .and_then(|rest| rest.find('<'))
-        .map(|relative| cursor + 1 + relative);
+        .map(|relative| search_start + relative);
     let next_tera = islands
         .iter()
         .find(|island| island.node.start > cursor)
@@ -495,5 +500,35 @@ mod tests {
             .nodes
             .iter()
             .any(|node| matches!(node.kind, MixedCstKind::Tera { .. })));
+    }
+
+    #[test]
+    fn utf8_text_after_start_tag_preserves_following_html_hierarchy() {
+        let source = concat!(
+            "<section><div>",
+            "<h2>Începe prin a modifica acest conținut.</h2>",
+            "<p>Selectează un element în preview.</p>",
+            "</div></section>",
+            "{% block scripts %}<script src=\"/app.js\"></script>{% endblock %}",
+        );
+        let document = parse_mixed_cst(source, "unicode.html");
+
+        assert!(document.is_lossless());
+        assert!(document.tera.is_valid_tera());
+        assert_eq!(
+            document
+                .elements
+                .iter()
+                .map(|element| element.tag.as_str())
+                .collect::<Vec<_>>(),
+            vec!["section", "div", "h2", "p", "script"],
+        );
+        assert_eq!(document.elements[1].parent, Some(0));
+        assert_eq!(document.elements[2].parent, Some(1));
+        assert_eq!(document.elements[3].parent, Some(1));
+        assert_eq!(document.elements[4].parent, None);
+        assert!(document.elements[..4]
+            .iter()
+            .all(|element| element.closing_node.is_some()));
     }
 }

@@ -1,77 +1,125 @@
 <script lang="ts">
   import { IconCode, IconEdit, IconTrash } from "@tabler/icons-svelte";
-  import { buildTeraEditorContext, teraKindLabel } from "$lib/source-graph/context";
-  import { formatSourceEditLocation } from "$lib/source-graph/location";
+  import {
+    editorSourceReferenceDisplay,
+    teraSourceKindLabel,
+  } from "$lib/source-provenance";
   import { sourceOriginLabel } from "$lib/source-graph/view";
-  import { projectRelativeZolaPath } from "$lib/project/files";
+  import { sourceCapabilityReason } from "$lib/source-graph/capabilities";
   import { deleteTeraNodeCapability } from "$lib/tera/mutations";
-  import { canRequestTemplateEditGateKind, templateEditGateReason } from "$lib/tera/template-edit-gate";
-  import type { SourceGraph, SourceGraphNode } from "$lib/types";
+  import type {
+    EditorNavigationNode,
+    EditorSourceReference,
+    SourceGraphNode,
+  } from "$lib/types";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
 
   export let node: SourceGraphNode | null = null;
-  export let graph: SourceGraph | null = null;
-  export let previewSelector: string | null = null;
-  export let editSelectedTeraLayer: () => void | Promise<void>;
+  export let navigationNode: EditorNavigationNode | null = null;
+  export let enterTeraBoundary: (scopeId: string) => void | Promise<void>;
   export let openSelectedTeraSource: () => void | Promise<void>;
   export let deleteSelectedTeraNode: () => void | Promise<void>;
 
-  $: context = buildTeraEditorContext(graph, node?.id ?? null);
   $: deleteCapability = deleteTeraNodeCapability(node);
-  $: editGateReason = templateEditGateReason(node?.kind, Boolean(previewSelector));
-  $: canRequestEditGate = Boolean(previewSelector && canRequestTemplateEditGateKind(node?.kind));
-  $: sourceDisplay = node?.range
-    ? formatSourceEditLocation({
-        file: projectRelativeZolaPath(node.file),
-        line: node.range.line,
-        column: node.range.column,
+  $: selectedBoundary = navigationNode?.kind === "teraBoundary"
+    && navigationNode.boundary?.sourceNodeId === node?.id
+      ? navigationNode
+      : null;
+  $: canEnterBoundary = selectedBoundary?.capabilities.canEnterBoundary === true;
+  $: enterBoundaryReason = canEnterBoundary
+    ? t("project-navigation-enter-scope")
+    : selectedBoundary
+      ? sourceCapabilityReason(selectedBoundary.capabilities)
+      : t("editor-navigation-boundary-missing");
+  $: definition = navigationNode?.sourceProvenance.definition ?? null;
+  $: composition = navigationNode?.sourceProvenance.composition ?? null;
+  $: sourceDisplay = definition
+    ? editorSourceReferenceDisplay(definition)
+    : t("source-provenance-unresolved");
+  $: compositionDisplay = composition
+    ? editorSourceReferenceDisplay(composition)
+    : "";
+  $: originLabel = definition
+    ? editorReferenceOriginLabel(definition)
+    : t("inspector-tera-unknown");
+  $: impactLabel = navigationNode?.boundary?.effectScope === "allRenderedInstances"
+    ? t("source-provenance-impact-all", {
+        count: navigationNode.boundary.renderedInstanceCount,
       })
-    : (node ? projectRelativeZolaPath(node.file) : "");
-  $: originLabel = node ? sourceOriginLabel(node.origin, node.themeName) : "Necunoscut";
+    : navigationNode?.boundary?.effectScope === "sharedDefinition"
+      ? t("source-provenance-impact-shared")
+      : t("source-provenance-impact-single");
+  $: editingLabel = navigationNode?.capabilities.canEnterBoundary
+    ? t("source-provenance-edit-boundary")
+    : navigationNode
+      ? sourceCapabilityReason(navigationNode.capabilities)
+      : t("editor-navigation-boundary-missing");
+
+  function editorReferenceOriginLabel(reference: EditorSourceReference) {
+    if (reference.origin === "theme") {
+      return sourceOriginLabel("theme", reference.themeName);
+    }
+    if (reference.origin === "project") return sourceOriginLabel("local");
+    return t("inspector-tera-unknown");
+  }
 </script>
 
 <section class="tera-source-card">
   {#if node}
     <div class="tera-card-head">
-      <span class="tera-kind">{teraKindLabel(node.kind)}</span>
+      <span class="tera-kind">{teraSourceKindLabel(node.kind)}</span>
       <strong>{node.label}</strong>
     </div>
 
     <dl class="tera-meta">
       <div>
-        <dt>Sursă</dt>
+        <dt>{t("inspector-tera-source")}</dt>
         <dd>{sourceDisplay}</dd>
       </div>
+      {#if compositionDisplay}
+        <div>
+          <dt>{t("source-provenance-composition")}</dt>
+          <dd>{compositionDisplay}</dd>
+        </div>
+      {/if}
       <div>
-        <dt>Origine</dt>
+        <dt>{t("inspector-tera-origin")}</dt>
         <dd>{originLabel}</dd>
       </div>
       <div>
-        <dt>Impact</dt>
-        <dd>{context.impactLabel}</dd>
+        <dt>{t("inspector-tera-impact")}</dt>
+        <dd>{impactLabel}</dd>
       </div>
       <div>
-        <dt>Editare</dt>
-        <dd>{context.editabilityReason}</dd>
+        <dt>{t("inspector-tera-editing")}</dt>
+        <dd>{editingLabel}</dd>
       </div>
     </dl>
 
     <div class="tera-actions">
       <button
         type="button"
-        disabled={!canRequestEditGate}
-        title={editGateReason}
-        onclick={() => { void editSelectedTeraLayer(); }}
+        disabled={!canEnterBoundary || !selectedBoundary}
+        title={enterBoundaryReason}
+        onclick={() => {
+          if (selectedBoundary) void enterTeraBoundary(selectedBoundary.id);
+        }}
       >
         <IconEdit size={13} stroke={2} />
-        <span>Editează</span>
+        <span>{t("inspector-tera-edit")}</span>
       </button>
       <button
         type="button"
-        title="Deschide sursa Tera în editorul de cod"
+        title={t("inspector-tera-open-source")}
         onclick={() => { void openSelectedTeraSource(); }}
       >
         <IconCode size={13} stroke={2} />
-        <span>Cod</span>
+        <span>{t("inspector-tera-code")}</span>
       </button>
       <button
         class="danger"
@@ -85,7 +133,7 @@
       </button>
     </div>
   {:else}
-    <p class="tera-empty">Selectează un nod Tera din preview sau din Straturi.</p>
+    <p class="tera-empty">{t("inspector-tera-select-node")}</p>
   {/if}
 </section>
 

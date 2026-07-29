@@ -88,7 +88,7 @@ test("detached close evaluates kernel policy without rebuilding the frontend pro
     setGlobalStatus(text, kind) {
       statuses.push({ text, kind });
     },
-    notify(notification) {
+    escalateGlobalStatus(notification) {
       notifications.push(notification);
     },
   };
@@ -101,6 +101,6 @@ test("detached close evaluates kernel policy without rebuilding the frontend pro
   assert.equal(host.projectTransitionDecisionRequest.targetRoot, "/project-a");
   assert.equal(host.projectTransitionDecisionRequest.action, "close_project");
   assert.equal(host.projectTransitionDecisionRequest.continuation.kind, "close_project");
-  assert.equal(statuses.at(-1).kind, "idle");
+  assert.equal(statuses.length, 0);
   assert.equal(notifications.at(-1).level, "warning");
 });

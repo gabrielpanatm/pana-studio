@@ -139,12 +139,12 @@ pub(in crate::kernel::write_authority::capability) fn plan_copy(
         CapabilityReplacePolicy::CreateNew
             if !matches!(
                 authority.scope(),
-                DirectoryAuthorityScope::ProjectBootstrap { .. }
+                DirectoryAuthorityScope::ProjectCreation { .. }
             ) =>
         {
             return Err(capability_error(
                 &lexical.public_label,
-                "Copy create-only este permis numai sub authority ProjectBootstrap",
+                "Copy create-only este permis numai sub ProjectCreationAuthority",
             ));
         }
         CapabilityReplacePolicy::Replace

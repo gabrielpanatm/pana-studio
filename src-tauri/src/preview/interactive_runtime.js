@@ -74,7 +74,8 @@
 
   function ready() {
     var runtime = window.PanaBlockRuntime;
-    if (!runtime) {
+    var motionPreview = document.documentElement.hasAttribute("data-pana-motion-preview");
+    if (!runtime && !motionPreview) {
       post("lifecycle-error", {
         blockId: null,
         phase: "bootstrap",
@@ -82,8 +83,10 @@
       });
       return;
     }
-    runtime.setReporter(post);
-    runtime.start();
+    if (runtime) {
+      runtime.setReporter(post);
+      runtime.start();
+    }
     if (document.body) {
       observer = new MutationObserver(function () { scheduleInspection("mutation"); });
       observer.observe(document.body, {

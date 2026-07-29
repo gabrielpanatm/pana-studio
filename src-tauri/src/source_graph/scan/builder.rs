@@ -1,12 +1,18 @@
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
-use crate::source_graph::{
-    identity::{source_relation_id, SourceIdentityAssigner},
-    model::{
-        SourceCapabilities, SourceDiagnosticSeverity, SourceGraph, SourceGraphAsset,
-        SourceGraphDataFile, SourceGraphDiagnostic, SourceGraphPage, SourceGraphScript,
-        SourceGraphStyle, SourceGraphTemplate, SourceNode, SourceNodeKind, SourceOrigin,
-        SourceRange, SourceRelation, SourceRelationKind, SourceStructuredDocument,
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        identity::{source_relation_id, SourceIdentityAssigner},
+        model::{
+            SourceCapabilities, SourceDiagnosticSeverity, SourceGraph, SourceGraphAsset,
+            SourceGraphDataFile, SourceGraphDiagnostic, SourceGraphPage, SourceGraphScript,
+            SourceGraphStyle, SourceGraphTemplate, SourceNode, SourceNodeKind, SourceOrigin,
+            SourceRange, SourceRelation, SourceRelationKind, SourceStructuredDocument,
+        },
     },
 };
 
@@ -15,7 +21,9 @@ pub(super) struct SourceGraphBuilder {
     zola_root: String,
     active_theme: Option<String>,
     nodes: Vec<SourceNode>,
+    node_indexes: HashMap<String, usize>,
     relations: Vec<SourceRelation>,
+    relation_ids: HashSet<String>,
     diagnostics: Vec<SourceGraphDiagnostic>,
     identities: SourceIdentityAssigner,
 }
@@ -27,7 +35,9 @@ impl SourceGraphBuilder {
             zola_root: zola_root.to_string_lossy().to_string(),
             active_theme,
             nodes: Vec::new(),
+            node_indexes: HashMap::new(),
             relations: Vec::new(),
+            relation_ids: HashSet::new(),
             diagnostics: Vec::new(),
             identities: SourceIdentityAssigner::default(),
         }
@@ -47,13 +57,18 @@ impl SourceGraphBuilder {
         let id = self.identities.next(&file, &kind, &label);
 
         if let Some(parent_id) = parent.as_ref() {
-            if let Some(parent_node) = self.nodes.iter_mut().find(|node| node.id == *parent_id) {
+            if let Some(parent_node) = self
+                .node_indexes
+                .get(parent_id)
+                .and_then(|index| self.nodes.get_mut(*index))
+            {
                 if !parent_node.children.contains(&id) {
                     parent_node.children.push(id.clone());
                 }
             }
         }
 
+        let node_index = self.nodes.len();
         self.nodes.push(SourceNode {
             id: id.clone(),
             kind,
@@ -66,6 +81,7 @@ impl SourceGraphBuilder {
             children: Vec::new(),
             capabilities,
         });
+        self.node_indexes.insert(id.clone(), node_index);
         id
     }
 
@@ -81,7 +97,7 @@ impl SourceGraphBuilder {
         }
         let label = label.into();
         let id = source_relation_id(&from, &to, &kind, &label);
-        if self.relations.iter().any(|relation| relation.id == id) {
+        if !self.relation_ids.insert(id.clone()) {
             return;
         }
         self.relations.push(SourceRelation {
@@ -96,20 +112,24 @@ impl SourceGraphBuilder {
     pub(super) fn add_diagnostic(
         &mut self,
         severity: SourceDiagnosticSeverity,
-        message: impl Into<String>,
+        diagnostic: LocalizedDiagnostic,
         file: Option<String>,
         range: Option<SourceRange>,
     ) {
         self.diagnostics.push(SourceGraphDiagnostic {
             severity,
-            message: message.into(),
+            diagnostic,
             file,
             range,
         });
     }
 
     pub(super) fn update_node_range(&mut self, node_id: &str, range: SourceRange) {
-        if let Some(node) = self.nodes.iter_mut().find(|node| node.id == node_id) {
+        if let Some(node) = self
+            .node_indexes
+            .get(node_id)
+            .and_then(|index| self.nodes.get_mut(*index))
+        {
             node.range = Some(range);
         }
     }

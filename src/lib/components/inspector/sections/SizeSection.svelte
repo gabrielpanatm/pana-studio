@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
@@ -37,7 +38,7 @@
   $effect(() => { if (hasAdvancedValues) showAdvanced = true; });
 </script>
 
-<InspectorSection title="Size" {hasValues}>
+<InspectorSection title={t("inspector-size-title")} {hasValues}>
   {#snippet icon()}<IconArrowsMaximize size={13} stroke={1.7} />{/snippet}
 
   <!-- W / H -->
@@ -48,8 +49,8 @@
 
   <!-- Min W / Min H -->
   <div class="row-labels">
-    <span class="row-label">Min W</span>
-    <span class="row-label">Min H</span>
+    <span class="row-label">{t("inspector-size-min-width")}</span>
+    <span class="row-label">{t("inspector-size-min-height")}</span>
   </div>
   <div class="row-2">
     <PropInput label="mW" value={getValue("min-width")} suggestions={variablesForProperty("min-width", scssVariables)} placeholder="0" {...edit.continuous("min-width")} />
@@ -58,8 +59,8 @@
 
   <!-- Max W / Max H -->
   <div class="row-labels">
-    <span class="row-label">Max W</span>
-    <span class="row-label">Max H</span>
+    <span class="row-label">{t("inspector-size-max-width")}</span>
+    <span class="row-label">{t("inspector-size-max-height")}</span>
   </div>
   <div class="row-2">
     <PropInput label="MW" value={getValue("max-width")} suggestions={variablesForProperty("max-width", scssVariables)} placeholder="none" {...edit.continuous("max-width")} />
@@ -69,14 +70,14 @@
   <!-- Advanced toggle -->
   <button type="button" class="advanced-toggle" onclick={() => (showAdvanced = !showAdvanced)}>
     <span class="adv-chevron" class:open={showAdvanced}>›</span>
-    Advanced options
+    {t("inspector-size-advanced-options")}
   </button>
 
   {#if showAdvanced}
     <!-- Aspect Ratio / Object Fit -->
     <div class="row-labels">
-      <span class="row-label">Aspect Ratio</span>
-      <span class="row-label">Object Fit</span>
+      <span class="row-label">{t("inspector-size-aspect-ratio")}</span>
+      <span class="row-label">{t("inspector-size-object-fit")}</span>
     </div>
     <div class="row-2">
       <TextWithOptions
@@ -94,7 +95,7 @@
     </div>
 
     <!-- Object Position -->
-    <div class="row-label">Poziția obiectului</div>
+    <div class="row-label">{t("inspector-size-object-position")}</div>
     <TextWithOptions
       value={getValue("object-position")}
       placeholder="auto"
@@ -104,8 +105,8 @@
 
     <!-- Scroll Snap / Snap Align -->
     <div class="row-labels">
-      <span class="row-label">Scroll Snap</span>
-      <span class="row-label">Snap Align</span>
+      <span class="row-label">{t("inspector-size-scroll-snap")}</span>
+      <span class="row-label">{t("inspector-size-snap-align")}</span>
     </div>
     <div class="row-2">
       <TextWithOptions
@@ -123,7 +124,7 @@
     </div>
 
     <!-- Touch Action -->
-    <div class="row-label">Acțiune la atingere</div>
+    <div class="row-label">{t("inspector-size-touch-action")}</div>
     <TextWithOptions
       value={getValue("touch-action")}
       placeholder="auto"
@@ -133,8 +134,8 @@
 
     <!-- Scrollbar Width / Color -->
     <div class="row-labels">
-      <span class="row-label">Scrollbar Width</span>
-      <span class="row-label">Scrollbar Color</span>
+      <span class="row-label">{t("inspector-size-scrollbar-width")}</span>
+      <span class="row-label">{t("inspector-size-scrollbar-color")}</span>
     </div>
     <div class="row-2">
       <TextWithOptions

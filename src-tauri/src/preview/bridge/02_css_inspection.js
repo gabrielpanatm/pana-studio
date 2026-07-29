@@ -234,15 +234,13 @@
       });
   }
 
-  function createSelectionInfo(element) {
+  function createElementObservation(element) {
     var computed = window.getComputedStyle(element);
     var rect = element.getBoundingClientRect();
     var tag = element.tagName.toLowerCase();
     var id = element.id || "";
     var classes = Array.prototype.filter.call(element.classList, function (className) {
-      return className !== SELECTED_CLASS &&
-        className !== TEMPLATE_SELECTED_CLASS &&
-        className !== EMPTY_EDITABLE_CLASS &&
+      return className !== EMPTY_EDITABLE_CLASS &&
         className !== EMPTY_TERA_SLOT_CLASS;
     });
     var parentElement =
@@ -300,12 +298,8 @@
       imageSrc: tag === "img" ? element.getAttribute("src") : null,
       zolaImage: tag === "img" ? decodeZolaImagePresentation(element) : null,
       attributes: collectElementAttributes(element),
-	      parentNode: parentElement ? createDomNodeLink(parentElement) : null,
-	      childNodes: childNodes,
-	      sourceLocation: null,
-	      sourceId: element.getAttribute(SOURCE_ID_ATTR) || null,
-      templateSourceId: inheritedTemplateSourceId(element),
-      sessionId: element.getAttribute(SESSION_ID_ATTR) || null,
+      parentNode: parentElement ? createDomNodeLink(parentElement) : null,
+      childNodes: childNodes,
       blockContext: blockContextForElement(element),
     };
   }
@@ -322,9 +316,6 @@
       markerKind: canonical ? "canonical" : "legacy",
       rootSelector: createDomPathSelector(root),
       rootTag: root.tagName.toLowerCase(),
-      rootSourceId: root.getAttribute(SOURCE_ID_ATTR) || null,
-      rootTemplateSourceId: inheritedTemplateSourceId(root),
-      rootSessionId: root.getAttribute(SESSION_ID_ATTR) || null,
     };
   }
 

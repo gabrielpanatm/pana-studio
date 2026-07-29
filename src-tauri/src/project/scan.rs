@@ -44,19 +44,14 @@ pub fn scan_project_root(root: &Path) -> Result<ProjectScan, String> {
     collect_project_files(&root, &root, &mut files, zola_mode, output_root.as_deref())?;
     files.sort_by(compare_project_files);
 
-    let is_empty = fs::read_dir(&root)
-        .map(|mut entries| entries.next().is_none())
-        .unwrap_or(false);
-
     Ok(ProjectScan {
         root: root.to_string_lossy().to_string(),
         preview_base_url: None,
         preview_warning: None,
         active_theme,
         files,
-        is_zola: zola_mode,
-        is_empty,
         kernel_session_id: None,
+        workspace_revision: None,
         accepted_disk_manifest: None,
         accepted_disk_generation: None,
     })
@@ -67,6 +62,18 @@ pub fn scan_project_root(root: &Path) -> Result<ProjectScan, String> {
 /// resources; the complete workspace text namespace replaces disk text
 /// membership. Live disk enumeration is deliberately forbidden here.
 pub fn scan_project_workspace_projection(
+    projection: &WorkspaceProjectionLease,
+) -> Result<ProjectScan, String> {
+    let mut scan = scan_project_workspace_projection_full(projection)?;
+    scan.files.truncate(MAX_SCAN_FILES);
+    Ok(scan)
+}
+
+/// Builds the complete logical Files namespace for one immutable workspace
+/// revision. This is intentionally separate from the bounded compatibility
+/// scan: FileExplorer owns its own explicit truncation contract and must see
+/// the complete candidate set before choosing a hierarchy-safe prefix.
+pub(crate) fn scan_project_workspace_projection_full(
     projection: &WorkspaceProjectionLease,
 ) -> Result<ProjectScan, String> {
     projection
@@ -95,11 +102,23 @@ pub fn scan_project_workspace_projection(
     let mut files = Vec::new();
     let mut directories = BTreeSet::new();
 
-    for relative_path in paths {
-        if files.len() >= MAX_SCAN_FILES {
-            break;
+    for relative_path in &paths {
+        let mut parent = Path::new(relative_path).parent();
+        while let Some(directory) = parent {
+            let relative_directory = directory.to_string_lossy().replace('\\', "/");
+            if relative_directory.is_empty() {
+                break;
+            }
+            directories.insert(relative_directory);
+            parent = directory.parent();
         }
+    }
+
+    for relative_path in paths {
         let path = root.join(&relative_path);
+        if path.file_name().and_then(|name| name.to_str()) == Some(".gitkeep") {
+            continue;
+        }
         let Some(kind) = project_file_kind(&path) else {
             continue;
         };
@@ -121,22 +140,9 @@ pub fn scan_project_workspace_projection(
             kind,
             preview_path,
         });
-
-        let mut parent = Path::new(&relative_path).parent();
-        while let Some(directory) = parent {
-            let relative_directory = directory.to_string_lossy().replace('\\', "/");
-            if relative_directory.is_empty() {
-                break;
-            }
-            directories.insert(relative_directory);
-            parent = directory.parent();
-        }
     }
 
     for relative_path in directories {
-        if files.len() >= MAX_SCAN_FILES {
-            break;
-        }
         let Some(name) = Path::new(&relative_path)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -153,17 +159,14 @@ pub fn scan_project_workspace_projection(
         });
     }
     files.sort_by(compare_project_files);
-    let is_empty = files.is_empty();
-
     Ok(ProjectScan {
         root: projection.project_root.clone(),
         preview_base_url: None,
         preview_warning: None,
         active_theme,
         files,
-        is_zola,
-        is_empty,
         kernel_session_id: Some(projection.runtime_session_id.clone()),
+        workspace_revision: Some(projection.revision),
         accepted_disk_manifest: Some(projection.accepted_disk.manifest.clone()),
         accepted_disk_generation: Some(projection.accepted_disk.generation),
     })
@@ -655,6 +658,7 @@ mod tests {
             scan.kernel_session_id.as_deref(),
             Some(runtime_session_id.as_str())
         );
+        assert_eq!(scan.workspace_revision, Some(7));
         assert_eq!(scan.accepted_disk_generation, Some(1));
         assert_eq!(scan.active_theme.as_deref(), Some("workspace-theme"));
         assert!(paths.contains("templates/draft.html"));

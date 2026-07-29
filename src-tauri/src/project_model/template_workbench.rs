@@ -3,11 +3,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    localization::LocalizedDiagnostic,
     project_model::model::ProjectModel,
     source_graph::model::{SourceGraphPage, SourceGraphTemplate, SourceOrigin, SourceRelationKind},
+    source_graph::taxonomy_catalog::build_taxonomy_catalog,
 };
 
-pub const TEMPLATE_WORKBENCH_PLAN_SCHEMA_VERSION: u32 = 2;
+pub const TEMPLATE_WORKBENCH_PLAN_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +17,8 @@ pub struct TemplateWorkbenchPlanInput {
     pub template_path: String,
     #[serde(default)]
     pub preferred_page_path: Option<String>,
+    #[serde(default)]
+    pub preferred_route: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -27,9 +31,26 @@ pub struct TemplateWorkbenchPlan {
     pub navigator: Vec<TemplateWorkbenchNavigatorEntry>,
     pub consumers: Vec<TemplateWorkbenchConsumer>,
     pub selected_context: Option<TemplateWorkbenchConsumer>,
+    pub selected_route: Option<TemplateWorkbenchRouteContext>,
     pub render_mode: TemplateWorkbenchRenderMode,
     pub render_context: TemplateWorkbenchRenderContext,
     pub diagnostics: Vec<TemplateWorkbenchDiagnostic>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateWorkbenchRouteContext {
+    pub kind: TemplateWorkbenchRouteKind,
+    pub label: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateWorkbenchRouteKind {
+    TaxonomyList,
+    TaxonomyTerm,
+    NotFound,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -95,6 +116,7 @@ pub enum TemplateWorkbenchDependencyKind {
 pub enum TemplateWorkbenchRenderMode {
     Page,
     IncludedTemplate,
+    CanonicalRoute,
     MacroScenario,
     OrphanTemplate,
 }
@@ -113,6 +135,7 @@ pub struct TemplateWorkbenchRenderContext {
 pub enum TemplateWorkbenchRenderContextKind {
     RealZolaPage,
     RealZolaConsumer,
+    RealZolaRoute,
     ControlledMacroScenario,
     ControlledTemplateFixture,
 }
@@ -121,7 +144,7 @@ pub enum TemplateWorkbenchRenderContextKind {
 #[serde(rename_all = "camelCase")]
 pub struct TemplateWorkbenchDiagnostic {
     pub code: String,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
 }
 
 #[derive(Clone)]
@@ -134,6 +157,12 @@ pub fn resolve_template_workbench_plan(
     model: &ProjectModel,
     input: &TemplateWorkbenchPlanInput,
 ) -> Result<TemplateWorkbenchPlan, String> {
+    if input.preferred_page_path.is_some() && input.preferred_route.is_some() {
+        return Err(
+            "Contextul de template acceptă fie o pagină reală, fie o rută canonică, nu ambele."
+                .to_string(),
+        );
+    }
     let graph = &model.source_graph;
     let active =
         find_template(graph.templates.as_slice(), &input.template_path).ok_or_else(|| {
@@ -183,9 +212,18 @@ pub fn resolve_template_workbench_plan(
         })
         .or_else(|| consumers.first())
         .cloned();
+    let selected_route = input
+        .preferred_route
+        .as_deref()
+        .map(|route| resolve_canonical_route_context(model, active, route))
+        .transpose()?;
 
-    let render_mode = render_mode(active, selected_context.as_ref());
-    let render_context = render_context(&render_mode, selected_context.as_ref());
+    let render_mode = render_mode(active, selected_context.as_ref(), selected_route.as_ref());
+    let render_context = render_context(
+        &render_mode,
+        selected_context.as_ref(),
+        selected_route.as_ref(),
+    );
     let mut navigator = Vec::with_capacity(if direct_parent.is_some() { 2 } else { 1 });
     if let Some(parent) = direct_parent {
         navigator.push(TemplateWorkbenchNavigatorEntry {
@@ -203,16 +241,20 @@ pub fn resolve_template_workbench_plan(
     });
 
     let mut diagnostics = Vec::new();
-    if selected_context.is_none() {
+    if selected_context.is_none() && selected_route.is_none() {
         diagnostics.push(TemplateWorkbenchDiagnostic {
             code: "template_without_consumer".to_string(),
-            message: "Template-ul nu este consumat de nicio pagină; Workbench-ul trebuie să folosească un context controlat explicit.".to_string(),
+            message_diagnostic: LocalizedDiagnostic::new(
+                "template-workbench-diagnostic-without-consumer",
+            ),
         });
     }
     if render_mode == TemplateWorkbenchRenderMode::MacroScenario {
         diagnostics.push(TemplateWorkbenchDiagnostic {
             code: "controlled_macro_scenario".to_string(),
-            message: "Macro-ul este randat printr-un import și un apel controlat, cu argumente demonstrative declarate ca fixture.".to_string(),
+            message_diagnostic: LocalizedDiagnostic::new(
+                "template-workbench-diagnostic-controlled-macro",
+            ),
         });
     }
 
@@ -224,6 +266,7 @@ pub fn resolve_template_workbench_plan(
         navigator,
         consumers,
         selected_context,
+        selected_route,
         render_mode,
         render_context,
         diagnostics,
@@ -233,6 +276,7 @@ pub fn resolve_template_workbench_plan(
 fn render_context(
     mode: &TemplateWorkbenchRenderMode,
     selected_context: Option<&TemplateWorkbenchConsumer>,
+    selected_route: Option<&TemplateWorkbenchRouteContext>,
 ) -> TemplateWorkbenchRenderContext {
     match mode {
         TemplateWorkbenchRenderMode::Page => TemplateWorkbenchRenderContext {
@@ -254,6 +298,22 @@ fn render_context(
                 })
                 .unwrap_or_else(|| {
                     "Template-ul este evaluat în contextul consumatorului Zola selectat.".to_string()
+                }),
+        },
+        TemplateWorkbenchRenderMode::CanonicalRoute => TemplateWorkbenchRenderContext {
+            kind: TemplateWorkbenchRenderContextKind::RealZolaRoute,
+            canonical_truth: true,
+            label: "Rută Zola reală".to_string(),
+            explanation: selected_route
+                .map(|route| {
+                    format!(
+                        "Template-ul este randat în ruta canonică «{}» ({}).",
+                        route.label, route.url
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "Template-ul este randat în ruta canonică verificată de ProjectModel."
+                        .to_string()
                 }),
         },
         TemplateWorkbenchRenderMode::MacroScenario => TemplateWorkbenchRenderContext {
@@ -372,7 +432,11 @@ fn dependency_kind_rank(kind: TemplateWorkbenchDependencyKind) -> u8 {
 fn render_mode(
     active: &SourceGraphTemplate,
     selected_context: Option<&TemplateWorkbenchConsumer>,
+    selected_route: Option<&TemplateWorkbenchRouteContext>,
 ) -> TemplateWorkbenchRenderMode {
+    if selected_route.is_some() {
+        return TemplateWorkbenchRenderMode::CanonicalRoute;
+    }
     if active.is_partial && !active.macros.is_empty() {
         return TemplateWorkbenchRenderMode::MacroScenario;
     }
@@ -384,6 +448,85 @@ fn render_mode(
     } else {
         TemplateWorkbenchRenderMode::IncludedTemplate
     }
+}
+
+fn resolve_canonical_route_context(
+    model: &ProjectModel,
+    active: &SourceGraphTemplate,
+    requested_route: &str,
+) -> Result<TemplateWorkbenchRouteContext, String> {
+    let requested_route = normalize_url(requested_route);
+    if requested_route.is_empty() || !requested_route.starts_with('/') {
+        return Err("Contextul de rută al șablonului trebuie să înceapă cu /.".to_string());
+    }
+    if normalize_project_path(&active.name) == "404.html"
+        && normalize_url("/404.html") == requested_route
+    {
+        return Ok(TemplateWorkbenchRouteContext {
+            kind: TemplateWorkbenchRouteKind::NotFound,
+            label: "Pagina 404".to_string(),
+            url: "/404.html".to_string(),
+        });
+    }
+
+    let (config_path, config_source) = ["zola.toml", "config.toml"]
+        .iter()
+        .find_map(|path| {
+            model
+                .files
+                .iter()
+                .find(|file| normalize_project_path(&file.relative_path) == *path)
+                .map(|file| ((*path).to_string(), file.contents.as_str()))
+        })
+        .ok_or_else(|| {
+            "Contextul de rută cere zola.toml sau config.toml în ProjectModel.".to_string()
+        })?;
+    let catalog = build_taxonomy_catalog(&model.source_graph, &config_path, config_source);
+    for taxonomy in catalog.entries.iter().filter(|entry| entry.render) {
+        if template_matches_catalog_resource(
+            active,
+            taxonomy.list_template.file.as_deref(),
+            &taxonomy.list_template.logical_name,
+        ) && normalize_url(&taxonomy.path) == requested_route
+        {
+            return Ok(TemplateWorkbenchRouteContext {
+                kind: TemplateWorkbenchRouteKind::TaxonomyList,
+                label: format!("Listă {}", taxonomy.name),
+                url: taxonomy.path.clone(),
+            });
+        }
+        if template_matches_catalog_resource(
+            active,
+            taxonomy.term_template.file.as_deref(),
+            &taxonomy.term_template.logical_name,
+        ) {
+            if let Some(term) = taxonomy
+                .terms
+                .iter()
+                .find(|term| normalize_url(&term.path) == requested_route)
+            {
+                return Ok(TemplateWorkbenchRouteContext {
+                    kind: TemplateWorkbenchRouteKind::TaxonomyTerm,
+                    label: term.name.clone(),
+                    url: term.path.clone(),
+                });
+            }
+        }
+    }
+    Err(format!(
+        "ProjectModel nu confirmă ruta «{requested_route}» drept consumator canonic al șablonului «{}».",
+        active.name
+    ))
+}
+
+fn template_matches_catalog_resource(
+    active: &SourceGraphTemplate,
+    catalog_file: Option<&str>,
+    catalog_name: &str,
+) -> bool {
+    catalog_file
+        .is_some_and(|file| normalize_project_path(file) == normalize_project_path(&active.file))
+        || normalize_project_path(catalog_name) == normalize_project_path(&active.name)
 }
 
 fn workbench_template(template: &SourceGraphTemplate) -> TemplateWorkbenchTemplate {
@@ -477,6 +620,7 @@ mod tests {
             &TemplateWorkbenchPlanInput {
                 template_path: "index.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -502,6 +646,7 @@ mod tests {
             &TemplateWorkbenchPlanInput {
                 template_path: "layout.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -519,6 +664,7 @@ mod tests {
             &TemplateWorkbenchPlanInput {
                 template_path: "templates/partials/header.html".to_string(),
                 preferred_page_path: Some("content/_index.md".to_string()),
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -558,6 +704,7 @@ mod tests {
             &TemplateWorkbenchPlanInput {
                 template_path: "partials/cta.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -588,6 +735,7 @@ mod tests {
             &TemplateWorkbenchPlanInput {
                 template_path: "partials/card.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -601,6 +749,7 @@ mod tests {
             &TemplateWorkbenchPlanInput {
                 template_path: "partials/macros.html".to_string(),
                 preferred_page_path: None,
+                preferred_route: None,
             },
         )
         .unwrap();
@@ -608,6 +757,116 @@ mod tests {
             macros.render_mode,
             TemplateWorkbenchRenderMode::MacroScenario
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolves_only_exact_taxonomy_routes_for_the_active_semantic_resource() {
+        let root = fixture_root("taxonomy-routes");
+        fs::create_dir_all(root.join("templates/tags")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = \"http://example.test\"\ntaxonomies = [{ name = \"tags\" }]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/article.md"),
+            "+++\ntitle = \"Articol\"\n[taxonomies]\ntags = [\"Rust\"]\n+++\n",
+        )
+        .unwrap();
+        fs::write(root.join("templates/tags/list.html"), "<main>Tags</main>").unwrap();
+        fs::write(
+            root.join("templates/tags/single.html"),
+            "<main>Termen</main>",
+        )
+        .unwrap();
+
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let list = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "tags/list.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/tags/".to_string()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            list.render_mode,
+            TemplateWorkbenchRenderMode::CanonicalRoute
+        );
+        assert_eq!(
+            list.selected_route.as_ref().unwrap().kind,
+            TemplateWorkbenchRouteKind::TaxonomyList
+        );
+        assert_eq!(list.selected_route.as_ref().unwrap().url, "/tags/");
+        assert!(list.render_context.canonical_truth);
+
+        let term = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "tags/single.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/tags/rust/".to_string()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            term.selected_route.as_ref().unwrap().kind,
+            TemplateWorkbenchRouteKind::TaxonomyTerm
+        );
+        assert_eq!(term.selected_route.as_ref().unwrap().url, "/tags/rust/");
+
+        let mismatch = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "tags/list.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/tags/rust/".to_string()),
+            },
+        )
+        .unwrap_err();
+        assert!(mismatch.contains("nu confirmă ruta"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn resolves_the_not_found_route_only_for_the_active_404_resource() {
+        let root = fixture_root("not-found-route");
+        write_fixture(&root, "<main>Acasă</main>");
+        fs::write(root.join("templates/404.html"), "<main>Nu există</main>").unwrap();
+
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let not_found = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "404.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/404.html".to_string()),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            not_found.selected_route.as_ref().unwrap().kind,
+            TemplateWorkbenchRouteKind::NotFound
+        );
+        assert_eq!(
+            not_found.render_mode,
+            TemplateWorkbenchRenderMode::CanonicalRoute
+        );
+
+        let mismatch = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "index.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: Some("/404.html".to_string()),
+            },
+        )
+        .unwrap_err();
+        assert!(mismatch.contains("nu confirmă ruta"));
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -6,7 +6,13 @@
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
-  background: var(--app-bg);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--brand) 3%, transparent),
+      transparent 36%
+    ),
+    var(--app-bg);
   color: var(--text);
 }
 
@@ -24,7 +30,7 @@
   border: 1px solid var(--border-3, #3b4541);
   border-radius: var(--radius-panel);
   color: var(--text, #e7ede9);
-  background: var(--surface-4, #191c1f);
+  background: var(--material-control);
   box-shadow: var(--shadow);
 }
 
@@ -50,6 +56,8 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
+  background: var(--material-inset);
+  box-shadow: var(--shadow-inset);
 }
 
 .workspace {
@@ -64,6 +72,8 @@
   flex: 1;
   padding: 6px 8px 7px;
   overflow: hidden;
+  isolation: isolate;
+  background: transparent;
 }
 
 .workspace.left-pane-collapsed {
@@ -81,6 +91,7 @@
 
 .center-stack {
   position: relative;
+  z-index: 2;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   grid-column: 2;
@@ -92,6 +103,17 @@
 
 .center-stack.bottom-panel-open {
   grid-template-rows: minmax(0, 1fr) var(--terminal-pane-height);
+}
+
+.center-stack.motion-timeline-open {
+  grid-template-rows: minmax(0, 1fr) var(--motion-timeline-height);
+}
+
+.center-stack.motion-timeline-open.bottom-panel-open {
+  grid-template-rows:
+    minmax(0, 1fr)
+    var(--motion-timeline-height)
+    var(--terminal-pane-height);
 }
 
 .project-pane-shell,
@@ -107,8 +129,11 @@
 .inspector-pane-shell,
 .editor-shell-shell {
   display: flex;
+  z-index: 2;
   flex-direction: column;
   min-height: 0;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-workspace-panel);
 }
 
 .editor-shell-shell {
@@ -124,7 +149,8 @@
   color: var(--text-muted);
   font-size: var(--font-body);
   font-weight: 600;
-  background: var(--surface-7);
+  background: var(--material-inset);
+  box-shadow: var(--shadow-inset);
 }
 
 .project-pane-shell {
@@ -191,13 +217,11 @@ body.is-resizing iframe {
 }
 
 :root body:is(
-  .layers-dragging,
   .files-dragging,
   .element-palette-dragging,
   .tera-palette-dragging
 ),
 :root body:is(
-  .layers-dragging,
   .files-dragging,
   .element-palette-dragging,
   .tera-palette-dragging

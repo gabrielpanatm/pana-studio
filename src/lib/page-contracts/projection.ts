@@ -9,6 +9,7 @@ import type {
   PageJsDraftStageReceipt,
   ProjectWorkspaceMutationReceipt,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PageContractProjectionHost = {
   sourceCache: Record<string, string>;
@@ -61,7 +62,7 @@ export function capturePageContractSessionLease(
   const projectRoot = host.sessionProjectRoot.trim();
   const sessionId = host.kernelProjectSessionId.trim();
   if (!projectRoot || !sessionId) {
-    throw new Error("Contractul paginii cere o sesiune de proiect activă și identificabilă.");
+    throw new Error(t("page-contract-session-missing"));
   }
   return { projectRoot, sessionId, projectSessionEpoch: host.projectSessionEpoch };
 }
@@ -106,7 +107,7 @@ export function capturePageContractProjectionLease(
   relativePaths: string[],
 ): PageContractProjectionLease {
   if (!pageContractSessionLeaseMatches(host, sessionLease)) {
-    throw new Error("Page Contract a devenit stale înainte de capturarea proiecției.");
+    throw new Error(t("page-contract-projection-stale"));
   }
   return {
     ...sessionLease,
@@ -167,10 +168,10 @@ function requireCurrentPageContractReceipt(
 ) {
   const authority = receipt.authority;
   if (!pageContractSessionLeaseMatches(host, lease)) {
-    throw new Error("Page Contract a ignorat receipt-ul unei sesiuni înlocuite.");
+    throw new Error(t("page-contract-replaced-session-receipt"));
   }
   if (authority.projectRoot !== lease.projectRoot || authority.sessionId !== lease.sessionId) {
-    throw new Error("Page Contract a primit un receipt Rust din altă sesiune.");
+    throw new Error(t("page-contract-session-receipt-mismatch"));
   }
   if (
     authority.schemaVersion !== 2
@@ -179,20 +180,20 @@ function requireCurrentPageContractReceipt(
     || !Number.isSafeInteger(authority.revisionAfter)
     || authority.revisionAfter < authority.revisionBefore
   ) {
-    throw new Error("Page Contract a primit un receipt revision/schema invalid.");
+    throw new Error(t("page-contract-revision-schema-invalid"));
   }
   if (authority.status === "noop" && authority.revisionAfter !== authority.revisionBefore) {
-    throw new Error("Page Contract noop nu poate avansa revizia.");
+    throw new Error(t("page-contract-noop-advanced"));
   }
   if (authority.status === "staged" && authority.revisionAfter === authority.revisionBefore) {
-    throw new Error("Page Contract staged trebuie să avanseze revizia.");
+    throw new Error(t("page-contract-staged-not-advanced"));
   }
   if (receipt.workspaceMutation) {
     if (
       receipt.workspaceMutation.revisionBefore < authority.revisionBefore
       || receipt.workspaceMutation.revisionAfter > authority.revisionAfter
     ) {
-      throw new Error("Page Contract a primit o mutație în afara intervalului autorității.");
+      throw new Error(t("page-contract-mutation-outside-authority"));
     }
   }
 }

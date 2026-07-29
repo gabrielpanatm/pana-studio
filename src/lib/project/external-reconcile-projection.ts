@@ -3,6 +3,7 @@ import type {
   KernelExternalDiskReconcileReceipt,
   ProjectDiskManifest,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type ExternalSourceProjection = {
   sourceCache: Record<string, string>;
@@ -37,17 +38,19 @@ export function acceptedExternalReconcileManifest(
   expectedRoot: string,
 ): ProjectDiskManifest {
   if (receipt.status !== "applied" && receipt.status !== "noop") {
-    throw new Error(`Receipt-ul ${receipt.status} nu poate avansa baseline-ul extern.`);
+    throw new Error(t("external-reconcile-status-cannot-advance", {
+      status: receipt.status,
+    }));
   }
   if (!receipt.acceptedManifest || receipt.acceptedManifest.root !== expectedRoot) {
-    throw new Error("Rust reconcile nu a returnat manifestul acceptat pentru proiectul curent.");
+    throw new Error(t("external-reconcile-manifest-missing"));
   }
   if (
     receipt.acceptedDiskGeneration === null
     || !Number.isSafeInteger(receipt.acceptedDiskGeneration)
     || receipt.acceptedDiskGeneration < 1
   ) {
-    throw new Error("Rust reconcile nu a returnat generația AcceptedDisk terminală.");
+    throw new Error(t("external-reconcile-generation-missing"));
   }
   return receipt.acceptedManifest;
 }
@@ -67,7 +70,9 @@ export function projectExternalReconcileSources(
     return { sourceCache: nextCache, activeSource: null };
   }
   if (!receipt.activeFile || receipt.activeFile.relativePath !== activeRelativePath) {
-    throw new Error(`Rust reconcile nu a returnat bufferul activ ${activeRelativePath}.`);
+    throw new Error(t("external-reconcile-active-buffer-missing", {
+      path: activeRelativePath,
+    }));
   }
   nextCache[scannedCacheKey({ relativePath: activeRelativePath })] = receipt.activeFile.text;
   return { sourceCache: nextCache, activeSource: receipt.activeFile.text };

@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::kernel::workbench::{WorkbenchActivity, WorkbenchSurface};
+use crate::localization::LocalizedDiagnostic;
 
-pub const COMMAND_CENTER_SCHEMA_VERSION: u32 = 1;
+pub const COMMAND_CENTER_SCHEMA_VERSION: u32 = 3;
 pub const COMMAND_CENTER_DEFAULT_LIMIT: usize = 24;
 pub const COMMAND_CENTER_MAX_LIMIT: usize = 100;
 pub const COMMAND_CENTER_MAX_QUERY_BYTES: usize = 512;
@@ -87,13 +88,17 @@ pub enum CommandCenterAction {
 pub struct CommandCenterItem {
     pub id: String,
     pub kind: CommandCenterItemKind,
-    pub title: String,
-    pub subtitle: String,
+    pub title: Option<String>,
+    pub title_diagnostic: Option<LocalizedDiagnostic>,
+    pub subtitle: Option<String>,
+    pub subtitle_diagnostic: Option<LocalizedDiagnostic>,
     pub shortcut: Option<String>,
     pub enabled: bool,
-    pub disabled_reason: Option<String>,
+    pub disabled_diagnostic: Option<LocalizedDiagnostic>,
     pub score: i32,
     pub action: CommandCenterAction,
+    #[serde(skip)]
+    pub search_title: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

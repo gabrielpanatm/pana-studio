@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-css-inspector-context"
+description = "Enables the resolve_css_inspector_context command without any pre-configured scope."
+commands.allow = ["resolve_css_inspector_context"]
+
+[[permission]]
+identifier = "deny-resolve-css-inspector-context"
+description = "Denies the resolve_css_inspector_context command without any pre-configured scope."
+commands.deny = ["resolve_css_inspector_context"]

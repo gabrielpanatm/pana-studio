@@ -10,37 +10,45 @@
     IconTerminal2,
   } from "@tabler/icons-svelte";
   import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type {
     AuditCategory,
     AuditDiagnostic,
     AuditSeverity,
   } from "$lib/types";
+  import { errorMessage } from "$lib/util";
 
   let {
     app,
     openWorkspaceSource,
+    requestedView = "overview",
+    observabilityFocusSerial = 0,
+    onViewChange = undefined,
   }: {
     app: AppState;
     openWorkspaceSource: (path: string) => void | Promise<void>;
+    requestedView?: AuditView;
+    observabilityFocusSerial?: number;
+    onViewChange?: (view: AuditView) => void;
   } = $props();
 
   type AuditView = "overview" | "runtime";
   type SeverityFilter = "all" | AuditSeverity;
   type CategoryFilter = "all" | AuditCategory;
 
-  const views: { id: AuditView; label: string }[] = [
-    { id: "overview", label: "Audit proiect" },
-    { id: "runtime", label: "Execuție" },
-  ];
-  const categoryLabels: Record<AuditCategory, string> = {
-    build: "Construire",
-    references: "Referințe",
-    accessibility: "Accesibilitate",
-    seo: "SEO",
-    assets: "Resurse",
-    workspace: "Spațiu de lucru",
-  };
+  const views = $derived([
+    { id: "overview" as const, label: t("audit-view-project") },
+    { id: "runtime" as const, label: t("audit-view-runtime") },
+  ]);
+  const categoryLabels = $derived<Record<AuditCategory, string>>({
+    build: t("audit-category-build"),
+    references: t("audit-category-references"),
+    accessibility: t("audit-category-accessibility"),
+    seo: t("audit-category-seo"),
+    assets: t("audit-category-assets"),
+    workspace: t("audit-category-workspace"),
+  });
 
   let activeView = $state<AuditView>("overview");
   let severityFilter = $state<SeverityFilter>("all");
@@ -48,8 +56,20 @@
   let query = $state("");
   let validationRunning = $state(false);
 
+  function diagnosticTitle(diagnostic: AuditDiagnostic) {
+    return errorMessage(diagnostic.titleDiagnostic);
+  }
+
+  function diagnosticMessage(diagnostic: AuditDiagnostic) {
+    return errorMessage(diagnostic.messageDiagnostic);
+  }
+
+  $effect(() => {
+    if (activeView !== requestedView) activeView = requestedView;
+  });
+
   const snapshot = $derived(app.projectAuditSnapshot);
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase("ro"));
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const diagnostics = $derived.by(() => {
     const source = snapshot?.diagnostics ?? [];
     return source.filter((diagnostic) => {
@@ -57,12 +77,12 @@
       if (categoryFilter !== "all" && diagnostic.category !== categoryFilter) return false;
       if (!normalizedQuery) return true;
       return [
-        diagnostic.title,
-        diagnostic.message,
+        diagnosticTitle(diagnostic),
+        diagnosticMessage(diagnostic),
         diagnostic.file ?? "",
         diagnostic.code,
         categoryLabels[diagnostic.category],
-      ].some((value) => value.toLocaleLowerCase("ro").includes(normalizedQuery));
+      ].some((value) => value.toLocaleLowerCase(l10n.locale).includes(normalizedQuery));
     });
   });
   const zolaTone = $derived(
@@ -75,12 +95,12 @@
   );
   const zolaLabel = $derived.by(() => {
     switch (app.controlledPreview.validation) {
-      case "valid": return "Validare Zola reușită";
-      case "invalid": return "Proiect Zola invalid";
-      case "error": return "Validare indisponibilă";
-      case "queued": return "Validare programată";
-      case "running": return "Validare în curs";
-      default: return "Zola nevalidat";
+      case "valid": return t("audit-zola-valid");
+      case "invalid": return t("audit-zola-invalid");
+      case "error": return t("audit-zola-unavailable");
+      case "queued": return t("audit-zola-queued");
+      case "running": return t("audit-zola-running");
+      default: return t("audit-zola-none");
     }
   });
 
@@ -100,7 +120,7 @@
       await app.refreshProjectAudit(true);
     } catch (error) {
       app.setGlobalStatus(
-        `Auditul complet a eșuat: ${error instanceof Error ? error.message : String(error)}`,
+        t("audit-full-failed", { error: error instanceof Error ? error.message : String(error) }),
         "error",
       );
     } finally {
@@ -114,13 +134,14 @@
   }
 
   function diagnosticLocation(diagnostic: AuditDiagnostic) {
-    if (!diagnostic.file) return "Proiect";
+    if (!diagnostic.file) return t("audit-project-location");
     if (!diagnostic.range) return diagnostic.file;
     return `${diagnostic.file}:${diagnostic.range.line}:${diagnostic.range.column}`;
   }
 
   function selectView(view: AuditView) {
     activeView = view;
+    onViewChange?.(view);
   }
 
   function handleViewKeydown(event: KeyboardEvent, index: number) {
@@ -138,51 +159,55 @@
   }
 </script>
 
-<section class="audit-workspace" aria-labelledby="audit-title">
-  <header class="audit-header">
+<section class="activity-workspace audit-workspace" aria-labelledby="audit-title">
+  <header class="workspace-header audit-header">
     <div class="heading">
-      <span class="eyebrow"><IconShieldCheck size={15} stroke={1.9} /> Quality workspace</span>
-      <h1 id="audit-title">Audit proiect</h1>
-      <p>Problemele structurale sunt derivate din sesiunea Rust curentă; validarea Zola confirmă separat construirea reală.</p>
+      <span class="eyebrow"><IconShieldCheck size={15} stroke={1.9} /> {t("audit-eyebrow")}</span>
+      <h1 id="audit-title">{t("audit-title")}</h1>
+      <p>{t("audit-description")}</p>
     </div>
     <div class="header-actions">
       <button
+        class="ui-button toolbar"
         type="button"
         disabled={app.projectAuditLoading}
         onclick={() => { void app.refreshProjectAudit(true); }}
       >
         <IconRefresh class={app.projectAuditLoading ? "spin" : undefined} size={15} stroke={1.9} />
-        Reanalizează
+        {t("audit-refresh")}
       </button>
       <button
-        class="primary"
+        class="ui-button primary toolbar"
         type="button"
         disabled={validationRunning || app.controlledPreview.validation === "running"}
         onclick={() => { void runFullAudit(); }}
       >
         <IconCircleCheck size={15} stroke={1.9} />
-        Rulează audit complet
+        {t("audit-run-full")}
       </button>
     </div>
   </header>
 
-  <div class="audit-tabs" role="tablist" aria-label="Vizualizări Audit">
-    {#each views as view, index (view.id)}
-      <button
-        id={`audit-tab-${view.id}`}
-        type="button"
-        role="tab"
-        aria-selected={activeView === view.id ? "true" : "false"}
-        aria-controls={`audit-panel-${view.id}`}
-        tabindex={activeView === view.id ? 0 : -1}
-        class:active={activeView === view.id}
-        onclick={() => { selectView(view.id); }}
-        onkeydown={(event) => { handleViewKeydown(event, index); }}
-      >
-        {#if view.id === "runtime"}<IconTerminal2 size={14} stroke={1.9} />{/if}
-        {view.label}
-      </button>
-    {/each}
+  <div class="workspace-toolbar">
+    <div class="ui-tabs view-tabs" role="tablist" aria-label={t("audit-tabs-label")}>
+      {#each views as view, index (view.id)}
+        <button
+          id={`audit-tab-${view.id}`}
+          type="button"
+          role="tab"
+          aria-selected={activeView === view.id ? "true" : "false"}
+          aria-controls={`audit-panel-${view.id}`}
+          tabindex={activeView === view.id ? 0 : -1}
+          class="ui-tab"
+          class:active={activeView === view.id}
+          onclick={() => { selectView(view.id); }}
+          onkeydown={(event) => { handleViewKeydown(event, index); }}
+        >
+          {#if view.id === "runtime"}<IconTerminal2 size={14} stroke={1.9} />{/if}
+          {view.label}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if activeView === "runtime"}
@@ -200,6 +225,7 @@
         canSave={app.globalDirtyState.canSave}
         diskBlockedReason={app.immediateDiskOperationBlockedReason}
         projectStatus={app.projectStatus}
+        {observabilityFocusSerial}
         onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
       />
     </div>
@@ -210,29 +236,32 @@
       role="tabpanel"
       aria-labelledby="audit-tab-overview"
     >
-      <section class="audit-summary" aria-label="Rezumat audit">
-        <article aria-label={`${snapshot?.summary.errors ?? 0} erori`} class:error={Boolean(snapshot?.summary.errors)}>
-          <span>Erori</span>
-          <strong>{snapshot?.summary.errors ?? 0}</strong>
+      <section class="audit-summary" aria-label={t("audit-summary-label")}>
+        <article aria-label={t("audit-errors-count", { count: snapshot?.summary.errors ?? 0 })} class:error={Boolean(snapshot?.summary.errors)}>
+          <span>{t("audit-errors")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.errors ?? 0)}</strong>
         </article>
-        <article aria-label={`${snapshot?.summary.warnings ?? 0} avertismente`} class:warning={Boolean(snapshot?.summary.warnings)}>
-          <span>Avertismente</span>
-          <strong>{snapshot?.summary.warnings ?? 0}</strong>
+        <article aria-label={t("audit-warnings-count", { count: snapshot?.summary.warnings ?? 0 })} class:warning={Boolean(snapshot?.summary.warnings)}>
+          <span>{t("audit-warnings")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.warnings ?? 0)}</strong>
         </article>
-        <article aria-label={`${snapshot?.summary.info ?? 0} diagnostice informative`}>
-          <span>Informative</span>
-          <strong>{snapshot?.summary.info ?? 0}</strong>
+        <article aria-label={t("audit-info-count", { count: snapshot?.summary.info ?? 0 })}>
+          <span>{t("audit-informational")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.info ?? 0)}</strong>
         </article>
-        <article aria-label={`${snapshot?.summary.affectedFiles ?? 0} fișiere afectate`}>
-          <span>Fișiere afectate</span>
-          <strong>{snapshot?.summary.affectedFiles ?? 0}</strong>
+        <article aria-label={t("audit-files-count", { count: snapshot?.summary.affectedFiles ?? 0 })}>
+          <span>{t("audit-affected-files")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.affectedFiles ?? 0)}</strong>
         </article>
         <article
-          aria-label={`Construire: ${zolaLabel}. ${app.controlledPreview.validationMessage}`}
+          aria-label={t("audit-build-label", {
+            status: zolaLabel,
+            message: app.controlledPreview.validationMessage,
+          })}
           class:zola-error={zolaTone === "error"}
           class:zola-success={zolaTone === "success"}
         >
-          <span>Construire</span>
+          <span>{t("audit-build")}</span>
           <strong>{zolaLabel}</strong>
           <small>{app.controlledPreview.validationMessage}</small>
         </article>
@@ -241,33 +270,36 @@
       <section class="diagnostics-card" aria-labelledby="diagnostics-title">
         <header class="diagnostics-toolbar">
           <div>
-            <h2 id="diagnostics-title">Diagnostice</h2>
-            <span>{diagnostics.length} din {snapshot?.summary.total ?? 0}</span>
+            <h2 id="diagnostics-title">{t("audit-diagnostics")}</h2>
+            <span>{t("audit-visible-count", {
+              visible: l10n.formatNumber(diagnostics.length),
+              total: l10n.formatNumber(snapshot?.summary.total ?? 0),
+            })}</span>
           </div>
           <label class="search-field">
-            <span class="sr-only">Caută în diagnostice</span>
+            <span class="sr-only">{t("audit-search-label")}</span>
             <IconSearch size={14} stroke={1.9} />
-            <input bind:value={query} type="search" placeholder="Caută mesaj, cod sau fișier" />
+            <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("audit-search-placeholder")} />
           </label>
           <label>
-            <span>Severitate</span>
-            <select bind:value={severityFilter}>
-              <option value="all">Toate</option>
-              <option value="error">Erori</option>
-              <option value="warning">Avertismente</option>
-              <option value="info">Informative</option>
+            <span>{t("audit-severity")}</span>
+            <select class="ui-field toolbar" bind:value={severityFilter}>
+              <option value="all">{t("audit-all")}</option>
+              <option value="error">{t("audit-errors")}</option>
+              <option value="warning">{t("audit-warnings")}</option>
+              <option value="info">{t("audit-informational")}</option>
             </select>
           </label>
           <label>
-            <span>Categorie</span>
-            <select bind:value={categoryFilter}>
-              <option value="all">Toate</option>
-              <option value="build">Construire</option>
-              <option value="references">Referințe</option>
-              <option value="accessibility">Accesibilitate</option>
-              <option value="seo">SEO</option>
-              <option value="assets">Resurse</option>
-              <option value="workspace">Spațiu de lucru</option>
+            <span>{t("audit-category")}</span>
+            <select class="ui-field toolbar" bind:value={categoryFilter}>
+              <option value="all">{t("audit-all")}</option>
+              <option value="build">{categoryLabels.build}</option>
+              <option value="references">{categoryLabels.references}</option>
+              <option value="accessibility">{categoryLabels.accessibility}</option>
+              <option value="seo">{categoryLabels.seo}</option>
+              <option value="assets">{categoryLabels.assets}</option>
+              <option value="workspace">{categoryLabels.workspace}</option>
             </select>
           </label>
         </header>
@@ -276,32 +308,32 @@
           {#if app.projectAuditError}
             <div class="empty-state error" role="alert">
               <IconAlertTriangle size={22} stroke={1.8} />
-              <strong>Auditul Rust nu a putut fi construit</strong>
+              <strong>{t("audit-rust-failed")}</strong>
               <span>{app.projectAuditError}</span>
-              <button type="button" onclick={() => { void app.refreshProjectAudit(true); }}>Reîncearcă</button>
+              <button class="ui-button toolbar" type="button" onclick={() => { void app.refreshProjectAudit(true); }}>{t("audit-retry")}</button>
             </div>
           {:else if app.projectAuditLoading && !snapshot}
-            <div class="empty-state">Se construiește proiecția auditului din sesiunea proiectului…</div>
+            <div class="empty-state">{t("audit-building")}</div>
           {:else if diagnostics.length === 0 && (snapshot?.summary.total ?? 0) > 0}
             <div class="empty-state">
               <IconSearch size={22} stroke={1.8} />
-              <strong>Niciun rezultat pentru filtrele curente</strong>
-              <button type="button" onclick={() => { severityFilter = "all"; categoryFilter = "all"; query = ""; }}>Resetează filtrele</button>
+              <strong>{t("audit-no-filter-results")}</strong>
+              <button class="ui-button toolbar" type="button" onclick={() => { severityFilter = "all"; categoryFilter = "all"; query = ""; }}>{t("audit-reset-filters")}</button>
             </div>
           {:else if diagnostics.length === 0}
             <div class="empty-state success">
               <IconCircleCheck size={24} stroke={1.8} />
-              <strong>Nu există probleme structurale cunoscute</strong>
-              <span>Rulează auditul complet pentru a confirma și build-ul Zola.</span>
+              <strong>{t("audit-no-known-problems")}</strong>
+              <span>{t("audit-run-full-help")}</span>
             </div>
           {:else}
             {#each diagnostics as diagnostic (diagnostic.id)}
               <article
-                aria-label={`${diagnostic.title}. ${diagnostic.message}. ${diagnosticLocation(diagnostic)}`}
+                aria-label={`${diagnosticTitle(diagnostic)}. ${diagnosticMessage(diagnostic)}. ${diagnosticLocation(diagnostic)}`}
                 class:error={diagnostic.severity === "error"}
                 class:warning={diagnostic.severity === "warning"}
               >
-                <span class="severity" aria-label={`Severitate: ${diagnostic.severity}`}>
+                <span class="severity" aria-label={t("audit-severity-label", { severity: diagnostic.severity })}>
                   {#if diagnostic.severity === "error"}
                     <IconAlertTriangle size={16} stroke={2} />
                   {:else if diagnostic.severity === "warning"}
@@ -311,13 +343,13 @@
                   {/if}
                 </span>
                 <div class="diagnostic-copy">
-                  <div><strong>{diagnostic.title}</strong><code>{diagnostic.code}</code></div>
-                  <p>{diagnostic.message}</p>
+                  <div><strong>{diagnosticTitle(diagnostic)}</strong><code>{diagnostic.code}</code></div>
+                  <p>{diagnosticMessage(diagnostic)}</p>
                   <span>{categoryLabels[diagnostic.category]} · {diagnosticLocation(diagnostic)}</span>
                 </div>
                 {#if diagnostic.file}
-                  <button type="button" onclick={() => { void openDiagnostic(diagnostic); }}>
-                    Deschide <IconExternalLink size={13} stroke={1.9} />
+                  <button class="ui-button compact" type="button" onclick={() => { void openDiagnostic(diagnostic); }}>
+                    {t("audit-open")} <IconExternalLink size={13} stroke={1.9} />
                   </button>
                 {/if}
               </article>
@@ -330,24 +362,7 @@
 </section>
 
 <style>
-  .audit-workspace {
-    display: grid;
-    grid-template-rows: auto 38px minmax(0, 1fr);
-    min-width: 0;
-    min-height: 0;
-    height: 100%;
-    overflow: hidden;
-    border: 1px solid var(--wb-border-subtle, var(--border));
-    border-radius: var(--radius-panel);
-    color: var(--wb-text-primary, var(--text));
-    background: var(--wb-surface-document, var(--surface));
-  }
-
-  .audit-header,
   .header-actions,
-  .header-actions button,
-  .audit-tabs,
-  .audit-tabs button,
   .diagnostics-toolbar,
   .diagnostics-toolbar > div,
   .search-field,
@@ -359,56 +374,10 @@
     align-items: center;
   }
 
-  .audit-header {
-    justify-content: space-between;
-    gap: 24px;
-    padding: 18px 20px;
-    border-bottom: 1px solid var(--wb-border-subtle, var(--border));
-    background: var(--wb-surface-chrome, var(--surface-2));
-  }
-
   .heading { min-width: 0; }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--wb-accent-strong, var(--brand-strong));
-    font-size: 12px;
-    font-weight: 650;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  h1 { margin: 6px 0 0; color: var(--text-strong); font-size: 20px; font-weight: 650; letter-spacing: -0.015em; }
-  .heading p { max-width: 720px; margin: 6px 0 0; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; line-height: 1.45; }
+  .heading p { max-width: 720px; }
 
   .header-actions { flex: 0 0 auto; gap: 7px; }
-  .header-actions button,
-  .diagnostics-list article > button,
-  .empty-state button {
-    justify-content: center;
-    gap: 6px;
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--wb-border-subtle, var(--border-3));
-    border-radius: var(--wb-radius-control, 6px);
-    color: var(--wb-text-primary, var(--text));
-    background: var(--wb-surface-document, var(--surface));
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .header-actions button.primary { border-color: var(--wb-accent, var(--brand)); color: #fff; background: var(--wb-accent, var(--brand)); }
-  button:disabled { cursor: default; opacity: 0.55; }
-  button:not(:disabled) { cursor: pointer; }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--brand-strong)); outline-offset: 1px; }
-
-  .audit-tabs {
-    gap: 2px;
-    padding: 0 10px;
-    border-bottom: 1px solid var(--wb-border-subtle, var(--border));
-    background: var(--wb-surface-chrome, var(--surface-2));
-  }
-  .audit-tabs button { align-self: stretch; gap: 5px; padding: 0 11px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted, var(--text-muted)); background: transparent; font-size: 12px; font-weight: 600; }
-  .audit-tabs button.active { border-bottom-color: var(--wb-accent, var(--brand)); color: var(--wb-accent-strong, var(--brand-strong)); }
 
   .overview-panel { min-width: 0; min-height: 0; overflow: auto; padding: 12px; }
   .runtime-panel { min-width: 0; min-height: 0; overflow: hidden; padding: 10px; }
@@ -430,12 +399,8 @@
   h2 { margin: 0; color: var(--text-strong); font-size: 12px; }
   .diagnostics-toolbar > div span { color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; }
   .diagnostics-toolbar label { display: grid; gap: 2px; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; font-weight: 800; text-transform: uppercase; }
-  .diagnostics-toolbar input,
-  .diagnostics-toolbar select { height: 28px; border: 1px solid var(--wb-border-subtle, var(--border-3)); border-radius: 5px; color: var(--wb-text-primary, var(--text)); background: var(--wb-surface-document, var(--surface)); font-size: 12px; }
-  .diagnostics-toolbar select { min-width: 105px; padding: 0 7px; }
+  .diagnostics-toolbar select { min-width: 105px; }
   .diagnostics-toolbar .search-field { position: relative; display: flex; flex-direction: row; gap: 0; min-width: min(260px, 30vw); }
-  .search-field :global(svg) { position: absolute; left: 8px; color: var(--wb-text-muted, var(--text-muted)); pointer-events: none; }
-  .search-field input { width: 100%; padding: 0 8px 0 28px; text-transform: none; }
 
   .diagnostics-list { display: grid; }
   .diagnostics-list article { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: start; gap: 8px; min-height: 66px; padding: 9px 10px; border-bottom: 1px solid var(--wb-border-subtle, var(--border)); border-left: 3px solid var(--wb-accent, var(--brand)); }
@@ -466,6 +431,6 @@
     .audit-summary article:last-child { grid-column: 1 / -1; }
     .diagnostics-toolbar { align-items: stretch; flex-wrap: wrap; }
     .diagnostics-toolbar > div { width: 100%; }
-    .search-field { flex: 1 1 220px; }
+    .diagnostics-toolbar .search-field { flex: 1 1 220px; }
   }
 </style>

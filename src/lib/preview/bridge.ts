@@ -6,7 +6,27 @@ export function escapeHtmlAttribute(value: string) {
     .replaceAll(">", "&gt;");
 }
 
-const htmlSelectionOverlayId = "pana-studio-html-selection";
+const applicationAccentProperty = "--pana-studio-accent";
+const applicationTextOnAccentProperty = "--pana-studio-text-on-accent";
+
+function normalizedApplicationColor(value: string, fallback: string) {
+  return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : fallback;
+}
+
+export function applyApplicationAppearanceToPreviewDocument(
+  previewDocument: Document,
+  accent: string,
+  textOnAccent: string,
+) {
+  previewDocument.documentElement.style.setProperty(
+    applicationAccentProperty,
+    normalizedApplicationColor(accent, "#1d7f6a"),
+  );
+  previewDocument.documentElement.style.setProperty(
+    applicationTextOnAccentProperty,
+    normalizedApplicationColor(textOnAccent, "#ffffff"),
+  );
+}
 
 export function buildPreviewStatusDocument(title: string, message: string) {
   return `<!doctype html>
@@ -71,55 +91,6 @@ export function ensurePreviewInspectorStyles(previewDocument: Document) {
   `;
 
   previewDocument.head.append(styleElement);
-}
-
-function ensurePreviewHtmlSelectionOverlay(previewDocument: Document) {
-  let overlay = previewDocument.getElementById(htmlSelectionOverlayId) as HTMLDivElement | null;
-  if (!overlay) {
-    overlay = previewDocument.createElement("div");
-    overlay.id = htmlSelectionOverlayId;
-    overlay.style.cssText = [
-      "position: fixed",
-      "z-index: 2147483646",
-      "display: none",
-      "border: 1px solid #1d7f6a",
-      "border-radius: 0",
-      "background: transparent",
-      "box-shadow: none",
-      "pointer-events: none",
-      "box-sizing: border-box",
-    ].join(";");
-    previewDocument.body.append(overlay);
-  }
-  return overlay;
-}
-
-export function hidePreviewHtmlSelectionOverlay(previewDocument: Document | null | undefined) {
-  const overlay = previewDocument?.getElementById(htmlSelectionOverlayId);
-  if (overlay) overlay.style.display = "none";
-}
-
-export function updatePreviewHtmlSelectionOverlay(element: Element | null | undefined) {
-  if (!element?.isConnected) {
-    hidePreviewHtmlSelectionOverlay(element?.ownerDocument);
-    return;
-  }
-
-  const previewDocument = element.ownerDocument;
-  const rect = element.getBoundingClientRect();
-  if (rect.width <= 0 && rect.height <= 0) {
-    hidePreviewHtmlSelectionOverlay(previewDocument);
-    return;
-  }
-
-  const overlay = ensurePreviewHtmlSelectionOverlay(previewDocument);
-  const computed = previewDocument.defaultView?.getComputedStyle(element);
-  overlay.style.display = "block";
-  overlay.style.left = `${Math.round(rect.left)}px`;
-  overlay.style.top = `${Math.round(rect.top)}px`;
-  overlay.style.width = `${Math.round(rect.width)}px`;
-  overlay.style.height = `${Math.round(rect.height)}px`;
-  overlay.style.borderRadius = computed?.borderRadius || "0px";
 }
 
 export function applyStagedOverrideStylesToDocument(previewDocument: Document, css: string) {

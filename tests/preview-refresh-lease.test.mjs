@@ -8,11 +8,17 @@ import { PreviewRuntimeTransportError } from "$lib/editor-runtime/preview-runtim
 import {
   confirmMountedCanvasProjection,
   fetchDomTreeFromPreview,
+  isCanvasProjectionSurfaceUnavailableError,
+  mountCanvasProjectionSurface,
   prepareCanvasProjectionNavigation,
   refreshRenderedPreviewDocument,
   reloadPreview,
+  unmountCanvasProjectionSurface,
 } from "$lib/state/preview-controller";
-import { requestControlledPreviewRefresh } from "$lib/state/controlled-preview-controller";
+import {
+  requestControlledPreviewRefresh,
+  runZolaValidation,
+} from "$lib/state/controlled-preview-controller";
 import {
   refreshSourceGraph,
   isPreviewControlPlaneMessage,
@@ -92,7 +98,6 @@ function host(overrides = {}) {
     previewDocumentMarkup: "old markup",
     activeRenderedPreviewPageFile: previewFile(),
     isActiveRenderedPreviewPage: true,
-    selectedPreviewElement: null,
     projectStatus: "Project A",
     overrideRules: {},
     variableOverrides: {},
@@ -109,7 +114,7 @@ function controlledHost(overrides = {}) {
     controlledPreview: createControlledPreviewState(),
     zolaValidationTimer: null,
     zolaValidationSerial: 0,
-    scannedProject: { root: "/project-a", isZola: true },
+    scannedProject: { root: "/project-a" },
     statuses: [],
     async reloadPreview(lease) {
       return await reloadPreview(this, lease);
@@ -159,7 +164,12 @@ test("bootstrap Canvas promovează numai identitatea completă a documentului mo
         : payload.input.phase,
     };
   });
-  const activeHost = host();
+  const frame = { contentWindow: {} };
+  const activeHost = host({
+    previewFrame: frame,
+    canvasSurfaceElement: frame,
+    canvasSurfaceGeneration: 1,
+  });
   const mounted = prepareCanvasProjectionNavigation(activeHost, plan);
 
   assert.equal(await confirmMountedCanvasProjection(
@@ -179,12 +189,161 @@ test("bootstrap Canvas promovează numai identitatea completă a documentului mo
   assert.equal(activeHost.canvasProjectionConfirmation, null);
 });
 
+test("un Canvas absent nu lasă plan sau confirmare imposibilă în frontend", () => {
+  const plan = {
+    schemaVersion: 1,
+    identity: {
+      projectRoot: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      workspaceRevision: 8,
+      transactionId: "canvas-without-surface-8",
+      previewRevision: "workspace-without-surface-8",
+    },
+    workspaceTransactionId: "workspace-edit-8",
+    phase: "prepared",
+    impact: { kinds: ["htmlStructure"], paths: [], requiresFullDocument: true },
+    resources: { schemaVersion: 1, previewRevision: "workspace-without-surface-8", totalBytes: 0, entries: [] },
+  };
+  const activeHost = host({
+    canvasSurfaceElement: null,
+    canvasSurfaceGeneration: 2,
+  });
+
+  assert.throws(
+    () => prepareCanvasProjectionNavigation(activeHost, plan),
+    isCanvasProjectionSurfaceUnavailableError,
+  );
+  assert.equal(activeHost.pendingCanvasProjection, null);
+  assert.equal(activeHost.previewWorkspaceRevision, null);
+  assert.equal(activeHost.canvasProjectionConfirmation, null);
+});
+
+test("demontarea Canvas invalidează lease-ul și respinge ACK-ul ferestrei vechi", async () => {
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 9,
+    transactionId: "canvas-workspace-9",
+    previewRevision: "workspace-9",
+  };
+  const plan = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: "workspace-edit-9",
+    phase: "prepared",
+    impact: { kinds: ["htmlStructure"], paths: ["templates/index.html"], requiresFullDocument: false },
+    resources: { schemaVersion: 1, previewRevision: "workspace-9", totalBytes: 0, entries: [] },
+  };
+  const oldFrame = { contentWindow: {} };
+  const activeHost = host({
+    previewFrame: oldFrame,
+    canvasSurfaceElement: oldFrame,
+    canvasSurfaceGeneration: 4,
+  });
+
+  const waiting = prepareCanvasProjectionNavigation(activeHost, plan);
+  assert.equal(unmountCanvasProjectionSurface(activeHost, oldFrame), true);
+  await assert.rejects(waiting, isCanvasProjectionSurfaceUnavailableError);
+  assert.equal(activeHost.pendingCanvasProjection, null);
+  assert.equal(activeHost.previewWorkspaceRevision, null);
+  assert.equal(activeHost.canvasSurfaceGeneration, 5);
+
+  const newFrame = { contentWindow: {} };
+  assert.equal(mountCanvasProjectionSurface(activeHost, newFrame), 6);
+  assert.equal(await confirmMountedCanvasProjection(
+    activeHost,
+    identity,
+    canvasPhaseReceipts(identity),
+  ), false);
+});
+
+test("înlocuirea directă a iframe-ului închide confirmarea generației precedente", async () => {
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 10,
+    transactionId: "canvas-replaced-10",
+    previewRevision: "workspace-replaced-10",
+  };
+  const plan = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: "workspace-edit-10",
+    phase: "prepared",
+    impact: { kinds: ["htmlStructure"], paths: [], requiresFullDocument: true },
+    resources: { schemaVersion: 1, previewRevision: identity.previewRevision, totalBytes: 0, entries: [] },
+  };
+  const oldFrame = { contentWindow: {} };
+  const activeHost = host({
+    previewFrame: oldFrame,
+    canvasSurfaceElement: oldFrame,
+    canvasSurfaceGeneration: 8,
+  });
+
+  const waiting = prepareCanvasProjectionNavigation(activeHost, plan);
+  const newFrame = { contentWindow: {} };
+  assert.equal(mountCanvasProjectionSurface(activeHost, newFrame), 9);
+  await assert.rejects(waiting, isCanvasProjectionSurfaceUnavailableError);
+  assert.equal(activeHost.pendingCanvasProjection, null);
+  assert.equal(activeHost.canvasProjectionConfirmation, null);
+  assert.equal(unmountCanvasProjectionSurface(activeHost, oldFrame), false);
+});
+
+test("timeout-ul autentic este raportat numai pentru generația Canvas încă montată", async () => {
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 11,
+    transactionId: "canvas-workspace-11",
+    previewRevision: "workspace-11",
+  };
+  const plan = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: "workspace-edit-11",
+    phase: "prepared",
+    impact: { kinds: ["htmlStructure"], paths: ["templates/index.html"], requiresFullDocument: false },
+    resources: { schemaVersion: 1, previewRevision: "workspace-11", totalBytes: 0, entries: [] },
+  };
+  const frame = { contentWindow: {} };
+  const events = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (callback) => {
+    queueMicrotask(callback);
+    return 17;
+  };
+  globalThis.clearTimeout = () => {};
+  try {
+    const activeHost = host({
+      previewFrame: frame,
+      canvasSurfaceElement: frame,
+      canvasSurfaceGeneration: 7,
+      async recordCanvasProjectionRuntimeEvent(...args) {
+        events.push(args);
+      },
+    });
+    await assert.rejects(
+      prepareCanvasProjectionNavigation(activeHost, plan),
+      /styledReady within 15 seconds/,
+    );
+    await nextTurn();
+    assert.equal(events.length, 1);
+    assert.equal(events[0][0], "canvas_ack_timeout");
+    assert.deepEqual(events[0][1], identity);
+    assert.match(events[0][3], /surfaceGeneration=7;lastPhase=prepared/);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
 test("browser preview nu deschide URL-ul vechi după redeschiderea aceluiași root", async () => {
   const startGate = deferred();
   let capturedIdentity = null;
   let openedUrl = null;
   const activeHost = {
-    scannedProject: { root: "/project-a", isZola: true, acceptedDiskGeneration: 4 },
+    scannedProject: { root: "/project-a", acceptedDiskGeneration: 4 },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     currentStatus: "",
@@ -195,7 +354,7 @@ test("browser preview nu deschide URL-ul vechi după redeschiderea aceluiași ro
     clearNotification() {
       throw new Error("continuarea stale nu poate curăța notificări");
     },
-    notify(notification) {
+    escalateGlobalStatus(notification) {
       this.notifications.push(notification);
     },
   };
@@ -235,7 +394,7 @@ test("browser preview deschide numai receipt-ul legat de runtime-ul capturat", a
   const opened = [];
   const statuses = [];
   const activeHost = {
-    scannedProject: { root: "/project-a", isZola: true, acceptedDiskGeneration: 5 },
+    scannedProject: { root: "/project-a", acceptedDiskGeneration: 5 },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     setGlobalStatus(text, kind) {
@@ -244,7 +403,7 @@ test("browser preview deschide numai receipt-ul legat de runtime-ul capturat", a
     clearNotification(id) {
       assert.equal(id, "project.browser-preview.warning");
     },
-    notify() {
+    escalateGlobalStatus() {
       throw new Error("un receipt valid nu trebuie să emită warning");
     },
   };
@@ -264,24 +423,25 @@ test("browser preview deschide numai receipt-ul legat de runtime-ul capturat", a
   });
 
   assert.deepEqual(opened, ["http://127.0.0.1:43102"]);
-  assert.deepEqual(statuses.at(-1), {
-    text: "Source Browser deschis din generația salvată: http://127.0.0.1:43102",
-    kind: "restored",
-  });
+  assert.equal(statuses.at(-1)?.kind, "restored");
+  assert.match(
+    statuses.at(-1)?.text ?? "",
+    /Source Browser opened from the saved generation:.*http:\/\/127\.0\.0\.1:43102/,
+  );
 });
 
 test("browser preview compune pagina activă peste originea Source Browser", async () => {
   const opened = [];
   const statuses = [];
   const activeHost = {
-    scannedProject: { root: "/project-a", isZola: true, acceptedDiskGeneration: 6 },
+    scannedProject: { root: "/project-a", acceptedDiskGeneration: 6 },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     setGlobalStatus(text, kind) {
       statuses.push({ text, kind });
     },
     clearNotification() {},
-    notify() {
+    escalateGlobalStatus() {
       throw new Error("ruta activă validă nu trebuie să emită warning");
     },
   };
@@ -301,17 +461,18 @@ test("browser preview compune pagina activă peste originea Source Browser", asy
   }, { route: "/servicii/" });
 
   assert.deepEqual(opened, ["http://127.0.0.1:43104/servicii/"]);
-  assert.deepEqual(statuses.at(-1), {
-    text: "Source Browser deschis din generația salvată: http://127.0.0.1:43104/servicii/",
-    kind: "restored",
-  });
+  assert.equal(statuses.at(-1)?.kind, "restored");
+  assert.match(
+    statuses.at(-1)?.text ?? "",
+    /Source Browser opened from the saved generation:.*http:\/\/127\.0\.0\.1:43104\/servicii\//,
+  );
 });
 
 test("browser preview nu publică URL-ul unei generații AcceptedDisk depășite", async () => {
   const startGate = deferred();
   let openedUrl = null;
   const activeHost = {
-    scannedProject: { root: "/project-a", isZola: true, acceptedDiskGeneration: 8 },
+    scannedProject: { root: "/project-a", acceptedDiskGeneration: 8 },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     currentStatus: "",
@@ -322,7 +483,7 @@ test("browser preview nu publică URL-ul unei generații AcceptedDisk depășite
     clearNotification() {
       throw new Error("continuarea stale nu poate curăța notificări");
     },
-    notify(notification) {
+    escalateGlobalStatus(notification) {
       this.notifications.push(notification);
     },
   };
@@ -362,7 +523,6 @@ test("preview embedded întârziat nu se publică după redeschiderea aceluiași
   const activeHost = {
     scannedProject: {
       root: "/project-a",
-      isZola: true,
       files: [{ relativePath: "templates/index.html" }],
       previewBaseUrl: null,
       previewWarning: null,
@@ -383,7 +543,7 @@ test("preview embedded întârziat nu se publică după redeschiderea aceluiași
     scheduleZolaValidation() {
       throw new Error("continuarea stale nu poate porni validarea");
     },
-    notify() {
+    escalateGlobalStatus() {
       throw new Error("continuarea stale nu poate publica warning");
     },
   };
@@ -423,7 +583,6 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
   const activeHost = {
     scannedProject: {
       root: "/project-a",
-      isZola: true,
       files: [{ relativePath: "templates/index.html" }],
       previewBaseUrl: null,
       previewWarning: null,
@@ -438,7 +597,7 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
     clearNotification() {},
     setGlobalStatus() {},
     scheduleZolaValidation() {},
-    notify() {},
+    escalateGlobalStatus() {},
   };
   const identity = {
     expectedProjectRoot: "/project-a",
@@ -494,7 +653,6 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
   const activeHost = {
     scannedProject: {
       root: "/project-a",
-      isZola: true,
       files: [template, page],
       previewBaseUrl: null,
       previewWarning: null,
@@ -532,7 +690,7 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
     clearNotification() {},
     setGlobalStatus() {},
     scheduleZolaValidation() {},
-    notify() {},
+    escalateGlobalStatus() {},
   };
 
   const starting = startPreviewAfterOpen(activeHost, {
@@ -559,6 +717,174 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
   assert.deepEqual(events, ["main-prepared", "main-canonical", "load:template"]);
 });
 
+test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau activare prematură", async () => {
+  const template = {
+    name: "index.html",
+    relativePath: "templates/index.html",
+    role: "template",
+  };
+  const page = {
+    name: "_index.md",
+    relativePath: "content/_index.md",
+    role: "page",
+    previewPath: "/",
+  };
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 5,
+    transactionId: "canvas-main-5",
+    previewRevision: "preview-main-5",
+  };
+  const canvasProjection = {
+    schemaVersion: 1,
+    identity,
+    workspaceTransactionId: null,
+    phase: "prepared",
+    impact: { kinds: ["fullDocument"], paths: [], requiresFullDocument: true },
+    resources: { schemaVersion: 1, previewRevision: "preview-main-5", totalBytes: 0, entries: [] },
+  };
+  const events = [];
+  const activeHost = {
+    scannedProject: {
+      root: "/project-a",
+      files: [template, page],
+      previewBaseUrl: null,
+      previewWarning: null,
+    },
+    sessionProjectRoot: "/project-a",
+    kernelProjectSessionId: "session-a:runtime-1",
+    projectTransitionFrontendLeaseActive: false,
+    activeScannedPath: template.relativePath,
+    activePreviewPath: "about:blank",
+    previewSrc: "about:blank",
+    previewDocumentMarkup: null,
+    pendingCanvasProjection: null,
+    previewWorkspaceRevision: null,
+    activeCanvasIdentity: null,
+    activeCanvasUrl: "",
+    hasMountedCanvasProjectionSurface() { return false; },
+    deferWorkspacePreviewProjection() { events.push("deferred"); },
+    prepareCanvasProjectionNavigation() {
+      throw new Error("confirmarea nu trebuie pornită fără suprafață");
+    },
+    previewUrlForScannedFile() {
+      return "http://127.0.0.1:43221/?__pana_preview_revision=preview-main-5";
+    },
+    async loadScannedProjectFile() {
+      events.push("template-loaded");
+    },
+    clearNotification(id) { events.push(`clear:${id}`); },
+    setGlobalStatus(text, kind) { events.push(`${kind}:${text}`); },
+    scheduleZolaValidation() { events.push("validation"); },
+    escalateGlobalStatus() { events.push("warning"); },
+  };
+
+  const outcome = await startPreviewAfterOpen(activeHost, {
+    expectedProjectRoot: "/project-a",
+    expectedSessionId: "session-a:runtime-1",
+  }, {
+    async start() {
+      return {
+        url: "http://127.0.0.1:43221",
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        workspaceRevision: 5,
+        previewRevision: "preview-main-5",
+        canvasProjection,
+      };
+    },
+  });
+
+  assert.equal(outcome.status, "deferred");
+  assert.equal(activeHost.scannedProject.previewBaseUrl, "http://127.0.0.1:43221");
+  assert.equal(activeHost.scannedProject.previewWarning, null);
+  assert.equal(activeHost.pendingCanvasProjection, null);
+  assert.equal(activeHost.previewWorkspaceRevision, null);
+  assert.deepEqual(events, [
+    "deferred",
+    "clear:project.preview.warning",
+    "restored:The Zola Preview engine is running; Canvas will resume when you return to Editor.",
+  ]);
+});
+
+test("reatașarea unui Canvas Rust deja canonic amână numai suprafața și Template Workbench", async () => {
+  const template = {
+    name: "index.html",
+    relativePath: "templates/index.html",
+    role: "template",
+  };
+  const page = {
+    name: "_index.md",
+    relativePath: "content/_index.md",
+    role: "page",
+    previewPath: "/",
+  };
+  const identity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 6,
+    transactionId: "canvas-canonical-6",
+    previewRevision: "preview-canonical-6",
+  };
+  const events = [];
+  const activeHost = {
+    scannedProject: {
+      root: "/project-a",
+      files: [template, page],
+      previewBaseUrl: null,
+      previewWarning: null,
+    },
+    sessionProjectRoot: "/project-a",
+    kernelProjectSessionId: "session-a:runtime-1",
+    projectTransitionFrontendLeaseActive: false,
+    activeScannedPath: template.relativePath,
+    activePreviewPath: "about:blank",
+    previewSrc: "about:blank",
+    previewDocumentMarkup: null,
+    pendingCanvasProjection: null,
+    previewWorkspaceRevision: null,
+    activeCanvasIdentity: null,
+    activeCanvasUrl: "",
+    hasMountedCanvasProjectionSurface() { return false; },
+    deferWorkspacePreviewProjection() { events.push("deferred"); },
+    previewUrlForScannedFile() { return "http://127.0.0.1:43222/"; },
+    async loadScannedProjectFile() { events.push("template-loaded"); },
+    clearNotification() {},
+    setGlobalStatus() {},
+    scheduleZolaValidation() { events.push("validation"); },
+    escalateGlobalStatus() { events.push("warning"); },
+  };
+
+  const outcome = await startPreviewAfterOpen(activeHost, {
+    expectedProjectRoot: "/project-a",
+    expectedSessionId: "session-a:runtime-1",
+  }, {
+    async start() {
+      return {
+        url: "http://127.0.0.1:43222",
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        workspaceRevision: 6,
+        previewRevision: identity.previewRevision,
+        canvasProjection: {
+          schemaVersion: 1,
+          identity,
+          workspaceTransactionId: null,
+          phase: "canonicalVerified",
+          impact: { kinds: ["fullDocument"], paths: [], requiresFullDocument: true },
+          resources: { schemaVersion: 1, previewRevision: identity.previewRevision, totalBytes: 0, entries: [] },
+        },
+      };
+    },
+  });
+
+  assert.equal(outcome.status, "deferred");
+  assert.equal(activeHost.previewSrc, "http://127.0.0.1:43222/");
+  assert.deepEqual(activeHost.activeCanvasIdentity, identity);
+  assert.deepEqual(events, ["deferred"]);
+});
+
 test("un server Preview pornit rămâne reatașabil după un eșec frontend de montare", async () => {
   const canvasIdentity = {
     projectRoot: "/project-a",
@@ -580,7 +906,6 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
   const activeHost = {
     scannedProject: {
       root: "/project-a",
-      isZola: true,
       files: [{
         name: "_index.md",
         relativePath: "content/_index.md",
@@ -601,7 +926,7 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
       throw new Error("iframe mount failed");
     },
     resetControlledPreviewState() { resetCount += 1; },
-    notify(notification) { warnings.push(notification); },
+    escalateGlobalStatus(notification) { warnings.push(notification); },
     setGlobalStatus() {},
   };
 
@@ -712,20 +1037,23 @@ test("aceeași rută primește documentul Zola canonic fără reload de iframe",
     }
     throw new Error(`Comandă IPC neașteptată: ${command}`);
   });
+  const frame = {
+    contentWindow: {},
+    getAttribute(name) {
+      if (name === "src") return canonicalUrl;
+      return null;
+    },
+    hasAttribute() { return false; },
+  };
   const activeHost = host({
     previewSrc: canonicalUrl,
     previewUrlForScannedFile() { return canonicalUrl; },
     previewDocumentMarkup: null,
     previewWorkspaceRevision: "workspace-8",
     pendingCanvasProjection: plan,
-    previewFrame: {
-      contentWindow: {},
-      getAttribute(name) {
-        if (name === "src") return canonicalUrl;
-        return null;
-      },
-      hasAttribute() { return false; },
-    },
+    previewFrame: frame,
+    canvasSurfaceElement: frame,
+    canvasSurfaceGeneration: 1,
     previewRuntime: {
       async sendAndWait(payload) {
         sent.push(payload);
@@ -847,20 +1175,23 @@ test("un bridge fără ACK recuperează aceeași revizie prin navigarea iframe-u
     throw new Error(`Comandă IPC neașteptată: ${command}`);
   });
   const sendStarted = deferred();
+  const frame = {
+    contentWindow: {},
+    getAttribute(name) {
+      if (name === "src") return canonicalUrl;
+      return null;
+    },
+    hasAttribute() { return false; },
+  };
   const activeHost = host({
     previewSrc: canonicalUrl,
     previewDocumentMarkup: null,
     previewWorkspaceRevision: "workspace-10",
     previewUrlForScannedFile() { return canonicalUrl; },
     pendingCanvasProjection: plan,
-    previewFrame: {
-      contentWindow: {},
-      getAttribute(name) {
-        if (name === "src") return canonicalUrl;
-        return null;
-      },
-      hasAttribute() { return false; },
-    },
+    previewFrame: frame,
+    canvasSurfaceElement: frame,
+    canvasSurfaceGeneration: 1,
     previewRuntime: {
       async sendAndWait() {
         sendStarted.resolve();
@@ -949,6 +1280,25 @@ test("un refresh de proiecție poate păstra eșecul intern fără notificare gl
   assert.match(activeHost.projectStatus, /404 Not Found/);
 });
 
+test("validarea automată păstrează în coadă o revizie care așteaptă Preview-ul", async () => {
+  mockIPC(async (command) => {
+    assert.equal(command, "zola_check_workspace");
+    throw new Error(
+      "PANA_WORKSPACE_PREVIEW_PENDING: Generația Preview nu confirmă încă revizia ProjectWorkspace 42.",
+    );
+  });
+  const activeHost = controlledHost();
+
+  assert.equal(await runZolaValidation(activeHost, "refresh"), false);
+  assert.equal(activeHost.controlledPreview.validation, "queued");
+  assert.equal(
+    activeHost.controlledPreview.validationMessage,
+    "Generația Preview nu confirmă încă revizia ProjectWorkspace 42.",
+  );
+  assert.equal(activeHost.statuses.at(-1)?.kind, "unsaved");
+  assert.doesNotMatch(activeHost.projectStatus, /PANA_WORKSPACE_PREVIEW_PENDING/);
+});
+
 test("citirea DOM întârziată nu poate repopula Layers după schimbarea proiectului", async () => {
   const readStarted = deferred();
   const readGate = deferred();
@@ -991,7 +1341,7 @@ test("Source Graph întârziat nu poate fi publicat într-un runtime redeschis p
   });
   const runtimeTwoGraph = { schemaVersion: 1, nodes: [{ id: "runtime-two" }] };
   const activeHost = {
-    scannedProject: { root: "/project-a", isZola: true },
+    scannedProject: { root: "/project-a" },
     sessionProjectRoot: "/project-a",
     kernelProjectSessionId: "session-a:runtime-1",
     projectSessionEpoch: 7,
@@ -1000,18 +1350,22 @@ test("Source Graph întârziat nu poate fi publicat într-un runtime redeschis p
     kernelSourceDirtyPaths: [],
     sourceCache: {},
     pageSections: [],
-    selectedElement: null,
+    coordinatedElementSelection: null,
     hydratePageSections(sections) {
       return sections;
     },
-    syncPreviewTeraGateState() {},
   };
 
   const refresh = refreshSourceGraph(activeHost);
   await readStarted.promise;
   activeHost.kernelProjectSessionId = "session-a:runtime-2";
   activeHost.projectSessionEpoch += 1;
-  readGate.resolve({ schemaVersion: 1, nodes: [{ id: "runtime-one" }] });
+  readGate.resolve({
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 0,
+    graph: { schemaVersion: 1, nodes: [{ id: "runtime-one" }] },
+  });
 
   assert.equal(await refresh, false);
   assert.equal(activeHost.sourceGraph, runtimeTwoGraph);

@@ -1,12 +1,16 @@
 <script lang="ts">
   import {
     IconArrowsMaximize,
+    IconBrush,
     IconDeviceDesktop,
     IconDeviceMobile,
     IconDeviceTablet,
     IconRuler2,
+    IconSparkles,
+    IconPointer,
   } from "@tabler/icons-svelte";
   import PreviewZoomControl from "$lib/components/workbench/PreviewZoomControl.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type {
     WorkbenchCanvasPreset,
     WorkbenchCanvasViewportSnapshot,
@@ -19,9 +23,9 @@
     setPreviewZoom,
     commitPreviewZoom,
     resetPreviewZoom,
-    interactivePreviewEnabled = false,
+    previewExecutionMode = "design",
     interactivePreviewUrl = "",
-    setInteractivePreviewEnabled,
+    setPreviewExecutionMode,
   }: {
     viewport: WorkbenchCanvasViewportSnapshot;
     breakpoints?: Array<{ id: string; label: string; widthPx: number }>;
@@ -29,26 +33,26 @@
     setPreviewZoom: (value: number) => void;
     commitPreviewZoom: (value: number) => void | Promise<void>;
     resetPreviewZoom: () => void;
-    interactivePreviewEnabled?: boolean;
+    previewExecutionMode?: "design" | "motion" | "interactive";
     interactivePreviewUrl?: string;
-    setInteractivePreviewEnabled: (enabled: boolean) => void;
+    setPreviewExecutionMode: (mode: "design" | "motion" | "interactive") => void;
   } = $props();
 
-  const presets: Array<{
+  const presets = $derived<Array<{
     id: Exclude<WorkbenchCanvasPreset, "custom">;
     label: string;
     widthPx: number;
-  }> = [
-    { id: "desktop", label: "Desktop 1440", widthPx: 1_440 },
-    { id: "tablet", label: "Tabletă 768", widthPx: 768 },
-    { id: "mobile", label: "Telefon 390", widthPx: 390 },
-  ];
+  }>>([
+    { id: "desktop", label: `${t("workbench-canvas-desktop")} 1440`, widthPx: 1_440 },
+    { id: "tablet", label: `${t("workbench-canvas-tablet")} 768`, widthPx: 768 },
+    { id: "mobile", label: `${t("workbench-canvas-mobile")} 390`, widthPx: 390 },
+  ]);
 
   const activeBreakpoint = $derived.by(() => {
-    if (viewport.mode === "fit") return "Lățime fluidă";
+    if (viewport.mode === "fit") return t("workbench-canvas-fluid-width");
     const sorted = [...breakpoints].sort((left, right) => left.widthPx - right.widthPx);
     return sorted.find((breakpoint) => viewport.widthPx <= breakpoint.widthPx)?.label
-      ?? "Peste breakpointuri";
+      ?? t("workbench-canvas-over-breakpoints");
   });
 
   function applyPreset(preset: (typeof presets)[number]) {
@@ -68,20 +72,20 @@
 
 </script>
 
-<div class="canvas-toolbar" aria-label="Controale preview">
+<div class="canvas-toolbar" aria-label={t("workbench-canvas-controls")}>
   <div class="toolbar-controls">
-    <div class="segmented" role="group" aria-label="Preset viewport">
+    <div class="segmented" role="group" aria-label={t("workbench-viewport-preset")}>
       <button
         type="button"
         class="ui-button compact"
         class:active={viewport.mode === "fit"}
         aria-pressed={viewport.mode === "fit" ? "true" : "false"}
-        aria-label="Potrivește canvas-ul în spațiul disponibil"
-        title="Potrivește canvas-ul în spațiul disponibil"
+        aria-label={t("workbench-canvas-fit-title")}
+        title={t("workbench-canvas-fit-title")}
         onclick={() => { void setViewport({ mode: "fit", zoomPercent: 100 }); }}
       >
         <IconArrowsMaximize size={14} stroke={1.8} />
-        <span>Fit</span>
+        <span>{t("workbench-canvas-fit")}</span>
       </button>
       {#each presets as preset (preset.id)}
         <button
@@ -105,7 +109,7 @@
       {/each}
     </div>
 
-    <label class="ui-field compact width-field" title="Lățime exactă viewport">
+    <label class="ui-field compact width-field" title={t("workbench-viewport-exact-width")}>
       <span>L</span>
       <input
         type="number"
@@ -114,7 +118,7 @@
         step="1"
         value={viewport.widthPx}
         disabled={viewport.mode === "fit"}
-        aria-label="Lățime viewport în pixeli"
+        aria-label={t("workbench-viewport-width-pixels")}
         onchange={commitWidth}
         onkeydown={(event) => {
           if (event.key === "Enter") commitWidth(event);
@@ -136,14 +140,14 @@
       class="ui-icon-button compact ruler-toggle"
       class:active={viewport.showRulers}
       aria-pressed={viewport.showRulers ? "true" : "false"}
-      title="Arată sau ascunde rigla și breakpointurile"
-      aria-label="Comută rigla canvas-ului"
+      title={t("workbench-rulers-title")}
+      aria-label={t("workbench-rulers-toggle")}
       onclick={() => { void setViewport({ showRulers: !viewport.showRulers }); }}
     >
       <IconRuler2 size={14} stroke={1.8} />
     </button>
 
-    <div class="breakpoint-summary" title="Breakpoint activ pentru lățimea curentă">
+    <div class="breakpoint-summary" title={t("workbench-active-breakpoint")}>
       <span>{activeBreakpoint}</span>
       {#if viewport.mode === "fixed"}
         {#each [...breakpoints].sort((left, right) => left.widthPx - right.widthPx) as breakpoint (breakpoint.id)}
@@ -155,16 +159,33 @@
     </div>
   </div>
 
-  <button
-    type="button"
-    class="ui-button compact interactive-toggle"
-    class:active={interactivePreviewEnabled}
-    aria-pressed={interactivePreviewEnabled ? "true" : "false"}
-    disabled={!interactivePreviewEnabled && !interactivePreviewUrl}
-    onclick={() => setInteractivePreviewEnabled(!interactivePreviewEnabled)}
-  >
-    {interactivePreviewEnabled ? "Revino la editare sigură" : "Pornește modul interactiv"}
-  </button>
+  <div class="preview-mode segmented" role="group" aria-label={t("workbench-preview-mode")}>
+    <button
+      type="button"
+      class="ui-button compact"
+      class:active={previewExecutionMode === "design"}
+      aria-pressed={previewExecutionMode === "design"}
+      onclick={() => setPreviewExecutionMode("design")}
+    ><IconBrush size={13} /> {t("workbench-preview-design")}</button>
+    <button
+      type="button"
+      class="ui-button compact"
+      class:active={previewExecutionMode === "motion"}
+      aria-pressed={previewExecutionMode === "motion"}
+      disabled={!interactivePreviewUrl}
+      title={t("workbench-preview-motion-title")}
+      onclick={() => setPreviewExecutionMode("motion")}
+    ><IconSparkles size={13} /> {t("workbench-preview-motion")}</button>
+    <button
+      type="button"
+      class="ui-button compact"
+      class:active={previewExecutionMode === "interactive"}
+      aria-pressed={previewExecutionMode === "interactive"}
+      disabled={!interactivePreviewUrl}
+      title={t("workbench-preview-interactive-title")}
+      onclick={() => setPreviewExecutionMode("interactive")}
+    ><IconPointer size={13} /> {t("workbench-preview-interactive")}</button>
+  </div>
 </div>
 
 <style>
@@ -184,6 +205,10 @@
     font-size: var(--font-meta);
   }
 
+  .preview-mode {
+    flex: 0 0 auto;
+  }
+
   .toolbar-controls,
   .segmented,
   .width-field,
@@ -196,12 +221,6 @@
     justify-content: flex-end;
     gap: 6px;
     min-width: 0;
-  }
-
-  .interactive-toggle {
-    flex: 0 0 auto;
-    border-radius: var(--radius-control);
-    font-weight: 600;
   }
 
   button,

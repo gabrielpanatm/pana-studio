@@ -5,6 +5,7 @@ import {
   htmlAttributeDefinition,
   htmlAttributePreviewMode,
   htmlAttributeValueError,
+  htmlTagAcceptsChildren,
   htmlTagTransitionOptions,
   htmlEditorSchema,
 } from "$lib/html/editor-schema.ts";
@@ -34,6 +35,13 @@ test("tag options retain only structurally compatible live destinations", () => 
   assert.ok(!sectionOptions.includes("iframe"));
   assert.deepEqual(htmlTagTransitionOptions("img"), []);
   assert.deepEqual(htmlTagTransitionOptions("a").map((option) => option.value), ["a"]);
+});
+
+test("Tera placement shares the canonical HTML child-containment schema", () => {
+  assert.equal(htmlTagAcceptsChildren(" SECTION "), true);
+  assert.equal(htmlTagAcceptsChildren("ul"), true);
+  assert.equal(htmlTagAcceptsChildren("img"), false);
+  assert.equal(htmlTagAcceptsChildren("unknown-element"), false);
 });
 
 test("live attribute drafts omit source-only and blocked attributes without losing empty values", () => {

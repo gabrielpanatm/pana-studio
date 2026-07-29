@@ -110,7 +110,7 @@
   function applyStoredLiveTextDraft(draft) {
     var element = resolveLiveTextDraftTarget(draft.target);
     element.textContent = draft.text;
-    if (element === currentSelectedElement()) updateHtmlSelectionOverlay();
+    updateCanvasAgentOverlays();
     return element;
   }
 
@@ -213,7 +213,7 @@
       }
       element.setAttribute(normalized, value);
     });
-    if (element === currentSelectedElement()) updateHtmlSelectionOverlay();
+    updateCanvasAgentOverlays();
     return element;
   }
 
@@ -337,10 +337,9 @@
     }
   }
 
-  function restoreCanvasPatchSelection(previousSelection) {
+  function refreshCanvasPatchProjection() {
     refreshEmptyEditableZones();
-    if (previousSelection && previousSelection.isConnected) selectElement(previousSelection);
-    else clearSelectedElement();
+    updateCanvasAgentOverlays();
     post("structure", { sections: collectPageSections() });
   }
 
@@ -354,7 +353,6 @@
     }
     var operation = patch.operation || {};
     var selected = null;
-    var previousSelection = currentSelectedElement();
     var rollbacks = [];
     var root = document.documentElement;
     var basePreviewRevision = root.getAttribute(PREVIEW_REVISION_ATTR) || "";
@@ -495,8 +493,7 @@
 
       refreshEmptyEditableZones();
       notifyPanaBlocksInit(document);
-      if (selected && selected.isConnected) selectElement(selected);
-      else clearSelectedElement();
+      updateCanvasAgentOverlays();
       post("structure", { sections: collectPageSections() });
 
       appliedCanvasPatchIds.push(patch.patchId);
@@ -507,7 +504,6 @@
         workspaceTransactionId: patch.workspaceTransactionId,
         basePreviewRevision: basePreviewRevision,
         baseCanvasTransactionId: baseCanvasTransactionId,
-        previousSelection: previousSelection,
         rollbacks: rollbacks
       });
       return {
@@ -521,7 +517,7 @@
       };
     } catch (error) {
       runCanvasPatchRollbacks(rollbacks);
-      restoreCanvasPatchSelection(previousSelection);
+      refreshCanvasPatchProjection();
       throw error;
     }
   }
@@ -554,7 +550,7 @@
     appliedCanvasPatchIds = appliedCanvasPatchIds.filter(function (patchId) {
       return patchId !== entry.patchId;
     });
-    restoreCanvasPatchSelection(entry.previousSelection);
+    refreshCanvasPatchProjection();
     return {
       canvasPatchRollbackReceipt: {
         schemaVersion: 1,

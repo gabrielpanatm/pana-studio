@@ -86,13 +86,17 @@ test("proprietățile blocurilor sunt definite și validate exclusiv în Rust", 
 });
 
 test("selecția unui descendent alege rădăcina celui mai apropiat bloc imbricat", () => {
-  const selection = source("../src/lib/preview/selection.ts");
   const embeddedBridge = source("../src-tauri/src/preview/bridge/02_css_inspection.js");
+  const canvasAgent = source("../src-tauri/src/preview/bridge/03_canvas_agent.js");
+  const app = source("../src/lib/state/app.svelte.ts");
   const inspector = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
 
-  assert.match(selection, /element\.closest\("\[data-pana-block\],\[data-pana-component\]"\)/);
   assert.match(embeddedBridge, /element\.closest\("\[data-pana-block\],\[data-pana-component\]"\)/);
-  assert.match(selection, /markerKind:\s*canonical \? "canonical" : "legacy"/);
+  assert.match(embeddedBridge, /markerKind:\s*canonical \? "canonical" : "legacy"/);
+  assert.match(canvasAgent, /physicalBlockContext/);
+  assert.doesNotMatch(canvasAgent, /rootSourceId|rootTemplateSourceId|rootSessionId/);
+  assert.match(app, /bounded\.providerId !== physical\.providerId/);
+  assert.match(app, /rootSessionId: coordinated\.snapshot\.runtimeSessionId/);
   assert.match(inspector, /instance\.rootSourceNodeId === blockContext\.rootSourceId/);
   assert.doesNotMatch(inspector, /querySelector\(|getAttribute\(/);
 });

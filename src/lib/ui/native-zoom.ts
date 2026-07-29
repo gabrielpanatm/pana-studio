@@ -14,7 +14,7 @@ export function resetNativeWebviewZoom() {
   requestAnimationFrame(() => {
     resetQueued = false;
     void invoke("reset_main_webview_zoom").catch((error) => {
-      console.warn("[Pană Studio] Nu am putut reseta zoom-ul nativ WebView.", error);
+      console.warn("[Pană Studio] Could not reset native WebView zoom.", error);
     });
   });
 }

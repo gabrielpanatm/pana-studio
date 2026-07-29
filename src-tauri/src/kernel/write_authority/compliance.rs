@@ -92,7 +92,7 @@ const READ_ONLY_MODE_MEMBERS: &[&str] = &["empty"];
 const READ_ONLY_FILE_TYPE_MEMBERS: &[&str] = &["from_raw_mode", "RegularFile"];
 
 const SCOPED_AUTHORITY_ISSUERS: &[(&str, &[&str])] = &[
-    ("ProjectBootstrapLease::capture", &["project/init.rs"]),
+    ("ProjectCreationAuthority::capture", &["project/startup.rs"]),
     ("CodexConfigLease::capture", &["mcp/codex.rs"]),
     (
         "ComponentValidationSandboxLease::capture",

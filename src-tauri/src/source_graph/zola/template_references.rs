@@ -1,5 +1,6 @@
 use crate::source_graph::zola::{
-    internal_content_path, parse_zola_path_calls, static_asset_reference, TeraZolaPathFunction,
+    count_dynamic_zola_load_data_paths, internal_content_path, parse_zola_path_calls,
+    static_asset_reference, TeraZolaPathFunction,
 };
 
 #[derive(Default)]
@@ -10,12 +11,16 @@ pub(crate) struct ZolaTemplateReferences {
     pub(crate) asset_urls: Vec<String>,
     pub(crate) asset_hashes: Vec<String>,
     pub(crate) data_loads: Vec<String>,
+    pub(crate) dynamic_data_loads: usize,
     pub(crate) image_metadata: Vec<String>,
     pub(crate) image_resizes: Vec<String>,
 }
 
 pub(crate) fn extract_zola_template_references(source: &str) -> ZolaTemplateReferences {
-    let mut references = ZolaTemplateReferences::default();
+    let mut references = ZolaTemplateReferences {
+        dynamic_data_loads: count_dynamic_zola_load_data_paths(source),
+        ..Default::default()
+    };
     for call in parse_zola_path_calls(source) {
         match call.function {
             TeraZolaPathFunction::GetPage => {
@@ -104,6 +109,7 @@ mod tests {
             references.data_loads,
             vec!["static/data/catalog.json", "@/blog/post.md"]
         );
+        assert_eq!(references.dynamic_data_loads, 0);
         assert_eq!(references.image_metadata, vec!["static/img/hero.png"]);
         assert_eq!(references.image_resizes, vec!["static/img/hero.png"]);
     }

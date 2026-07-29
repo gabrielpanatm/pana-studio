@@ -14,6 +14,29 @@ const workspaces = {
   data: "../src/lib/components/data/DataWorkspace.svelte",
 };
 
+const canonicalActivityWorkspaces = {
+  ...workspaces,
+  blocks: "../src/lib/components/creation/BlocksWorkspace.svelte",
+  templates: "../src/lib/components/templates/TemplatesWorkspace.svelte",
+  taxonomies: "../src/lib/components/taxonomies/TaxonomiesWorkspace.svelte",
+  themes: "../src/lib/components/themes/ThemesWorkspace.svelte",
+  audit: "../src/lib/components/audit/AuditWorkspace.svelte",
+  publish: "../src/lib/components/publish/PublishWorkspace.svelte",
+  versioning: "../src/lib/components/VersionsPanel.svelte",
+};
+
+const tabbedActivityWorkspaces = {
+  design: canonicalActivityWorkspaces.design,
+  components: canonicalActivityWorkspaces.components,
+  content: canonicalActivityWorkspaces.content,
+  assets: canonicalActivityWorkspaces.assets,
+  data: canonicalActivityWorkspaces.data,
+  blocks: canonicalActivityWorkspaces.blocks,
+  templates: canonicalActivityWorkspaces.templates,
+  audit: canonicalActivityWorkspaces.audit,
+  publish: canonicalActivityWorkspaces.publish,
+};
+
 test("workspaces-urile folosesc același model catalog plus panou contextual", () => {
   for (const [name, path] of Object.entries(workspaces)) {
     const workspace = source(path);
@@ -25,9 +48,102 @@ test("workspaces-urile folosesc același model catalog plus panou contextual", (
     assert.match(workspace, /class="[^"]*\btoolbar-action\b[^"]*"/, name);
     assert.match(workspace, /detailMode === "create"/, name);
     assert.match(workspace, /detailMode === "edit"/, name);
-    assert.match(workspace, /Adaugă/, name);
+    assert.match(workspace, /t\("(?:design|components|content|assets|data)-add/, name);
     assert.doesNotMatch(workspace, /window\.(?:prompt|confirm)/, name);
   }
+});
+
+test("activitățile folosesc contractul vizual central pentru shell, taburi și toolbar", () => {
+  const designSystem = source("../src/routes/design-system.css");
+
+  assert.match(designSystem, /--control-height-toolbar:\s*30px/);
+  assert.match(designSystem, /--activity-toolbar-height:\s*42px/);
+  assert.match(designSystem, /--activity-search-width:\s*420px/);
+  assert.match(designSystem, /--activity-filter-width:\s*164px/);
+  assert.match(designSystem, /\.sr-only\s*\{[\s\S]*clip-path:\s*inset\(50%\)/);
+  assert.match(designSystem, /body \.app-shell \.activity-workspace\s*\{/);
+  assert.match(designSystem, /\.activity-workspace\.activity-workspace-scroll\s*\{/);
+  assert.match(designSystem, /\.activity-workspace > \.workspace-toolbar/);
+  assert.match(designSystem, /\.activity-workspace \.view-tabs > \.ui-tab/);
+  assert.match(designSystem, /\.activity-workspace \.workspace-toolbar > \.toolbar-action/);
+  assert.match(designSystem, /\.activity-workspace \.search-field\s*\{[\s\S]*flex:\s*0 1 var\(--activity-search-width\);[\s\S]*max-width:\s*var\(--activity-search-width\)/);
+  assert.match(designSystem, /\.activity-workspace \.toolbar-query-group\s*\{[\s\S]*margin-left:\s*auto/);
+  assert.match(designSystem, /\.activity-workspace \.toolbar-query-group\.with-filter\s*\{/);
+  assert.match(designSystem, /\.activity-workspace \.ui-button:not\(\.compact\):not\(\.toolbar\)\s*\{[\s\S]*min-height:\s*var\(--control-height\)/);
+  assert.match(designSystem, /\.activity-workspace :is\(\.ui-button, \.ui-icon-button\)\.compact\s*\{[\s\S]*height:\s*var\(--control-height-compact\)/);
+
+  for (const [name, path] of Object.entries(canonicalActivityWorkspaces)) {
+    const workspace = source(path);
+    assert.match(
+      workspace,
+      /class="activity-workspace [^"]+-workspace"/,
+      `${name} nu folosește shell-ul canonic`,
+    );
+  }
+
+  for (const [name, path] of Object.entries(tabbedActivityWorkspaces)) {
+    const workspace = source(path);
+    assert.match(
+      workspace,
+      /class="ui-tabs view-tabs"/,
+      `${name} nu folosește grupul canonic de taburi`,
+    );
+    assert.match(workspace, /class="ui-tab"/, `${name} nu folosește tabul canonic`);
+  }
+
+  for (const name of ["audit", "publish"]) {
+    const workspace = source(canonicalActivityWorkspaces[name]);
+    assert.match(
+      workspace,
+      /class="workspace-toolbar"[\s\S]*class="ui-tabs view-tabs"/,
+      `${name} nu folosește toolbar-ul canonic al activităților`,
+    );
+  }
+
+  for (const name of ["design", "components", "content", "assets", "data", "blocks", "templates"]) {
+    const workspace = source(canonicalActivityWorkspaces[name]);
+    assert.match(
+      workspace,
+      /class="ui-field toolbar"/,
+      `${name} nu folosește câmpul canonic de toolbar`,
+    );
+    assert.match(
+      workspace,
+      /class="ui-button primary toolbar toolbar-action"/,
+      `${name} nu folosește acțiunea canonică de toolbar`,
+    );
+  }
+
+  for (const name of Object.keys(canonicalActivityWorkspaces)) {
+    const workspace = source(canonicalActivityWorkspaces[name]);
+    assert.doesNotMatch(
+      workspace,
+      /^\s*\.(?:workspace-toolbar|view-tabs|search-field|toolbar-action)\s*\{/m,
+      `${name} redeclară local o primitivă vizuală canonică`,
+    );
+    assert.doesNotMatch(
+      workspace,
+      /class="(?:primary|danger|secondary-action|primary-action)"/,
+      `${name} folosește o acțiune semantică fără primitiva ui-button`,
+    );
+  }
+
+  for (const name of ["design", "content", "assets"]) {
+    const filteredWorkspace = source(canonicalActivityWorkspaces[name]);
+    assert.match(
+      filteredWorkspace,
+      /class="toolbar-query-group(?: with-filter)?"[\s\S]*class="toolbar-filter"[\s\S]*class="search-field"/,
+      `${name} nu grupează filtrul cu bara de căutare`,
+    );
+    assert.doesNotMatch(
+      filteredWorkspace,
+      /^\s*\.workspace-toolbar select\s*\{/m,
+      `${name} stilizează local filtrul din toolbar`,
+    );
+  }
+
+  const designWorkspace = source(canonicalActivityWorkspaces.design);
+  assert.match(designWorkspace, /class:with-filter=\{activeView === "global-styles" \|\| activeView === "tokens"\}/);
 });
 
 test("Sistem de design creează și editează prin comenzile ProjectWorkspace", () => {
@@ -40,7 +156,7 @@ test("Sistem de design creează și editează prin comenzile ProjectWorkspace", 
   assert.match(workspace, /app\.createDesignSystemClass/);
   assert.match(workspace, /createProjectTextFile/);
   assert.match(workspace, /downloadGoogleFontFamily/);
-  assert.match(workspace, />\s*Editează\s*</);
+  assert.match(workspace, /t\("design-edit"\)/);
   assert.match(css, /create_scss_variable[\s\S]*execute_css_workspace_mutation/);
   assert.match(design, /create_design_class[\s\S]*finish_mutation/);
   assert.match(design, /stage_resource_texts/);
@@ -79,7 +195,7 @@ test("Conținut are două panouri și elimină fluxul legacy cu prompt", () => {
   const controller = source("../src/lib/state/project-controller.ts");
 
   assert.match(workspace, /type ContentView = "all" \| "pages" \| "sections"/);
-  assert.match(workspace, /class="section-field"/);
+  assert.match(workspace, /class="toolbar-filter"[\s\S]*bind:value=\{sectionFilter\}/);
   assert.match(workspace, /class="content-list"/);
   assert.match(workspace, /class="detail-panel"/);
   assert.match(workspace, /app\.createContentPageFromInput/);

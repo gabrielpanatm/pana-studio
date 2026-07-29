@@ -1,4 +1,4 @@
-import type { CssSelectorOption, SelectionInfo } from "$lib/types";
+import type { CssSelectorOption, CanvasElementObservation } from "$lib/types";
 
 function escapeCssIdentifier(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);
@@ -16,7 +16,7 @@ function isInlineRule(selector: string) {
   return selector === 'style=""';
 }
 
-function addMatchedRuleOptions(options: CssSelectorOption[], selection: SelectionInfo) {
+function addMatchedRuleOptions(options: CssSelectorOption[], selection: CanvasElementObservation) {
   for (const rule of selection.matchedRules) {
     if (isInlineRule(rule.selector)) {
       continue;
@@ -26,12 +26,13 @@ function addMatchedRuleOptions(options: CssSelectorOption[], selection: Selectio
       selector: rule.selector,
       label: rule.selector,
       source: "matched",
-      detail: `${rule.source} · regula existenta`,
+      detailKind: "matched_rule",
+      detailSource: rule.source,
     });
   }
 }
 
-export function selectorOptionsForSelection(selection: SelectionInfo | null): CssSelectorOption[] {
+export function selectorOptionsForObservation(selection: CanvasElementObservation | null): CssSelectorOption[] {
   if (!selection) {
     return [];
   }
@@ -48,7 +49,7 @@ export function selectorOptionsForSelection(selection: SelectionInfo | null): Cs
       selector: `.${classes.join(".")}`,
       label: `.${classes.join(".")}`,
       source: "compound",
-      detail: "toate clasele elementului",
+      detailKind: "all_element_classes",
     });
   }
 
@@ -57,7 +58,7 @@ export function selectorOptionsForSelection(selection: SelectionInfo | null): Cs
       selector: `.${className}`,
       label: `.${className}`,
       source: "class",
-      detail: "clasa elementului",
+      detailKind: "element_class",
     });
   }
 
@@ -67,7 +68,7 @@ export function selectorOptionsForSelection(selection: SelectionInfo | null): Cs
       selector,
       label: selector,
       source: "id",
-      detail: "id element",
+      detailKind: "element_id",
     });
   }
 
@@ -76,7 +77,7 @@ export function selectorOptionsForSelection(selection: SelectionInfo | null): Cs
       selector: selection.cssSelector,
       label: selection.cssSelector,
       source: "compound",
-      detail: "selector generat fara clasa/id",
+      detailKind: "generated_without_class_or_id",
     });
   }
 
@@ -84,12 +85,12 @@ export function selectorOptionsForSelection(selection: SelectionInfo | null): Cs
     selector: tag,
     label: tag,
     source: "tag",
-    detail: "tag fallback",
+    detailKind: "tag_fallback",
   });
 
   return options;
 }
 
-export function defaultSelectorForSelection(selection: SelectionInfo | null) {
-  return selectorOptionsForSelection(selection)[0]?.selector ?? "";
+export function defaultSelectorForObservation(selection: CanvasElementObservation | null) {
+  return selectorOptionsForObservation(selection)[0]?.selector ?? "";
 }

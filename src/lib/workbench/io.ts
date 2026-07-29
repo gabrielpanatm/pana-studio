@@ -7,6 +7,7 @@ import {
   type WorkbenchIntent,
   type WorkbenchSnapshot,
 } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export async function readWorkbenchState(): Promise<WorkbenchSnapshot | null> {
   const snapshot = await invoke<WorkbenchSnapshot | null>("read_workbench_state");
@@ -55,11 +56,11 @@ export function requireWorkbenchSnapshot(snapshot: WorkbenchSnapshot): void {
     || snapshot.groups.length < 1
     || snapshot.groups.length > 2
   ) {
-    throw new Error("[workbench_invalid_snapshot] Rust a returnat un snapshot Workbench invalid.");
+    throw new Error(t("workbench-invalid-snapshot"));
   }
 }
 
-function requireWorkbenchReceipt(
+export function requireWorkbenchReceipt(
   receipt: WorkbenchCommandReceipt,
   identity: WorkbenchIdentity,
 ): void {
@@ -77,6 +78,6 @@ function requireWorkbenchReceipt(
     || receipt.snapshot.runtimeSessionId !== receipt.runtimeSessionId
     || receipt.snapshot.revision !== receipt.revisionAfter
   ) {
-    throw new Error("[workbench_invalid_receipt] Rust a returnat un receipt Workbench invalid sau stale.");
+    throw new Error(t("workbench-invalid-receipt"));
   }
 }

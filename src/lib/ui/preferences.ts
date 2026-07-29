@@ -1,13 +1,9 @@
-export type UiTheme = "dark" | "light";
-
 export type StoredUiPreferences = {
-  theme: UiTheme | null;
   leftPaneWidth: number | null;
   rightPaneWidth: number | null;
   terminalPaneHeight: number | null;
 };
 
-const uiThemeKey = "pana-studio-ui-theme";
 const leftPaneWidthKey = "pana-studio-left-pane-width";
 const rightPaneWidthKey = "pana-studio-right-pane-width";
 const terminalPaneHeightKey = "pana-studio-terminal-height";
@@ -15,7 +11,6 @@ const uiDensityVersionKey = "pana-studio-ui-density-version";
 const currentUiDensityVersion = "2";
 
 export function loadStoredUiPreferences(storage: Storage): StoredUiPreferences {
-  const storedTheme = storage.getItem(uiThemeKey);
   const densityVersion = storage.getItem(uiDensityVersionKey);
   const shouldResetPaneDimensions = densityVersion !== currentUiDensityVersion;
   if (shouldResetPaneDimensions) {
@@ -23,15 +18,10 @@ export function loadStoredUiPreferences(storage: Storage): StoredUiPreferences {
   }
 
   return {
-    theme: storedTheme === "dark" || storedTheme === "light" ? storedTheme : null,
     leftPaneWidth: shouldResetPaneDimensions ? null : parseStoredNumber(storage.getItem(leftPaneWidthKey)),
     rightPaneWidth: shouldResetPaneDimensions ? null : parseStoredNumber(storage.getItem(rightPaneWidthKey)),
     terminalPaneHeight: shouldResetPaneDimensions ? null : parseStoredNumber(storage.getItem(terminalPaneHeightKey)),
   };
-}
-
-export function saveUiTheme(storage: Storage, theme: UiTheme) {
-  storage.setItem(uiThemeKey, theme);
 }
 
 export function savePaneDimensions(

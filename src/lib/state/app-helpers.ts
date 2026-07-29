@@ -4,14 +4,13 @@ import {
 import { normalizeProjectPath, sourceInteractionOrigin } from "$lib/source-graph/interaction";
 import type { HtmlPendingArea, InspectorPendingArea, SourceGraphNode } from "$lib/types";
 
-export type PreviewTemplateGateOrigin = "current" | "local" | "theme" | "unknown";
+export type PreviewTeraSelectionOrigin = "current" | "local" | "theme" | "unknown";
 
-export type PreviewTemplateGate = {
+export type PreviewTeraSelectionTarget = {
   selector: string;
   sourceId: string;
-  origin: PreviewTemplateGateOrigin;
+  origin: PreviewTeraSelectionOrigin;
   themeName: string | null;
-  canSelectHtml?: boolean;
 };
 
 export function createEmptyInspectorPending(): Record<InspectorPendingArea, boolean> {
@@ -33,7 +32,7 @@ export function normalizedProjectPath(path: string | null | undefined) {
 export function templateOriginKind(
   node: SourceGraphNode | null,
   activeScannedPath: string | null,
-): PreviewTemplateGateOrigin {
+): PreviewTeraSelectionOrigin {
   return sourceInteractionOrigin(node, activeScannedPath);
 }
 
@@ -44,6 +43,19 @@ export function createEmptyHtmlPending(): Record<HtmlPendingArea, boolean> {
 export function initialUiTheme(): "dark" | "light" {
   if (typeof document === "undefined") return "dark";
   return document.documentElement.dataset.panaTheme === "light" ? "light" : "dark";
+}
+
+export function contrastingTextColor(color: string): "#111111" | "#ffffff" {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+  if (!match) return "#ffffff";
+  const channels = match.slice(1).map((channel) => Number.parseInt(channel, 16) / 255);
+  const [red, green, blue] = channels.map((channel) =>
+    channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4
+  );
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  return luminance > 0.42 ? "#111111" : "#ffffff";
 }
 
 export function shellQuote(value: string) {

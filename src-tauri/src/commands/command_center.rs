@@ -4,6 +4,7 @@ use crate::{
     kernel::command_center::{
         search_command_center_index, CommandCenterSearchRequest, CommandCenterSearchResponse,
     },
+    localization::LocalizedDiagnostic,
     project_model::{
         build_project_model_from_workspace_projection,
         cache::{capture_project_model_build_lease, publish_project_model_if_current},
@@ -16,11 +17,13 @@ use crate::{
 pub fn search_command_center(
     request: CommandCenterSearchRequest,
     state: State<AppState>,
-) -> Result<CommandCenterSearchResponse, String> {
+) -> Result<CommandCenterSearchResponse, LocalizedDiagnostic> {
     let identity = current_project_identity(&state)?;
     let Some((project_root, runtime_session_id)) = identity else {
         if request.expected_project_root.is_some() || request.expected_session_id.is_some() {
-            return Err("Command Center a refuzat identitatea unei sesiuni închise.".to_string());
+            return Err(LocalizedDiagnostic::new(
+                "command-center-closed-session-identity",
+            ));
         }
         return search_command_center_index(request, None, None, None);
     };
@@ -34,11 +37,13 @@ pub fn search_command_center(
     )
 }
 
-fn current_project_identity(state: &AppState) -> Result<Option<(String, String)>, String> {
+fn current_project_identity(
+    state: &AppState,
+) -> Result<Option<(String, String)>, LocalizedDiagnostic> {
     let workspace = state
         .project_workspace
         .lock()
-        .map_err(|_| "Command Center nu a putut citi ProjectWorkspace.".to_string())?;
+        .map_err(|_| LocalizedDiagnostic::new("command-center-workspace-lock-failed"))?;
     Ok(workspace.as_ref().map(|workspace| {
         (
             workspace.session.project_root.clone(),
@@ -51,11 +56,13 @@ fn require_request_identity(
     request: &CommandCenterSearchRequest,
     project_root: &str,
     runtime_session_id: &str,
-) -> Result<(), String> {
+) -> Result<(), LocalizedDiagnostic> {
     if request.expected_project_root.as_deref() != Some(project_root)
         || request.expected_session_id.as_deref() != Some(runtime_session_id)
     {
-        return Err("Command Center a refuzat o căutare pentru altă ProjectSession.".to_string());
+        return Err(LocalizedDiagnostic::new(
+            "command-center-session-identity-mismatch",
+        ));
     }
     Ok(())
 }
@@ -64,19 +71,21 @@ fn current_project_model(
     state: &AppState,
     project_root: &str,
     runtime_session_id: &str,
-) -> Result<ProjectModel, String> {
+) -> Result<ProjectModel, LocalizedDiagnostic> {
     {
         let workspace = state
             .project_workspace
             .lock()
-            .map_err(|_| "Command Center nu a putut citi ProjectModel cache.".to_string())?;
+            .map_err(|_| LocalizedDiagnostic::new("command-center-model-cache-lock-failed"))?;
         let workspace = workspace
             .as_ref()
-            .ok_or_else(|| "Command Center a pierdut ProjectWorkspace.".to_string())?;
+            .ok_or_else(|| LocalizedDiagnostic::new("command-center-workspace-lost"))?;
         if workspace.session.project_root != project_root
             || workspace.runtime_session_id() != runtime_session_id
         {
-            return Err("Command Center a devenit stale înainte de citirea indexului.".to_string());
+            return Err(LocalizedDiagnostic::new(
+                "command-center-index-stale-before-read",
+            ));
         }
         if workspace.project_model_source_revision == Some(workspace.revision) {
             if let Some(model) = workspace.project_model.as_ref() {
@@ -85,11 +94,24 @@ fn current_project_model(
         }
     }
 
-    let (root, session, lease) = capture_project_model_build_lease(state)?;
+    let (root, session, lease) = capture_project_model_build_lease(state).map_err(|details| {
+        LocalizedDiagnostic::new("command-center-model-build-lease-failed")
+            .with_argument("details", details)
+    })?;
     if session.project_root != project_root || session.runtime_instance_id() != runtime_session_id {
-        return Err("Command Center a devenit stale în timpul construirii indexului.".to_string());
+        return Err(LocalizedDiagnostic::new(
+            "command-center-index-stale-during-build",
+        ));
     }
-    let model = build_project_model_from_workspace_projection(&root, lease.projection())?;
-    publish_project_model_if_current(state, &lease, model.clone())?;
+    let model = build_project_model_from_workspace_projection(&root, lease.projection()).map_err(
+        |details| {
+            LocalizedDiagnostic::new("command-center-model-build-failed")
+                .with_argument("details", details)
+        },
+    )?;
+    publish_project_model_if_current(state, &lease, model.clone()).map_err(|details| {
+        LocalizedDiagnostic::new("command-center-model-publish-failed")
+            .with_argument("details", details)
+    })?;
     Ok(model)
 }

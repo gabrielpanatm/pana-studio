@@ -5,18 +5,19 @@ import {
   type TeraPaletteItem,
 } from "$lib/tera/model";
 import type { DropPosition } from "$lib/ui/drag";
-import type { SaveState } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
 import {
   blockedAction,
   type EditorActionOutcome,
 } from "$lib/editor-runtime/action-outcome";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PreviewTeraInsertControllerHost = {
   insertTeraPaletteItemAtTarget: (request: TeraDropRequest) => Promise<EditorActionOutcome>;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  previewDropGateStatus?: (target: {
-    targetSourceId?: string | null;
-    targetTemplateSourceId?: string | null;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
+  previewDropTargetStatus?: (target: {
+    targetRenderInstanceId?: string | null;
+    targetBoundarySourceId?: string | null;
   }) => { allowed: boolean; message?: string };
 };
 
@@ -64,6 +65,7 @@ export async function handlePreviewTeraInsertDrop(
   payload: unknown,
 ): Promise<EditorActionOutcome> {
   const data = payload as Record<string, unknown>;
+  const targetRenderInstanceId = stringValue(data.targetRenderInstanceId) || null;
   const targetSelector = stringValue(data.targetSelector);
   const targetSessionId = stringValue(data.targetSessionId) || null;
   const targetSourceId = stringValue(data.targetSourceId) || null;
@@ -73,14 +75,20 @@ export async function handlePreviewTeraInsertDrop(
   const item = teraPaletteItemValue(data.item);
 
   if (!targetSelector || !targetTag || !position || !item) {
-    host.setGlobalStatus("Drop invalid pentru Tera.", "error");
-    return blockedAction("Drop invalid pentru Tera.");
+    const reason = t("preview-drop-tera-invalid");
+    host.setGlobalStatus(reason, "error");
+    return blockedAction(reason);
   }
 
-  const gate = host.previewDropGateStatus?.({ targetSourceId, targetTemplateSourceId });
-  if (gate && !gate.allowed) {
-    host.setGlobalStatus(gate.message || "Drop blocat de gate-ul Tera.", "error");
-    return blockedAction(gate.message || "Drop blocat de gate-ul Tera.");
+  const targetStatus = host.previewDropTargetStatus?.({
+    targetRenderInstanceId,
+    targetBoundarySourceId:
+      data.targetKind === "empty-tera-slot" ? targetTemplateSourceId : null,
+  });
+  if (targetStatus && !targetStatus.allowed) {
+    const reason = targetStatus.message || t("preview-drop-navigation-target-blocked");
+    host.setGlobalStatus(reason, "error");
+    return blockedAction(reason);
   }
 
   return await host.insertTeraPaletteItemAtTarget({

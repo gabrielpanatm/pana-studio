@@ -1,14 +1,15 @@
 import type { TeraPaletteItem } from "$lib/tera/model";
 import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
-import type { CenterView, SaveState } from "$lib/types";
+import type { CenterView } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type TeraPaletteDragHost = {
   centerView: CenterView;
   previewFrame: HTMLIFrameElement | undefined;
   previewZoom: number;
   postPreviewMessage: (payload: Record<string, unknown>) => void;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
-  syncPreviewTeraGateState?: () => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 const dragThreshold = 6;
@@ -165,7 +166,6 @@ export function startTeraPaletteDrag(
       return;
     }
     wasOverPreview = true;
-    host.syncPreviewTeraGateState?.();
     host.postPreviewMessage({
       type: "preview-tera-drag-update",
       x: coordinates.x,
@@ -192,7 +192,6 @@ export function startTeraPaletteDrag(
       upEvent.preventDefault();
       const coordinates = previewCoordinatesForPointer(host, upEvent);
       if (coordinates) {
-        host.syncPreviewTeraGateState?.();
         host.postPreviewMessage({
           type: "preview-tera-drag-drop",
           x: coordinates.x,
@@ -200,7 +199,7 @@ export function startTeraPaletteDrag(
           item: previewPayloadFor(item),
         });
       } else if (host.centerView !== "preview") {
-        host.setGlobalStatus("Comută pe Previzualizare ca să adaugi Tera prin tragere.", "error");
+        host.setGlobalStatus(t("palette-drag-switch-preview-tera"), "error");
       }
     }
     cleanup();

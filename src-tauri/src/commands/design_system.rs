@@ -14,11 +14,11 @@ use crate::{
     },
     kernel::{
         design_system::{
-            build_design_class_inventory, build_theme_style_catalog, build_theme_style_preview,
-            collect_theme_style_variables, plan_design_class_rename, plan_theme_style_update,
-            resolve_theme_style_source, validate_class_name, DesignClassInventorySnapshot,
-            ThemeStyleCatalogSnapshot, ThemeStyleDraftPreview, ThemeStylePropertyInput,
-            ThemeStyleTargetSnapshot,
+            build_design_class_inventory, build_design_token_catalog, build_theme_style_catalog,
+            build_theme_style_preview, collect_theme_style_variables, plan_design_class_rename,
+            plan_theme_style_update, resolve_theme_style_source, validate_class_name,
+            DesignClassInventorySnapshot, DesignTokenCatalogSnapshot, ThemeStyleCatalogSnapshot,
+            ThemeStyleDraftPreview, ThemeStylePropertyInput, ThemeStyleTargetSnapshot,
         },
         file_buffer_store::{FileBufferCommandReceipt, FileBufferRequestIdentity},
         observability::now_ms,
@@ -32,6 +32,25 @@ use crate::{
 };
 
 pub const DESIGN_CLASS_RENAME_SCHEMA_VERSION: u32 = 1;
+
+#[tauri::command]
+pub fn read_design_token_catalog(
+    identity: FileBufferRequestIdentity,
+    state: State<AppState>,
+) -> Result<FileBufferCommandReceipt<DesignTokenCatalogSnapshot>, String> {
+    with_bound_css_file_buffer_revision(
+        state.inner(),
+        &identity,
+        |_project_root, _zola_root, session, store, workspace_revision| {
+            build_design_token_catalog(
+                &session.project_root,
+                &session.runtime_instance_id(),
+                workspace_revision,
+                store,
+            )
+        },
+    )
+}
 
 #[tauri::command]
 pub fn read_theme_style_catalog(

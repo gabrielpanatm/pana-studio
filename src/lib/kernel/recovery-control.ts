@@ -9,6 +9,7 @@ import type {
   RecoveryJournalFamilyStatus,
   RecoveryJournalFamilySummary,
 } from "$lib/types";
+import { l10n, t } from "$lib/i18n/runtime.svelte";
 
 export type RecoveryCoordinatorTone = "idle" | "clean" | "blocked" | "error";
 
@@ -19,43 +20,22 @@ export type RecoveryCoordinatorSummary = {
   blocked: boolean;
 };
 
-const statusLabels: Record<RecoveryCoordinatorStatus, string> = {
-  clean: "curat",
-  needs_attention: "necesită atenție",
-  unreadable: "necitibil",
-};
-
-const familyLabels: Record<RecoveryJournalFamily, string> = {
-  project_workspace_save: "salvarea sesiunii proiectului",
-  project_transition_decision_retention: "retenția deciziei de tranziție",
-};
-
-const familyStatusLabels: Record<RecoveryJournalFamilyStatus, string> = {
-  needs_attention: "necesită atenție",
-  manual_review_required: "revizuire manuală obligatorie",
-};
-
-const severityLabels: Record<RecoveryCoordinatorDiagnostic["severity"], string> = {
-  warning: "avertisment",
-  error: "eroare",
-};
-
 export function recoveryCoordinatorSummary(
   scan: RecoveryCoordinatorScan | null,
 ): RecoveryCoordinatorSummary {
   if (!scan) {
     return {
       tone: "idle",
-      label: "Coordonator de recuperare indisponibil",
-      detail: "Deschide un proiect valid pentru scanarea jurnalelor active.",
+      label: t("project-recovery-unavailable"),
+      detail: t("project-recovery-unavailable-detail"),
       blocked: false,
     };
   }
   if (scan.status === "clean") {
     return {
       tone: "clean",
-      label: "Coordonator de recuperare curat",
-      detail: "Nu există operații pe disc întrerupte care necesită intervenție.",
+      label: t("project-recovery-clean"),
+      detail: t("project-recovery-clean-detail"),
       blocked: false,
     };
   }
@@ -63,51 +43,72 @@ export function recoveryCoordinatorSummary(
   if (scan.status === "unreadable") {
     return {
       tone: "error",
-      label: "Coordonator de recuperare necitibil",
-      detail: `${scan.diagnostics.length} diagnostice; mutațiile pe disc rămân blocate până la clarificare.`,
+      label: t("project-recovery-unreadable"),
+      detail: t("project-recovery-unreadable-detail", {
+        count: scan.diagnostics.length,
+      }),
       blocked: true,
     };
   }
   return {
     tone: "blocked",
-    label: "Recuperare necesară",
-    detail: `${journalCount} jurnale active în ${scan.hotJournalFamilies.length} familii.`,
+    label: t("project-recovery-required"),
+    detail: t("project-recovery-required-detail", {
+      journals: journalCount,
+      families: scan.hotJournalFamilies.length,
+    }),
     blocked: true,
   };
 }
 
 export function recoveryCoordinatorStatusLabel(status: RecoveryCoordinatorStatus): string {
-  return statusLabels[status];
+  if (status === "clean") return t("project-recovery-status-clean");
+  if (status === "needs_attention") return t("project-recovery-status-attention");
+  return t("project-recovery-status-unreadable");
 }
 
 export function recoveryJournalFamilyLabel(family: RecoveryJournalFamily): string {
-  return familyLabels[family];
+  return family === "project_workspace_save"
+    ? t("project-recovery-family-workspace-save")
+    : t("project-recovery-family-transition-retention");
 }
 
 export function recoveryJournalFamilyStatusLabel(status: RecoveryJournalFamilyStatus): string {
-  return familyStatusLabels[status];
+  return status === "needs_attention"
+    ? t("project-recovery-status-attention")
+    : t("project-recovery-status-manual");
 }
 
 export function recoveryJournalFamilyActionLabel(summary: RecoveryJournalFamilySummary): string {
   const parts = [
-    summary.clearableCount ? `${summary.clearableCount} curățare` : "",
-    summary.rollbackCount ? `${summary.rollbackCount} revenire` : "",
-    summary.restoreCount ? `${summary.restoreCount} restaurare` : "",
-    summary.manualReviewCount ? `${summary.manualReviewCount} manual` : "",
+    summary.clearableCount
+      ? t("project-recovery-action-clear", { count: summary.clearableCount })
+      : "",
+    summary.rollbackCount
+      ? t("project-recovery-action-rollback", { count: summary.rollbackCount })
+      : "",
+    summary.restoreCount
+      ? t("project-recovery-action-restore", { count: summary.restoreCount })
+      : "",
+    summary.manualReviewCount
+      ? t("project-recovery-action-manual", { count: summary.manualReviewCount })
+      : "",
   ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "fără acțiune automată";
+  return parts.length ? parts.join(" · ") : t("project-recovery-no-automatic-action");
 }
 
 export function recoveryJournalFamilyStateLabel(summary: RecoveryJournalFamilySummary): string {
   return summary.stateCounts.length
     ? summary.stateCounts.map((item) => `${item.value}: ${item.count}`).join(" · ")
-    : "fără stări";
+    : t("project-recovery-no-states");
 }
 
 export function recoverySeverityLabel(
   severity: RecoveryCoordinatorDiagnostic["severity"],
 ): string {
-  return severityLabels[severity];
+  return severity === "warning"
+    ? t("project-recovery-severity-warning")
+    : t("project-recovery-severity-error");
 }
 
 export function normalizeRecoveryDiagnostic(value: string): string {
@@ -119,12 +120,12 @@ export function recoveryDiagnosticIsActionable(value: string): boolean {
 }
 
 export function formatRecoveryTime(timestampMs: number | null | undefined): string {
-  if (!timestampMs) return "timp necunoscut";
-  return new Intl.DateTimeFormat("ro-RO", {
+  if (!timestampMs) return t("project-recovery-time-unknown");
+  return l10n.formatDate(new Date(timestampMs), {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).format(new Date(timestampMs));
+  });
 }
 
 export function compactKernelPath(path: string, maxLength = 72): string {
@@ -149,41 +150,49 @@ export function shortHash(value: string | null | undefined): string {
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  if (bytes < 1024) return `${l10n.formatNumber(bytes)} B`;
+  if (bytes < 1024 * 1024) {
+    return `${l10n.formatNumber(bytes / 1024, { maximumFractionDigits: 1 })} KiB`;
+  }
+  return `${l10n.formatNumber(bytes / (1024 * 1024), {
+    maximumFractionDigits: 1,
+  })} MiB`;
 }
 
 export function projectTransitionDecisionRetentionCandidateIdsLabel(
   journal: KernelProjectTransitionDecisionRetentionHotJournal,
 ): string {
-  if (!journal.candidateRecordIds.length) return "fără candidați declarați";
+  if (!journal.candidateRecordIds.length) return t("project-recovery-no-candidates");
   if (journal.candidateRecordIds.length === 1) return journal.candidateRecordIds[0];
   const visible = journal.candidateRecordIds.slice(0, 3).join(", ");
   const hidden = journal.candidateRecordIds.length - 3;
-  return hidden > 0 ? `${visible} și încă ${hidden}` : visible;
+  return hidden > 0
+    ? t("project-recovery-more-candidates", { visible, count: hidden })
+    : visible;
 }
 
 export function projectTransitionRetentionStateLabel(
   state: KernelProjectTransitionDecisionRetentionHotJournalDiskState,
 ): string {
-  const labels: Record<KernelProjectTransitionDecisionRetentionHotJournalDiskState, string> = {
-    no_effect: "fără efect",
-    completed_retention: "retenție finalizată",
-    partial_retention: "retenție parțială",
-    conflict_state: "conflict",
-  };
-  return labels[state];
+  switch (state) {
+    case "no_effect": return t("project-recovery-retention-no-effect");
+    case "completed_retention": return t("project-recovery-retention-completed");
+    case "partial_retention": return t("project-recovery-retention-partial");
+    case "conflict_state": return t("project-recovery-retention-conflict");
+  }
 }
 
 export function projectTransitionRetentionActionLabel(
   action: KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction,
 ): string {
-  const labels: Record<KernelProjectTransitionDecisionRetentionHotJournalRecoveryAction, string> = {
-    clear_no_effect_journal: "curăță jurnalul fără efect",
-    clear_completed_journal: "curăță jurnalul finalizat",
-    restore_before_journal: "restaurează jurnalul anterior",
-    manual_review_conflict: "revizuire manuală a conflictului",
-  };
-  return labels[action];
+  switch (action) {
+    case "clear_no_effect_journal":
+      return t("project-recovery-retention-clear-no-effect");
+    case "clear_completed_journal":
+      return t("project-recovery-retention-clear-completed");
+    case "restore_before_journal":
+      return t("project-recovery-retention-restore-before");
+    case "manual_review_conflict":
+      return t("project-recovery-retention-manual-conflict");
+  }
 }

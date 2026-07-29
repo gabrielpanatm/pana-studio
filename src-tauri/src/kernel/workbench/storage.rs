@@ -216,8 +216,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 1,
                 directory_count: 1,

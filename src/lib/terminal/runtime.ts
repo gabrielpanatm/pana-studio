@@ -1,15 +1,15 @@
 import type { IDisposable, IPty } from "tauri-pty";
+import type { MessageId } from "$lib/i18n/generated/catalog";
 
 export type TerminalTab = {
   id: string;
-  title: string;
-  description: string;
+  index: number;
 };
 
 export type TerminalQuickTask = {
   id: string;
-  label: string;
-  title: string;
+  labelId: MessageId;
+  titleId: MessageId;
   kind: "embedded-check" | "embedded-build" | "internal-preview";
 };
 
@@ -40,34 +40,47 @@ export const defaultTerminalPaneHeight = 240;
 export const terminalQuickTasks: TerminalQuickTask[] = [
   {
     id: "zola-check",
-    label: "Verificare",
-    title: "Validează sursele salvate cu motorul Zola embedded",
+    labelId: "workbench-terminal-task-check",
+    titleId: "workbench-terminal-task-check-title",
     kind: "embedded-check",
   },
   {
     id: "zola-build",
-    label: "Construire",
-    title: "Construiește proiectul cu motorul Zola embedded",
+    labelId: "workbench-terminal-task-build",
+    titleId: "workbench-terminal-task-build-title",
     kind: "embedded-build",
   },
   {
     id: "source-browser",
-    label: "Preview",
-    title: "Deschide generația salvată în Source Browser intern",
+    labelId: "workbench-terminal-task-preview",
+    titleId: "workbench-terminal-task-preview-title",
     kind: "internal-preview",
   },
 ];
 
 let terminalRuntimePromise: Promise<TerminalRuntime> | null = null;
 
-export function createTerminalTheme(theme: "dark" | "light") {
+function normalizedTerminalAccent(accent: string) {
+  return /^#[0-9a-f]{6}$/i.test(accent) ? accent.toLowerCase() : "#1d7f6a";
+}
+
+function terminalAccentWithAlpha(accent: string, alpha: number) {
+  const normalized = normalizedTerminalAccent(accent);
+  const red = Number.parseInt(normalized.slice(1, 3), 16);
+  const green = Number.parseInt(normalized.slice(3, 5), 16);
+  const blue = Number.parseInt(normalized.slice(5, 7), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+export function createTerminalTheme(theme: "dark" | "light", accent = "#1d7f6a") {
+  const normalizedAccent = normalizedTerminalAccent(accent);
   if (theme === "light") {
     return {
       background: "#f4f8f6",
       foreground: "#223029",
-      cursor: "#1d7f6a",
+      cursor: normalizedAccent,
       cursorAccent: "#f4f8f6",
-      selectionBackground: "rgba(29, 127, 106, 0.16)",
+      selectionBackground: terminalAccentWithAlpha(normalizedAccent, 0.16),
       black: "#d2ddd7",
       brightBlack: "#6b7a73",
     };
@@ -76,9 +89,9 @@ export function createTerminalTheme(theme: "dark" | "light") {
   return {
     background: "#121816",
     foreground: "#d7e3dd",
-    cursor: "#2faa8c",
+    cursor: normalizedAccent,
     cursorAccent: "#121816",
-    selectionBackground: "rgba(47, 170, 140, 0.22)",
+    selectionBackground: terminalAccentWithAlpha(normalizedAccent, 0.22),
     black: "#0f1412",
     brightBlack: "#697670",
   };
@@ -87,8 +100,7 @@ export function createTerminalTheme(theme: "dark" | "light") {
 export function createTerminalTab(index: number): TerminalTab {
   return {
     id: `terminal-shell-${index}`,
-    title: `Shell ${index}`,
-    description: "Sesiune shell reala, pornita in radacina proiectului curent.",
+    index,
   };
 }
 

@@ -7,6 +7,7 @@ import {
   type EditorSurface,
   type EditorTeraTarget,
 } from "$lib/editor-runtime/commands";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export function htmlElementContextMenuItems(
   runtime: EditorRuntime,
@@ -19,7 +20,7 @@ export function htmlElementContextMenuItems(
   return [
     {
       id: `${surface}-select-html`,
-      label: options.selectLabel ?? "Selecteaza element",
+      label: options.selectLabel ?? t("context-menu-select-element"),
       disabled: !capturedTarget.selector,
       action: async () => {
         await runtime.dispatch({ type: "select-html", surface, target: capturedTarget });
@@ -27,7 +28,7 @@ export function htmlElementContextMenuItems(
     },
     {
       id: `${surface}-open-html-code`,
-      label: "Deschide in cod",
+      label: t("context-menu-open-code"),
       disabled: !capturedTarget.selector,
       action: async () => {
         await runtime.dispatch({ type: "open-html-code", surface, target: capturedTarget });
@@ -35,7 +36,7 @@ export function htmlElementContextMenuItems(
     },
     {
       id: `${surface}-duplicate-html`,
-      label: "Duplica element",
+      label: t("context-menu-duplicate-element"),
       disabled: !canMutate.allowed,
       separatorBefore: true,
       action: async () => {
@@ -44,7 +45,7 @@ export function htmlElementContextMenuItems(
     },
     {
       id: `${surface}-delete-html`,
-      label: "Sterge element",
+      label: t("context-menu-delete-element"),
       tone: "danger",
       shortcut: "Del",
       disabled: !canMutate.allowed,
@@ -64,29 +65,29 @@ export function teraContextMenuItems(
   return [
     {
       id: `${surface}-select-tera`,
-      label: "Selecteaza sursa Tera",
+      label: t("context-menu-select-tera-source"),
       action: async () => {
         await runtime.dispatch({ type: "select-tera", surface, target: capturedTarget });
       },
     },
     {
-      id: `${surface}-edit-tera-html`,
-      label: "Editeaza HTML vizual",
-      disabled: capturedTarget.canSelectHtml === false || !capturedTarget.selector,
+      id: `${surface}-enter-tera-boundary`,
+      label: t("context-menu-edit-html-visually"),
+      disabled: capturedTarget.canEnterBoundary !== true || !capturedTarget.editorNodeId,
       action: async () => {
-        await runtime.dispatch({ type: "edit-tera-html", surface, target: capturedTarget });
+        await runtime.dispatch({ type: "enter-tera-boundary", surface, target: capturedTarget });
       },
     },
     {
       id: `${surface}-open-tera-code`,
-      label: "Deschide sursa",
+      label: t("context-menu-open-source"),
       action: async () => {
         await runtime.dispatch({ type: "open-tera-code", surface, target: capturedTarget });
       },
     },
     {
       id: `${surface}-delete-tera`,
-      label: "Sterge nodul Tera",
+      label: t("context-menu-delete-tera-node"),
       tone: "danger",
       separatorBefore: true,
       action: async () => {

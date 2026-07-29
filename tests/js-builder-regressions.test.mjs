@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { createMotionStepTimingQueue } from "$lib/js/motion-step-timing-queue";
+import {
+  actionTargetsDataAnim,
+  createAnimateAction,
+  createMotionInteraction,
+  interactionDuration,
+  interactionTargetsDataAnim,
+  interactionTouchesDataAnim,
+  interactionTriggeredByDataAnim,
+  targetForDataAnim,
+} from "$lib/js/motion-v2";
 import { normalizePageJsTemplatePath } from "$lib/js/page-path";
 import { createLatestWinsAsyncQueue } from "$lib/session/latest-wins-async-queue";
 import { createPageJsDraftSyncQueue } from "$lib/session/page-js-draft-sync";
@@ -179,7 +188,7 @@ test("Page JS queue rejects a receipt from a replacement runtime", async () => {
   queue.enqueue(stageTask(1, "templates/index.html", taskIdentity));
   await assert.rejects(
     queue.flush({ retryFailures: false }),
-    /receipt-ul altei sesiuni/,
+    /rejected a receipt from another session/,
   );
 });
 
@@ -209,38 +218,138 @@ test("same-root Page JS replacement invalidates an in-flight continuation", asyn
   assert.equal(queue.snapshot().failureCount, 0);
 });
 
-test("motion timing queue composes partial patches for one step", async () => {
-  const applied = [];
-  const queue = createMotionStepTimingQueue(async (task) => applied.push(task), 1_000);
-  const base = {
-    projectRoot: "/project",
-    runtimeSessionId: "session:runtime",
-    templatePath: "templates/index.html",
-    timelineId: "timeline-1",
-    stepId: "step-1",
-    stepIndex: 0,
-  };
-  queue.enqueue({ ...base, patch: { position: "100" } });
-  queue.enqueue({ ...base, patch: { duration: 800 } });
-  await queue.flush();
-  assert.equal(applied.length, 1);
-  assert.deepEqual(applied[0].patch, { position: "100", duration: 800 });
+test("Motion v2 projects actions directly instead of persisting a timeline item", () => {
+  const interaction = createMotionInteraction("hero", "scroll", "fade");
+  assert.equal(interaction.domain, "progress");
+  assert.equal(interaction.actions.length, 1);
+  assert.equal(interaction.actions[0].type, "animate");
+  assert.equal(interactionDuration(interaction), 100);
+  assert.equal("timeline" in interaction, false);
 });
 
-test("motion timing never coalesces two runtime sessions", async () => {
-  const applied = [];
-  const queue = createMotionStepTimingQueue(async (task) => applied.push(task), 1_000);
-  const base = {
-    projectRoot: "/project",
-    templatePath: "templates/index.html",
-    timelineId: "timeline-1",
-    stepId: "step-1",
-    stepIndex: 0,
-  };
-  queue.enqueue({ ...base, runtimeSessionId: "session:a", patch: { position: "100" } });
-  queue.enqueue({ ...base, runtimeSessionId: "session:b", patch: { position: "200" } });
-  await queue.flush();
-  assert.deepEqual(applied.map((task) => task.runtimeSessionId), ["session:a", "session:b"]);
+test("Motion context separates trigger ownership from action targets", () => {
+  const interaction = createMotionInteraction("hero-title", "inView", "fade");
+  interaction.actions.push(createAnimateAction("custom", targetForDataAnim("cta-primary")));
+
+  assert.equal(interactionTriggeredByDataAnim(interaction, "hero-title"), true);
+  assert.equal(interactionTriggeredByDataAnim(interaction, "cta-primary"), false);
+  assert.equal(interactionTargetsDataAnim(interaction, "hero-title"), true);
+  assert.equal(interactionTargetsDataAnim(interaction, "cta-primary"), true);
+  assert.equal(interactionTouchesDataAnim(interaction, "cta-primary"), true);
+  assert.equal(
+    actionTargetsDataAnim(interaction.actions[0], "hero-title", interaction.triggerTarget),
+    true,
+  );
+  assert.equal(
+    actionTargetsDataAnim(interaction.actions[1], "cta-primary", interaction.triggerTarget),
+    true,
+  );
+});
+
+test("Motion owner is bound once by the rendered template, never by element source selection", () => {
+  const jsPane = readFileSync(
+    new URL("../src/lib/components/inspector/JsPane.svelte", import.meta.url),
+    "utf8",
+  );
+  const center = readFileSync(
+    new URL("../src/lib/components/workspace/WorkspaceCenterArea.svelte", import.meta.url),
+    "utf8",
+  );
+  const workspace = readFileSync(
+    new URL("../src/lib/state/motion-workspace.svelte.ts", import.meta.url),
+    "utf8",
+  );
+  const inspector = readFileSync(
+    new URL("../src/lib/components/inspector/js/MotionStudioPanel.svelte", import.meta.url),
+    "utf8",
+  );
+
+  assert.doesNotMatch(jsPane, /workspace\.bind\(/);
+  assert.doesNotMatch(jsPane, /sourceLocation\?\.file/);
+  assert.match(center, /motionWorkspace\.bind\(\s*app\.activeRenderedTemplatePath/);
+  assert.match(workspace, /owner = \$state<MotionOwner \| null>/);
+  assert.match(workspace, /receiptTemplatePath !== context\.templatePath/);
+  assert.match(inspector, /triggeredInteractions/);
+  assert.match(inspector, /targetedInteractions/);
+  assert.match(inspector, /workspace\.openTimeline/);
+});
+
+test("Motion timeline separates action rows and coalesces pointer drag before one Rust mutation", () => {
+  const timeline = readFileSync(
+    new URL("../src/lib/components/workspace/MotionTimelinePanel.svelte", import.meta.url),
+    "utf8",
+  );
+  assert.match(timeline, /{#each lanes as lane \(lane\.key\)}/);
+  assert.match(timeline, /{#each lane\.actions as action \(action\.id\)}[\s\S]*class="track timeline-canvas"/);
+  assert.match(timeline, /requestAnimationFrame\(\(\) => flushDragDraft\(current\)\)/);
+  assert.match(timeline, /event\.pointerId !== current\.pointerId/);
+  assert.match(timeline, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(timeline, /window\.addEventListener\("blur", cancelDrag/);
+  assert.match(timeline, /document\.addEventListener\("visibilitychange", handleDragVisibilityChange\)/);
+  assert.match(timeline, /workspace\.mutate\(\{\s*command: "setActionTiming"/);
+  const moveBody = timeline.slice(
+    timeline.indexOf("function moveDrag"),
+    timeline.indexOf("function finishDrag"),
+  );
+  const finishBody = timeline.slice(
+    timeline.indexOf("function finishDrag"),
+    timeline.indexOf("function cancelDrag"),
+  );
+  assert.doesNotMatch(moveBody, /workspace\.mutate\(/);
+  assert.equal(finishBody.match(/workspace\.mutate\(/g)?.length, 1);
+  assert.match(finishBody, /pendingTimingCommits\.set\(current\.action\.id/);
+  assert.match(finishBody, /setTimingDraft\(current\.action\.id, next\)/);
+  assert.doesNotMatch(finishBody, /removeTimingDraft\(current\.action\.id\)/);
+  assert.match(timeline, /function settleTimingCommit\(actionId: string, serial: number\)/);
+  assert.match(timeline, /pendingTimingCommits\.get\(actionId\)\?\.serial !== serial/);
+});
+
+test("Motion playhead is singular and pointer scrubbing is frame-bounded without Rust mutations", () => {
+  const timeline = readFileSync(
+    new URL("../src/lib/components/workspace/MotionTimelinePanel.svelte", import.meta.url),
+    "utf8",
+  );
+
+  assert.equal(timeline.match(/class="timeline-playhead"/g)?.length, 1);
+  assert.doesNotMatch(timeline, /class="playhead"/);
+  assert.doesNotMatch(timeline, /--playhead-height/);
+  assert.match(
+    timeline,
+    /\.timeline-playhead-layer \{[^}]*bottom:0;[^}]*overflow:clip;/,
+  );
+  assert.match(
+    timeline,
+    /\.timeline-playhead \{[^}]*left:clamp\(0px,calc\(var\(--playhead-position\) - 1px\),calc\(100% - 1px\)\)/,
+  );
+  assert.match(timeline, /\.timeline-playhead\.at-end::before/);
+  assert.equal(timeline.match(/onpointerdown=\{beginSeekDrag\}/g)?.length, 2);
+
+  const publishBody = timeline.slice(
+    timeline.indexOf("function publishSeekDrag"),
+    timeline.indexOf("function beginSeekDrag"),
+  );
+  const beginBody = timeline.slice(
+    timeline.indexOf("function beginSeekDrag"),
+    timeline.indexOf("function moveSeekDrag"),
+  );
+  const moveBody = timeline.slice(
+    timeline.indexOf("function moveSeekDrag"),
+    timeline.indexOf("function finishSeekDrag"),
+  );
+  const finishBody = timeline.slice(
+    timeline.indexOf("function finishSeekDrag"),
+    timeline.indexOf("function cancelSeekDrag"),
+  );
+
+  assert.match(beginBody, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(beginBody, /\|\| drag \|\| seekDrag/);
+  assert.match(beginBody, /window\.addEventListener\("blur", cancelSeekDrag/);
+  assert.match(moveBody, /requestAnimationFrame\(\(\) => publishSeekDrag\(current\)\)/);
+  assert.doesNotMatch(moveBody, /workspace\.requestPreview|workspace\.mutate/);
+  assert.equal(publishBody.match(/workspace\.requestPreview\(/g)?.length, 1);
+  assert.doesNotMatch(publishBody, /workspace\.mutate/);
+  assert.doesNotMatch(finishBody, /workspace\.mutate/);
+  assert.match(timeline, /document\.body\.classList\.remove\("motion-timeline-seeking"\)/);
 });
 
 test("preview runtime accepts ACK only for the exact revision and operation", () => {
@@ -433,11 +542,16 @@ test("preview ingress is bounded and reports overflow once per window", () => {
 test("Design Safe has no frontend execution path for raw project JS", () => {
   const jsPane = readFileSync(new URL("../src/lib/components/inspector/JsPane.svelte", import.meta.url), "utf8");
   const timeline = readFileSync(new URL("../src/lib/components/workspace/MotionTimelinePanel.svelte", import.meta.url), "utf8");
+  const workspace = readFileSync(new URL("../src/lib/state/motion-workspace.svelte.ts", import.meta.url), "utf8");
   const bridge = readFileSync(new URL("../src-tauri/src/preview/bridge/12_messages_events.js", import.meta.url), "utf8");
+  const backend = readFileSync(new URL("../src-tauri/src/commands/js.rs", import.meta.url), "utf8");
   for (const source of [jsPane, timeline, bridge]) {
     assert.doesNotMatch(source, /\beval\s*\(|new Function\s*\(/);
   }
-  assert.match(jsPane, /stage|draft|ProjectWorkspace/i);
+  assert.match(workspace, /applyMotionMutation/);
+  assert.match(workspace, /entryRevision/);
+  assert.match(backend, /ProjectWorkspace/);
+  assert.match(backend, /apply_motion_mutation_kernel/);
 });
 
 test("HTML persistence stays in ProjectWorkspace while live drafts are explicit ephemeral bridges", () => {
@@ -462,7 +576,7 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
     new URL("../src/lib/state/selection-controller.ts", import.meta.url),
     "utf8",
   );
-  const previewSelection = readFileSync(
+  const previewSelectionSource = readFileSync(
     new URL("../src/lib/preview/selection.ts", import.meta.url),
     "utf8",
   );
@@ -484,8 +598,11 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
   assert.match(app, /HTML_TEXT_HISTORY_IDLE_MS/);
   assert.match(app, /finishActiveHtmlAttributeEditSession/);
   assert.doesNotMatch(app, /htmlAttributeDraftCommitQueue/);
-  assert.match(previewSelection, /attr\.name\.startsWith\("data-pana-"\)/);
-  assert.match(selection, /activeHtmlTextEditKey === htmlTextSelectionKey\(selection\)/);
+  assert.match(previewSelectionSource, /attr\.name\.startsWith\("data-pana-"\)/);
+  assert.match(
+    selection,
+    /activeHtmlTextEditKey === htmlTextSelectionKey\(host\.coordinatedElementSelection\)/,
+  );
 });
 
 test("Canvas document commit waits for styledReady and never replaces head/body via innerHTML", () => {

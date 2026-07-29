@@ -1,12 +1,13 @@
 import { scannedCacheKey, zolaRelativePath } from "$lib/project/files";
 import { queueFileBufferDraftTextTransitionForPath } from "$lib/session/file-buffer-draft-sync";
-import type { SaveState } from "$lib/types";
+import type { GlobalStatusKind } from "$lib/status/global-status";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PageSettingsControllerHost = {
   activeScannedPath: string | null;
   source: string;
   sourceCache: Record<string, string>;
-  setGlobalStatus: (text: string, kind: SaveState) => void;
+  setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
 
 export function updatePageFrontmatterSource(
@@ -27,5 +28,7 @@ export function updatePageFrontmatterSource(
     host.source = nextSource;
   }
 
-  host.setGlobalStatus(`Frontmatter modificat în ${relativePath} — Ctrl+S pentru salvare`, "unsaved");
+  host.setGlobalStatus(t("page-settings-frontmatter-changed", {
+    path: relativePath,
+  }), "unsaved");
 }

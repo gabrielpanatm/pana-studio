@@ -6,6 +6,7 @@
     IconEyeOff,
     IconX,
   } from "@tabler/icons-svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import {
     readProjectAppConfig,
     readProjectEnv,
@@ -33,8 +34,6 @@
 
   let {
     scannedProject = false,
-    isZola = false,
-    isEmpty = false,
     cachebustAssets = false,
     workspaceMode = false,
     actionsOnly = false,
@@ -44,8 +43,6 @@
     onCachebustAssetsChange = undefined as ((value: boolean) => void) | undefined,
   }: {
     scannedProject?: boolean;
-    isZola?: boolean;
-    isEmpty?: boolean;
     cachebustAssets?: boolean;
     workspaceMode?: boolean;
     actionsOnly?: boolean;
@@ -98,14 +95,14 @@
       onCachebustAssetsChange?.(appConfig.cachebustAssets);
       configDirty = false;
     } catch (e) {
-      onStatusUpdate?.(`Eroare la încărcarea configurației: ${errorMessage(e)}`, "error");
+      onStatusUpdate?.(t("deploy-config-load-error", { error: errorMessage(e) }), "error");
     }
     configLoaded = true;
     loading = false;
   }
 
   async function saveConfig() {
-    onStatusUpdate?.("Se salvează configurația...", "saving");
+    onStatusUpdate?.(t("deploy-config-saving"), "saving");
     try {
       const settingsToSave = zolaSettingsWithTextFields(zolaSettings, {
         feedFilenamesText,
@@ -124,9 +121,9 @@
       syncTextFields(savedSettings);
       configDirty = false;
       onCachebustAssetsChange?.(appConfig.cachebustAssets);
-      onStatusUpdate?.("Setările proiectului au fost salvate.", "saved");
+      onStatusUpdate?.(t("deploy-config-saved"), "saved");
     } catch (e) {
-      onStatusUpdate?.(`Eroare config: ${errorMessage(e)}`, "error");
+      onStatusUpdate?.(t("deploy-config-error", { error: errorMessage(e) }), "error");
     }
   }
 
@@ -145,7 +142,7 @@
   function markConfigDirty() {
     if (!configLoaded || loading) return;
     if (!configDirty) {
-      onStatusUpdate?.("Setări modificate — folosește Salvează configurația.", "unsaved");
+      onStatusUpdate?.(t("deploy-config-dirty-status"), "unsaved");
     }
     configDirty = true;
   }
@@ -168,15 +165,15 @@
     buildRunning = true;
     actionLog = "";
     actionOk = null;
-    onStatusUpdate?.("Se construiește proiectul cu Zola...", "saving");
+    onStatusUpdate?.(t("deploy-build-running-status"), "saving");
     try {
       actionLog = await zolaBuild();
       actionOk = true;
-      onStatusUpdate?.("Construirea Zola s-a încheiat.", "saved");
+      onStatusUpdate?.(t("deploy-build-complete"), "saved");
     } catch (e) {
       actionLog = errorMessage(e);
       actionOk = false;
-      onStatusUpdate?.(`Eroare la construire: ${actionLog}`, "error");
+      onStatusUpdate?.(t("deploy-build-error", { error: actionLog }), "error");
     }
     buildRunning = false;
   }
@@ -185,15 +182,15 @@
     deployRunning = true;
     actionLog = "";
     actionOk = null;
-    onStatusUpdate?.("Se publică proiectul...", "saving");
+    onStatusUpdate?.(t("deploy-publish-running-status"), "saving");
     try {
       actionLog = await deployToBunny();
       actionOk = true;
-      onStatusUpdate?.("Publicarea s-a încheiat.", "saved");
+      onStatusUpdate?.(t("deploy-publish-complete"), "saved");
     } catch (e) {
       actionLog = errorMessage(e);
       actionOk = false;
-      onStatusUpdate?.(`Eroare la publicare: ${actionLog}`, "error");
+      onStatusUpdate?.(t("deploy-publish-error", { error: actionLog }), "error");
     }
     deployRunning = false;
   }
@@ -201,7 +198,7 @@
   async function cancelRunningOperation() {
     if (cancelRunning || (!buildRunning && !deployRunning)) return;
     if (!projectRoot || !runtimeSessionId) {
-      onStatusUpdate?.("Operația nu poate fi anulată fără identitatea sesiunii proiectului.", "error");
+      onStatusUpdate?.(t("deploy-cancel-no-session"), "error");
       return;
     }
     cancelRunning = true;
@@ -210,11 +207,11 @@
         expectedProjectRoot: projectRoot,
         expectedSessionId: runtimeSessionId,
       });
-      actionLog = `Anulare solicitată pentru ${receipt.kind} (${receipt.operationId}).`;
+      actionLog = t("deploy-cancel-log", { kind: receipt.kind, operation: receipt.operationId });
       actionOk = null;
-      onStatusUpdate?.("Anularea operației de publicare a fost solicitată.", "saving");
+      onStatusUpdate?.(t("deploy-cancel-requested"), "saving");
     } catch (error) {
-      onStatusUpdate?.(`Anularea publicării a eșuat: ${errorMessage(error)}`, "error");
+      onStatusUpdate?.(t("deploy-cancel-failed", { error: errorMessage(error) }), "error");
     } finally {
       cancelRunning = false;
     }
@@ -224,30 +221,28 @@
 <div class:workspace-mode={workspaceMode} class:actions-only={actionsOnly} class="deploy-pane">
 
   {#if !scannedProject}
-    <p class="hint">Deschide un dosar pentru configurarea proiectului.</p>
-  {:else if !isZola && !isEmpty}
-    <p class="hint">Setările și publicarea Zola sunt disponibile doar pentru proiecte Zola.</p>
+    <p class="hint">{t("deploy-open-folder")}</p>
   {:else if loading}
-    <p class="hint">Se încarcă configurația...</p>
+    <p class="hint">{t("deploy-config-loading")}</p>
   {:else}
     <div class="sticky-config-actions">
-      <span class:dirty={configDirty}>{configDirty ? "Modificări nesalvate" : "Configurație sincronizată"}</span>
+      <span class:dirty={configDirty}>{configDirty ? t("deploy-unsaved") : t("deploy-synchronized")}</span>
       <div class="sticky-action-buttons">
         <button type="button" class="save-config-btn compact-save" onclick={saveConfig}>
-          Salvează configurația
+          {t("deploy-save-config")}
         </button>
         {#if workspaceMode}
-          <button type="button" class="action-btn build-btn compact-action" onclick={runBuild} disabled={buildRunning || configDirty} title={configDirty ? "Salvează configurația înainte de construire" : "Construiește proiectul cu Zola"}>
+          <button type="button" class="action-btn build-btn compact-action" onclick={runBuild} disabled={buildRunning || configDirty} title={configDirty ? t("deploy-save-before-build") : t("deploy-build-title")}>
             <IconHammer size={14} stroke={1.8} />
-            {buildRunning ? "Se construiește…" : "Construiește"}
+            {buildRunning ? t("deploy-building") : t("deploy-build")}
           </button>
-          <button type="button" class="action-btn deploy-btn compact-action" onclick={runDeploy} disabled={deployRunning || configDirty} title={configDirty ? "Salvează configurația înainte de publicare" : "Publică pe Bunny CDN"}>
+          <button type="button" class="action-btn deploy-btn compact-action" onclick={runDeploy} disabled={deployRunning || configDirty} title={configDirty ? t("deploy-save-before-publish") : t("deploy-publish-title")}>
             <IconRocket size={14} stroke={1.8} />
-            {deployRunning ? "Publicare…" : "Publică"}
+            {deployRunning ? t("deploy-publishing") : t("deploy-publish")}
           </button>
           {#if buildRunning || deployRunning}
             <button type="button" class="action-btn cancel-btn compact-action" onclick={cancelRunningOperation} disabled={cancelRunning}>
-              <IconX size={14} stroke={2} /> {cancelRunning ? "Se anulează…" : "Anulează"}
+              <IconX size={14} stroke={2} /> {cancelRunning ? t("deploy-cancelling") : t("deploy-cancel")}
             </button>
           {/if}
         {/if}
@@ -263,22 +258,22 @@
     {#if !actionsOnly}
     <section class="config-section">
       <div class="section-title-row">
-        <h3 class="section-label">PROIECT</h3>
+        <h3 class="section-label">{t("deploy-section-project")}</h3>
         <code>{zolaSettings.configPath}</code>
       </div>
       <label class="config-field">
         <span>base_url</span>
-        <input type="url" class="config-input" placeholder="https://exemplu.ro" value={zolaSettings.baseUrl}
+        <input type="url" class="config-input" placeholder={t("deploy-placeholder-url")} value={zolaSettings.baseUrl}
           oninput={(event) => setSetting("baseUrl", event.currentTarget.value)} />
       </label>
       <label class="config-field">
         <span>title</span>
-        <input class="config-input" placeholder="Numele site-ului" value={zolaSettings.title}
+        <input class="config-input" placeholder={t("deploy-placeholder-title")} value={zolaSettings.title}
           oninput={(event) => setSetting("title", event.currentTarget.value)} />
       </label>
       <label class="config-field">
         <span>description</span>
-        <textarea class="config-textarea" rows="3" placeholder="Descriere scurtă pentru site"
+        <textarea class="config-textarea" rows="3" placeholder={t("deploy-placeholder-description")}
           value={zolaSettings.description}
           oninput={(event) => setSetting("description", event.currentTarget.value)}></textarea>
       </label>
@@ -290,22 +285,22 @@
         </label>
         <label class="config-field">
           <span>author</span>
-          <input class="config-input" placeholder="Autor" value={zolaSettings.author}
+          <input class="config-input" placeholder={t("deploy-placeholder-author")} value={zolaSettings.author}
             oninput={(event) => setSetting("author", event.currentTarget.value)} />
         </label>
       </div>
     </section>
 
     <section class="config-section">
-      <h3 class="section-label">BUILD</h3>
+      <h3 class="section-label">{t("deploy-section-build")}</h3>
       <label class="switch-field">
-        <span><strong>Compilează Sass</strong><small>Activează procesarea folderului <code>sass/</code>.</small></span>
+        <span><strong>{t("deploy-compile-sass")}</strong><small>{t("deploy-compile-sass-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.compileSass}
           onchange={(event) => setSetting("compileSass", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
       </label>
       <label class="switch-field">
-        <span><strong>Minifică HTML</strong><small>Reduce output-ul final generat de Zola.</small></span>
+        <span><strong>{t("deploy-minify-html")}</strong><small>{t("deploy-minify-html-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.minifyHtml}
           onchange={(event) => setSetting("minifyHtml", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
@@ -317,8 +312,8 @@
       </label>
       <label class="switch-field">
         <span>
-          <strong>Cache bust asset-uri generate</strong>
-          <small>Normalizează link-urile CSS/JS locale între URL simplu și <code>get_url(..., cachebust=true)</code>.</small>
+          <strong>{t("deploy-cachebust")}</strong>
+          <small>{t("deploy-cachebust-help")}</small>
         </span>
         <input
           type="checkbox"
@@ -334,27 +329,27 @@
     </section>
 
     <section class="config-section">
-      <h3 class="section-label">SEO & INDEXARE</h3>
+      <h3 class="section-label">{t("deploy-section-seo")}</h3>
       <label class="switch-field">
-        <span><strong>Sitemap XML</strong><small>Generează sitemap.xml.</small></span>
+        <span><strong>{t("deploy-sitemap")}</strong><small>{t("deploy-sitemap-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.generateSitemap}
           onchange={(event) => setSetting("generateSitemap", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
       </label>
       <label class="switch-field">
-        <span><strong>robots.txt</strong><small>Generează robots.txt.</small></span>
+        <span><strong>robots.txt</strong><small>{t("deploy-robots-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.generateRobotsTxt}
           onchange={(event) => setSetting("generateRobotsTxt", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
       </label>
       <label class="switch-field">
-        <span><strong>Exclude pagini paginate</strong><small>Nu include paginile paginate în sitemap.</small></span>
+        <span><strong>{t("deploy-exclude-paginated")}</strong><small>{t("deploy-exclude-paginated-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.excludePaginatedPagesInSitemap}
           onchange={(event) => setSetting("excludePaginatedPagesInSitemap", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
       </label>
       <label class="switch-field">
-        <span><strong>Feeds</strong><small>Generează feed-uri RSS/Atom.</small></span>
+        <span><strong>{t("deploy-feeds")}</strong><small>{t("deploy-feeds-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.generateFeeds}
           onchange={(event) => setSetting("generateFeeds", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
@@ -370,7 +365,7 @@
         </label>
         <label class="config-field">
           <span>feed_limit</span>
-          <input class="config-input" type="number" min="0" placeholder="gol = nelimitat" value={feedLimitText}
+          <input class="config-input" type="number" min="0" placeholder={t("deploy-unlimited-placeholder")} value={feedLimitText}
             oninput={(event) => {
               feedLimitText = event.currentTarget.value;
               markConfigDirty();
@@ -380,7 +375,7 @@
     </section>
 
     <section class="config-section">
-      <h3 class="section-label">MARKDOWN</h3>
+      <h3 class="section-label">{t("deploy-section-markdown")}</h3>
       <div class="field-grid">
         <label class="switch-field compact">
           <span><strong>Emoji</strong></span>
@@ -389,13 +384,13 @@
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Punctuație smart</strong></span>
+          <span><strong>{t("deploy-smart-punctuation")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.smartPunctuation}
             onchange={(event) => setSetting("smartPunctuation", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Imagini lazy async</strong></span>
+          <span><strong>{t("deploy-lazy-images")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.lazyAsyncImage}
             onchange={(event) => setSetting("lazyAsyncImage", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
@@ -407,7 +402,7 @@
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Footnotes jos</strong></span>
+          <span><strong>{t("deploy-bottom-footnotes")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.bottomFootnotes}
             onchange={(event) => setSetting("bottomFootnotes", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
@@ -415,9 +410,9 @@
       </div>
       <label class="config-field">
         <span>insert_anchor_links</span>
-        <SelectControl value={zolaSettings.insertAnchorLinks} options={insertAnchorOptions} ariaLabel="Inserare linkuri ancoră" onchange={(value) => setSetting("insertAnchorLinks", value)} />
+        <SelectControl value={zolaSettings.insertAnchorLinks} options={insertAnchorOptions} ariaLabel={t("deploy-anchor-links-label")} onchange={(value) => setSetting("insertAnchorLinks", value)} />
       </label>
-      <h4 class="subsection-label">Link-uri externe</h4>
+      <h4 class="subsection-label">{t("deploy-external-links")}</h4>
       <div class="field-grid">
         <label class="switch-field compact">
           <span><strong>target blank</strong></span>
@@ -441,44 +436,44 @@
     </section>
 
     <section class="config-section">
-      <h3 class="section-label">SEARCH</h3>
+      <h3 class="section-label">{t("deploy-section-search")}</h3>
       <label class="switch-field">
-        <span><strong>Construiește indexul de căutare</strong><small>Generează indexul de căutare Zola.</small></span>
+        <span><strong>{t("deploy-search-index")}</strong><small>{t("deploy-search-index-help")}</small></span>
         <input type="checkbox" role="switch" checked={zolaSettings.buildSearchIndex}
           onchange={(event) => setSetting("buildSearchIndex", event.currentTarget.checked)} />
         <i aria-hidden="true"></i>
       </label>
       <label class="config-field">
         <span>index_format</span>
-        <SelectControl value={zolaSettings.searchIndexFormat} options={searchIndexFormatOptions} ariaLabel="Formatul indexului de căutare" onchange={(value) => setSetting("searchIndexFormat", value)} />
+        <SelectControl value={zolaSettings.searchIndexFormat} options={searchIndexFormatOptions} ariaLabel={t("deploy-search-format-label")} onchange={(value) => setSetting("searchIndexFormat", value)} />
       </label>
       <div class="field-grid">
         <label class="switch-field compact">
-          <span><strong>Titlu</strong></span>
+          <span><strong>{t("deploy-search-title")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.searchIncludeTitle}
             onchange={(event) => setSetting("searchIncludeTitle", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Descriere</strong></span>
+          <span><strong>{t("deploy-search-description")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.searchIncludeDescription}
             onchange={(event) => setSetting("searchIncludeDescription", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Dată</strong></span>
+          <span><strong>{t("deploy-search-date")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.searchIncludeDate}
             onchange={(event) => setSetting("searchIncludeDate", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Path</strong></span>
+          <span><strong>{t("deploy-search-path")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.searchIncludePath}
             onchange={(event) => setSetting("searchIncludePath", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
         </label>
         <label class="switch-field compact">
-          <span><strong>Conținut</strong></span>
+          <span><strong>{t("deploy-search-content")}</strong></span>
           <input type="checkbox" role="switch" checked={zolaSettings.searchIncludeContent}
             onchange={(event) => setSetting("searchIncludeContent", event.currentTarget.checked)} />
           <i aria-hidden="true"></i>
@@ -486,7 +481,7 @@
       </div>
       <label class="config-field">
         <span>truncate_content_length</span>
-        <input class="config-input" type="number" min="0" placeholder="gol = complet" value={searchTruncateText}
+        <input class="config-input" type="number" min="0" placeholder={t("deploy-complete-placeholder")} value={searchTruncateText}
           oninput={(event) => {
             searchTruncateText = event.currentTarget.value;
             markConfigDirty();
@@ -495,10 +490,10 @@
     </section>
 
     <section class="config-section">
-      <h3 class="section-label">BUNNY CDN</h3>
-      {#each BUNNY_ENV_KEYS as { key, label, secret }}
+      <h3 class="section-label">{t("deploy-section-bunny")}</h3>
+      {#each BUNNY_ENV_KEYS as { key, labelId, secret }}
         <label class="config-field">
-          <span>{label}</span>
+          <span>{t(labelId)}</span>
           <div class="secret-row">
             <input
               class="config-input"
@@ -510,7 +505,7 @@
             />
             {#if secret}
               <button type="button" class="toggle-secret" onclick={() => toggleSecret(key)}
-                title={showSecrets[key] ? "Ascunde" : "Arata"}>
+                title={showSecrets[key] ? t("deploy-hide-secret") : t("deploy-show-secret")}>
                 {#if showSecrets[key]}
                   <IconEyeOff size={13} stroke={1.8} />
                 {:else}
@@ -521,11 +516,11 @@
           </div>
         </label>
       {/each}
-      <p class="env-note">Salvat in <code>.env</code> — nu se commitează in git.</p>
+      <p class="env-note">{t("deploy-env-note")}</p>
     </section>
 
     <button type="button" class="save-config-btn" onclick={saveConfig}>
-      Salvează configurația
+      {t("deploy-save-config")}
     </button>
 
     <div class="divider"></div>
@@ -533,11 +528,11 @@
     {#if !workspaceMode}<section class="actions-section">
       <button type="button" class="action-btn build-btn" onclick={runBuild} disabled={buildRunning}>
         <IconHammer size={14} stroke={1.8} />
-        {buildRunning ? "Se construiește..." : "Construire Zola"}
+        {buildRunning ? t("deploy-building") : t("deploy-build-zola")}
       </button>
       <button type="button" class="action-btn deploy-btn" onclick={runDeploy} disabled={deployRunning}>
         <IconRocket size={14} stroke={1.8} />
-        {deployRunning ? "Se publică..." : "Publică"}
+        {deployRunning ? t("deploy-publishing") : t("deploy-publish")}
       </button>
     </section>{/if}
     {/if}
@@ -766,11 +761,6 @@
     line-height: 1.35;
   }
 
-  .switch-field code {
-    font-family: "JetBrains Mono", monospace;
-    font-size: 12px;
-  }
-
   .switch-field input {
     position: absolute;
     opacity: 0;
@@ -829,8 +819,6 @@
     color: var(--text-muted);
     opacity: 0.65;
   }
-
-  .env-note code { font-family: "JetBrains Mono", monospace; font-size: 12px; }
 
   .save-config-btn {
     width: 100%;

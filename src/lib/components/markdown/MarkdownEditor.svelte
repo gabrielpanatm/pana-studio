@@ -3,6 +3,12 @@
   import type TipTapMarkdownEditorComponent from "$lib/components/markdown/TipTapMarkdownEditor.svelte";
   import { splitMarkdownFrontmatter, joinMarkdownFrontmatter } from "$lib/markdown/frontmatter";
   import { queueFileBufferDraftFlushSnapshotForPath } from "$lib/session/file-buffer-draft-sync";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
 
   export let source = "";
   export let path = "";
@@ -62,7 +68,7 @@
   }
 </script>
 
-<section class="markdown-editor" aria-label="Editor Markdown">
+<section class="markdown-editor" aria-label={t("markdown-editor-label")}>
   {#key `${path}:${refreshToken}`}
     {#if TipTapMarkdownEditor}
       <svelte:component
@@ -74,7 +80,7 @@
         onFlushSnapshot={handleFlushSnapshot}
       />
     {:else}
-      <div class="markdown-loading" aria-label="Se încarcă editorul Markdown"></div>
+      <div class="markdown-loading" aria-label={t("markdown-editor-loading")}></div>
     {/if}
   {/key}
 </section>

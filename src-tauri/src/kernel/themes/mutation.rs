@@ -5,13 +5,16 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-use crate::kernel::{
-    component_mutation::validate_semantic_workspace_candidate,
-    project_path::normalize_project_relative_path,
-    project_workspace::{
-        ProjectWorkspace, ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt,
-        WorkspaceBinaryRestoreChange, WorkspaceMutationMetadata, WorkspaceResourceMutation,
+use crate::{
+    kernel::{
+        component_mutation::validate_semantic_workspace_candidate,
+        project_path::normalize_project_relative_path,
+        project_workspace::{
+            ProjectWorkspace, ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt,
+            WorkspaceBinaryRestoreChange, WorkspaceMutationMetadata, WorkspaceResourceMutation,
+        },
     },
+    localization::LocalizedDiagnostic,
 };
 
 use super::{
@@ -49,7 +52,7 @@ pub fn plan_theme_operation(
             if install_complete {
                 notices.push(impact(
                     "theme_already_installed",
-                    "Tema este deja instalată integral; planul nu va modifica proiectul.",
+                    LocalizedDiagnostic::new("themes-impact-already-installed"),
                     None,
                     false,
                 ));
@@ -58,10 +61,8 @@ pub fn plan_theme_operation(
                     if paths.contains(&file.relative_path) {
                         conflicts.push(impact(
                             "theme_install_destination_exists",
-                            format!(
-                                "Instalarea nu suprascrie destinația existentă `{}`.",
-                                file.relative_path
-                            ),
+                            LocalizedDiagnostic::new("themes-impact-destination-exists")
+                                .with_argument("path", file.relative_path.clone()),
                             Some(file.relative_path.clone()),
                             true,
                         ));
@@ -78,12 +79,11 @@ pub fn plan_theme_operation(
                 conflicts.push(impact(
                     "theme_not_installed",
                     if installed_count == 0 {
-                        "Tema trebuie instalată înainte de activare.".to_string()
+                        LocalizedDiagnostic::new("themes-impact-not-installed")
                     } else {
-                        format!(
-                            "Instalarea temei este incompletă: {installed_count}/{} fișiere.",
-                            installed_files.len()
-                        )
+                        LocalizedDiagnostic::new("themes-impact-install-incomplete")
+                            .with_argument("installed", installed_count as u64)
+                            .with_argument("total", installed_files.len() as u64)
                     },
                     None,
                     true,
@@ -101,7 +101,7 @@ pub fn plan_theme_operation(
                 if active.as_deref() == Some(pack.manifest.id.as_str()) {
                     notices.push(impact(
                         "theme_already_active",
-                        "Tema este deja activă; planul nu va modifica proiectul.",
+                        LocalizedDiagnostic::new("themes-impact-already-active"),
                         Some(config_path),
                         false,
                     ));
@@ -112,7 +112,7 @@ pub fn plan_theme_operation(
             } else {
                 conflicts.push(impact(
                     "theme_config_missing",
-                    "Proiectul nu conține zola.toml sau config.toml în Zola root.",
+                    LocalizedDiagnostic::new("themes-impact-config-missing"),
                     None,
                     true,
                 ));
@@ -242,7 +242,8 @@ fn append_missing_requirements(
             if !paths.contains(&path) {
                 output.push(impact(
                     format!("theme_required_{kind}_missing"),
-                    format!("Cerința temei lipsește: `{path}`."),
+                    LocalizedDiagnostic::new("themes-impact-requirement-missing")
+                        .with_argument("path", path.clone()),
                     Some(path),
                     blocking,
                 ));
@@ -265,7 +266,8 @@ fn append_local_overrides(
         if paths.contains(&local) {
             output.push(impact(
                 "theme_local_override",
-                format!("Template-ul local `{local}` va avea prioritate peste tema activă."),
+                LocalizedDiagnostic::new("themes-impact-local-override")
+                    .with_argument("path", local.clone()),
                 Some(local),
                 false,
             ));
@@ -368,13 +370,13 @@ fn patch_theme_key(source: &str, theme_id: &str) -> Result<String, String> {
 
 fn impact(
     code: impl Into<String>,
-    message: impl Into<String>,
+    message_diagnostic: LocalizedDiagnostic,
     relative_path: Option<String>,
     blocking: bool,
 ) -> ThemeImpactItem {
     ThemeImpactItem {
         code: code.into(),
-        message: message.into(),
+        message_diagnostic,
         relative_path,
         blocking,
     }
@@ -787,8 +789,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 3,
                 directory_count: 3,

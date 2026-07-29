@@ -11,6 +11,7 @@ use crate::{
         project_state::scan_project_transition_decision_retention_hot_journals,
         project_workspace::scan_project_workspace_save_hot_journals,
     },
+    localization::LocalizedDiagnostic,
 };
 
 pub use model::{
@@ -39,11 +40,10 @@ pub fn scan_recovery_coordinator<R: Runtime>(
                     severity: RecoveryCoordinatorDiagnosticSeverity::Error,
                     code: "project_workspace_save_incomplete".to_string(),
                     transaction_id: Some(journal.transaction_id.clone()),
-                    message: format!(
-                        "Save-ul ProjectWorkspace {} este incomplet: stare disk {:?}, acțiune sigură {:?}. {}",
-                        journal.transaction_id, journal.disk_state, journal.recovery_plan.action,
-                        journal.recovery_plan.summary
-                    ),
+                    message_diagnostic: LocalizedDiagnostic::new(
+                        "recovery-project-workspace-save-incomplete",
+                    )
+                    .with_argument("transaction", journal.transaction_id.clone()),
                 });
             }
             if !journals.is_empty() {
@@ -65,10 +65,10 @@ pub fn scan_recovery_coordinator<R: Runtime>(
                     severity: RecoveryCoordinatorDiagnosticSeverity::Error,
                     code: "project_transition_retention_incomplete".to_string(),
                     transaction_id: None,
-                    message: format!(
-                        "Retenția ProjectTransition {} este incompletă: stare disk {:?}, acțiune sigură {:?}.",
-                        journal.retention_id, journal.disk_state, journal.recovery_plan.action
-                    ),
+                    message_diagnostic: LocalizedDiagnostic::new(
+                        "recovery-project-transition-retention-incomplete",
+                    )
+                    .with_argument("retention", journal.retention_id.clone()),
                 });
             }
             if !journals.is_empty() {
@@ -91,12 +91,21 @@ pub fn scan_recovery_coordinator<R: Runtime>(
     Ok(scan)
 }
 
-fn mark_scanner_unreadable(scan: &mut RecoveryCoordinatorScan, code: &str, message: String) {
+fn mark_scanner_unreadable(scan: &mut RecoveryCoordinatorScan, code: &str, _message: String) {
+    let diagnostic_code = match code {
+        "project_workspace_save_journal_unreadable" => {
+            "recovery-project-workspace-journal-unreadable"
+        }
+        "project_transition_retention_journal_unreadable" => {
+            "recovery-project-transition-journal-unreadable"
+        }
+        _ => "recovery-journal-unreadable",
+    };
     scan.diagnostics.push(RecoveryCoordinatorDiagnostic {
         severity: RecoveryCoordinatorDiagnosticSeverity::Error,
         code: code.to_string(),
         transaction_id: None,
-        message,
+        message_diagnostic: LocalizedDiagnostic::new(diagnostic_code),
     });
     scan.mark_unreadable();
 }

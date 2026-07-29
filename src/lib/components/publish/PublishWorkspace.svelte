@@ -11,15 +11,16 @@
     IconShieldCheck,
   } from "@tabler/icons-svelte";
   import DeployPane from "$lib/components/DeployPane.svelte";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
 
   let { app }: { app: AppState } = $props();
 
   type PublishView = "release" | "configuration";
-  const views: { id: PublishView; label: string }[] = [
-    { id: "release", label: "Pregătire publicare" },
-    { id: "configuration", label: "Configurare" },
-  ];
+  const views = $derived([
+    { id: "release" as const, label: t("publish-view-release") },
+    { id: "configuration" as const, label: t("publish-view-configuration") },
+  ]);
 
   let activeView = $state<PublishView>("release");
   let preflightRunning = $state(false);
@@ -47,12 +48,12 @@
 
   function validationLabel() {
     switch (app.controlledPreview.validation) {
-      case "valid": return "Construire Zola validă";
-      case "invalid": return "Construire Zola invalidă";
-      case "error": return "Validare indisponibilă";
-      case "queued": return "Validare programată";
-      case "running": return "Validare în curs";
-      default: return "Construire nevalidată";
+      case "valid": return t("publish-validation-valid");
+      case "invalid": return t("publish-validation-invalid");
+      case "error": return t("publish-validation-error");
+      case "queued": return t("publish-validation-queued");
+      case "running": return t("publish-validation-running");
+      default: return t("publish-validation-none");
     }
   }
 
@@ -62,10 +63,10 @@
     try {
       await app.runZolaValidation("manual");
       await app.refreshProjectAudit(true);
-      app.setGlobalStatus("Verificarea înainte de publicare a fost actualizată.", "saved");
+      app.setGlobalStatus(t("publish-preflight-updated"), "saved");
     } catch (error) {
       app.setGlobalStatus(
-        `Verificarea nu a putut fi finalizată: ${error instanceof Error ? error.message : String(error)}`,
+        t("publish-preflight-failed", { error: error instanceof Error ? error.message : String(error) }),
         "error",
       );
     } finally {
@@ -97,111 +98,117 @@
   }
 </script>
 
-<section class="publish-workspace" aria-labelledby="publish-title">
+<section class="activity-workspace publish-workspace" aria-labelledby="publish-title">
   <header class="workspace-header">
     <div>
-      <span class="eyebrow"><IconRocket size={15} stroke={1.9} /> Spațiu de publicare</span>
-      <h1 id="publish-title">Publicare</h1>
-      <p>Verificare, construire și publicare într-un singur flux. Sursele sunt salvate înainte ca rezultatul Zola să fie publicat.</p>
+      <span class="eyebrow"><IconRocket size={15} stroke={1.9} /> {t("publish-eyebrow")}</span>
+      <h1 id="publish-title">{t("publish-title")}</h1>
+      <p>{t("publish-description")}</p>
     </div>
     <div class="release-state" class:ready={releaseReady} class:blocked={!releaseReady}>
       {#if releaseReady}<IconCircleCheck size={19} stroke={1.9} />{:else}<IconAlertTriangle size={19} stroke={1.9} />{/if}
-      <div><span>Stare publicare</span><strong>{releaseReady ? "Pregătit pentru construire" : "Necesită verificare"}</strong></div>
+      <div><span>{t("publish-state")}</span><strong>{releaseReady ? t("publish-ready") : t("publish-needs-check")}</strong></div>
     </div>
   </header>
 
-  <div class="publish-tabs" role="tablist" aria-label="Vizualizări Publicare">
-    {#each views as view, index (view.id)}
-      <button
-        id={`publish-tab-${view.id}`}
-        type="button"
-        role="tab"
-        aria-selected={activeView === view.id ? "true" : "false"}
-        aria-controls={`publish-panel-${view.id}`}
-        tabindex={activeView === view.id ? 0 : -1}
-        class:active={activeView === view.id}
-        onclick={() => selectView(view.id)}
-        onkeydown={(event) => handleTabKeydown(event, index)}
-      >
-        {#if view.id === "configuration"}<IconSettings size={14} />{:else}<IconShieldCheck size={14} />{/if}
-        {view.label}
-      </button>
-    {/each}
+  <div class="workspace-toolbar">
+    <div class="ui-tabs view-tabs" role="tablist" aria-label={t("publish-tabs-label")}>
+      {#each views as view, index (view.id)}
+        <button
+          id={`publish-tab-${view.id}`}
+          type="button"
+          role="tab"
+          aria-selected={activeView === view.id ? "true" : "false"}
+          aria-controls={`publish-panel-${view.id}`}
+          tabindex={activeView === view.id ? 0 : -1}
+          class="ui-tab"
+          class:active={activeView === view.id}
+          onclick={() => selectView(view.id)}
+          onkeydown={(event) => handleTabKeydown(event, index)}
+        >
+          {#if view.id === "configuration"}<IconSettings size={14} />{:else}<IconShieldCheck size={14} />{/if}
+          {view.label}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if activeView === "release"}
     <div id="publish-panel-release" class="release-panel" role="tabpanel" aria-labelledby="publish-tab-release">
       <section class="preflight-card" aria-labelledby="preflight-title">
         <header>
-          <div><span>Praguri de calitate</span><h2 id="preflight-title">Verificare înainte de publicare</h2></div>
-          <button type="button" disabled={preflightRunning} onclick={() => { void runPreflight(); }}>
+          <div><span>{t("publish-quality-gates")}</span><h2 id="preflight-title">{t("publish-preflight-title")}</h2></div>
+          <button class="ui-button toolbar" type="button" disabled={preflightRunning} onclick={() => { void runPreflight(); }}>
             <IconRefresh class={preflightRunning ? "spin" : undefined} size={14} />
-            {preflightRunning ? "Se verifică…" : "Rulează preflight"}
+            {preflightRunning ? t("publish-checking") : t("publish-run-preflight")}
           </button>
         </header>
         <div class="gate-list">
           <article class:passed={sourceSaved} class:failed={!sourceSaved}>
             <span class="gate-icon">{#if sourceSaved}<IconCircleCheck size={17} />{:else}<IconAlertTriangle size={17} />{/if}</span>
-            <div><strong>Surse salvate</strong><p>{sourceSaved ? "Sesiunea proiectului și discul sunt sincronizate." : `${app.globalDirtyState.areas.length} zone conțin modificări nepersistate.`}</p></div>
-            {#if !sourceSaved}<button type="button" disabled={!app.globalDirtyState.canSave} onclick={() => { void saveSession(); }}><IconDeviceFloppy size={13} /> Salvează</button>{/if}
+            <div><strong>{t("publish-sources-saved")}</strong><p>{sourceSaved
+              ? t("publish-sources-synced")
+              : t("publish-unsaved-areas", { count: app.globalDirtyState.areas.length })}</p></div>
+            {#if !sourceSaved}<button class="ui-button toolbar" type="button" disabled={!app.globalDirtyState.canSave} onclick={() => { void saveSession(); }}><IconDeviceFloppy size={13} /> {t("publish-save")}</button>{/if}
           </article>
           <article class:passed={auditCurrent && auditErrors === 0} class:failed={!auditCurrent || auditErrors > 0}>
             <span class="gate-icon">{#if auditCurrent && auditErrors === 0}<IconCircleCheck size={17} />{:else}<IconAlertTriangle size={17} />{/if}</span>
-            <div><strong>Audit proiect</strong><p>{auditCurrent ? `${auditErrors} erori · ${auditWarnings} avertismente` : "Auditul nu corespunde reviziei curente."}</p></div>
-            <button type="button" onclick={() => { void app.setWorkbenchActivity("audit"); }}>Deschide auditul</button>
+            <div><strong>{t("publish-project-audit")}</strong><p>{auditCurrent
+              ? t("publish-audit-summary", {
+                errors: l10n.formatNumber(auditErrors),
+                warnings: l10n.formatNumber(auditWarnings),
+              })
+              : t("publish-audit-stale")}</p></div>
+            <button class="ui-button toolbar" type="button" onclick={() => { void app.setWorkbenchActivity("audit"); }}>{t("publish-open-audit")}</button>
           </article>
           <article class:passed={validationValid} class:failed={!validationValid}>
             <span class="gate-icon">{#if validationValid}<IconCircleCheck size={17} />{:else}<IconHammer size={17} />{/if}</span>
-            <div><strong>{validationLabel()}</strong><p>{app.controlledPreview.validationMessage || "Rulează preflight pentru validarea proiectului cu Zola."}</p></div>
-            <button type="button" disabled={preflightRunning} onclick={() => { void runPreflight(); }}>Verifică</button>
+            <div><strong>{validationLabel()}</strong><p>{app.controlledPreview.validationMessage || t("publish-validation-help")}</p></div>
+            <button class="ui-button toolbar" type="button" disabled={preflightRunning} onclick={() => { void runPreflight(); }}>{t("publish-check")}</button>
           </article>
           <article class="target-gate">
             <span class="gate-icon"><IconCloudUpload size={17} /></span>
-            <div><strong>Țintă Bunny CDN</strong><p>Credentialele rămân în .env și sunt folosite numai de comanda Rust de deploy.</p></div>
-            <button type="button" onclick={() => selectView("configuration")}>Configurează</button>
+            <div><strong>{t("publish-bunny-target")}</strong><p>{t("publish-bunny-description")}</p></div>
+            <button class="ui-button toolbar" type="button" onclick={() => selectView("configuration")}>{t("publish-configure")}</button>
           </article>
         </div>
       </section>
 
       <aside class="release-actions" aria-labelledby="release-actions-title">
         <div class="release-copy">
-          <span>Construire și publicare</span>
-          <h2 id="release-actions-title">Livrează versiunea curentă</h2>
-          <p>Construirea generează rezultatul local. Publicarea trimite rezultatul configurat către Bunny CDN și nu pornește automat.</p>
+          <span>{t("publish-build-and-release")}</span>
+          <h2 id="release-actions-title">{t("publish-release-current")}</h2>
+          <p>{t("publish-release-description")}</p>
         </div>
         {#if !releaseReady}
-          <div class="release-warning" role="status"><IconAlertTriangle size={15} /><span>Rezolvă pragurile înainte de publicare. Acțiunile rămân disponibile pentru verificări controlate.</span></div>
+          <div class="release-warning" role="status"><IconAlertTriangle size={15} /><span>{t("publish-gates-warning")}</span></div>
         {/if}
         <DeployPane
           scannedProject={!!app.scannedProject}
-          isZola={app.scannedProject?.isZola ?? false}
-          isEmpty={app.scannedProject?.isEmpty ?? false}
           cachebustAssets={app.cachebustAssets}
           projectRoot={app.sessionProjectRoot}
           runtimeSessionId={app.kernelProjectSessionId}
           workspaceMode
           actionsOnly
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as import("$lib/types").SaveState)}
+          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
           onCachebustAssetsChange={(value) => { app.cachebustAssets = value; }}
         />
-        <button class="output-link" type="button" onclick={() => { void app.setWorkbenchBottomPanel(true, "output"); }}>Deschide jurnalul</button>
+        <button class="ui-button toolbar output-link" type="button" onclick={() => { void app.openAuditWorkspace("runtime", true); }}>{t("publish-open-log")}</button>
       </aside>
     </div>
   {:else}
     <div id="publish-panel-configuration" class="configuration-panel" role="tabpanel" aria-labelledby="publish-tab-configuration">
       <header>
-        <div><span>config.toml · .env · setări Pană</span><h2>Configurare build și destinație</h2><p>Setările sunt citite și scrise prin comenzile proiectului, fără o configurație paralelă în interfață.</p></div>
+        <div><span>{t("publish-config-sources")}</span><h2>{t("publish-config-title")}</h2><p>{t("publish-config-description")}</p></div>
       </header>
       <div class="configuration-scroll">
         <DeployPane
           scannedProject={!!app.scannedProject}
-          isZola={app.scannedProject?.isZola ?? false}
-          isEmpty={app.scannedProject?.isEmpty ?? false}
           cachebustAssets={app.cachebustAssets}
           projectRoot={app.sessionProjectRoot}
           runtimeSessionId={app.kernelProjectSessionId}
           workspaceMode
-          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as import("$lib/types").SaveState)}
+          onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as import("$lib/status/global-status").GlobalStatusKind)}
           onCachebustAssetsChange={(value) => { app.cachebustAssets = value; }}
         />
       </div>
@@ -210,28 +217,19 @@
 </section>
 
 <style>
-  .publish-workspace { display: grid; grid-template-rows: auto 38px minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-panel); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .workspace-header, .eyebrow, .release-state, .publish-tabs, .publish-tabs button, .preflight-card > header, .preflight-card > header button, .gate-list article, .gate-list article > button, .gate-icon, .release-warning, .output-link { display: flex; align-items: center; }
-  .workspace-header { justify-content: space-between; gap: 24px; padding: 17px 20px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .eyebrow { gap: 6px; color: var(--wb-accent-strong); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
-  h1 { margin: 6px 0 0; color: var(--text-strong); font-size: 20px; font-weight: 650; letter-spacing: -.015em; }
-  .workspace-header p { margin: 5px 0 0; color: var(--wb-text-muted); font-size: 12px; }
+  .release-state, .preflight-card > header, .gate-list article, .gate-icon, .release-warning { display: flex; align-items: center; }
   .release-state { min-width: 194px; gap: 9px; padding: 9px 11px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); background: var(--wb-surface-document); }
   .release-state.ready { border-color: color-mix(in srgb, var(--success) 48%, var(--wb-border-subtle)); color: var(--success); }
   .release-state.blocked { border-color: color-mix(in srgb, var(--wb-warning) 48%, var(--wb-border-subtle)); color: var(--wb-warning); }
   .release-state > div { display: grid; gap: 2px; }
   .release-state span, .release-copy > span, .configuration-panel > header span, .preflight-card > header span { color: var(--wb-text-muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
   .release-state strong { color: var(--text-strong); font-size: 12px; }
-  .publish-tabs { gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .publish-tabs button { align-self: stretch; gap: 5px; padding: 0 11px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; font-size: 12px; font-weight: 600; }
-  .publish-tabs button.active { border-bottom-color: var(--wb-accent); color: var(--wb-accent-strong); }
   .release-panel { display: grid; grid-template-columns: minmax(430px, 1fr) minmax(330px, .72fr); gap: 11px; min-width: 0; min-height: 0; padding: 11px; overflow: auto; }
   .preflight-card, .release-actions, .configuration-panel { min-width: 0; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-panel); background: var(--wb-surface-document); }
   .preflight-card { overflow: hidden; align-self: start; }
   .preflight-card > header { justify-content: space-between; gap: 10px; min-height: 58px; padding: 9px 11px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
   .preflight-card > header > div { display: grid; gap: 3px; }
   h2 { margin: 0; color: var(--text-strong); font-size: 14px; }
-  .preflight-card > header button, .gate-list article > button, .output-link { justify-content: center; gap: 5px; min-height: 29px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; font-weight: 600; }
   .gate-list { display: grid; }
   .gate-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 72px; padding: 10px 11px; border-bottom: 1px solid var(--wb-border-subtle); border-left: 3px solid var(--wb-border-strong); }
   .gate-list article:last-child { border-bottom: 0; }

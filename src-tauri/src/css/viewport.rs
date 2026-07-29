@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use super::rules::{
-    get_class_rules as parse_class_rules, get_class_rules_in_media, has_media_block,
-    upsert_css_rule_desktop, upsert_css_rule_in_media_ordered, CssProperty,
+    get_class_rules as parse_class_rules, get_class_rules_in_media, has_class_rule,
+    has_class_rule_in_media, has_media_block, upsert_css_rule_desktop,
+    upsert_css_rule_in_media_ordered, CssProperty,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -11,7 +12,7 @@ pub struct CssBreakpointValues {
     pub mobile: Option<String>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CssRuleContext {
     pub file: String,
@@ -24,19 +25,6 @@ pub struct CssRuleContext {
     pub has_viewport_rule: bool,
 }
 
-pub fn get_rules_at_viewport(
-    breakpoints: &CssBreakpointValues,
-    source: &str,
-    viewport: &str,
-    selector: &str,
-) -> Vec<CssProperty> {
-    match viewport {
-        "tablet" => get_viewport_rules(breakpoints, source, "bp-tableta", "1024px", selector),
-        "mobile" => get_viewport_rules(breakpoints, source, "bp-mobil", "768px", selector),
-        _ => parse_class_rules(source, selector),
-    }
-}
-
 pub fn get_rule_context(
     breakpoints: &CssBreakpointValues,
     relative_path: String,
@@ -45,16 +33,15 @@ pub fn get_rule_context(
     viewport: String,
 ) -> CssRuleContext {
     let base_rules = parse_class_rules(source, &selector);
-    let has_base_rule = !base_rules.is_empty();
+    let has_base_rule = has_class_rule(source, &selector);
 
-    let (resolved_breakpoint, viewport_rules) = match viewport.as_str() {
+    let (resolved_breakpoint, viewport_rules, has_viewport_rule) = match viewport.as_str() {
         "tablet" => {
             get_viewport_rule_context(breakpoints, source, "bp-tableta", "1024px", &selector)
         }
         "mobile" => get_viewport_rule_context(breakpoints, source, "bp-mobil", "768px", &selector),
-        _ => (None, base_rules.clone()),
+        _ => (None, base_rules.clone(), has_base_rule),
     };
-    let has_viewport_rule = !viewport_rules.is_empty();
 
     CssRuleContext {
         file: relative_path,
@@ -108,41 +95,24 @@ fn viewport_media_token(var_name: &str) -> String {
     format!("${}", var_name)
 }
 
-fn get_viewport_rules(
-    breakpoints: &CssBreakpointValues,
-    source: &str,
-    var_name: &str,
-    fallback: &str,
-    selector: &str,
-) -> Vec<CssProperty> {
-    let token = viewport_media_token(var_name);
-    let token_rules = get_class_rules_in_media(source, &token, selector);
-    if !token_rules.is_empty() {
-        return token_rules;
-    }
-
-    let resolved =
-        resolve_breakpoint(breakpoints, var_name).unwrap_or_else(|| fallback.to_string());
-    get_class_rules_in_media(source, &resolved, selector)
-}
-
 fn get_viewport_rule_context(
     breakpoints: &CssBreakpointValues,
     source: &str,
     var_name: &str,
     fallback: &str,
     selector: &str,
-) -> (Option<String>, Vec<CssProperty>) {
+) -> (Option<String>, Vec<CssProperty>, bool) {
     let token = viewport_media_token(var_name);
     let token_rules = get_class_rules_in_media(source, &token, selector);
-    if !token_rules.is_empty() {
-        return (Some(token), token_rules);
+    if has_class_rule_in_media(source, &token, selector) {
+        return (Some(token), token_rules, true);
     }
 
     let resolved =
         resolve_breakpoint(breakpoints, var_name).unwrap_or_else(|| fallback.to_string());
     let resolved_rules = get_class_rules_in_media(source, &resolved, selector);
-    (Some(resolved), resolved_rules)
+    let has_resolved_rule = has_class_rule_in_media(source, &resolved, selector);
+    (Some(resolved), resolved_rules, has_resolved_rule)
 }
 
 fn write_viewport_rule(

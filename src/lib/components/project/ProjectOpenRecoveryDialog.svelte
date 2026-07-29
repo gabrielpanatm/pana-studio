@@ -1,9 +1,7 @@
 <script lang="ts">
   import { IconAlertTriangle, IconFolderOpen, IconShieldCheck, IconX } from "@tabler/icons-svelte";
-  import {
-    projectOpenRecoveryReasonLabel,
-    type ProjectOpenRecoveryDecisionRequest,
-  } from "$lib/project/open-recovery";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import type { ProjectOpenRecoveryDecisionRequest } from "$lib/project/open-recovery";
   import { errorMessage } from "$lib/util";
 
   let {
@@ -49,6 +47,16 @@
     event.preventDefault();
     close();
   }
+
+  function recoveryReason() {
+    if (request?.assessment.conflictReason === "project_root_replaced") {
+      return t("project-recovery-reason-root-replaced");
+    }
+    if (request?.assessment.conflictReason === "recovery_invalid") {
+      return t("project-recovery-reason-invalid");
+    }
+    return t("project-recovery-reason-disk-changed");
+  }
 </script>
 
 <svelte:window onkeydown={handleWindowKeydown} />
@@ -68,56 +76,56 @@
           <IconShieldCheck size={18} stroke={1.9} />
         </span>
         <div>
-          <p>Deschidere proiect</p>
-          <h2 id="project-open-recovery-title">Sesiune recuperabilă incompatibilă</h2>
+          <p>{t("project-recovery-eyebrow")}</p>
+          <h2 id="project-open-recovery-title">{t("project-recovery-title")}</h2>
         </div>
       </div>
-      <button type="button" class="icon-button" title="Anulează și păstrează recuperarea" disabled={submitting} onclick={close}>
+      <button type="button" class="ui-icon-button ui-close-button icon-button" title={t("project-recovery-close")} disabled={submitting} onclick={close}>
         <IconX size={16} stroke={1.9} />
       </button>
     </header>
 
     <div class="recovery-summary">
-      <span class="reason-pill">{projectOpenRecoveryReasonLabel(request.assessment)}</span>
-      <p id="project-open-recovery-message">
-        La această cale există ciorne dintr-o sesiune mai veche, dar dosarul de pe disc nu mai
-        corespunde stării lor de referință. Aplicarea automată ar putea combina două proiecte diferite.
-      </p>
+      <span class="reason-pill">{recoveryReason()}</span>
+      <p id="project-open-recovery-message">{t("project-recovery-message")}</p>
       <p class="target-path">{request.targetRoot}</p>
     </div>
 
-    <div class="metric-list" aria-label="Evidență de recuperare">
+    <div class="metric-list" aria-label={t("project-recovery-evidence")}>
       <div class="metric-row">
-        <span>Documente modificate</span>
-        <strong>{request.assessment.dirtyDocumentCount}</strong>
+        <span>{t("project-recovery-dirty-documents")}</span>
+        <strong>{l10n.formatNumber(request.assessment.dirtyDocumentCount)}</strong>
       </div>
       <div class="metric-row">
-        <span>Istoric recuperabil</span>
-        <strong>{request.assessment.undoCount} undo / {request.assessment.redoCount} redo</strong>
+        <span>{t("project-recovery-history")}</span>
+        <strong>{t("project-recovery-history-value", {
+          undo: l10n.formatNumber(request.assessment.undoCount),
+          redo: l10n.formatNumber(request.assessment.redoCount),
+        })}</strong>
       </div>
       <div class="metric-row">
-        <span>Fișiere în starea de referință / acum</span>
-        <strong>{request.assessment.acceptedFileCount} / {request.assessment.currentFileCount}</strong>
+        <span>{t("project-recovery-files")}</span>
+        <strong>{t("project-recovery-files-value", {
+          accepted: l10n.formatNumber(request.assessment.acceptedFileCount),
+          current: l10n.formatNumber(request.assessment.currentFileCount),
+        })}</strong>
       </div>
       <div class="metric-row">
-        <span>Resurse binare în draft</span>
-        <strong>{request.assessment.stagedBinaryResourceCount}</strong>
+        <span>{t("project-recovery-binary")}</span>
+        <strong>{l10n.formatNumber(request.assessment.stagedBinaryResourceCount)}</strong>
       </div>
     </div>
 
-    <section class="warning-block" aria-label="Consecința alegerii">
+    <section class="warning-block" aria-label={t("project-recovery-consequence")}>
       <IconAlertTriangle size={17} stroke={1.9} />
       <div>
-        <strong>Recuperarea rămâne neatinsă dacă anulezi.</strong>
-        <p>
-          Continuarea deschide starea actuală de pe disc și abandonează explicit ciornele vechi
-          numai după ce noua sesiune a fost publicată cu succes.
-        </p>
+        <strong>{t("project-recovery-preserved-title")}</strong>
+        <p>{t("project-recovery-preserved-description")}</p>
       </div>
     </section>
 
     {#if request.assessment.diagnostic}
-      <p class="diagnostic">{request.assessment.diagnostic}</p>
+      <p class="diagnostic">{t("project-recovery-technical-diagnostic")}</p>
     {/if}
     {#if error}
       <p class="error-message">{error}</p>
@@ -125,14 +133,14 @@
 
     <footer class="dialog-actions">
       <button type="button" class="secondary-button" disabled={submitting} onclick={close}>
-        Păstrează recuperarea și anulează
+        {t("project-recovery-keep-cancel")}
       </button>
       <button type="button" class="danger-button" disabled={submitting} onclick={() => void confirmAbandonment()}>
         {#if submitting}
-          Se verifică și se deschide...
+          {t("project-recovery-opening")}
         {:else}
           <IconFolderOpen size={16} stroke={1.9} />
-          Deschide dosarul actual și abandonează ciornele
+          {t("project-recovery-abandon")}
         {/if}
       </button>
     </footer>

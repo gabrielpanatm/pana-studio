@@ -19,6 +19,8 @@ use super::{
 pub const FILE_BUFFER_DRAFT_CAS_CONFLICT_CODE: &str = "file_buffer_draft_cas_conflict";
 pub const FILE_BUFFER_DRAFT_CAS_INVALID_CODE: &str = "file_buffer_draft_cas_invalid";
 pub const FILE_BUFFER_SAVE_CAS_CONFLICT_CODE: &str = "file_buffer_save_cas_conflict";
+pub const FILE_BUFFER_CHANGESET_CONFLICT_CODE: &str = "file_buffer_changeset_conflict";
+pub const FILE_BUFFER_CHANGESET_INVALID_CODE: &str = "file_buffer_changeset_invalid";
 
 impl FileBufferStore {
     pub fn new(
@@ -308,7 +310,9 @@ impl FileBufferStore {
     ) -> Result<FileBufferChangeSetResult, String> {
         let relative_path = input.relative_path.trim().to_string();
         if relative_path.is_empty() {
-            return Err("FileBufferStore a refuzat change-set-ul: path gol.".to_string());
+            return Err(format!(
+                "[{FILE_BUFFER_CHANGESET_INVALID_CODE}] FileBufferStore a refuzat change-set-ul: path gol."
+            ));
         }
         let max_file_bytes = self.limits.max_file_bytes;
 
@@ -320,7 +324,7 @@ impl FileBufferStore {
         if let Some(base_revision) = input.base_revision {
             if base_revision != entry.revision {
                 return Err(format!(
-                    "FileBufferStore a refuzat change-set-ul pentru {relative_path}: revizia așteptată {base_revision}, revizia curentă {}.",
+                    "[{FILE_BUFFER_CHANGESET_CONFLICT_CODE}] FileBufferStore a refuzat change-set-ul pentru {relative_path}: revizia așteptată {base_revision}, revizia curentă {}.",
                     entry.revision
                 ));
             }
@@ -331,17 +335,18 @@ impl FileBufferStore {
         if let Some(base_hash) = input.base_hash.as_deref() {
             if base_hash != current_hash {
                 return Err(format!(
-                    "FileBufferStore a refuzat change-set-ul pentru {relative_path}: hash-ul de bază nu mai corespunde bufferului curent."
+                    "[{FILE_BUFFER_CHANGESET_CONFLICT_CODE}] FileBufferStore a refuzat change-set-ul pentru {relative_path}: hash-ul de bază nu mai corespunde bufferului curent."
                 ));
             }
         }
 
         let previous_revision = entry.revision;
-        let applied = apply_text_changes(&current_text, &input.changes, input.coordinate_space)?;
+        let applied = apply_text_changes(&current_text, &input.changes, input.coordinate_space)
+            .map_err(|diagnostic| format!("[{FILE_BUFFER_CHANGESET_INVALID_CODE}] {diagnostic}"))?;
 
         if applied.text.len() as u64 > max_file_bytes {
             return Err(format!(
-                "FileBufferStore a refuzat change-set-ul pentru {relative_path}: draftul rezultat are {} bytes, peste limita de {} bytes.",
+                "[{FILE_BUFFER_CHANGESET_INVALID_CODE}] FileBufferStore a refuzat change-set-ul pentru {relative_path}: draftul rezultat are {} bytes, peste limita de {} bytes.",
                 applied.text.len(),
                 max_file_bytes
             ));

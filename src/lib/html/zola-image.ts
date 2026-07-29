@@ -1,5 +1,6 @@
 import { projectAssetPublicUrl } from "$lib/project/assets";
 import { zolaRelativePath } from "$lib/project/files";
+import { t } from "$lib/i18n/runtime.svelte";
 import type {
   ProjectFile,
   ProjectZolaImageIntent,
@@ -12,7 +13,26 @@ const SUPPORTED_SOURCE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "avif
 
 export type ZolaImageSourceResolution =
   | { eligible: true; sourceUrl: string; sourcePath: string; asset: ProjectFile }
-  | { eligible: false; reason: string };
+  | { eligible: false; code: ZolaImageSourceFailureCode };
+
+export type ZolaImageSourceFailureCode =
+  | "invalid_source_url"
+  | "asset_not_found"
+  | "asset_ambiguous"
+  | "source_unresolved";
+
+export function zolaImageSourceFailureMessage(code: ZolaImageSourceFailureCode) {
+  switch (code) {
+    case "invalid_source_url":
+      return t("zola-image-source-invalid");
+    case "asset_not_found":
+      return t("zola-image-source-not-found");
+    case "asset_ambiguous":
+      return t("zola-image-source-ambiguous");
+    case "source_unresolved":
+      return t("zola-image-source-unresolved");
+  }
+}
 
 export function decodeZolaImagePresentation(payload: string | null): ZolaImagePresentation | null {
   if (!payload) return null;
@@ -54,7 +74,7 @@ export function resolveZolaImageSource(
   ) {
     return {
       eligible: false,
-      reason: "Alege o imagine locală statică, fără URL extern, query sau expresie Tera.",
+      code: "invalid_source_url",
     };
   }
 
@@ -66,13 +86,13 @@ export function resolveZolaImageSource(
   if (matches.length === 0) {
     return {
       eligible: false,
-      reason: "Sursa nu corespunde unei imagini locale suportate din proiect.",
+      code: "asset_not_found",
     };
   }
   if (matches.length > 1) {
     return {
       eligible: false,
-      reason: "URL-ul imaginii este ambiguu între mai multe surse locale.",
+      code: "asset_ambiguous",
     };
   }
   const asset = matches[0];
@@ -95,7 +115,7 @@ export function createZolaImageIntent(input: {
 }): ProjectZolaImageIntent {
   if (!input.enabled) return { enabled: false };
   if (!input.source?.eligible) {
-    throw new Error(input.source?.reason ?? "Imaginea locală nu a putut fi rezolvată.");
+    throw new Error(zolaImageSourceFailureMessage(input.source?.code ?? "source_unresolved"));
   }
   return {
     enabled: true,

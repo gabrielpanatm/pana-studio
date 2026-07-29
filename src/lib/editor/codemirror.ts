@@ -61,23 +61,23 @@ export function createCodeEditorTheme(theme: "dark" | "light") {
         borderRight: dark ? "1px solid #24282c" : "1px solid #d8e0db",
       },
       ".cm-activeLine": {
-        backgroundColor: dark ? "rgba(29, 127, 106, 0.08)" : "rgba(29, 127, 106, 0.07)",
+        backgroundColor: `color-mix(in srgb, var(--brand) ${dark ? "8%" : "7%"}, transparent)`,
       },
       ".cm-activeLineGutter": {
-        backgroundColor: dark ? "rgba(29, 127, 106, 0.14)" : "rgba(29, 127, 106, 0.12)",
+        backgroundColor: `color-mix(in srgb, var(--brand) ${dark ? "14%" : "12%"}, transparent)`,
       },
       ".cm-selectionBackground, ::selection": {
-        backgroundColor: dark ? "rgba(47, 170, 140, 0.26)" : "rgba(29, 127, 106, 0.22)",
+        backgroundColor: `color-mix(in srgb, var(--brand) ${dark ? "26%" : "22%"}, transparent)`,
       },
       ".cm-cursor": {
-        borderLeftColor: dark ? "#2faa8c" : "#1d7f6a",
+        borderLeftColor: "var(--brand-strong)",
       },
       ".cm-searchMatch": {
         backgroundColor: dark ? "rgba(201, 140, 255, 0.18)" : "rgba(201, 140, 255, 0.12)",
       },
       ".cm-selected-source-node": {
-        backgroundColor: dark ? "rgba(29, 127, 106, 0.18)" : "rgba(29, 127, 106, 0.14)",
-        boxShadow: `inset 0 0 0 1px ${dark ? "rgba(47, 170, 140, 0.55)" : "rgba(29, 127, 106, 0.5)"}`,
+        backgroundColor: `color-mix(in srgb, var(--brand) ${dark ? "18%" : "14%"}, transparent)`,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, var(--brand) ${dark ? "55%" : "50%"}, transparent)`,
         borderRadius: "4px",
       },
     },

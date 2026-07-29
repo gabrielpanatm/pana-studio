@@ -7,6 +7,7 @@ use crate::kernel::file_buffer_store::{
     read_project_disk_text_snapshot, FileBufferBaseline, FileBufferEntry, FileBufferStore,
     ProjectDiskTextReadOutcome,
 };
+use crate::localization::LocalizedDiagnostic;
 
 use super::model::{
     KernelDiskConflictFileSnapshot, KernelDiskConflictKind, KernelDiskConflictSnapshot,
@@ -54,6 +55,7 @@ pub(crate) fn scan_disk_conflict_entry(
                 None,
                 KernelDiskConflictKind::MissingOnDisk,
                 "Fișierul urmărit lipsește de pe disk față de baseline-ul sesiunii.",
+                LocalizedDiagnostic::new("diagnostic-disk-conflict-file-missing"),
             );
         }
         ProjectDiskTextReadOutcome::NotFile => {
@@ -62,6 +64,7 @@ pub(crate) fn scan_disk_conflict_entry(
                 None,
                 KernelDiskConflictKind::NotFile,
                 "Path-ul urmărit nu mai este fișier text.",
+                LocalizedDiagnostic::new("diagnostic-disk-conflict-file-not-file"),
             );
         }
         ProjectDiskTextReadOutcome::Oversized(size) => {
@@ -73,6 +76,9 @@ pub(crate) fn scan_disk_conflict_entry(
                     "Fișierul de pe disk are {size} bytes, peste limita FileBufferStore de {} bytes.",
                     store.limits.max_file_bytes
                 ),
+                LocalizedDiagnostic::new("diagnostic-disk-conflict-file-oversized")
+                    .with_argument("size", size)
+                    .with_argument("limit", store.limits.max_file_bytes),
             );
         }
         ProjectDiskTextReadOutcome::InvalidPath(error)
@@ -82,6 +88,8 @@ pub(crate) fn scan_disk_conflict_entry(
                 None,
                 KernelDiskConflictKind::InvalidPath,
                 format!("Path-ul urmărit nu poate fi citit în boundary-ul proiectului: {error}"),
+                LocalizedDiagnostic::new("diagnostic-disk-conflict-file-invalid-path")
+                    .with_argument("detail", error),
             );
         }
         ProjectDiskTextReadOutcome::Unstable(error)
@@ -93,6 +101,8 @@ pub(crate) fn scan_disk_conflict_entry(
                 format!(
                     "Fișierul de pe disk nu poate fi citit ca text pentru conflict check: {error}"
                 ),
+                LocalizedDiagnostic::new("diagnostic-disk-conflict-file-unreadable")
+                    .with_argument("detail", error),
             );
         }
         ProjectDiskTextReadOutcome::Loaded(snapshot) => snapshot.baseline,
@@ -104,6 +114,7 @@ pub(crate) fn scan_disk_conflict_entry(
             Some(disk),
             KernelDiskConflictKind::Readonly,
             "Fișierul de pe disk este readonly; Save Engine ar bloca scrierea.",
+            LocalizedDiagnostic::new("diagnostic-disk-conflict-file-readonly"),
         );
     }
 
@@ -113,6 +124,7 @@ pub(crate) fn scan_disk_conflict_entry(
             Some(disk),
             KernelDiskConflictKind::DiskChanged,
             "Conținutul de pe disk diferă de baseline-ul FileBufferStore.",
+            LocalizedDiagnostic::new("diagnostic-disk-conflict-file-changed"),
         );
     }
 
@@ -122,6 +134,7 @@ pub(crate) fn scan_disk_conflict_entry(
             Some(disk),
             KernelDiskConflictKind::MetadataChanged,
             "Metadata disk diferă, dar hash-ul text este identic cu baseline-ul.",
+            LocalizedDiagnostic::new("diagnostic-disk-conflict-file-metadata"),
         );
     }
 
@@ -131,6 +144,7 @@ pub(crate) fn scan_disk_conflict_entry(
             Some(disk),
             KernelDiskConflictKind::DirtyOnly,
             "Există draft în memorie, iar disk-ul este încă la baseline-ul sesiunii.",
+            LocalizedDiagnostic::new("diagnostic-disk-conflict-file-draft"),
         );
     }
 
@@ -139,6 +153,7 @@ pub(crate) fn scan_disk_conflict_entry(
         Some(disk),
         KernelDiskConflictKind::Clean,
         "Disk-ul corespunde baseline-ului FileBufferStore.",
+        LocalizedDiagnostic::new("diagnostic-disk-conflict-file-clean"),
     )
 }
 
@@ -147,6 +162,7 @@ fn file_snapshot(
     disk: Option<FileBufferBaseline>,
     kind: KernelDiskConflictKind,
     message: impl Into<String>,
+    diagnostic: LocalizedDiagnostic,
 ) -> KernelDiskConflictFileSnapshot {
     KernelDiskConflictFileSnapshot {
         relative_path: entry.relative_path.clone(),
@@ -155,6 +171,7 @@ fn file_snapshot(
         role: entry.role,
         status: status_for_kind(kind),
         kind,
+        diagnostic,
         message: message.into(),
         baseline: entry.baseline.clone(),
         disk,
@@ -193,15 +210,25 @@ fn summarize_files(files: &[KernelDiskConflictFileSnapshot]) -> KernelDiskConfli
         KernelDiskConflictStatus::Clean
     };
 
+    let verdict_reason = verdict_reason(
+        files.len(),
+        conflict_count,
+        dirty_only_count,
+        metadata_changed_count,
+        status,
+    );
+    let verdict_diagnostic = verdict_diagnostic(
+        files.len(),
+        conflict_count,
+        dirty_only_count,
+        metadata_changed_count,
+        status,
+    );
+
     KernelDiskConflictSummary {
         status,
-        verdict_reason: verdict_reason(
-            files.len(),
-            conflict_count,
-            dirty_only_count,
-            metadata_changed_count,
-            status,
-        ),
+        verdict_diagnostic,
+        verdict_reason,
         tracked_file_count: files.len(),
         clean_count,
         dirty_only_count,
@@ -216,6 +243,33 @@ fn summarize_files(files: &[KernelDiskConflictFileSnapshot]) -> KernelDiskConfli
         conflict_count,
         blocking_count,
     }
+}
+
+fn verdict_diagnostic(
+    tracked_count: usize,
+    conflict_count: usize,
+    dirty_only_count: usize,
+    metadata_changed_count: usize,
+    status: KernelDiskConflictStatus,
+) -> LocalizedDiagnostic {
+    if tracked_count == 0 {
+        return LocalizedDiagnostic::new("diagnostic-disk-conflict-summary-empty");
+    }
+    if matches!(status, KernelDiskConflictStatus::Error) {
+        return LocalizedDiagnostic::new("diagnostic-disk-conflict-summary-error")
+            .with_argument("count", conflict_count);
+    }
+    if matches!(status, KernelDiskConflictStatus::Warning) {
+        return LocalizedDiagnostic::new("diagnostic-disk-conflict-summary-warning")
+            .with_argument("count", conflict_count);
+    }
+    if dirty_only_count > 0 || metadata_changed_count > 0 {
+        return LocalizedDiagnostic::new("diagnostic-disk-conflict-summary-info")
+            .with_argument("drafts", dirty_only_count)
+            .with_argument("metadata", metadata_changed_count);
+    }
+    LocalizedDiagnostic::new("diagnostic-disk-conflict-summary-clean")
+        .with_argument("count", tracked_count)
 }
 
 fn verdict_reason(

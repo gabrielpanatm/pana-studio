@@ -90,8 +90,6 @@ pub enum KernelEventKind {
     ObservabilityLogRotated,
     PreviewProjectionIntentAccepted,
     PreviewProjectionIntentBlocked,
-    PreviewProjectionLayerDropCommitted,
-    PreviewProjectionLayerDropBlocked,
     PreviewProjectionHtmlInsertDropCommitted,
     PreviewProjectionHtmlInsertDropBlocked,
     PreviewProjectionHtmlAttributesCommitted,
@@ -106,12 +104,8 @@ pub enum KernelEventKind {
     PreviewProjectionHtmlDeleteBlocked,
     PreviewProjectionTeraInsertDropCommitted,
     PreviewProjectionTeraInsertDropBlocked,
-    PreviewProjectionTeraMoveDropCommitted,
-    PreviewProjectionTeraMoveDropBlocked,
     PreviewProjectionTeraDeleteCommitted,
     PreviewProjectionTeraDeleteBlocked,
-    PreviewProjectionTemplateEditGranted,
-    PreviewProjectionTemplateEditBlocked,
     PreviewCanvasPrepared,
     PreviewCanvasPhaseAcknowledged,
     PreviewCanvasCanonicalVerified,
@@ -119,6 +113,7 @@ pub enum KernelEventKind {
     PreviewCanvasStaleDiscarded,
     PreviewCanvasPatchRolledBack,
     PreviewCanvasFallback,
+    PreviewCanvasAckTimeout,
     PreviewCanvasCacheHit,
     PreviewCanvasCacheMiss,
     PreviewCanvasFoucGuardSatisfied,
@@ -412,12 +407,6 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         KernelEventKind::PreviewProjectionIntentBlocked => {
             "kernel.preview_projection.intent.blocked"
         }
-        KernelEventKind::PreviewProjectionLayerDropCommitted => {
-            "kernel.preview_projection.layer_drop.committed"
-        }
-        KernelEventKind::PreviewProjectionLayerDropBlocked => {
-            "kernel.preview_projection.layer_drop.blocked"
-        }
         KernelEventKind::PreviewProjectionHtmlInsertDropCommitted => {
             "kernel.preview_projection.html_insert_drop.committed"
         }
@@ -460,23 +449,11 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         KernelEventKind::PreviewProjectionTeraInsertDropBlocked => {
             "kernel.preview_projection.tera_insert_drop.blocked"
         }
-        KernelEventKind::PreviewProjectionTeraMoveDropCommitted => {
-            "kernel.preview_projection.tera_move_drop.committed"
-        }
-        KernelEventKind::PreviewProjectionTeraMoveDropBlocked => {
-            "kernel.preview_projection.tera_move_drop.blocked"
-        }
         KernelEventKind::PreviewProjectionTeraDeleteCommitted => {
             "kernel.preview_projection.tera_delete.committed"
         }
         KernelEventKind::PreviewProjectionTeraDeleteBlocked => {
             "kernel.preview_projection.tera_delete.blocked"
-        }
-        KernelEventKind::PreviewProjectionTemplateEditGranted => {
-            "kernel.preview_projection.template_edit.granted"
-        }
-        KernelEventKind::PreviewProjectionTemplateEditBlocked => {
-            "kernel.preview_projection.template_edit.blocked"
         }
         KernelEventKind::PreviewCanvasPrepared => "kernel.preview.canvas.prepared",
         KernelEventKind::PreviewCanvasPhaseAcknowledged => {
@@ -489,6 +466,7 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         KernelEventKind::PreviewCanvasStaleDiscarded => "kernel.preview.canvas.stale_discarded",
         KernelEventKind::PreviewCanvasPatchRolledBack => "kernel.preview.canvas.patch_rolled_back",
         KernelEventKind::PreviewCanvasFallback => "kernel.preview.canvas.fallback",
+        KernelEventKind::PreviewCanvasAckTimeout => "kernel.preview.canvas.ack_timeout",
         KernelEventKind::PreviewCanvasCacheHit => "kernel.preview.canvas.cache_hit",
         KernelEventKind::PreviewCanvasCacheMiss => "kernel.preview.canvas.cache_miss",
         KernelEventKind::PreviewCanvasFoucGuardSatisfied => {
@@ -561,6 +539,14 @@ mod tests {
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn canvas_ack_timeout_has_a_distinct_stable_event_name() {
+        assert_eq!(
+            kernel_event_name(KernelEventKind::PreviewCanvasAckTimeout),
+            "kernel.preview.canvas.ack_timeout"
+        );
+    }
 
     #[test]
     fn versioning_events_have_stable_distinct_names() {

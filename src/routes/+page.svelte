@@ -3,6 +3,7 @@
   import type { Component } from "svelte";
   import type { TerminalPaneProps } from "$lib/components/TerminalPane.svelte";
   import AppChrome from "$lib/components/workspace/AppChrome.svelte";
+  import StartupView from "$lib/components/startup/StartupView.svelte";
   import ProjectOpenRecoveryDialog from "$lib/components/project/ProjectOpenRecoveryDialog.svelte";
   import ProjectTransitionDecisionDialog from "$lib/components/project/ProjectTransitionDecisionDialog.svelte";
   import WorkspaceCenterArea from "$lib/components/workspace/WorkspaceCenterArea.svelte";
@@ -35,6 +36,7 @@
     resetNativeWebviewZoom,
     resetNativeZoomIfVisualViewportChanged,
   } from "$lib/ui/native-zoom";
+  import { installSmoothWheelScrolling } from "$lib/ui/smooth-wheel";
   import {
     selectTopbarUndoRedoRoute,
     topbarUndoRedoState,
@@ -45,8 +47,11 @@
     ProjectWorkspaceSnapshot,
     ProjectWorkspaceUndoRedoCommandReceipt,
     WorkbenchSurface,
+    WorkspaceSourceOpenOptions,
   } from "$lib/types";
   import { onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   type ProjectWorkspaceUndoRedoOutcome =
     | {
@@ -57,9 +62,6 @@
     | { ok: false; message: string };
 
   const app = new AppState();
-  let statusSourceLabel = $state("");
-  let statusSourceValue = $state("");
-  let statusSourceOpenable = $state(false);
   let TerminalPaneComponent = $state<Component<TerminalPaneProps> | null>(null);
   let terminalPaneLoading = false;
   let topbarKernelUndoRedo = $state<ProjectWorkspaceSnapshot | null>(null);
@@ -89,7 +91,7 @@
       return topbarKernelUndoRedo;
     } catch (error) {
       topbarKernelUndoRedo = null;
-      app.setGlobalStatus(`Istoricul sesiunii proiectului nu a putut fi citit: ${errorMessage(error)}`, "error");
+      app.setGlobalStatus(t("workbench-history-read-failed", { error: errorMessage(error) }), "error");
       return null;
     } finally {
       topbarKernelUndoRedoLoading = false;
@@ -114,7 +116,7 @@
     direction: TopbarUndoRedoDirection,
   ): Promise<ProjectWorkspaceUndoRedoOutcome> {
     if (kernelUndoRedoInFlight) {
-      const message = "O operație de anulare sau refacere este deja în curs.";
+      const message = t("workbench-history-in-flight");
       return { ok: false, message };
     }
 
@@ -124,7 +126,7 @@
       expectedSessionEpoch: app.projectSessionEpoch,
     };
     if (!lease.expectedProjectRoot || !lease.expectedSessionId) {
-      const message = "Anularea sau refacerea necesită o sesiune activă și identificată.";
+      const message = t("workbench-history-session-required");
       return { ok: false, message };
     }
 
@@ -134,19 +136,19 @@
     try {
       await app.beginKernelUndoRedoFrontendLease();
       frontendLeaseAcquired = true;
-      requireCurrentKernelUndoRedoUiLease(lease, "bariera frontend Undo/Redo");
+      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-frontend"));
       const before = await refreshTopbarKernelUndoRedoState();
-      requireCurrentKernelUndoRedoUiLease(lease, "citirea istoricului sesiunii proiectului");
+      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-read"));
       const target = direction === "undo" ? before?.history.nextUndo : before?.history.nextRedo;
       if (!before || !target) {
         const message = direction === "undo"
-          ? "Sesiunea proiectului nu mai are o modificare disponibilă pentru anulare."
-          : "Sesiunea proiectului nu mai are o modificare disponibilă pentru refacere.";
+          ? t("workbench-history-no-undo")
+          : t("workbench-history-no-redo");
         return { ok: false, message };
       }
 
       app.setGlobalStatus(
-        direction === "undo" ? "Se aplică undo în sesiune..." : "Se aplică redo în sesiune...",
+        direction === "undo" ? t("workbench-history-applying-undo") : t("workbench-history-applying-redo"),
         "saving",
       );
       const identity = {
@@ -159,7 +161,7 @@
         ? await undoProjectWorkspace(identity)
         : await redoProjectWorkspace(identity);
       operationReceipt = receipt;
-      requireCurrentKernelUndoRedoUiLease(lease, "receipt-ul Undo/Redo");
+      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-receipt"));
       requireProjectWorkspaceUndoRedoCommandReceipt(receipt, {
         projectRoot: lease.expectedProjectRoot,
         runtimeSessionId: lease.expectedSessionId,
@@ -171,22 +173,25 @@
       // layer belongs to the pre-history revision and must never be replayed
       // over the generation that Rust is about to publish.
       app.clearInspectorLiveProperties();
+      if (receipt.workbench) {
+        app.workbenchSnapshot = receipt.workbench.snapshot;
+      }
       topbarKernelUndoRedo = receipt.workspace;
       const previewWarning = await syncAfterKernelUndoRedo(receipt, lease);
-      const label = direction === "undo" ? "Anularea" : "Refacerea";
+      const label = direction === "undo" ? t("workbench-history-undo-label") : t("workbench-history-redo-label");
       app.setGlobalStatus(
         previewWarning
-          ? `${label} aplicat în sesiune. Preview-ul va fi resincronizat: ${previewWarning}`
-          : `${label} aplicat în sesiune.`,
+          ? t("workbench-history-applied-preview-warning", { operation: label, warning: previewWarning })
+          : t("workbench-history-applied", { operation: label }),
         previewWarning ? "unsaved" : "restored",
       );
       return { ok: true, snapshot: receipt.workspace.history, receipt };
     } catch (error) {
-      const label = direction === "undo" ? "Anularea" : "Refacerea";
+      const label = direction === "undo" ? t("workbench-history-undo-label") : t("workbench-history-redo-label");
       const detail = errorMessage(error);
       const message = operationReceipt
-        ? `${label} a schimbat sesiunea, dar proiecția interfeței a eșuat: ${detail} Reîncarcă proiecția aceleiași revizii.`
-        : `${label} nu a fost aplicat: ${detail}`;
+        ? t("workbench-history-projection-failed", { operation: label, error: detail })
+        : t("workbench-history-not-applied", { operation: label, error: detail });
       app.setGlobalStatus(
         message,
         "error",
@@ -208,7 +213,7 @@
     operation: string,
   ) {
     if (!kernelUndoRedoUiLeaseIsCurrent(lease)) {
-      throw new Error(`${operation} a fost invalidată de schimbarea ProjectSession.`);
+      throw new Error(t("workbench-history-session-changed", { operation }));
     }
   }
 
@@ -216,10 +221,10 @@
     receipt: ProjectWorkspaceUndoRedoCommandReceipt,
     lease: KernelUndoRedoProjectionLease,
   ): Promise<string | null> {
-    requireCurrentKernelUndoRedoUiLease(lease, "proiecția Undo/Redo");
+    requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-projection"));
     const entry = receipt.result.entry;
     for (const projection of receipt.result.documents) {
-      requireCurrentKernelUndoRedoUiLease(lease, "proiecția documentelor Undo/Redo");
+      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-documents"));
       rebaseFileBufferDraftSyncProjection(projection.relativePath, projection.snapshot);
       if (projection.snapshot) {
         applySourceTextFromKernelUndoRedo(projection.relativePath, projection.snapshot.text);
@@ -227,13 +232,13 @@
         removeSourceTextAfterKernelUndoRedo(projection.relativePath);
       }
     }
-    requireCurrentKernelUndoRedoUiLease(lease, "proiecția source Undo/Redo");
+    requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-source"));
     if (entry.pageJsPaths.length > 0) app.jsRefreshToken += 1;
     if (entry.documentPaths.some((path) => /\.(?:css|scss)$/i.test(path))) {
       app.notifyCssSourceChanged();
     }
     await reconcileProjectWorkspaceTopologyAfterHistory(app, receipt, lease);
-    requireCurrentKernelUndoRedoUiLease(lease, "reconcilierea topologiei Undo/Redo");
+    requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-topology"));
     // Inspectorul, CodeMirror și navigatorul trebuie să reflecte snapshot-ul
     // Rust chiar dacă proiecția iframe-ului este momentan indisponibilă.
     app.refreshToken += 1;
@@ -243,10 +248,10 @@
         minimumWorkspaceRevision: receipt.workspace.revision,
         requestedPaths: [...new Set([...entry.documentPaths, ...entry.pageJsPaths])].sort(),
       });
-      requireCurrentKernelUndoRedoUiLease(lease, "proiecția previzualizării după anulare sau refacere");
+      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-preview"));
       return null;
     } catch (error) {
-      requireCurrentKernelUndoRedoUiLease(lease, "eșecul previzualizării după anulare sau refacere");
+      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-preview-failure"));
       return errorMessage(error);
     }
   }
@@ -278,35 +283,6 @@
     return app.scssVariables.find((variable) => variable.name === name)?.value || fallback;
   }
 
-  function setStatusSourceContext(context: { label: string; value: string; openable?: boolean } | null) {
-    statusSourceLabel = context?.label ?? "";
-    statusSourceValue = context?.value ?? "";
-    statusSourceOpenable = Boolean(context?.openable && context.value);
-  }
-
-  async function openStatusSource() {
-    if (!statusSourceOpenable || !statusSourceValue || !app.scannedProject) return;
-    if ((statusSourceLabel.startsWith("SCSS") || statusSourceLabel.startsWith("CSS")) && app.activeCssSelector) {
-      await app.openCssCodeRevealTarget({
-        selector: app.activeCssSelector,
-        file: statusSourceValue,
-      });
-      return;
-    }
-    if (statusSourceValue.includes(":")) {
-      await app.openSourceLocation(statusSourceValue);
-      await app.setCenterView("code");
-      app.requestCodeSelectionReveal();
-      return;
-    }
-    const file = app.scannedProject.files.find((item) => item.relativePath === statusSourceValue);
-    if (file) {
-      await app.loadScannedProjectFile(file);
-      await app.setCenterView("code");
-      app.requestCodeSelectionReveal();
-    }
-  }
-
   async function undoFromShortcut() {
     await runTopbarUndoRedo("undo");
   }
@@ -329,7 +305,7 @@
     else if (intent === "redo") void redoFromShortcut();
     else if (intent === "toggleTerminal") void app.toggleTerminalPane();
     else if (intent === "showProblems" && app.scannedProject) {
-      void app.setWorkbenchBottomPanel(true, "problems");
+      void app.openAuditWorkspace("overview");
     }
     else if (intent === "toggleEditorSplit" && app.scannedProject) {
       void app.setSynchronizedWorkbenchSplit(
@@ -370,7 +346,7 @@
       (candidate) => candidatePaths.includes(candidate.relativePath),
     );
     if (!file) {
-      throw new Error("Resursa nu mai există în scanarea proiectului: " + relativePath);
+      throw new Error(t("workbench-command-resource-missing", { path: relativePath }));
     }
     app.openProjectWorkbench();
     await app.loadScannedProjectFile(file);
@@ -423,13 +399,14 @@
         await app.toggleTerminalPane();
         break;
       case "show_problems":
-        await app.setWorkbenchBottomPanel(true, "problems");
+        await app.openAuditWorkspace("overview");
         break;
       case "show_output":
-        await app.setWorkbenchBottomPanel(true, "output");
+        await app.openAuditWorkspace("runtime", true);
         break;
       case "show_timeline":
-        await app.setWorkbenchBottomPanel(true, "timeline");
+        app.motionWorkspace.openTimeline();
+        app.setPreviewExecutionMode("motion");
         break;
       case "split_vertical":
         await app.setSynchronizedWorkbenchSplit("vertical");
@@ -482,10 +459,10 @@
       app.openProjectWorkbench();
       app.clearNotification("workbench.activity");
     } catch (error) {
-      app.notify({
+      app.escalateGlobalStatus({
         id: "workbench.activity",
         level: "warning",
-        title: "Activitatea nu a putut fi deschisă",
+        title: t("workbench-activity-open-failed"),
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -520,10 +497,14 @@
       activeWorkbenchActivity: app.workbenchSnapshot?.activeActivity ?? "editor",
       applicationSurface: app.applicationSurface,
       centerView: app.centerView,
-      selectedElement: app.selectedElement,
+      selectionSnapshot: app.selectionSnapshot,
     });
-    if (intent !== "deleteSelectedHtml") return;
+    if (intent === "none") return;
     event.preventDefault();
+    if (intent === "deleteSelectedTera") {
+      void app.deleteSelectedTeraNode();
+      return;
+    }
     void app.deleteHtmlElement();
   }
 
@@ -558,15 +539,43 @@
     window.setTimeout(() => bootScreen.remove(), 120);
   }
 
-  async function openWorkspaceSource(path: string) {
+  async function revealApplication() {
+    const bootScreen = document.getElementById("pana-boot-screen");
+    if (bootScreen) {
+      bootScreen.setAttribute("aria-label", t("application-loading-label"));
+      const subtitle = bootScreen.querySelector<HTMLElement>(".boot-subtitle");
+      if (subtitle) subtitle.textContent = t("application-loading-subtitle");
+    }
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    hideBootScreen();
+    try {
+      await getCurrentWindow().show();
+    } catch {
+      // Browser-only development does not expose a native Tauri window.
+    }
+  }
+
+  async function openWorkspaceSource(
+    path: string,
+    options: WorkspaceSourceOpenOptions = {},
+  ) {
     const candidatePaths = [path];
     const file = app.scannedProject?.files.find((item) => candidatePaths.includes(item.relativePath));
     if (!file) {
-      app.setGlobalStatus(`Fișierul nu este în scanarea proiectului: ${path}`, "error");
+      app.setGlobalStatus(t("workbench-file-not-scanned", { path }), "error");
       return;
     }
-    await app.loadScannedProjectFile(file);
-    await app.setCenterView("code");
+    await app.loadScannedProjectFile(file, {
+      preferredTemplatePagePath: options.templateContextPagePath,
+      preferredTemplateRoute: options.templateContextUrl,
+    });
+    await app.setCenterView(
+      options.surface === "visual"
+        ? "preview"
+        : options.surface === "markdown"
+          ? "markdown"
+          : "code",
+    );
   }
 
   $effect(() => {
@@ -586,9 +595,11 @@
   });
 
   onMount(() => {
+    const disposeSmoothWheelScrolling = installSmoothWheelScrolling(window);
     requestAnimationFrame(() => {
-      hideBootScreen();
-      window.setTimeout(() => app.initFromStorage(window.localStorage), 0);
+      window.setTimeout(() => {
+        void app.initFromStorage(window.localStorage).finally(revealApplication);
+      }, 0);
     });
     window.addEventListener("message", handleWindowMessage);
     window.addEventListener("keydown", handleAppShortcuts, { capture: true });
@@ -601,6 +612,7 @@
     window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
     resetNativeWebviewZoom();
     return () => {
+      disposeSmoothWheelScrolling();
       app.destroy();
       window.removeEventListener("message", handleWindowMessage);
       window.removeEventListener("keydown", handleAppShortcuts, { capture: true });
@@ -627,57 +639,64 @@
   class:dark-theme={app.uiTheme === "dark"}
   class:light-theme={app.uiTheme === "light"}
   class:external-reconcile-lock={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired}
+  class:startup-active={!app.scannedProject && app.applicationSurface !== "settings"}
   class="app-shell"
   inert={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired}
   aria-busy={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired}
 >
-  <AppChrome
-    {app}
-    topbarCanUndo={topbarUndoRedo.canUndo}
-    topbarCanRedo={topbarUndoRedo.canRedo}
-    undoAction={() => runTopbarUndoRedo("undo")}
-    redoAction={() => runTopbarUndoRedo("redo")}
-    {statusSourceLabel}
-    {statusSourceValue}
-    {statusSourceOpenable}
-    {openStatusSource}
-    {commandCenterOpen}
-    {openCommandCenter}
-    {closeCommandCenter}
-    {executeCommandCenterAction}
-  >
-
-  <div class="workbench-frame">
-    <ActivityRail
-      activeActivity={app.workbenchSnapshot?.activeActivity ?? "editor"}
-      disabled={!app.scannedProject}
-      terminalOpen={app.applicationSurface === "workbench" && app.terminalPaneOpen}
-      settingsActive={app.applicationSurface === "settings"}
-      selectActivity={selectWorkbenchActivity}
-      toggleTerminal={() => { void app.toggleTerminalPane(); }}
-      selectSettings={() => app.openApplicationSettings()}
-    />
-  <section
-    class:left-pane-collapsed={app.leftPaneCollapsed}
-    class:right-pane-collapsed={app.rightPaneCollapsed}
-    class:center-workspace-active={!editorSidebarsAvailable}
-    class="workspace"
-    style={`--left-pane-width: ${app.leftPaneWidth}px; --right-pane-width: ${app.rightPaneWidth}px;`}
-    aria-label="Spațiu de lucru Pană Studio"
-  >
-    <WorkspaceProjectArea {app} />
-
-    <WorkspaceCenterArea
+  {#if app.scannedProject || app.applicationSurface === "settings"}
+    <AppChrome
       {app}
-      {TerminalPaneComponent}
-      {breakpointValue}
-      {openWorkspaceSource}
-    />
+      topbarCanUndo={topbarUndoRedo.canUndo}
+      topbarCanRedo={topbarUndoRedo.canRedo}
+      undoAction={() => runTopbarUndoRedo("undo")}
+      redoAction={() => runTopbarUndoRedo("redo")}
+      {commandCenterOpen}
+      {openCommandCenter}
+      {closeCommandCenter}
+      {executeCommandCenterAction}
+    >
 
-    <WorkspaceInspectorArea {app} {setStatusSourceContext} />
-  </section>
-  </div>
-  </AppChrome>
+      <div class="workbench-frame">
+        <ActivityRail
+          activeActivity={app.workbenchSnapshot?.activeActivity ?? "editor"}
+          disabled={!app.scannedProject}
+          terminalOpen={app.applicationSurface === "workbench" && app.terminalPaneOpen}
+          settingsActive={app.applicationSurface === "settings"}
+          selectActivity={selectWorkbenchActivity}
+          toggleTerminal={() => { void app.toggleTerminalPane(); }}
+          selectSettings={() => {
+            if (!app.scannedProject && app.applicationSurface === "settings") {
+              app.openProjectWorkbench();
+            } else {
+              app.openApplicationSettings();
+            }
+          }}
+        />
+        <section
+          class:left-pane-collapsed={app.leftPaneCollapsed}
+          class:right-pane-collapsed={app.rightPaneCollapsed}
+          class:center-workspace-active={!editorSidebarsAvailable}
+          class="workspace"
+          style={`--left-pane-width: ${app.leftPaneWidth}px; --right-pane-width: ${app.rightPaneWidth}px;`}
+          aria-label={t("workbench-aria-label")}
+        >
+          <WorkspaceProjectArea {app} />
+
+          <WorkspaceCenterArea
+            {app}
+            {TerminalPaneComponent}
+            {breakpointValue}
+            {openWorkspaceSource}
+          />
+
+          <WorkspaceInspectorArea {app} />
+        </section>
+      </div>
+    </AppChrome>
+  {:else}
+    <StartupView {app} />
+  {/if}
 
   <ProjectTransitionDecisionDialog
     request={app.projectTransitionDecisionRequest}
@@ -694,10 +713,10 @@
 
 {#if app.externalDiskState.workspaceProjectionRecoveryRequired}
   <dialog open class="external-reconcile-recovery" aria-labelledby="external-reconcile-recovery-title">
-    <strong id="external-reconcile-recovery-title">Reproiectare necesară</strong>
-    <p>Starea confirmată pe disc și interfața nu mai sunt sincronizate. Editarea și scrierea sunt blocate până la reîncărcare, pentru a preveni pierderea datelor.</p>
+    <strong id="external-reconcile-recovery-title">{t("workbench-external-recovery-title")}</strong>
+    <p>{t("workbench-external-recovery-description")}</p>
     <button type="button" disabled={externalRecoveryInFlight} onclick={recoverExternalProjectionFromDisk}>
-      {externalRecoveryInFlight ? "Se reîncarcă..." : "Reîncarcă sigur de pe disc"}
+      {externalRecoveryInFlight ? t("workbench-external-recovery-loading") : t("workbench-external-recovery-action")}
     </button>
   </dialog>
 {/if}

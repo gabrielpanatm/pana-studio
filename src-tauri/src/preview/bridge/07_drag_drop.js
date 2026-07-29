@@ -44,13 +44,7 @@
     if (element.id === "pana-studio-preview-drop-line" ||
         element.id === "pana-studio-preview-drop-box" ||
         element.id === "pana-studio-preview-drop-hint" ||
-        element.id === HTML_SELECTION_ID ||
-        element.id === PREVIEW_HOVER_ID ||
-        element.id === TEMPLATE_GATE_ID ||
-        element.id === TEMPLATE_GATE_ACTIONS_ID ||
-        (element.closest && element.closest("#" + HTML_SELECTION_ID)) ||
-        (element.closest && element.closest("#" + PREVIEW_HOVER_ID)) ||
-        (element.closest && element.closest("#" + TEMPLATE_GATE_ACTIONS_ID))) {
+        isStudioOverlayElement(element)) {
       return null;
     }
     if (element === document.body || element === document.documentElement) {
@@ -59,34 +53,10 @@
     return element;
   }
 
-  function previewDragTargetFromPointer(event) {
-    return previewDragTargetFromPoint(event.clientX, event.clientY);
-  }
-
-  function previewDraggableElementFromTarget(target) {
-    if (!(target instanceof Element)) return null;
-    if (target.closest("input, textarea, select, [contenteditable='true']")) return null;
-    if (target.closest("#" + HTML_SELECTION_ID + ", #" + PREVIEW_HOVER_ID + ", #" + TEMPLATE_GATE_ID + ", #" + TEMPLATE_GATE_ACTIONS_ID)) return null;
-    var element = target.closest("body *");
-    return element instanceof Element ? element : null;
-  }
-
   function closestPreviewSourceAttribute(element, attributeName) {
     if (!(element instanceof Element)) return null;
     var sourceElement = element.closest("[" + attributeName + "]");
     return sourceElement ? sourceElement.getAttribute(attributeName) : null;
-  }
-
-  function previewDropGateStatus(target) {
-    var templateSourceId = closestPreviewSourceAttribute(target, TEMPLATE_SOURCE_ID_ATTR);
-    if (!templateSourceId || openTeraGateSourceIds[templateSourceId]) {
-      return { invalid: false, sourceId: templateSourceId };
-    }
-    return {
-      invalid: true,
-      sourceId: templateSourceId,
-      message: "Deschide gate-ul Tera înainte de drop."
-    };
   }
 
   function ensurePreviewDragOverlay() {
@@ -160,20 +130,6 @@
     overlay.line.style.left = Math.round(rect.left) + "px";
     overlay.line.style.top = Math.round(position === "before" ? rect.top : rect.bottom) + "px";
     overlay.line.style.width = Math.max(24, Math.round(rect.width)) + "px";
-  }
-
-  function resetPreviewDragState() {
-    previewDragCandidate = null;
-    previewDragActive = false;
-    previewDragKind = "html";
-    previewDragSourceTeraId = null;
-    previewDragSourceElement = null;
-    previewDragTargetElement = null;
-    previewDragPosition = null;
-    previewDragInvalid = false;
-    document.body.classList.remove("pana-studio-preview-drag-candidate");
-    document.body.classList.remove("pana-studio-preview-dragging");
-    clearPreviewDragIndicator();
   }
 
   function normalizedInsertElementPayload(element) {
@@ -261,10 +217,8 @@
     var element = normalizedInsertElementPayload(data && data.element);
     var drop = previewInsertTargetFromData(data);
     var invalid = !drop.target;
-    var gate = invalid ? null : previewDropGateStatus(drop.target);
-    if (gate && gate.invalid) invalid = true;
     var message = invalid
-      ? (gate && gate.message ? gate.message : "Alege o destinație.")
+      ? "Alege o destinație."
       : previewDropLabel(drop.position) + " <" + element.tag + ">";
     updatePreviewDragIndicator(drop.event, drop.target, drop.position, invalid, message);
   }
@@ -274,9 +228,8 @@
     var drop = previewInsertTargetFromData(data);
     resetPreviewInsertDragState();
     if (!drop.target || !drop.position) return;
-    if (previewDropGateStatus(drop.target).invalid) return;
-
     post("preview-insert-drop", {
+      targetRenderInstanceId: closestPreviewSourceAttribute(drop.target, CANVAS_AGENT_RENDER_ATTR),
       targetSelector: createDomPathSelector(drop.target),
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),
       targetSourceId: closestPreviewSourceAttribute(drop.target, SOURCE_ID_ATTR),
@@ -297,10 +250,8 @@
     var item = normalizedTeraItemPayload(data && data.item);
     var drop = previewInsertTargetFromData(data);
     var invalid = !drop.target;
-    var gate = invalid ? null : previewDropGateStatus(drop.target);
-    if (gate && gate.invalid) invalid = true;
     var message = invalid
-      ? (gate && gate.message ? gate.message : "Alege o destinație Tera.")
+      ? "Alege o destinație Tera."
       : previewDropLabel(drop.position) + " " + item.label;
     updatePreviewDragIndicator(drop.event, drop.target, drop.position, invalid, message, "tera");
   }
@@ -310,9 +261,8 @@
     var drop = previewInsertTargetFromData(data);
     resetPreviewTeraInsertDragState();
     if (!drop.target || !drop.position) return;
-    if (previewDropGateStatus(drop.target).invalid) return;
-
     post("preview-tera-drop", {
+      targetRenderInstanceId: closestPreviewSourceAttribute(drop.target, CANVAS_AGENT_RENDER_ATTR),
       targetSelector: createDomPathSelector(drop.target),
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),
       targetSourceId: closestPreviewSourceAttribute(drop.target, SOURCE_ID_ATTR),
@@ -322,212 +272,4 @@
       position: drop.position,
       item: item
     });
-  }
-
-  function handlePreviewPointerDown(event) {
-    if (!isTrustedPreviewGesture(event)) return;
-    if (event.button !== 0) return;
-    var current = currentSelectedElement();
-    var target = event.target;
-    if (!(target instanceof Element)) return;
-    var draggable = previewDraggableElementFromTarget(target);
-    if (!draggable) return;
-    var teraSourceId = renderedTemplateGate && elementBelongsToRenderedTemplateGate(target)
-      ? renderedTemplateGate.sourceId
-      : null;
-    var source = teraSourceId
-      ? (current && current.contains(target) ? current : draggable)
-      : (current && current.contains(target) ? current : draggable);
-
-    event.preventDefault();
-    event.stopPropagation();
-    clearTextSelection();
-    document.body.classList.add("pana-studio-preview-drag-candidate");
-    try {
-      target.setPointerCapture(event.pointerId);
-    } catch (_error) {}
-
-    if (!teraSourceId && source !== current) {
-      selectElement(source);
-    }
-
-    previewDragCandidate = {
-      kind: teraSourceId ? "tera" : "html",
-      sourceId: teraSourceId,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      source: source
-    };
-  }
-
-  function handlePreviewPointerMove(event) {
-    if (!isTrustedPreviewGesture(event)) return;
-    if (!previewDragCandidate || event.pointerId !== previewDragCandidate.pointerId) return;
-    var distance = Math.hypot(event.clientX - previewDragCandidate.startX, event.clientY - previewDragCandidate.startY);
-    if (!previewDragActive && distance < 6) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (!previewDragActive) {
-      previewDragActive = true;
-      previewDragKind = previewDragCandidate.kind || "html";
-      previewDragSourceTeraId = previewDragCandidate.sourceId || null;
-      previewDragSourceElement = previewDragCandidate.source;
-      clearTextSelection();
-      document.body.classList.remove("pana-studio-preview-drag-candidate");
-      document.body.classList.add("pana-studio-preview-dragging");
-    }
-
-    var target = previewDragTargetFromPointer(event);
-    var invalid = !target;
-    var message = "";
-    var position = null;
-
-    if (!invalid && previewDragKind === "html" && (target === previewDragSourceElement || previewDragSourceElement.contains(target))) {
-      invalid = true;
-      message = "Nu poate fi mutat în propriul copil.";
-    }
-
-    if (!invalid && previewDragKind === "tera" && closestPreviewSourceAttribute(target, TEMPLATE_SOURCE_ID_ATTR) === previewDragSourceTeraId) {
-      invalid = true;
-      message = "Nu poate fi mutat în propriul gate Tera.";
-    }
-
-    if (!invalid) {
-      var gate = previewDropGateStatus(target);
-      if (gate.invalid) {
-        invalid = true;
-        message = gate.message;
-      }
-    }
-
-    if (!invalid) {
-      position = dropPositionFromPreviewPointer(event, target);
-    } else if (!message) {
-      message = "Alege alt element.";
-    }
-
-    previewDragTargetElement = target;
-    previewDragPosition = position;
-    previewDragInvalid = invalid;
-    updatePreviewDragIndicator(event, target, position, invalid, message, previewDragKind === "tera" ? "tera" : undefined);
-  }
-
-  function previewHoverKeyForSelection(selection) {
-    return [
-      selection.sessionId || "",
-      selection.sourceId || "",
-      selection.templateSourceId || "",
-      selection.domPath || selection.cssSelector || ""
-    ].join("|");
-  }
-
-  function clearPreviewHoverRequest() {
-    if (previewHoverRequestKey === null) return;
-    previewHoverRequestKey = null;
-    post("preview-hover-clear", {});
-  }
-
-  function requestPreviewHoverForElement(element) {
-    if (!(element instanceof Element)) {
-      clearPreviewHoverRequest();
-      return;
-    }
-    var selection = createSelectionInfo(element);
-    var key = previewHoverKeyForSelection(selection);
-    if (key === previewHoverRequestKey) return;
-    previewHoverRequestKey = key;
-    post("preview-hover", { selection: selection });
-  }
-
-  function handlePreviewHoverPointerMove(event) {
-    if (!isTrustedPreviewGesture(event)) return;
-    if (previewDragCandidate || previewDragActive || previewInsertDragActive || previewTeraInsertDragActive) {
-      return;
-    }
-    var eventTarget = event.target;
-    if (eventTarget instanceof Element &&
-        eventTarget.closest("#" + TEMPLATE_GATE_ACTIONS_ID)) {
-      clearPreviewHoverRequest();
-      return;
-    }
-    requestPreviewHoverForElement(previewDragTargetFromPointer(event));
-  }
-
-  function handlePreviewHoverPointerLeave() {
-    clearPreviewHoverRequest();
-  }
-
-  function handlePreviewPointerUp(event) {
-    if (!isTrustedPreviewGesture(event)) return;
-    if (!previewDragCandidate || event.pointerId !== previewDragCandidate.pointerId) return;
-    var wasActive = previewDragActive;
-    var source = previewDragSourceElement;
-    var sourceKind = previewDragKind;
-    var sourceTeraId = previewDragSourceTeraId;
-    var target = previewDragTargetElement;
-    var position = previewDragPosition;
-    var invalid = previewDragInvalid;
-
-    if (wasActive) {
-      event.preventDefault();
-      event.stopPropagation();
-      previewDragSuppressClick = true;
-      window.setTimeout(function () {
-        previewDragSuppressClick = false;
-      }, 120);
-    }
-
-    resetPreviewDragState();
-
-    if (!wasActive || invalid || !source || !target || !position) return;
-
-    if (sourceKind === "tera") {
-      if (!sourceTeraId) return;
-      post("preview-tera-move-drop", {
-        sourceId: sourceTeraId,
-        targetSelector: createDomPathSelector(target),
-        targetSourceId: closestPreviewSourceAttribute(target, SOURCE_ID_ATTR),
-        targetTemplateSourceId: closestPreviewSourceAttribute(target, TEMPLATE_SOURCE_ID_ATTR),
-        targetTag: target.tagName.toLowerCase(),
-        targetKind: "preview",
-        targetSlotKind: isEmptyTeraSlot(target) ? "empty-tera-slot" : "html",
-        position: position
-      });
-      return;
-    }
-
-    post("preview-layer-drop", {
-      sourceSelector: createDomPathSelector(source),
-      targetSelector: createDomPathSelector(target),
-      sourceSessionId: closestPreviewSourceAttribute(source, SESSION_ID_ATTR),
-      sourceSourceId: closestPreviewSourceAttribute(source, SOURCE_ID_ATTR),
-      sourceTemplateSourceId: closestPreviewSourceAttribute(source, TEMPLATE_SOURCE_ID_ATTR),
-      targetSessionId: closestPreviewSourceAttribute(target, SESSION_ID_ATTR),
-      targetSourceId: closestPreviewSourceAttribute(target, SOURCE_ID_ATTR),
-      targetTemplateSourceId: closestPreviewSourceAttribute(target, TEMPLATE_SOURCE_ID_ATTR),
-      targetKind: isEmptyTeraSlot(target) ? "empty-tera-slot" : "html",
-      position: position
-    });
-  }
-
-  function handlePreviewPointerCancel(event) {
-    if (!previewDragCandidate || event.pointerId !== previewDragCandidate.pointerId) return;
-    resetPreviewDragState();
-  }
-
-  function clearTextSelection() {
-    var selection = window.getSelection && window.getSelection();
-    if (selection && typeof selection.removeAllRanges === "function") {
-      selection.removeAllRanges();
-    }
-  }
-
-  function handlePreviewSelectStart(event) {
-    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
-    clearTextSelection();
-    event.preventDefault();
-    event.stopPropagation();
   }

@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::{
     kernel::{
-        file_buffer_store::FileBufferStore, preview_projection::PreviewStructuralCommandIdentity,
+        preview_projection::PreviewStructuralCommandIdentity,
         project_session::ProjectSessionSnapshot,
     },
     project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
@@ -17,26 +17,6 @@ pub(super) struct PreviewWriteCommandContext {
     pub(super) accepted_disk: AcceptedProjectDiskManifest,
     pub(super) aliases: HashMap<String, String>,
     pub(super) workspace_revision: u64,
-}
-
-pub(super) struct PreviewReadCommandContext {
-    pub(super) root: PathBuf,
-    pub(super) session: ProjectSessionSnapshot,
-    pub(super) accepted_disk: AcceptedProjectDiskManifest,
-}
-
-pub(super) fn prepare_preview_read_command(
-    state: &State<AppState>,
-    identity: &PreviewStructuralCommandIdentity,
-) -> Result<PreviewReadCommandContext, String> {
-    let (root, session, accepted_disk, _) = capture_preview_workspace_authority(state)?;
-    require_preview_command_identity(&session, identity)?;
-
-    Ok(PreviewReadCommandContext {
-        root,
-        session,
-        accepted_disk,
-    })
 }
 
 pub(super) fn prepare_preview_write_command(
@@ -83,31 +63,6 @@ pub(super) fn require_preview_command_identity(
         ));
     }
     Ok(())
-}
-
-pub(super) fn with_preview_read_store<R>(
-    state: &State<AppState>,
-    context: &PreviewReadCommandContext,
-    execute: impl FnOnce(&FileBufferStore) -> Result<R, String>,
-) -> Result<R, String> {
-    let workspace = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
-    let workspace = workspace
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    let accepted_disk = require_preview_accepted_lease(
-        Some(&workspace.accepted_disk),
-        &context.root,
-        &context.session,
-        &context.accepted_disk,
-    )?;
-    let store = &workspace.documents;
-
-    let result = execute(store)?;
-    require_accepted_disk_unchanged(&context.root, accepted_disk)?;
-    Ok(result)
 }
 
 pub(super) fn with_preview_write_workspace<R>(
@@ -236,8 +191,6 @@ mod identity_tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 1,
                 directory_count: 1,
@@ -251,6 +204,7 @@ mod identity_tests {
         let identity = PreviewStructuralCommandIdentity {
             expected_project_root: live.project_root.clone(),
             expected_session_id: live.runtime_instance_id(),
+            expected_selection: None,
         };
         require_preview_command_identity(&live, &identity).unwrap();
     }
@@ -262,6 +216,7 @@ mod identity_tests {
         let identity = PreviewStructuralCommandIdentity {
             expected_project_root: stale.project_root.clone(),
             expected_session_id: stale.runtime_instance_id(),
+            expected_selection: None,
         };
         let error = require_preview_command_identity(&live, &identity).unwrap_err();
         assert!(error.contains("request stale"));
@@ -274,6 +229,7 @@ mod identity_tests {
         let identity = PreviewStructuralCommandIdentity {
             expected_project_root: "/tmp/other".to_string(),
             expected_session_id: live.runtime_instance_id(),
+            expected_selection: None,
         };
         assert!(require_preview_command_identity(&live, &identity).is_err());
     }

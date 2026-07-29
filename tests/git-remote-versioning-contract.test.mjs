@@ -29,6 +29,8 @@ test("Git este o activitate Workbench canonică, nu un overlay local", () => {
   assert.doesNotMatch(state, /versionsPanelOpen/);
   const panel = source("src/lib/components/VersionsPanel.svelte");
   assert.doesNotMatch(panel, /versions-backdrop|position:\s*fixed/);
+  assert.match(panel, /\.versions-panel\s*\{[^}]*width:\s*100%/);
+  assert.doesNotMatch(panel, /\.versions-panel\s*\{[^}]*(?:max-width|width:\s*min\(|margin:\s*0 auto|border-(?:left|right))/);
 });
 
 test("UI-ul Versiuni expune remote, progres, preview și integrare explicită", () => {
@@ -53,12 +55,29 @@ test("UI-ul Versiuni expune remote, progres, preview și integrare explicită", 
   assert.match(types, /"diverged"/);
   assert.match(types, /"conflict_resolution_required"/);
   assert.match(types, /"integration"/);
-  assert.match(panel, /Pană Studio nu rulează <code>git pull<\/code>/);
-  assert.match(panel, /Previzualizare patch din țintă/);
-  assert.match(panel, /Commit-uri care intră din țintă/);
+  assert.match(panel, /t\("versions-no-pull-hint"\)/);
+  assert.match(panel, /t\("versions-target-patch-preview"\)/);
+  assert.match(panel, /t\("versions-target-commits"/);
   assert.match(panel, /pana-versioning-network-progress/);
-  assert.match(panel, /Fast-forward/);
-  assert.match(panel, /Merge explicit/);
+  assert.match(panel, /t\("versions-fast-forward"\)/);
+  assert.match(panel, /t\("versions-explicit-merge"\)/);
+});
+
+test("activitatea Git folosește shell-ul și tema vizuală standard a aplicației", () => {
+  const panel = source("src/lib/components/VersionsPanel.svelte");
+  const designSystem = source("src/routes/design-system.css");
+
+  assert.match(panel, /aria-labelledby="version-control-title"/);
+  assert.match(panel, /class="activity-workspace [^"]*versioning-workspace"/);
+  assert.match(panel, /class="workspace-header panel-header"/);
+  assert.match(panel, /class="eyebrow"><IconGitBranch/);
+  assert.match(panel, /class="header-metrics"/);
+  assert.match(panel, /class="head-reference"/);
+  assert.match(panel, /class="setup-icon"/);
+  assert.match(designSystem, /\.activity-workspace > :is\(\.workspace-header, \.audit-header\)\s*\{[\s\S]*padding:\s*17px 20px/);
+  assert.match(designSystem, /\.activity-workspace > \.workspace-header \.header-metrics > div\s*\{[\s\S]*var\(--material-control\)/);
+  assert.match(panel, /\.setup-card\s*\{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\) auto/);
+  assert.doesNotMatch(panel, /class="title-icon"/);
 });
 
 test("backendul remote folosește refspec-uri explicite și nu oferă force/pull", () => {

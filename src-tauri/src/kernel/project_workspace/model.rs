@@ -176,6 +176,7 @@ pub struct ProjectWorkspaceMutationReceipt {
     pub dirty: bool,
     pub transaction_id: Option<String>,
     pub touched_files: Vec<String>,
+    pub documents: Vec<WorkspaceDocumentProjection>,
     pub entry: Option<WorkspaceHistoryEntrySnapshot>,
     pub files: Vec<FileBufferFileSnapshot>,
     pub page_js: Option<PageJsDraftStageReceipt>,

@@ -312,8 +312,8 @@ fn authority_scope_label(scope: &DirectoryAuthorityScope) -> String {
         }
         DirectoryAuthorityScope::RecoveryTarget => "recovery_target".into(),
         DirectoryAuthorityScope::ProjectRoot => "project_root".into(),
-        DirectoryAuthorityScope::ProjectBootstrap { lease_id } => {
-            format!("project_bootstrap:{lease_id}")
+        DirectoryAuthorityScope::ProjectCreation { authority_id } => {
+            format!("project_creation:{authority_id}")
         }
         DirectoryAuthorityScope::ZolaArtifactPublication { lease_id } => {
             format!("zola_artifact_publication:{lease_id}")

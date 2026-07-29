@@ -5,7 +5,12 @@ use super::types::PageJsConfig;
 
 pub fn generate_page_js(config: &PageJsConfig) -> String {
     let mut out = block_metadata_comments(config);
+    out.push_str("(function(){\n");
+    out.push_str("  var _panaMotionPreview=false;\n");
+    out.push_str("  try{_panaMotionPreview=new URLSearchParams(window.location.search).get('__pana_motion_mode')==='preview';}catch(error){}\n");
+    out.push_str("  if(_panaMotionPreview)return;\n");
     out.push_str(&install_native_block_runtime(config));
+    out.push_str("\n})();\n");
     out.push_str("\n(function () {\n");
     if let Some(metadata) = motion_metadata_comment(config) {
         out.push_str(&metadata);
@@ -13,7 +18,6 @@ pub fn generate_page_js(config: &PageJsConfig) -> String {
     }
     out.push_str("  var _panaStarted=false;\n");
     out.push_str("  function _panaRun(){if(_panaStarted)return;_panaStarted=true;\n");
-    out.push_str("  var _an=window.anime||{},animate=_an.animate||function(){},stagger=_an.stagger||function(){return 0;},onScroll=_an.onScroll||function(){return null;};\n");
 
     let motion_js = generate_motion_js(config);
     if !motion_js.is_empty() {
@@ -54,7 +58,7 @@ fn motion_metadata_comment(config: &PageJsConfig) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::js::NativeBlockRuntimeEntry;
+    use crate::js::{MotionDocument, NativeBlockRuntimeEntry};
 
     #[test]
     fn generated_page_js_runs_after_dom_is_already_ready() {
@@ -66,18 +70,31 @@ mod tests {
     #[test]
     fn generated_page_js_embeds_motion_metadata_when_present() {
         let config = PageJsConfig {
-            version: Some(1),
-            motion: Some(serde_json::json!({
-                "schemaVersion": 1,
-                "animeVersion": "4.4.1",
-                "items": [{ "id": "animation-a", "type": "animation" }]
-            })),
+            version: Some(2),
+            motion: Some(
+                MotionDocument::from_value(serde_json::json!({
+                    "schemaVersion": 1,
+                    "animeVersion": "4.4.1",
+                    "items": [{
+                        "id": "animation-a",
+                        "type": "animation",
+                        "target": { "dataAnim": "hero" },
+                        "properties": [{
+                            "id": "opacity",
+                            "property": "opacity",
+                            "category": "css",
+                            "value": { "mode": "fromTo", "from": 0, "to": 1 }
+                        }]
+                    }]
+                }))
+                .expect("legacy migration"),
+            ),
             ..PageJsConfig::default()
         };
         let js = generate_page_js(&config);
         assert!(js.contains("// @pana-motion "));
-        assert!(js.contains("MOTION STUDIO"));
-        assert!(js.contains("\"type\":\"animation\""));
+        assert!(js.contains("PANA MOTION V2"));
+        assert!(js.contains("\"type\":\"animate\""));
     }
 
     #[test]
@@ -92,6 +109,7 @@ mod tests {
 
         assert!(js.contains("window.PanaBlockRuntime"));
         assert!(js.contains("installPageConfig"));
+        assert!(js.contains("if(_panaMotionPreview)return;"));
         assert!(js.contains("\"id\":\"accordion\""));
         assert!(js.contains("// @pana-block {\"id\":\"accordion\"}"));
         assert!(!js.contains("// @pana-component"));

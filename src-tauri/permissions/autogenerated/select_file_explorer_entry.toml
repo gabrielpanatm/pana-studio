@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-select-file-explorer-entry"
+description = "Enables the select_file_explorer_entry command without any pre-configured scope."
+commands.allow = ["select_file_explorer_entry"]
+
+[[permission]]
+identifier = "deny-select-file-explorer-entry"
+description = "Denies the select_file_explorer_entry command without any pre-configured scope."
+commands.deny = ["select_file_explorer_entry"]

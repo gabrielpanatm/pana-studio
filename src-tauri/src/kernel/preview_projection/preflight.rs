@@ -7,9 +7,9 @@ use super::model::{
     PreviewProjectionDiagnostic, PreviewProjectionEffect, PreviewProjectionIntentInput,
     PreviewProjectionIntentKind, PreviewProjectionIntentReceipt, PreviewProjectionIntentStatus,
 };
-use crate::kernel::project_session::ProjectSessionSnapshot;
+use crate::{kernel::project_session::ProjectSessionSnapshot, localization::LocalizedDiagnostic};
 
-const PREVIEW_PROJECTION_SCHEMA_VERSION: u32 = 1;
+const PREVIEW_PROJECTION_SCHEMA_VERSION: u32 = 2;
 const DROP_POSITIONS: &[&str] = &["before", "after", "inside"];
 
 pub fn preflight_preview_projection_intent(
@@ -23,17 +23,15 @@ pub fn preflight_preview_projection_intent(
     if kind == PreviewProjectionIntentKind::Unsupported {
         diagnostics.push(PreviewProjectionDiagnostic::blocking(
             "unsupported_preview_intent",
-            format!(
-                "Preview Projection nu recunoaște mesajul '{}'.",
-                input.message_type.trim()
-            ),
+            LocalizedDiagnostic::new("preview-projection-unsupported-intent")
+                .with_argument("type", input.message_type.trim()),
         ));
     }
 
     if requires_project_session && session.is_none() {
         diagnostics.push(PreviewProjectionDiagnostic::blocking(
             "missing_project_session",
-            "Preview Projection nu acceptă intenții mutante fără ProjectSession activ.",
+            LocalizedDiagnostic::new("preview-projection-project-session-required"),
         ));
     }
 
@@ -49,21 +47,15 @@ pub fn preflight_preview_projection_intent(
     };
     let accepted = status == PreviewProjectionIntentStatus::Accepted;
     let effect = effect_for_kind(kind);
-    let message = match status {
+    let message_diagnostic = match status {
         PreviewProjectionIntentStatus::Accepted => {
-            format!(
-                "Preview Projection a acceptat intenția {}.",
-                kind.operation_label()
-            )
+            LocalizedDiagnostic::new("preview-projection-intent-accepted")
         }
         PreviewProjectionIntentStatus::Blocked => {
-            format!(
-                "Preview Projection a blocat intenția {}.",
-                kind.operation_label()
-            )
+            LocalizedDiagnostic::new("preview-projection-intent-blocked")
         }
         PreviewProjectionIntentStatus::Unsupported => {
-            "Preview Projection a respins un mesaj preview necunoscut.".to_string()
+            LocalizedDiagnostic::new("preview-projection-intent-unsupported")
         }
     };
 
@@ -79,33 +71,27 @@ pub fn preflight_preview_projection_intent(
         project_root: session.map(|session| session.project_root.clone()),
         runtime_session_id: session.map(ProjectSessionSnapshot::runtime_instance_id),
         preview_revision: input.preview_revision,
-        message,
+        message_diagnostic,
         diagnostics,
     }
 }
 
 fn kind_from_message_type(message_type: &str) -> PreviewProjectionIntentKind {
     match message_type.trim() {
-        "preview-layer-drop" => PreviewProjectionIntentKind::LayerDrop,
         "preview-insert-drop" => PreviewProjectionIntentKind::HtmlInsertDrop,
         "preview-html-attributes" => PreviewProjectionIntentKind::HtmlAttributes,
         "preview-html-text" => PreviewProjectionIntentKind::HtmlText,
         "preview-html-tag" => PreviewProjectionIntentKind::HtmlTag,
         "preview-duplicate-selected" => PreviewProjectionIntentKind::HtmlDuplicate,
         "preview-tera-drop" => PreviewProjectionIntentKind::TeraInsertDrop,
-        "preview-tera-move-drop" => PreviewProjectionIntentKind::TeraMoveDrop,
         "preview-delete-selected" => PreviewProjectionIntentKind::HtmlDelete,
         "preview-template-delete-selected" => PreviewProjectionIntentKind::TemplateDelete,
-        "preview-template-edit-selected" => PreviewProjectionIntentKind::TemplateEdit,
         _ => PreviewProjectionIntentKind::Unsupported,
     }
 }
 
 fn effect_for_kind(kind: PreviewProjectionIntentKind) -> PreviewProjectionEffect {
     match kind {
-        PreviewProjectionIntentKind::TemplateEdit => {
-            PreviewProjectionEffect::TemplatePermissionPreflight
-        }
         PreviewProjectionIntentKind::Unsupported => PreviewProjectionEffect::Unsupported,
         _ => PreviewProjectionEffect::KernelMutationPreflight,
     }
@@ -117,11 +103,6 @@ fn validate_intent_shape(
     diagnostics: &mut Vec<PreviewProjectionDiagnostic>,
 ) {
     match kind {
-        PreviewProjectionIntentKind::LayerDrop => {
-            require_text(diagnostics, "sourceSelector", &input.source_selector);
-            require_text(diagnostics, "targetSelector", &input.target_selector);
-            require_drop_position(diagnostics, &input.position);
-        }
         PreviewProjectionIntentKind::HtmlInsertDrop => {
             require_text(diagnostics, "targetSelector", &input.target_selector);
             require_text(diagnostics, "targetTag", &input.target_tag);
@@ -150,22 +131,11 @@ fn validate_intent_shape(
             require_text(diagnostics, "itemKind", &input.item_kind);
             require_drop_position(diagnostics, &input.position);
         }
-        PreviewProjectionIntentKind::TeraMoveDrop => {
-            require_text(diagnostics, "sourceId", &input.source_id);
-            require_text(diagnostics, "targetSelector", &input.target_selector);
-            require_text(diagnostics, "targetTag", &input.target_tag);
-            require_text(diagnostics, "targetKind", &input.target_kind);
-            require_drop_position(diagnostics, &input.position);
-        }
         PreviewProjectionIntentKind::HtmlDelete => {
             require_text(diagnostics, "selector", &input.selector);
         }
         PreviewProjectionIntentKind::TemplateDelete => {
             require_text(diagnostics, "sourceId", &input.source_id);
-        }
-        PreviewProjectionIntentKind::TemplateEdit => {
-            require_text(diagnostics, "sourceId", &input.source_id);
-            require_text(diagnostics, "selector", &input.selector);
         }
         PreviewProjectionIntentKind::Unsupported => {}
     }
@@ -184,7 +154,8 @@ fn require_text(
     {
         diagnostics.push(PreviewProjectionDiagnostic::blocking(
             format!("missing_{field}"),
-            format!("Intenția preview nu conține câmpul obligatoriu {field}."),
+            LocalizedDiagnostic::new("preview-projection-required-field-missing")
+                .with_argument("field", field),
         ));
     }
 }
@@ -197,7 +168,7 @@ fn require_drop_position(
     if !DROP_POSITIONS.contains(&position) {
         diagnostics.push(PreviewProjectionDiagnostic::blocking(
             "invalid_position",
-            "Intenția preview are poziție invalidă; sunt acceptate before, after sau inside.",
+            LocalizedDiagnostic::new("preview-projection-position-invalid"),
         ));
     }
 }
@@ -249,38 +220,11 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: crate::kernel::project_session::ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 0,
                 directory_count: 0,
             },
         }
-    }
-
-    #[test]
-    fn accepts_valid_layer_drop_with_session() {
-        let receipt = preflight_preview_projection_intent(
-            PreviewProjectionIntentInput {
-                message_type: "preview-layer-drop".to_string(),
-                source_selector: Some("body > main > section:nth-child(1)".to_string()),
-                target_selector: Some("body > main > section:nth-child(2)".to_string()),
-                position: Some("after".to_string()),
-                ..PreviewProjectionIntentInput::default()
-            },
-            Some(&session()),
-        );
-
-        assert!(receipt.accepted);
-        assert_eq!(receipt.status, PreviewProjectionIntentStatus::Accepted);
-        assert_eq!(receipt.kind, PreviewProjectionIntentKind::LayerDrop);
-        assert_eq!(receipt.project_session_id.as_deref(), Some("session-1"));
-        assert_eq!(receipt.project_root.as_deref(), Some("/tmp/project"));
-        assert_eq!(
-            receipt.runtime_session_id.as_deref(),
-            Some(session().runtime_instance_id().as_str()),
-        );
-        assert!(receipt.diagnostics.is_empty());
     }
 
     #[test]

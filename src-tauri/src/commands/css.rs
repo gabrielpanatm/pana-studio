@@ -12,19 +12,13 @@ use crate::{
             plan_page_stylesheet_link_writes_with_reader, prepare_page_stylesheet_source,
             remove_page_stylesheet_link, PageCssTarget, PageCssWriteResult, WrittenProjectFile,
         },
-        rules::{
-            find_class_in_sources, get_class_rules as parse_class_rules, upsert_css_rule_desktop,
-            CssProperty,
-        },
+        rules::{selector_source_target, upsert_css_rule_desktop},
         validation::{validate_panel_rule_input, validate_panel_variable_value},
         variables::{
             parse_variables_from_source, update_variable_in_source, variable_value_in_source,
             ScssVariable,
         },
-        viewport::{
-            get_rule_context, get_rules_at_viewport, write_rule_at_viewport, CssBreakpointValues,
-            CssRuleContext,
-        },
+        viewport::{get_rule_context, write_rule_at_viewport, CssBreakpointValues, CssRuleContext},
     },
     kernel::{
         file_buffer_store::{
@@ -39,6 +33,7 @@ use crate::{
             WorkspaceMutationMetadata, WorkspaceResourceDelete, WorkspaceResourceMutation,
             WorkspaceTextChange, WorkspaceTextDelete, WorkspaceTextResourceMutationInput,
         },
+        selection_coordinator::SelectionMutationIdentity,
     },
     project::{strip_zola_root_prefix, zola_project_root},
     state::AppState,
@@ -78,6 +73,7 @@ pub struct CssMutationAuthorityReceipt {
 pub struct CssMutationCommandReceipt<T> {
     pub project_root: String,
     pub runtime_session_id: String,
+    pub workspace_revision: u64,
     pub payload: T,
     pub authority: CssMutationAuthorityReceipt,
 }
@@ -87,6 +83,7 @@ impl<T> CssMutationCommandReceipt<T> {
         Self {
             project_root: session.project_root.clone(),
             runtime_session_id: session.runtime_instance_id(),
+            workspace_revision: workspace.revision,
             payload,
             authority: CssMutationAuthorityReceipt {
                 schema_version: CSS_MUTATION_AUTHORITY_SCHEMA_VERSION,
@@ -121,6 +118,7 @@ impl<T> CssMutationCommandReceipt<T> {
         Self {
             project_root: session.project_root.clone(),
             runtime_session_id: session.runtime_instance_id(),
+            workspace_revision: workspace_mutation.revision_after,
             payload,
             authority: CssMutationAuthorityReceipt {
                 schema_version: CSS_MUTATION_AUTHORITY_SCHEMA_VERSION,
@@ -148,13 +146,6 @@ impl<T> CssMutationCommandReceipt<T> {
 
 fn to_zola_relative_path(path: &str) -> String {
     strip_zola_root_prefix(path).to_string()
-}
-
-fn to_zola_relative_paths(paths: &[String]) -> Vec<String> {
-    paths
-        .iter()
-        .map(|path| to_zola_relative_path(path))
-        .collect()
 }
 
 fn to_project_relative_path(path: &str) -> String {
@@ -261,38 +252,34 @@ fn require_complete_style_inventory(store: &FileBufferStore) -> Result<(), Strin
     Ok(())
 }
 
-fn find_class_in_current_project_styles(
+fn collect_current_project_style_sources(
     project_root: &Path,
     store: &FileBufferStore,
-    preferred_files: &[String],
-    selector: &str,
-) -> Result<Option<(String, Vec<CssProperty>)>, String> {
+) -> Result<Vec<(String, String)>, String> {
     require_complete_style_inventory(store)?;
-    let mut candidates = preferred_files
-        .iter()
-        .map(|path| to_zola_relative_path(path))
-        .collect::<BTreeSet<_>>();
-    candidates.extend(current_style_paths(store));
-    if candidates.len() > store.limits.max_files {
+    let paths = current_style_paths(store);
+    if paths.len() > store.limits.max_files {
         return Err(format!(
             "[css_style_inventory_limit] Inventarul CSS/SCSS cere {} fișiere, peste limita FileBufferStore de {}.",
-            candidates.len(), store.limits.max_files,
+            paths.len(), store.limits.max_files,
         ));
     }
     let mut total_bytes = 0u64;
-    find_class_in_sources(candidates, selector, |relative_path| {
-        let source = read_current_zola_text(project_root, store, relative_path)?;
-        if let Some(source) = source.as_ref() {
-            total_bytes = total_bytes.saturating_add(source.len() as u64);
-            if total_bytes > store.limits.max_total_bytes {
-                return Err(format!(
-                    "[css_style_inventory_budget] Citirea CSS/SCSS depășește bugetul agregat FileBufferStore de {} bytes.",
-                    store.limits.max_total_bytes,
-                ));
-            }
+    let mut sources = Vec::with_capacity(paths.len());
+    for relative_path in paths {
+        let Some(source) = read_current_zola_text(project_root, store, &relative_path)? else {
+            continue;
+        };
+        total_bytes = total_bytes.saturating_add(source.len() as u64);
+        if total_bytes > store.limits.max_total_bytes {
+            return Err(format!(
+                "[css_style_inventory_budget] Citirea CSS/SCSS depășește bugetul agregat FileBufferStore de {} bytes.",
+                store.limits.max_total_bytes,
+            ));
         }
-        Ok(source)
-    })
+        sources.push((relative_path, source));
+    }
+    Ok(sources)
 }
 
 fn collect_current_scss_variables(
@@ -428,7 +415,11 @@ pub(crate) fn with_bound_css_file_buffer_revision<T>(
         &session.project_root,
         project_root,
     )?;
-    Ok(FileBufferCommandReceipt::new(session, payload))
+    Ok(FileBufferCommandReceipt::new(
+        session,
+        workspace.revision,
+        payload,
+    ))
 }
 
 pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
@@ -585,6 +576,31 @@ fn execute_css_workspace_mutation<R>(
     )
 }
 
+fn execute_selection_bound_css_workspace_mutation<R>(
+    app: &AppHandle,
+    state: &State<AppState>,
+    identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
+    build: impl FnOnce(
+        &Path,
+        &Path,
+        &FileBufferStore,
+    ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
+) -> Result<CssMutationCommandReceipt<R>, String> {
+    let execute = || execute_css_workspace_mutation(app, state, identity, build);
+    let Some(expected) = expected_selection else {
+        return execute();
+    };
+    state.selection_coordinator.with_mutation_target(
+        &identity.expected_session_id,
+        expected.selection_revision,
+        expected.editor_node_id.as_deref(),
+        expected.source_node_id.as_deref(),
+        expected.render_instance_id.as_deref(),
+        execute,
+    )
+}
+
 fn collect_media_query_migration_changes(
     project_root: &Path,
     store: &FileBufferStore,
@@ -634,11 +650,75 @@ fn collect_scss_replacements(
     Ok(())
 }
 
+const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CssInspectorContextState {
+    Existing,
+    Creation,
+    Ambiguous,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CssInspectorSourceCandidate {
+    pub file: String,
+    pub rule_context: CssRuleContext,
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClassSearchResult {
-    pub file: String,
-    pub rules: Vec<CssProperty>,
+pub struct CssInspectorContextResolution {
+    pub schema_version: u32,
+    pub selection_revision: u64,
+    pub selector: String,
+    pub viewport: String,
+    pub state: CssInspectorContextState,
+    pub target: Option<PageCssTarget>,
+    pub rule_context: Option<CssRuleContext>,
+    pub candidates: Vec<CssInspectorSourceCandidate>,
+}
+
+fn css_inspector_source_candidates(
+    sources: &[(String, String)],
+    breakpoints: &CssBreakpointValues,
+    source_selector: &str,
+    requested_selector: &str,
+    viewport: &str,
+) -> Vec<CssInspectorSourceCandidate> {
+    sources
+        .iter()
+        .filter_map(|(file, source)| {
+            selector_source_target(source, source_selector)?;
+            Some(CssInspectorSourceCandidate {
+                rule_context: get_rule_context(
+                    breakpoints,
+                    to_project_relative_path(file),
+                    source,
+                    requested_selector.to_string(),
+                    viewport.to_string(),
+                ),
+                file: to_project_relative_path(file),
+            })
+        })
+        .collect()
+}
+
+fn base_class_selector(selector: &str) -> Option<String> {
+    let selector = selector.trim();
+    let bytes = selector.as_bytes();
+    if bytes.first() != Some(&b'.') {
+        return None;
+    }
+    let mut end = 1usize;
+    while bytes
+        .get(end)
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        end += 1;
+    }
+    (end > 1 && end < selector.len()).then(|| selector[..end].to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -683,91 +763,227 @@ fn css_has_effective_rules(source: &str) -> bool {
 }
 
 #[tauri::command(async)]
-pub fn resolve_page_css_target(
+pub fn resolve_css_inspector_context(
     template_path: Option<String>,
     selector: String,
-    scss_files: Vec<String>,
+    viewport: String,
     fallback_file: Option<String>,
+    expected_workspace_revision: u64,
+    expected_selection: SelectionMutationIdentity,
     identity: FileBufferRequestIdentity,
     state: State<AppState>,
-) -> Result<FileBufferCommandReceipt<PageCssTarget>, String> {
-    with_bound_css_file_buffer(
-        state.inner(),
-        &identity,
-        move |project_root, _root, _session, store| {
-            let selector = selector.trim().to_string();
-            let template_path = template_path.map(|path| to_zola_relative_path(&path));
-            let scss_files = to_zola_relative_paths(&scss_files);
-            let fallback_file = fallback_file.map(|path| to_zola_relative_path(&path));
+) -> Result<FileBufferCommandReceipt<CssInspectorContextResolution>, String> {
+    validate_panel_rule_input(&selector, &HashMap::new(), &viewport)?;
+    let runtime_session_id = identity.expected_session_id.clone();
+    state.selection_coordinator.with_selection_target(
+        &runtime_session_id,
+        expected_selection.selection_revision,
+        expected_selection.editor_node_id.as_deref(),
+        expected_selection.source_node_id.as_deref(),
+        expected_selection.render_instance_id.as_deref(),
+        || {
+            with_bound_css_file_buffer_revision(
+                state.inner(),
+                &identity,
+                move |project_root, _root, _session, store, workspace_revision| {
+                    if workspace_revision != expected_workspace_revision {
+                        return Err(format!(
+                            "[css_inspector_stale_workspace] Rezoluția CSS a cerut revizia ProjectWorkspace {expected_workspace_revision}, dar revizia activă este {workspace_revision}."
+                        ));
+                    }
+                    let selector = selector.trim().to_string();
+                    let template_path =
+                        template_path.map(|path| to_zola_relative_path(&path));
+                    let fallback_file =
+                        fallback_file.map(|path| to_zola_relative_path(&path));
+                    let breakpoints = current_css_breakpoints(project_root, store)?;
+                    let sources = collect_current_project_style_sources(project_root, store)?;
+                    let candidates = css_inspector_source_candidates(
+                        &sources,
+                        &breakpoints,
+                        &selector,
+                        &selector,
+                        &viewport,
+                    );
 
-            if let Some((file, _rules)) =
-                find_class_in_current_project_styles(project_root, store, &scss_files, &selector)?
-            {
-                let page_file = template_path
-                    .as_deref()
-                    .map(page_scss_relative_path)
-                    .unwrap_or_default();
-                let href = template_path.as_deref().map(page_css_href);
-                let linked = template_path
-                    .as_deref()
-                    .zip(href.as_deref())
-                    .map(|(template, href)| {
-                        read_current_zola_text(project_root, store, template).map(|source| {
-                            source
+                    if candidates.len() > 1 {
+                        return Ok(CssInspectorContextResolution {
+                            schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                            selection_revision: expected_selection.selection_revision,
+                            selector,
+                            viewport,
+                            state: CssInspectorContextState::Ambiguous,
+                            target: None,
+                            rule_context: None,
+                            candidates,
+                        });
+                    }
+
+                    if let Some(candidate) = candidates.first().cloned() {
+                        let file = candidate.file.clone();
+                        let page_file = template_path
+                            .as_deref()
+                            .map(page_scss_relative_path)
+                            .unwrap_or_default();
+                        let href = template_path.as_deref().map(page_css_href);
+                        let linked = template_path
+                            .as_deref()
+                            .zip(href.as_deref())
+                            .map(|(template, href)| {
+                                read_current_zola_text(project_root, store, template).map(
+                                    |source| {
+                                        source.as_deref().is_some_and(|source| {
+                                            template_contains_asset_path(source, href)
+                                        })
+                                    },
+                                )
+                            })
+                            .transpose()?
+                            .unwrap_or(false);
+                        let target = PageCssTarget {
+                            exists: project_relative_exists(project_root, store, &file)?,
+                            page_owned: !page_file.is_empty()
+                                && file == to_project_relative_path(&page_file),
+                            file,
+                            selector: selector.clone(),
+                            target_kind: "existing".to_string(),
+                            linked,
+                            href,
+                            template_path: template_path
+                                .clone()
+                                .map(|path| to_project_relative_path(&path)),
+                            reason: "Regula există deja în acest fișier.".to_string(),
+                        };
+                        return Ok(CssInspectorContextResolution {
+                            schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                            selection_revision: expected_selection.selection_revision,
+                            selector,
+                            viewport,
+                            state: CssInspectorContextState::Existing,
+                            target: Some(target),
+                            rule_context: Some(candidate.rule_context),
+                            candidates,
+                        });
+                    }
+
+                    if let Some(base_selector) = base_class_selector(&selector) {
+                        let base_candidates = css_inspector_source_candidates(
+                            &sources,
+                            &breakpoints,
+                            &base_selector,
+                            &selector,
+                            &viewport,
+                        );
+                        if base_candidates.len() > 1 {
+                            return Ok(CssInspectorContextResolution {
+                                schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                                selection_revision: expected_selection.selection_revision,
+                                selector,
+                                viewport,
+                                state: CssInspectorContextState::Ambiguous,
+                                target: None,
+                                rule_context: None,
+                                candidates: base_candidates,
+                            });
+                        }
+                        if let Some(candidate) = base_candidates.first().cloned() {
+                            let file = candidate.file.clone();
+                            let page_file = template_path
                                 .as_deref()
-                                .is_some_and(|source| template_contains_asset_path(source, href))
-                        })
-                    })
-                    .transpose()?
-                    .unwrap_or(false);
-                let page_owned = !page_file.is_empty() && file == page_file;
+                                .map(page_scss_relative_path)
+                                .unwrap_or_default();
+                            let href = template_path.as_deref().map(page_css_href);
+                            let linked = template_path
+                                .as_deref()
+                                .zip(href.as_deref())
+                                .map(|(template, href)| {
+                                    read_current_zola_text(project_root, store, template).map(
+                                        |source| {
+                                            source.as_deref().is_some_and(|source| {
+                                                template_contains_asset_path(source, href)
+                                            })
+                                        },
+                                    )
+                                })
+                                .transpose()?
+                                .unwrap_or(false);
+                            let target = PageCssTarget {
+                                exists: project_relative_exists(project_root, store, &file)?,
+                                page_owned: !page_file.is_empty()
+                                    && file == to_project_relative_path(&page_file),
+                                file,
+                                selector: selector.clone(),
+                                target_kind: "variant".to_string(),
+                                linked,
+                                href,
+                                template_path: template_path
+                                    .clone()
+                                    .map(|path| to_project_relative_path(&path)),
+                                reason: format!(
+                                    "Varianta va fi creată lângă regula de bază {base_selector}."
+                                ),
+                            };
+                            return Ok(CssInspectorContextResolution {
+                                schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                                selection_revision: expected_selection.selection_revision,
+                                selector,
+                                viewport,
+                                state: CssInspectorContextState::Creation,
+                                target: Some(target),
+                                rule_context: Some(candidate.rule_context),
+                                candidates: base_candidates,
+                            });
+                        }
+                    }
 
-                return Ok(PageCssTarget {
-                    exists: project_relative_exists(
+                    let mut target = page_target_for_template(
+                        template_path.as_deref(),
+                        &selector,
+                        fallback_file.as_deref(),
+                    );
+                    let target_source =
+                        read_current_zola_text(project_root, store, &target.file)?
+                            .unwrap_or_default();
+                    let rule_context = get_rule_context(
+                        &breakpoints,
+                        to_project_relative_path(&target.file),
+                        &target_source,
+                        selector.clone(),
+                        viewport.clone(),
+                    );
+                    target.exists = project_relative_exists(
                         project_root,
                         store,
-                        &to_project_relative_path(&file),
-                    )?,
-                    file: to_project_relative_path(&file),
-                    selector,
-                    target_kind: "existing".to_string(),
-                    linked,
-                    href,
-                    template_path: template_path.map(|path| to_project_relative_path(&path)),
-                    page_owned,
-                    reason: "Regula există deja în acest fișier.".to_string(),
-                });
-            }
-
-            let mut target = page_target_for_template(
-                template_path.as_deref(),
-                &selector,
-                fallback_file
-                    .as_deref()
-                    .or_else(|| scss_files.first().map(String::as_str)),
-            );
-            target.exists = project_relative_exists(
-                project_root,
-                store,
-                &to_project_relative_path(&target.file),
-            )?;
-            target.linked = template_path
-                .as_deref()
-                .zip(target.href.as_deref())
-                .map(|(template, href)| {
-                    read_current_zola_text(project_root, store, template).map(|source| {
-                        source
-                            .as_deref()
-                            .is_some_and(|source| template_contains_asset_path(source, href))
+                        &to_project_relative_path(&target.file),
+                    )?;
+                    target.linked = template_path
+                        .as_deref()
+                        .zip(target.href.as_deref())
+                        .map(|(template, href)| {
+                            read_current_zola_text(project_root, store, template).map(|source| {
+                                source.as_deref().is_some_and(|source| {
+                                    template_contains_asset_path(source, href)
+                                })
+                            })
+                        })
+                        .transpose()?
+                        .unwrap_or(false);
+                    target.file = to_project_relative_path(&target.file);
+                    target.template_path = target
+                        .template_path
+                        .map(|path| to_project_relative_path(&path));
+                    Ok(CssInspectorContextResolution {
+                        schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+                        selection_revision: expected_selection.selection_revision,
+                        selector,
+                        viewport,
+                        state: CssInspectorContextState::Creation,
+                        target: Some(target),
+                        rule_context: Some(rule_context),
+                        candidates,
                     })
-                })
-                .transpose()?
-                .unwrap_or(false);
-            target.file = to_project_relative_path(&target.file);
-            target.template_path = target
-                .template_path
-                .map(|path| to_project_relative_path(&path));
-            Ok(target)
+                },
+            )
         },
     )
 }
@@ -853,29 +1069,6 @@ pub fn cleanup_page_css_contract(
                     written_files,
                 },
             ))
-        },
-    )
-}
-
-#[tauri::command(async)]
-pub fn find_class_in_scss(
-    selector: String,
-    scss_files: Vec<String>,
-    identity: FileBufferRequestIdentity,
-    state: State<AppState>,
-) -> Result<FileBufferCommandReceipt<Option<ClassSearchResult>>, String> {
-    with_bound_css_file_buffer(
-        state.inner(),
-        &identity,
-        move |project_root, _root, _session, store| {
-            let scss_files = to_zola_relative_paths(&scss_files);
-            Ok(
-                find_class_in_current_project_styles(project_root, store, &scss_files, &selector)?
-                    .map(|(file, rules)| ClassSearchResult {
-                        file: to_project_relative_path(&file),
-                        rules,
-                    }),
-            )
         },
     )
 }
@@ -1034,88 +1227,24 @@ fn validate_scss_variable_name(value: &str) -> Result<String, String> {
 }
 
 #[tauri::command(async)]
-pub fn get_class_rules(
-    relative_path: String,
-    selector: String,
-    identity: FileBufferRequestIdentity,
-    state: State<AppState>,
-) -> Result<FileBufferCommandReceipt<Vec<CssProperty>>, String> {
-    with_bound_css_file_buffer(
-        state.inner(),
-        &identity,
-        move |project_root, _root, _session, store| {
-            let zola_relative_path = strip_zola_root_prefix(&relative_path);
-            let source = read_current_zola_text(project_root, store, zola_relative_path)?
-                .ok_or_else(|| format!("Nu am putut citi {relative_path}."))?;
-            Ok(parse_class_rules(&source, selector.trim()))
-        },
-    )
-}
-
-#[tauri::command(async)]
-pub fn get_class_rules_at_viewport(
-    relative_path: String,
-    selector: String,
-    viewport: String,
-    identity: FileBufferRequestIdentity,
-    state: State<AppState>,
-) -> Result<FileBufferCommandReceipt<Vec<CssProperty>>, String> {
-    with_bound_css_file_buffer(
-        state.inner(),
-        &identity,
-        move |project_root, _root, _session, store| {
-            let zola_relative_path = strip_zola_root_prefix(&relative_path);
-            let source = read_current_zola_text(project_root, store, zola_relative_path)?
-                .ok_or_else(|| format!("Nu am putut citi {relative_path}."))?;
-            let breakpoints = current_css_breakpoints(project_root, store)?;
-            Ok(get_rules_at_viewport(
-                &breakpoints,
-                &source,
-                &viewport,
-                selector.trim(),
-            ))
-        },
-    )
-}
-
-#[tauri::command(async)]
-pub fn get_css_rule_context(
-    relative_path: String,
-    selector: String,
-    viewport: String,
-    identity: FileBufferRequestIdentity,
-    state: State<AppState>,
-) -> Result<FileBufferCommandReceipt<CssRuleContext>, String> {
-    with_bound_css_file_buffer(
-        state.inner(),
-        &identity,
-        move |project_root, _root, _session, store| {
-            let zola_relative_path = strip_zola_root_prefix(&relative_path);
-            let selector = selector.trim().to_string();
-            let source = read_current_zola_text(project_root, store, zola_relative_path)?
-                .ok_or_else(|| format!("Nu am putut citi {relative_path}."))?;
-            let breakpoints = current_css_breakpoints(project_root, store)?;
-            Ok(get_rule_context(
-                &breakpoints,
-                to_project_relative_path(zola_relative_path),
-                &source,
-                selector,
-                viewport,
-            ))
-        },
-    )
-}
-
-#[tauri::command(async)]
 pub fn set_css_rule(
     relative_path: String,
     selector: String,
     properties: HashMap<String, String>,
     identity: FileBufferRequestIdentity,
+    expected_selection: Option<SelectionMutationIdentity>,
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
-    set_css_rule_impl(relative_path, selector, properties, &identity, &app, &state)
+    set_css_rule_impl(
+        relative_path,
+        selector,
+        properties,
+        &identity,
+        expected_selection.as_ref(),
+        &app,
+        &state,
+    )
 }
 
 fn set_css_rule_impl(
@@ -1123,15 +1252,17 @@ fn set_css_rule_impl(
     selector: String,
     properties: HashMap<String, String>,
     identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
     validate_panel_rule_input(&selector, &properties, "desktop")?;
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
-    execute_css_workspace_mutation(
+    execute_selection_bound_css_workspace_mutation(
         app,
         state,
         identity,
+        expected_selection,
         move |project_root, _zola_root, store| {
             if properties.is_empty() {
                 return Ok((None, ()));
@@ -1175,6 +1306,7 @@ pub fn set_css_rule_at_viewport(
     properties: HashMap<String, String>,
     viewport: String,
     identity: FileBufferRequestIdentity,
+    expected_selection: Option<SelectionMutationIdentity>,
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
@@ -1184,6 +1316,7 @@ pub fn set_css_rule_at_viewport(
         properties,
         viewport,
         &identity,
+        expected_selection.as_ref(),
         &app,
         &state,
     )
@@ -1195,15 +1328,17 @@ fn set_css_rule_at_viewport_impl(
     properties: HashMap<String, String>,
     viewport: String,
     identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
     validate_panel_rule_input(&selector, &properties, &viewport)?;
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
-    execute_css_workspace_mutation(
+    execute_selection_bound_css_workspace_mutation(
         app,
         state,
         identity,
+        expected_selection,
         move |project_root, _zola_root, store| {
             if properties.is_empty() {
                 return Ok((None, ()));
@@ -1256,6 +1391,7 @@ pub fn set_page_css_rule_at_viewport(
     viewport: String,
     cachebust_assets: bool,
     identity: FileBufferRequestIdentity,
+    expected_selection: Option<SelectionMutationIdentity>,
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<CssMutationCommandReceipt<PageCssWriteResult>, String> {
@@ -1267,6 +1403,7 @@ pub fn set_page_css_rule_at_viewport(
         viewport,
         cachebust_assets,
         &identity,
+        expected_selection.as_ref(),
         &app,
         &state,
     )
@@ -1280,16 +1417,18 @@ fn set_page_css_rule_at_viewport_impl(
     viewport: String,
     cachebust_assets: bool,
     identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<PageCssWriteResult>, String> {
     validate_panel_rule_input(&selector, &properties, &viewport)?;
     let template_path = to_zola_relative_path(&template_path);
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
-    execute_css_workspace_mutation(
+    execute_selection_bound_css_workspace_mutation(
         app,
         state,
         identity,
+        expected_selection,
         move |project_root, _zola_root, store| {
             if properties.is_empty() {
                 return Ok((
@@ -1426,4 +1565,108 @@ fn set_page_css_rule_at_viewport_impl(
             ))
         },
     )
+}
+
+#[cfg(test)]
+mod css_inspector_context_tests {
+    use super::*;
+
+    #[test]
+    fn atomic_candidates_keep_the_exact_file_and_viewport_context() {
+        let candidates = css_inspector_source_candidates(
+            &[
+                (
+                    "sass/_other.scss".to_string(),
+                    ".other { color: black; }".to_string(),
+                ),
+                (
+                    "sass/_hero.scss".to_string(),
+                    ".hero-title { color: red; }\n@media (max-width: $bp-mobil) { .hero-title { color: blue; } }"
+                        .to_string(),
+                ),
+            ],
+            &CssBreakpointValues {
+                tablet: Some("1024px".to_string()),
+                mobile: Some("768px".to_string()),
+            },
+            ".hero-title",
+            ".hero-title",
+            "mobile",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].file, "sass/_hero.scss");
+        assert!(candidates[0].rule_context.has_base_rule);
+        assert!(candidates[0].rule_context.has_viewport_rule);
+        assert_eq!(
+            candidates[0].rule_context.resolved_breakpoint.as_deref(),
+            Some("$bp-mobil")
+        );
+    }
+
+    #[test]
+    fn an_empty_exact_rule_is_existing_source_not_absent() {
+        let candidates = css_inspector_source_candidates(
+            &[(
+                "sass/_hero.scss".to_string(),
+                ".hero-title {\n}\n".to_string(),
+            )],
+            &CssBreakpointValues::default(),
+            ".hero-title",
+            ".hero-title",
+            "desktop",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].file, "sass/_hero.scss");
+        assert!(candidates[0].rule_context.has_base_rule);
+        assert!(candidates[0].rule_context.has_viewport_rule);
+    }
+
+    #[test]
+    fn duplicate_selector_sources_remain_explicitly_ambiguous() {
+        let candidates = css_inspector_source_candidates(
+            &[
+                (
+                    "sass/_framework.scss".to_string(),
+                    ".hero-title { color: red; }".to_string(),
+                ),
+                (
+                    "sass/pages/index.scss".to_string(),
+                    ".hero-title { color: blue; }".to_string(),
+                ),
+            ],
+            &CssBreakpointValues::default(),
+            ".hero-title",
+            ".hero-title",
+            "desktop",
+        );
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].file, "sass/_framework.scss");
+        assert_eq!(candidates[1].file, "sass/pages/index.scss");
+    }
+
+    #[test]
+    fn a_missing_variant_keeps_the_unique_base_rule_source() {
+        assert_eq!(
+            base_class_selector(".hero-title:hover").as_deref(),
+            Some(".hero-title")
+        );
+        let candidates = css_inspector_source_candidates(
+            &[(
+                "sass/_hero.scss".to_string(),
+                ".hero-title { color: red; }".to_string(),
+            )],
+            &CssBreakpointValues::default(),
+            ".hero-title",
+            ".hero-title:hover",
+            "desktop",
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].file, "sass/_hero.scss");
+        assert_eq!(candidates[0].rule_context.selector, ".hero-title:hover");
+        assert!(!candidates[0].rule_context.has_base_rule);
+    }
 }

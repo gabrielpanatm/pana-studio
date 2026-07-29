@@ -17,6 +17,7 @@
   type="button"
   {title}
   {disabled}
+  aria-pressed={segmented ? active : undefined}
   onclick={onclick}
 >
   <slot></slot>
@@ -38,14 +39,28 @@
     border-radius: var(--radius-control);
     color: var(--text);
     line-height: 0;
-    background: var(--surface-4);
-    transition: background 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
+    transition:
+      background 120ms ease,
+      border-color 120ms ease,
+      box-shadow 120ms ease,
+      color 120ms ease,
+      transform 80ms ease,
+      opacity 120ms ease;
   }
 
   .toolbar-icon-button:hover:not(:disabled) {
     border-color: var(--border-strong);
     color: var(--text-strong);
-    background: var(--control-hover);
+    background: var(--material-control-hover);
+    box-shadow: var(--shadow-control-hover);
+  }
+
+  .toolbar-icon-button:active:not(:disabled) {
+    background: var(--material-control-selected);
+    box-shadow: var(--shadow-pressed);
+    transform: translateY(1px);
   }
 
   .toolbar-icon-button.segmented {
@@ -53,25 +68,63 @@
     min-width: 30px;
     height: 28px;
     min-height: 28px;
-    border-color: transparent;
-    border-radius: 3px;
+    border: 0;
+    border-radius: 0;
+    color: var(--text-muted);
     background: transparent;
+    box-shadow: none;
   }
 
   .toolbar-icon-button.segmented + :global(.toolbar-icon-button.segmented) {
-    margin-left: 1px;
+    margin-left: 0;
   }
 
   .toolbar-icon-button.active {
+    border-color: color-mix(in srgb, var(--brand) 42%, var(--border-subtle));
+    color: var(--brand-strong);
+    background: var(--material-control-selected);
+    box-shadow: var(--shadow-pressed);
+  }
+
+  .toolbar-icon-button.segmented:hover:not(:disabled):not(.active) {
+    border-color: transparent;
+    color: var(--text-strong);
+    background: var(--material-control-hover);
+    box-shadow: inset 0 1px 0 var(--skeuo-edge-highlight);
+  }
+
+  .toolbar-icon-button.segmented.active {
     border-color: transparent;
     color: var(--brand-strong);
-    background: var(--control-selected);
+    background: var(--material-control-selected);
+    box-shadow:
+      inset 0 1px 2px var(--skeuo-shade-soft),
+      inset 0 -1px 0 var(--skeuo-edge-highlight);
+  }
+
+  .toolbar-icon-button.segmented.active:hover:not(:disabled) {
+    color: var(--brand-strong);
+    background: var(--material-control-selected);
+    box-shadow:
+      inset 0 1px 2px var(--skeuo-shade-soft),
+      inset 0 -1px 0 var(--skeuo-edge-highlight);
+  }
+
+  .toolbar-icon-button.segmented:active:not(:disabled) {
+    background: color-mix(in srgb, var(--brand) 16%, var(--surface-inset));
+    box-shadow: var(--shadow-pressed);
+    transform: none;
+  }
+
+  .toolbar-icon-button.segmented:focus-visible {
+    outline-offset: -2px;
   }
 
   .toolbar-icon-button:disabled {
     opacity: 0.38;
     cursor: not-allowed;
     background: color-mix(in srgb, var(--surface-4) 55%, transparent);
+    box-shadow: none;
   }
 
   .toolbar-icon-button.segmented:disabled {
@@ -80,13 +133,19 @@
 
   .toolbar-icon-button.open-folder-cta {
     border-color: var(--brand);
-    color: #ffffff;
-    background: var(--brand);
+    color: var(--text-on-accent);
+    background: var(--material-accent);
+    box-shadow: var(--shadow-control);
   }
 
   .toolbar-icon-button.open-folder-cta:hover {
     border-color: var(--brand-strong);
-    background: var(--brand-strong);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--brand-strong) 86%, white),
+      var(--brand-strong)
+    );
+    box-shadow: var(--shadow-control-hover);
   }
 
   .toolbar-icon-button.pending {

@@ -1,13 +1,11 @@
 use std::collections::{BTreeSet, HashSet};
 
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-
 use crate::{
     css::page::{page_css_href, page_scss_relative_path, remove_page_stylesheet_link},
-    js::{NativeBlockRuntimeEntry, PageJsConfig},
+    js::{MotionTarget, MotionTargetKind, NativeBlockRuntimeEntry, PageJsConfig},
     zola_links::template_contains_asset_path,
 };
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -425,99 +423,45 @@ fn normalize_page_js_config(config: PageJsConfig) -> PageJsConfig {
         .collect();
 
     PageJsConfig {
-        version: Some(config.version.unwrap_or(1)),
+        version: Some(2),
         blocks,
-        motion: Some(normalize_motion_config(config.motion)),
+        motion: Some(config.motion.unwrap_or_default()),
     }
-}
-
-fn normalize_motion_config(motion: Option<Value>) -> Value {
-    let anime_version = motion
-        .as_ref()
-        .and_then(|value| value.get("animeVersion"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("4.4.1")
-        .to_string();
-    let active_item_id = motion
-        .as_ref()
-        .and_then(|value| value.get("activeItemId"))
-        .and_then(Value::as_str)
-        .map(|value| json!(value))
-        .unwrap_or(Value::Null);
-    let items = motion
-        .as_ref()
-        .and_then(|value| value.get("items"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    json!({
-        "schemaVersion": 1,
-        "animeVersion": anime_version,
-        "activeItemId": active_item_id,
-        "items": items,
-    })
 }
 
 fn reconcile_page_js_motion(
     config: &PageJsConfig,
     active_data_anim_ids: &BTreeSet<String>,
 ) -> PageJsConfig {
-    let motion = normalize_motion_config(config.motion.clone());
-    let anime_version = motion
-        .get("animeVersion")
-        .and_then(Value::as_str)
-        .unwrap_or("4.4.1")
-        .to_string();
-    let active_item_id = motion.get("activeItemId").cloned().unwrap_or(Value::Null);
-    let items = motion
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|item| motion_item_still_targets_active_data_anim(item, active_data_anim_ids))
-        .collect::<Vec<_>>();
+    let mut motion = config.motion.clone().unwrap_or_default();
+    motion.interactions.retain(|interaction| {
+        let mut ids = data_anim_ids_referenced_by_target(&interaction.trigger_target);
+        for action in &interaction.actions {
+            if let Some(target) = action.target() {
+                ids.extend(data_anim_ids_referenced_by_target(target));
+            }
+        }
+        ids.is_empty() || ids.iter().all(|id| active_data_anim_ids.contains(id))
+    });
+    motion.behaviors.retain(|behavior| {
+        let ids = data_anim_ids_referenced_by_target(behavior.target());
+        ids.is_empty() || ids.iter().all(|id| active_data_anim_ids.contains(id))
+    });
 
     PageJsConfig {
-        version: Some(config.version.unwrap_or(1)),
+        version: Some(2),
         blocks: config.blocks.clone(),
-        motion: Some(json!({
-            "schemaVersion": 1,
-            "animeVersion": anime_version,
-            "activeItemId": active_item_id,
-            "items": items,
-        })),
+        motion: Some(motion),
     }
 }
 
-fn motion_item_still_targets_active_data_anim(
-    item: &Value,
-    active_data_anim_ids: &BTreeSet<String>,
-) -> bool {
-    let ids = data_anim_ids_referenced_by_motion_item(item);
-    ids.is_empty() || ids.iter().all(|id| active_data_anim_ids.contains(id))
-}
-
-fn data_anim_ids_referenced_by_motion_item(item: &Value) -> BTreeSet<String> {
+fn data_anim_ids_referenced_by_target(target: &MotionTarget) -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
-    let target = item.get("target");
-    if let Some(data_anim) = target
-        .and_then(|target| target.get("dataAnim"))
-        .and_then(Value::as_str)
-        .and_then(non_empty_trimmed)
-    {
-        ids.insert(data_anim);
+    if target.kind == MotionTargetKind::Element && !target.data_anim.trim().is_empty() {
+        ids.insert(target.data_anim.trim().to_string());
     }
-    if let Some(selector) = target
-        .and_then(|target| target.get("selector"))
-        .and_then(Value::as_str)
-    {
-        ids.extend(data_anim_ids_in_selector(selector));
-    }
-    if let Some(selector) = item.get("targetSelector").and_then(Value::as_str) {
-        ids.extend(data_anim_ids_in_selector(selector));
+    if !target.selector.trim().is_empty() {
+        ids.extend(data_anim_ids_in_selector(&target.selector));
     }
     ids
 }
@@ -557,7 +501,10 @@ fn data_anim_ids_in_selector(selector: &str) -> BTreeSet<String> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+    use crate::js::MotionDocument;
 
     fn request(
         template_source: &str,
@@ -603,32 +550,47 @@ mod tests {
     #[test]
     fn filters_motion_items_targeting_removed_data_anim_ids() {
         let page_js_config = PageJsConfig {
-            version: Some(1),
+            version: Some(2),
             blocks: vec![NativeBlockRuntimeEntry {
                 id: "accordion".to_string(),
             }],
-            motion: Some(json!({
-                "schemaVersion": 1,
-                "animeVersion": "4.4.1",
-                "activeItemId": "old",
-                "items": [
-                    {
-                        "id": "active",
-                        "type": "animation",
-                        "target": { "dataAnim": "hero", "selector": "[data-anim=\"hero\"]" }
-                    },
-                    {
-                        "id": "old",
-                        "type": "animation",
-                        "target": { "selector": "[data-anim='removed']" }
-                    },
-                    {
-                        "id": "manual",
-                        "type": "custom",
-                        "target": { "selector": ".manual" }
-                    }
-                ]
-            })),
+            motion: Some(
+                MotionDocument::from_value(json!({
+                    "schemaVersion": 1,
+                    "animeVersion": "4.4.1",
+                    "activeItemId": "old",
+                    "items": [
+                        {
+                            "id": "active",
+                            "type": "animation",
+                            "target": { "dataAnim": "hero", "selector": "[data-anim=\"hero\"]" },
+                            "properties": [{
+                                "id": "opacity-active",
+                                "property": "opacity",
+                                "category": "css",
+                                "value": { "mode": "fromTo", "from": 0, "to": 1 }
+                            }]
+                        },
+                        {
+                            "id": "old",
+                            "type": "animation",
+                            "target": { "selector": "[data-anim='removed']" },
+                            "properties": [{
+                                "id": "opacity-old",
+                                "property": "opacity",
+                                "category": "css",
+                                "value": { "mode": "fromTo", "from": 0, "to": 1 }
+                            }]
+                        },
+                        {
+                            "id": "manual",
+                            "type": "custom",
+                            "target": { "selector": ".manual" }
+                        }
+                    ]
+                }))
+                .expect("legacy migration"),
+            ),
         };
 
         let plan = plan_page_asset_contract(request(
@@ -637,18 +599,23 @@ mod tests {
             page_js_config,
         ));
 
-        let items = plan
-            .page_js_config
-            .motion
-            .as_ref()
-            .and_then(|motion| motion.get("items"))
-            .and_then(Value::as_array)
-            .unwrap();
-        let ids = items
-            .iter()
-            .filter_map(|item| item.get("id").and_then(Value::as_str))
-            .collect::<Vec<_>>();
-        assert_eq!(ids, vec!["active", "manual"]);
+        let motion = plan.page_js_config.motion.as_ref().unwrap();
+        assert_eq!(
+            motion
+                .interactions
+                .iter()
+                .map(|interaction| interaction.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["active"]
+        );
+        assert_eq!(
+            motion
+                .custom_code
+                .iter()
+                .map(|custom| custom.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["manual"]
+        );
         assert!(plan.page_js_changed);
         assert_eq!(plan.page_js_config.blocks[0].id, "accordion");
     }

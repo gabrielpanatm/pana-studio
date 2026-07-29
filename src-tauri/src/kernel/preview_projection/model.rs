@@ -7,35 +7,32 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    kernel::project_workspace::ProjectWorkspaceMutationReceipt,
+    kernel::{
+        project_workspace::ProjectWorkspaceMutationReceipt,
+        selection_coordinator::SelectionMutationIdentity,
+    },
+    localization::LocalizedDiagnostic,
     project_model::{
         attribute_engine::{ProjectHtmlAttributeIntent, ProjectHtmlAttributePatch},
         delete_engine::{ProjectHtmlDeleteIntent, ProjectHtmlDeletePatch},
         duplicate_engine::{ProjectHtmlDuplicateIntent, ProjectHtmlDuplicatePatch},
         insert_engine::{ProjectHtmlInsertIntent, ProjectHtmlInsertPatch},
-        move_engine::{ProjectHtmlMoveIntent, ProjectHtmlMovePatch, ProjectMovePosition},
+        move_engine::ProjectMovePosition,
         tag_engine::{ProjectHtmlTagIntent, ProjectHtmlTagPatch},
-        template_edit_gate::{
-            ProjectTemplateEditPermissionGrant, ProjectTemplateEditPermissionIntent,
-        },
         tera_delete_engine::{ProjectTeraDeleteIntent, ProjectTeraDeletePatch},
         tera_insert_engine::{ProjectTeraInsertIntent, ProjectTeraInsertPatch},
-        tera_move_engine::{ProjectTeraMoveIntent, ProjectTeraMovePatch},
         text_engine::{ProjectHtmlTextIntent, ProjectHtmlTextPatch},
     },
 };
 
-pub const PREVIEW_LAYER_DROP_EXECUTION_SCHEMA_VERSION: u32 = 2;
-pub const PREVIEW_HTML_INSERT_DROP_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_HTML_ATTRIBUTES_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_HTML_TEXT_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_HTML_TAG_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_HTML_DUPLICATE_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_HTML_DELETE_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_TERA_INSERT_DROP_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_TERA_MOVE_DROP_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_TERA_DELETE_EXECUTION_SCHEMA_VERSION: u32 = 1;
-pub const PREVIEW_TEMPLATE_EDIT_PERMISSION_SCHEMA_VERSION: u32 = 1;
+pub const PREVIEW_HTML_INSERT_DROP_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_HTML_ATTRIBUTES_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_HTML_TEXT_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_HTML_TAG_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_HTML_DUPLICATE_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_HTML_DELETE_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_TERA_INSERT_DROP_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_TERA_DELETE_EXECUTION_SCHEMA_VERSION: u32 = 2;
 pub const CANVAS_PATCH_SCHEMA_VERSION: u32 = 1;
 const MAX_CANVAS_PATCH_BYTES: usize = 2 * 1024 * 1024;
 
@@ -44,7 +41,11 @@ const MAX_CANVAS_PATCH_BYTES: usize = 2 * 1024 * 1024;
 pub struct PreviewStructuralCommandIdentity {
     pub expected_project_root: String,
     pub expected_session_id: String,
+    #[serde(default)]
+    pub expected_selection: Option<PreviewStructuralSelectionIdentity>,
 }
+
+pub type PreviewStructuralSelectionIdentity = SelectionMutationIdentity;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,34 +88,28 @@ pub struct PreviewProjectionIntentInput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PreviewProjectionIntentKind {
-    LayerDrop,
     HtmlInsertDrop,
     HtmlAttributes,
     HtmlText,
     HtmlTag,
     HtmlDuplicate,
     TeraInsertDrop,
-    TeraMoveDrop,
     HtmlDelete,
     TemplateDelete,
-    TemplateEdit,
     Unsupported,
 }
 
 impl PreviewProjectionIntentKind {
     pub fn operation_label(self) -> &'static str {
         match self {
-            Self::LayerDrop => "preview.layer.drop",
             Self::HtmlInsertDrop => "preview.html.insert_drop",
             Self::HtmlAttributes => "preview.html.attributes",
             Self::HtmlText => "preview.html.text",
             Self::HtmlTag => "preview.html.tag",
             Self::HtmlDuplicate => "preview.html.duplicate_selected",
             Self::TeraInsertDrop => "preview.tera.insert_drop",
-            Self::TeraMoveDrop => "preview.tera.move_drop",
             Self::HtmlDelete => "preview.html.delete_selected",
             Self::TemplateDelete => "preview.template.delete_selected",
-            Self::TemplateEdit => "preview.template.edit_selected",
             Self::Unsupported => "preview.unsupported",
         }
     }
@@ -132,7 +127,6 @@ pub enum PreviewProjectionIntentStatus {
 #[serde(rename_all = "snake_case")]
 pub enum PreviewProjectionEffect {
     KernelMutationPreflight,
-    TemplatePermissionPreflight,
     Unsupported,
 }
 
@@ -149,16 +143,16 @@ pub enum PreviewProjectionDiagnosticSeverity {
 pub struct PreviewProjectionDiagnostic {
     pub code: String,
     pub severity: PreviewProjectionDiagnosticSeverity,
-    pub message: String,
+    pub diagnostic: LocalizedDiagnostic,
     pub blocking: bool,
 }
 
 impl PreviewProjectionDiagnostic {
-    pub fn blocking(code: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn blocking(code: impl Into<String>, diagnostic: LocalizedDiagnostic) -> Self {
         Self {
             code: code.into(),
             severity: PreviewProjectionDiagnosticSeverity::Error,
-            message: message.into(),
+            diagnostic,
             blocking: true,
         }
     }
@@ -178,7 +172,7 @@ pub struct PreviewProjectionIntentReceipt {
     pub project_root: Option<String>,
     pub runtime_session_id: Option<String>,
     pub preview_revision: Option<u64>,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub diagnostics: Vec<PreviewProjectionDiagnostic>,
 }
 
@@ -359,40 +353,6 @@ fn full_hex(bytes: &[u8]) -> String {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewLayerDropExecutionInput {
-    pub intent: PreviewProjectionIntentInput,
-    pub move_intent: ProjectHtmlMoveIntent,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PreviewLayerDropExecutionStatus {
-    Committed,
-    Blocked,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewLayerDropExecutionReceipt {
-    pub schema_version: u32,
-    pub intent: PreviewProjectionIntentReceipt,
-    pub status: PreviewLayerDropExecutionStatus,
-    pub message: String,
-    pub model_revision: Option<String>,
-    /// Canonical Source Graph identity of the moved node in `model_revision`.
-    /// This is intentionally distinct from the pre-move ID carried by the
-    /// patch: positional DOM selectors and preview session IDs are not stable
-    /// after the Zola document is reloaded.
-    pub projected_source_id: Option<String>,
-    pub patch: Option<ProjectHtmlMovePatch>,
-    pub canvas_patch: Option<CanvasPatch>,
-    pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
-    pub touched_files: Vec<String>,
-    pub diagnostics: Vec<PreviewProjectionDiagnostic>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PreviewHtmlInsertDropExecutionInput {
     pub intent: PreviewProjectionIntentInput,
     pub insert_intent: ProjectHtmlInsertIntent,
@@ -411,7 +371,7 @@ pub struct PreviewHtmlInsertDropExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewHtmlInsertDropExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectHtmlInsertPatch>,
     pub canvas_patch: Option<CanvasPatch>,
@@ -440,7 +400,7 @@ pub struct PreviewHtmlAttributesExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewHtmlAttributesExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectHtmlAttributePatch>,
     pub canvas_patch: Option<CanvasPatch>,
@@ -473,7 +433,7 @@ pub struct PreviewHtmlTextExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewHtmlTextExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectHtmlTextPatch>,
     pub canvas_patch: Option<CanvasPatch>,
@@ -502,7 +462,7 @@ pub struct PreviewHtmlTagExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewHtmlTagExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectHtmlTagPatch>,
     pub canvas_patch: Option<CanvasPatch>,
@@ -531,7 +491,7 @@ pub struct PreviewHtmlDuplicateExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewHtmlDuplicateExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectHtmlDuplicatePatch>,
     pub canvas_patch: Option<CanvasPatch>,
@@ -560,7 +520,7 @@ pub struct PreviewHtmlDeleteExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewHtmlDeleteExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectHtmlDeletePatch>,
     pub canvas_patch: Option<CanvasPatch>,
@@ -589,38 +549,9 @@ pub struct PreviewTeraInsertDropExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewTeraInsertDropExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectTeraInsertPatch>,
-    pub canvas_patch: Option<CanvasPatch>,
-    pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
-    pub touched_files: Vec<String>,
-    pub diagnostics: Vec<PreviewProjectionDiagnostic>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewTeraMoveDropExecutionInput {
-    pub intent: PreviewProjectionIntentInput,
-    pub move_intent: ProjectTeraMoveIntent,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PreviewTeraMoveDropExecutionStatus {
-    Committed,
-    Blocked,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewTeraMoveDropExecutionReceipt {
-    pub schema_version: u32,
-    pub intent: PreviewProjectionIntentReceipt,
-    pub status: PreviewTeraMoveDropExecutionStatus,
-    pub message: String,
-    pub model_revision: Option<String>,
-    pub patch: Option<ProjectTeraMovePatch>,
     pub canvas_patch: Option<CanvasPatch>,
     pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
     pub touched_files: Vec<String>,
@@ -647,37 +578,11 @@ pub struct PreviewTeraDeleteExecutionReceipt {
     pub schema_version: u32,
     pub intent: PreviewProjectionIntentReceipt,
     pub status: PreviewTeraDeleteExecutionStatus,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
     pub model_revision: Option<String>,
     pub patch: Option<ProjectTeraDeletePatch>,
     pub canvas_patch: Option<CanvasPatch>,
     pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
     pub touched_files: Vec<String>,
-    pub diagnostics: Vec<PreviewProjectionDiagnostic>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewTemplateEditPermissionInput {
-    pub intent: PreviewProjectionIntentInput,
-    pub edit_intent: ProjectTemplateEditPermissionIntent,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PreviewTemplateEditPermissionStatus {
-    Granted,
-    Blocked,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PreviewTemplateEditPermissionReceipt {
-    pub schema_version: u32,
-    pub intent: PreviewProjectionIntentReceipt,
-    pub status: PreviewTemplateEditPermissionStatus,
-    pub message: String,
-    pub model_revision: Option<String>,
-    pub grant: Option<ProjectTemplateEditPermissionGrant>,
     pub diagnostics: Vec<PreviewProjectionDiagnostic>,
 }

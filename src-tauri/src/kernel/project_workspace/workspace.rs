@@ -1324,6 +1324,13 @@ impl ProjectWorkspace {
             .as_ref()
             .map(|entry| entry.document_paths.clone())
             .unwrap_or_default();
+        let documents = touched_files
+            .iter()
+            .map(|relative_path| WorkspaceDocumentProjection {
+                relative_path: relative_path.clone(),
+                snapshot: self.documents.text_snapshot(relative_path),
+            })
+            .collect();
         let transaction_id = entry.as_ref().map(|entry| entry.transaction_id.clone());
         ProjectWorkspaceMutationReceipt {
             schema_version: self.schema_version,
@@ -1333,6 +1340,7 @@ impl ProjectWorkspace {
             dirty: self.is_dirty(),
             transaction_id,
             touched_files,
+            documents,
             entry,
             files,
             page_js,
@@ -1694,6 +1702,14 @@ mod tests {
         assert!(receipt.changed);
         assert!(receipt.dirty);
         assert!(receipt.entry.as_ref().unwrap().topology_paths.is_empty());
+        assert_eq!(receipt.documents.len(), 1);
+        assert_eq!(
+            receipt.documents[0]
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text.as_str()),
+            Some("<h1>Draft</h1>")
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "<h1>Disk</h1>");
         let target_transaction_id = receipt.entry.unwrap().transaction_id;
         assert!(workspace
@@ -1922,7 +1938,7 @@ mod tests {
         fs::write(&path, "<main>Disk</main>").unwrap();
         let mut workspace = workspace(&root, &[("templates/index.html", "<main>Disk</main>")]);
 
-        workspace
+        let delete = workspace
             .stage_resource_changes(
                 &identity(&workspace),
                 metadata("Delete template", None),
@@ -1934,6 +1950,9 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(delete.documents.len(), 1);
+        assert_eq!(delete.documents[0].relative_path, "templates/index.html");
+        assert!(delete.documents[0].snapshot.is_none());
         assert_eq!(fs::read_to_string(&path).unwrap(), "<main>Disk</main>");
         assert_eq!(
             workspace.deleted_document_paths(),
@@ -1979,6 +1998,9 @@ mod tests {
         assert!(receipt.changed);
         assert!(receipt.dirty);
         assert_eq!(receipt.touched_files, vec![relative_path]);
+        assert_eq!(receipt.documents.len(), 1);
+        assert_eq!(receipt.documents[0].relative_path, relative_path);
+        assert!(receipt.documents[0].snapshot.is_none());
         assert!(!disk_path.exists());
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.staged_binary_resource_count, 1);
@@ -2362,8 +2384,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 0,
                 directory_count: 0,

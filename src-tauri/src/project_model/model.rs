@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::localization::LocalizedDiagnostic;
 use crate::source_graph::model::{
     SourceCapabilities, SourceGraph, SourceNodeKind, SourceOrigin, SourceRange,
 };
@@ -92,7 +93,7 @@ pub enum ProjectModelFileKind {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectModelDiagnostic {
     pub severity: ProjectModelDiagnosticSeverity,
-    pub message: String,
+    pub diagnostic: LocalizedDiagnostic,
     pub file: Option<String>,
     pub range: Option<SourceRange>,
 }

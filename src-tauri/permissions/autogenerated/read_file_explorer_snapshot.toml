@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-file-explorer-snapshot"
+description = "Enables the read_file_explorer_snapshot command without any pre-configured scope."
+commands.allow = ["read_file_explorer_snapshot"]
+
+[[permission]]
+identifier = "deny-read-file-explorer-snapshot"
+description = "Denies the read_file_explorer_snapshot command without any pre-configured scope."
+commands.deny = ["read_file_explorer_snapshot"]

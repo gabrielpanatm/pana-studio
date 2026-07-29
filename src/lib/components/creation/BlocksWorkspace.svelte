@@ -8,6 +8,7 @@
     IconX,
   } from "@tabler/icons-svelte";
   import { nativeBlockPaletteGroupsFromRegistry } from "$lib/blocks/registry";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readNativeBlockRegistry, readUiBlockGraph } from "$lib/project/io";
   import type { HtmlPaletteElement } from "$lib/project/html-palette";
   import type { AppState } from "$lib/state/app.svelte";
@@ -24,12 +25,12 @@
   type BlockView = "all" | "element" | "section" | "composition";
   type DetailMode = "info" | "insert";
 
-  const blockViews: Array<{ id: BlockView; label: string }> = [
-    { id: "all", label: "Toate" },
-    { id: "element", label: "Elemente" },
-    { id: "section", label: "Secțiuni" },
-    { id: "composition", label: "Compoziții" },
-  ];
+  const blockViews = $derived([
+    { id: "all" as const, label: t("blocks-view-all") },
+    { id: "element" as const, label: t("blocks-view-elements") },
+    { id: "section" as const, label: t("blocks-view-sections") },
+    { id: "composition" as const, label: t("blocks-view-compositions") },
+  ]);
 
   let activeView = $state<BlockView>("all");
   let detailMode = $state<DetailMode>("info");
@@ -43,7 +44,7 @@
 
   const blockGraph = $derived(uiBlockGraph);
   const definitions = $derived(blockGraph?.definitions ?? []);
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase("ro"));
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredDefinitions = $derived(definitions.filter((definition) => {
     const inView = activeView === "all" || definition.scale === activeView;
     if (!inView) return false;
@@ -55,7 +56,7 @@
       definition.familyId,
       definition.variantId,
       definition.origin,
-    ].join(" ").toLocaleLowerCase("ro").includes(normalizedQuery);
+    ].join(" ").toLocaleLowerCase(l10n.locale).includes(normalizedQuery);
   }));
   const selectedDefinition = $derived(
     definitions.find((definition) => definition.id === selectedDefinitionId)
@@ -84,6 +85,7 @@
       )
       : [],
   );
+  const insertTarget = $derived(app.coordinatedElementSelection);
 
   $effect(() => {
     const projectRoot = app.sessionProjectRoot;
@@ -135,19 +137,21 @@
   }
 
   async function insertSelectedBlock() {
-    const target = app.selectedElement;
+    const target = insertTarget;
     const element = selectedPaletteElement as HtmlPaletteElement | null;
     if (!element || !target?.sourceLocation || inserting) return;
+    const observation = target.observation;
     inserting = true;
     loadError = "";
     try {
       await app.insertPaletteElementAtTarget({
-        targetSelector: target.domPath || target.cssSelector || target.selector,
-        targetSessionId: target.sessionId,
-        targetSourceId: target.sourceId,
-        targetTemplateSourceId: target.templateSourceId,
+        targetRenderInstanceId: target.renderInstanceId,
+        targetSelector: observation.domPath || observation.cssSelector || observation.selector,
+        targetSessionId: target.snapshot.runtimeSessionId,
+        targetSourceId: target.sourceNodeId,
+        targetTemplateSourceId: null,
         targetSourceLocation: target.sourceLocation,
-        targetTag: target.tag,
+        targetTag: observation.tag,
         position: "after",
         element,
       });
@@ -175,23 +179,23 @@
   }
 </script>
 
-<section class="blocks-workspace" aria-labelledby="blocks-title">
+<section class="activity-workspace blocks-workspace" aria-labelledby="blocks-title">
   <header class="workspace-header">
     <div>
-      <span class="eyebrow"><IconBox size={15} stroke={1.9} /> Catalog nativ Rust</span>
-      <h1 id="blocks-title">Blocuri</h1>
-      <p>Ansambluri vizuale preasamblate, separate complet de componentele Zola și Tera.</p>
+      <span class="eyebrow"><IconBox size={15} stroke={1.9} /> {t("blocks-eyebrow")}</span>
+      <h1 id="blocks-title">{t("blocks-title")}</h1>
+      <p>{t("blocks-description")}</p>
     </div>
     <dl>
-      <div><dt>Definiții</dt><dd>{definitions.length}</dd></div>
-      <div><dt>În surse</dt><dd>{blockGraph?.sourceInstances.length ?? 0}</dd></div>
-      <div><dt>Randate</dt><dd>{uiBlockGraph?.renderedInstances.length ?? 0}</dd></div>
-      <div><dt>Diagnostice</dt><dd>{blockGraph?.diagnostics.length ?? 0}</dd></div>
+      <div><dt>{t("blocks-stat-definitions")}</dt><dd>{l10n.formatNumber(definitions.length)}</dd></div>
+      <div><dt>{t("blocks-stat-source")}</dt><dd>{l10n.formatNumber(blockGraph?.sourceInstances.length ?? 0)}</dd></div>
+      <div><dt>{t("blocks-stat-rendered")}</dt><dd>{l10n.formatNumber(uiBlockGraph?.renderedInstances.length ?? 0)}</dd></div>
+      <div><dt>{t("blocks-stat-diagnostics")}</dt><dd>{l10n.formatNumber(blockGraph?.diagnostics.length ?? 0)}</dd></div>
     </dl>
   </header>
 
   <div class="workspace-toolbar">
-    <div class="view-tabs" role="tablist" aria-label="Scara blocurilor">
+    <div class="ui-tabs view-tabs" role="tablist" aria-label={t("blocks-scale-label")}>
       {#each blockViews as view, index (view.id)}
         <button
           id={`blocks-tab-${view.id}`}
@@ -199,6 +203,7 @@
           role="tab"
           aria-selected={activeView === view.id ? "true" : "false"}
           tabindex={activeView === view.id ? 0 : -1}
+          class="ui-tab"
           class:active={activeView === view.id}
           onclick={() => selectView(view.id)}
           onkeydown={(event) => handleViewKeydown(event, index)}
@@ -206,30 +211,31 @@
       {/each}
     </div>
     <label class="search-field">
-      <span class="sr-only">Caută blocuri</span>
+      <span class="sr-only">{t("blocks-search-label")}</span>
       <IconSearch size={14} stroke={1.9} />
-      <input bind:value={query} type="search" placeholder="Caută blocuri" />
+      <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("blocks-search-placeholder")} />
     </label>
     <button
-      class="primary-action"
+      class="ui-button primary toolbar toolbar-action"
       type="button"
       disabled={!selectedDefinition?.capabilities.canInsert || !selectedPaletteElement}
       onclick={beginInsert}
     >
-      <IconPlus size={14} stroke={2} /> Adaugă bloc
+      <IconPlus size={14} stroke={2} /> {t("blocks-add")}
     </button>
   </div>
 
   <div class="workspace-body">
     <div class="resource-list" role="tabpanel" aria-labelledby={`blocks-tab-${activeView}`}>
       {#if !blockGraph}
-        <div class="workspace-state">Se construiește BlockGraph…</div>
+        <div class="workspace-state">{t("blocks-loading")}</div>
       {:else}
         {#each filteredDefinitions as definition (definition.id)}
           <button
             type="button"
-            class="resource-card"
-            class:selected={selectedDefinition?.id === definition.id}
+            class="resource-card ui-entity-selectable"
+            data-ui-selected={selectedDefinition?.id === definition.id ? "true" : undefined}
+            aria-pressed={selectedDefinition?.id === definition.id}
             onclick={() => selectDefinition(definition)}
           >
             <span class="resource-icon"><IconBox size={17} stroke={1.8} /></span>
@@ -243,39 +249,41 @@
             </span>
           </button>
         {:else}
-          <div class="workspace-state">Nu există blocuri pentru filtrul curent.</div>
+          <div class="workspace-state">{t("blocks-empty-filter")}</div>
         {/each}
       {/if}
     </div>
 
-    <aside class="resource-detail" aria-label="Informații și adăugare bloc">
+    <aside class="resource-detail" aria-label={t("blocks-detail-label")}>
       {#if detailMode === "insert" && selectedDefinition && selectedPaletteElement}
         <header class="detail-heading">
           <div>
-            <span class="detail-kicker">Pregătire inserare</span>
+            <span class="detail-kicker">{t("blocks-prepare-insert")}</span>
             <h2>{selectedDefinition.displayName}</h2>
-            <p>Rust va planifica markup-ul și contractele gestionate într-o singură mutație.</p>
+            <p>{t("blocks-insert-description")}</p>
           </div>
-          <button type="button" aria-label="Renunță" onclick={() => { detailMode = "info"; }}>
+          <button class="ui-icon-button ui-close-button" type="button" aria-label={t("blocks-cancel")} onclick={() => { detailMode = "info"; }}>
             <IconX size={14} />
           </button>
         </header>
         <div class="target-card">
-          <strong>{app.selectedElement ? `După <${app.selectedElement.tag}>` : "Nicio țintă selectată"}</strong>
-          <span>{app.selectedElement?.sourceLocation?.file ?? "Selectează un element editabil în Editor."}</span>
+          <strong>{insertTarget
+            ? t("blocks-after-target", { tag: insertTarget.observation.tag })
+            : t("blocks-no-target")}</strong>
+          <span>{insertTarget?.sourceLocation?.file ?? t("blocks-select-target-help")}</span>
         </div>
         <pre><code>{selectedPaletteElement.html}</code></pre>
         {#if loadError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {loadError}</p>{/if}
         <div class="detail-actions">
-          <button type="button" onclick={() => { detailMode = "info"; }}>Renunță</button>
+          <button type="button" onclick={() => { detailMode = "info"; }}>{t("blocks-cancel")}</button>
           <button
-            class="primary-action"
+            class="ui-button primary primary-action"
             type="button"
-            disabled={!app.selectedElement?.sourceLocation || inserting}
+            disabled={!insertTarget?.sourceLocation || inserting}
             onclick={() => { void insertSelectedBlock(); }}
           >
             <IconPlus size={14} />
-            {inserting ? "Se inserează…" : "Adaugă după selecție"}
+            {inserting ? t("blocks-inserting") : t("blocks-add-after-selection")}
           </button>
         </div>
       {:else if selectedDefinition}
@@ -286,78 +294,56 @@
         <h2>{selectedDefinition.displayName}</h2>
         <p>{selectedDefinition.description}</p>
         <dl class="block-contract">
-          <div><dt>Provider</dt><dd>{selectedDefinition.providerId}</dd></div>
-          <div><dt>Familie</dt><dd>{selectedDefinition.familyId}</dd></div>
-          <div><dt>Variantă</dt><dd>{selectedDefinition.variantId}</dd></div>
-          <div><dt>Versiune</dt><dd>{selectedDefinition.schemaVersion}</dd></div>
+          <div><dt>{t("blocks-provider")}</dt><dd>{selectedDefinition.providerId}</dd></div>
+          <div><dt>{t("blocks-family")}</dt><dd>{selectedDefinition.familyId}</dd></div>
+          <div><dt>{t("blocks-variant")}</dt><dd>{selectedDefinition.variantId}</dd></div>
+          <div><dt>{t("blocks-version")}</dt><dd>{selectedDefinition.schemaVersion}</dd></div>
         </dl>
         <section class="detail-section">
-          <h3>Instanțe</h3>
-          <div class="semantic-row"><code>sursă</code><span>{selectedSourceInstances.length}</span></div>
-          <div class="semantic-row"><code>Canvas</code><span>{selectedRenderedInstances.length}</span></div>
+          <h3>{t("blocks-instances")}</h3>
+          <div class="semantic-row"><code>{t("blocks-source")}</code><span>{l10n.formatNumber(selectedSourceInstances.length)}</span></div>
+          <div class="semantic-row"><code>{t("blocks-canvas")}</code><span>{l10n.formatNumber(selectedRenderedInstances.length)}</span></div>
         </section>
         {#if selectedSourceInstances.some((instance) => Boolean(instance.diagnostic))}
           <section class="detail-section diagnostics">
-            <h3>Diagnostice</h3>
+            <h3>{t("blocks-diagnostics")}</h3>
             {#each selectedSourceInstances.filter((instance) => instance.diagnostic) as instance}
-              <p><IconAlertTriangle size={13} /> {instance.diagnostic}</p>
+              <p><IconAlertTriangle size={13} /> {errorMessage(instance.diagnostic)}</p>
             {/each}
           </section>
         {/if}
         {#if loadError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {loadError}</p>{/if}
         <div class="detail-actions">
           <button
-            class="primary-action"
+            class="ui-button primary primary-action"
             type="button"
             disabled={!selectedDefinition.capabilities.canInsert || !selectedPaletteElement}
             onclick={beginInsert}
           >
-            <IconPlus size={14} /> Pregătește adăugarea
+            <IconPlus size={14} /> {t("blocks-prepare-add")}
           </button>
-          <button type="button" disabled title="Providerul nativ este autoritativ în Rust.">
-            <IconCode size={14} /> Read-only
+          <button type="button" disabled title={t("blocks-readonly-title")}>
+            <IconCode size={14} /> {t("blocks-readonly")}
           </button>
         </div>
       {:else}
-        <div class="workspace-state">Selectează un bloc.</div>
+        <div class="workspace-state">{t("blocks-select-help")}</div>
       {/if}
     </aside>
   </div>
 </section>
 
 <style>
-  .blocks-workspace { display: grid; grid-template-rows: auto 42px minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-panel); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 17px 20px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .workspace-header > div { min-width: 0; }
-  .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--wb-accent-strong); font-size: 11px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
-  h1 { margin: 6px 0 0; color: var(--text-strong); font-size: 20px; }
-  .workspace-header p, .resource-detail > p, .detail-heading p { margin: 4px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
-  .workspace-header dl { display: grid; grid-template-columns: repeat(4, minmax(68px, auto)); gap: 7px; margin: 0; }
-  .workspace-header dl div { min-width: 68px; padding: 7px 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
+  .resource-detail > p, .detail-heading p { margin: 4px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.45; }
   dt { color: var(--wb-text-muted); font-size: var(--font-meta); font-weight: 800; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 16px; font-weight: 750; }
-  .workspace-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 9px; border-bottom: 1px solid var(--wb-border-subtle); }
-  .view-tabs { display: flex; align-self: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .view-tabs::-webkit-scrollbar { display: none; }
-  .view-tabs button { flex: 0 0 auto; height: 100%; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; font-size: 12px; font-weight: 650; }
-  .view-tabs button.active { border-bottom-color: var(--wb-accent); color: var(--wb-accent-strong); }
-  .search-field { position: relative; display: flex; flex: 1; min-width: 150px; margin-left: auto; }
-  .search-field :global(svg) { position: absolute; left: 8px; top: 7px; color: var(--wb-text-muted); pointer-events: none; }
-  .search-field input { width: 100%; height: 28px; padding: 0 8px 0 28px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
-  .primary-action, .detail-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 11px; font-weight: 700; }
-  .primary-action { border-color: var(--wb-accent); color: var(--text-on-accent); background: var(--wb-accent); }
   .workspace-body { display: grid; grid-template-columns: minmax(330px, 1fr) minmax(330px, .62fr); min-width: 0; min-height: 0; }
-  .resource-list { min-width: 0; min-height: 0; overflow: auto; padding: 9px; border-right: 1px solid var(--wb-border-subtle); }
-  .resource-card { display: flex; align-items: center; width: 100%; gap: 9px; min-height: 54px; padding: 7px 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-primary); background: transparent; text-align: left; }
-  .resource-card:hover, .resource-card.selected { border-color: var(--wb-border-subtle); background: var(--wb-control-hover); }
-  .resource-card.selected { box-shadow: inset 3px 0 0 var(--wb-accent); }
   .resource-icon { display: grid; flex: 0 0 auto; width: 30px; height: 30px; place-items: center; border-radius: 7px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
   .resource-card > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
   .resource-card strong { color: var(--text-strong); font-size: 12px; }
   .resource-card small { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .resource-badges { display: grid; justify-items: end; gap: 3px; }
   .resource-badges code { padding: 2px 4px; border-radius: 4px; color: var(--wb-text-muted); background: var(--wb-surface-chrome); font-size: var(--font-meta); }
-  .resource-detail { min-width: 0; min-height: 0; overflow: auto; padding: 17px; background: var(--wb-surface-chrome); }
   .detail-kicker-row, .detail-heading, .detail-actions { display: flex; align-items: center; }
   .detail-kicker-row, .detail-heading { justify-content: space-between; gap: 12px; }
   .detail-heading { align-items: flex-start; }

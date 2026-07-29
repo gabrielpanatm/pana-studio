@@ -1,197 +1,233 @@
 <script lang="ts">
   import { IconPlus } from "@tabler/icons-svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import ClassEditor from "$lib/components/inspector/ClassEditor.svelte";
-  import type { CssProperty, CssRuleContext, PageCssTarget, ProjectFile, ScssVariable, SelectionInfo } from "$lib/types";
+  import type {
+    CssInspectorContextResolution,
+    CssProperty,
+    CssRuleContext,
+    InspectorSelectionSummarySnapshot,
+    InstalledFontVariationAxis,
+    PageCssTarget,
+    ProjectFile,
+    ScssVariable,
+  } from "$lib/types";
   import type { CssViewport } from "$lib/project/io";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
 
-  const PSEUDO_OPTIONS = [
-    { label: "base", suffix: "" },
+  const pseudoOptions = $derived([
+    { label: t("inspector-css-pseudo-base"), suffix: "" },
     { label: ":hover", suffix: ":hover" },
     { label: ":focus", suffix: ":focus" },
     { label: ":active", suffix: ":active" },
-  ];
+  ]);
 
   let {
-    selectedElement = null,
+    selectionSummary = null,
     selectedClass = null,
     effectiveSelector = null,
-    activeSuffix = "",
     viewportLabel = "Desktop",
     previewDevice = "desktop",
-    targetCssFile = "",
     pageCssTarget = null,
-    cssFileCount = 0,
+    resolution = null,
     cssRuleContext = null,
     classRules = [],
     pendingValues = {},
     scssVariables = [],
+    fontFamilies = [],
+    installedFontAxes = [],
     scannedAssets = [],
     loadingClassRules = false,
-    searchingClass = false,
     selectorSuffix = "",
     customSuffix = "",
     usingCustom = false,
     cssPropertyEdit,
-    searchClassInAllFiles,
-    setSelectorSuffix,
-    setCustomSuffix,
-    setUsingCustom,
+    selectCssVariant,
   }: {
-    selectedElement?: SelectionInfo | null;
+    selectionSummary?: InspectorSelectionSummarySnapshot | null;
     selectedClass?: string | null;
     effectiveSelector?: string | null;
-    activeSuffix?: string;
     viewportLabel?: string;
     previewDevice?: CssViewport;
-    targetCssFile?: string;
     pageCssTarget?: PageCssTarget | null;
-    cssFileCount?: number;
+    resolution?: CssInspectorContextResolution | null;
     cssRuleContext?: CssRuleContext | null;
     classRules?: CssProperty[];
     pendingValues?: Record<string, string>;
     scssVariables?: ScssVariable[];
+    fontFamilies?: string[];
+    installedFontAxes?: InstalledFontVariationAxis[];
     scannedAssets?: ProjectFile[];
     loadingClassRules?: boolean;
-    searchingClass?: boolean;
     selectorSuffix?: string;
     customSuffix?: string;
     usingCustom?: boolean;
     cssPropertyEdit: CssPropertyEditController;
-    searchClassInAllFiles: () => void;
-    setSelectorSuffix: (suffix: string) => void;
-    setCustomSuffix: (suffix: string) => void;
-    setUsingCustom: (enabled: boolean) => void;
+    selectCssVariant: (suffix: string) => void;
   } = $props();
+
+  let customEditorOpen = $state(false);
+  const customEditorVisible = $derived(usingCustom || customEditorOpen);
+  const hasElementSelection = $derived(
+    selectionSummary?.state === "resolved"
+      && (
+        selectionSummary.subjectKind === "htmlElement"
+        || selectionSummary.subjectKind === "runtimeElement"
+      ),
+  );
 </script>
 
-{#if selectedClass}
-  <section class="inspector-group">
-    <div class="group-header">
-      <h3>Reguli <code>{effectiveSelector}</code> <span class="viewport-pill">{viewportLabel}</span></h3>
-    </div>
+{#if hasElementSelection && selectedClass}
+  <section class="css-pane">
+    <div class="css-context">
+      <div class="group-header">
+        <h3>{t("inspector-css-rules")}</h3>
+        <code>{effectiveSelector}</code>
+        <span class="viewport-pill">{viewportLabel}</span>
+      </div>
 
-    <div class="pseudo-bar">
-      {#each PSEUDO_OPTIONS as opt}
+      <div class="pseudo-bar" aria-label={t("inspector-css-rules")}>
+        {#each pseudoOptions as opt}
+          <button
+            type="button"
+            class="pseudo-btn"
+            class:active={!usingCustom && selectorSuffix === opt.suffix}
+            onclick={() => {
+              customEditorOpen = false;
+              selectCssVariant(opt.suffix);
+            }}
+          >{opt.label}</button>
+        {/each}
         <button
           type="button"
-          class="pseudo-btn"
-          class:active={!usingCustom && selectorSuffix === opt.suffix}
-          onclick={() => { setSelectorSuffix(opt.suffix); setUsingCustom(false); setCustomSuffix(""); }}
-        >{opt.label}</button>
-      {/each}
-      <button
-        type="button"
-        class="pseudo-btn pseudo-custom-btn"
-        class:active={usingCustom}
-        title="Selector personalizat"
-        aria-label="Comută selectorul personalizat"
-        onclick={() => {
-          const next = !usingCustom;
-          setUsingCustom(next);
-          if (!next) setCustomSuffix("");
-        }}
-      >
-        <IconPlus size={13} stroke={1.9} />
-      </button>
+          class="pseudo-btn pseudo-custom-btn"
+          class:active={customEditorVisible}
+          title={t("inspector-css-custom-selector")}
+          aria-label={t("inspector-css-toggle-custom")}
+          onclick={() => {
+            const next = !customEditorVisible;
+            customEditorOpen = next;
+            if (!next) selectCssVariant("");
+          }}
+        >
+          <IconPlus size={13} stroke={1.9} />
+        </button>
+      </div>
+
+      {#if customEditorVisible}
+        <input
+          type="text"
+          class="custom-selector-input"
+          placeholder={t("inspector-css-custom-placeholder")}
+          value={customSuffix}
+          oninput={(event) => selectCssVariant(event.currentTarget.value)}
+          onkeydown={(event) => {
+            if (event.key === "Escape") {
+              customEditorOpen = false;
+              selectCssVariant("");
+            }
+          }}
+        />
+      {/if}
     </div>
 
-    {#if usingCustom}
-      <input
-        type="text"
-        class="custom-selector-input"
-        placeholder=":nth-child(2) sau .parinte &"
-        value={customSuffix}
-        oninput={(event) => setCustomSuffix(event.currentTarget.value)}
-        onkeydown={(event) => {
-          if (event.key === "Escape") {
-            setUsingCustom(false);
-            setCustomSuffix("");
-          }
-        }}
-      />
-    {/if}
-
     {#if loadingClassRules}
-      <p class="hint">Se încarcă...</p>
-    {:else if previewDevice === "desktop" && !cssRuleContext?.hasBaseRule && !activeSuffix && !pageCssTarget?.pageOwned}
-      <p class="hint">Regula <code>{effectiveSelector}</code> nu a fost găsită pentru {viewportLabel} în <code>{targetCssFile}</code>.</p>
-      <button class="save-css" type="button" onclick={searchClassInAllFiles} disabled={searchingClass}>
-        {searchingClass ? "Se caută..." : "Caută în toate fișierele SCSS"}
-      </button>
-    {:else if previewDevice !== "desktop" && !cssRuleContext?.hasBaseRule && !activeSuffix && !pageCssTarget?.pageOwned}
+      <p class="hint">{t("inspector-css-loading")}</p>
+    {:else if resolution?.state === "ambiguous"}
       <p class="hint">
-        Regula de bază <code>{effectiveSelector}</code> nu a fost găsită în <code>{targetCssFile}</code>.
-        Comută pe Desktop pentru detectarea fișierului sursă.
+        {t("inspector-css-source-ambiguous", {
+          selector: effectiveSelector ?? "",
+          files: resolution.candidates.map((candidate) => candidate.file).join(", "),
+        })}
       </p>
+    {:else if resolution?.state === "creation" && pageCssTarget}
+      <p class="hint">
+        {t("inspector-css-rule-will-create", { selector: effectiveSelector ?? "", file: pageCssTarget.file })}
+        {#if pageCssTarget.href && !pageCssTarget.linked}{t("inspector-css-will-link", { href: pageCssTarget.href })}{/if}
+      </p>
+      <ClassEditor
+        {classRules}
+        {pendingValues}
+        {scssVariables}
+        {fontFamilies}
+        {installedFontAxes}
+        {scannedAssets}
+        {cssPropertyEdit}
+      />
     {:else}
-      {#if pageCssTarget?.pageOwned && !cssRuleContext?.hasBaseRule && !activeSuffix}
+      {#if previewDevice !== "desktop" && cssRuleContext?.hasBaseRule && !cssRuleContext?.hasViewportRule}
         <p class="hint">
-          Regula <code>{effectiveSelector}</code> va fi creată în <code>{pageCssTarget.file}</code>.
-          {#if pageCssTarget.href && !pageCssTarget.linked}La salvare va fi legată în template ca <code>{pageCssTarget.href}</code>.{/if}
-        </p>
-      {:else if previewDevice !== "desktop" && cssRuleContext?.hasBaseRule && !cssRuleContext?.hasViewportRule}
-        <p class="hint">
-          Nu există override pentru {viewportLabel}{cssRuleContext.resolvedBreakpoint ? ` (${cssRuleContext.resolvedBreakpoint})` : ""}.
-          Valorile afișate vin din Desktop; modificările salvate se vor scrie în media query.
+          {t("inspector-css-no-override", {
+            viewport: `${viewportLabel}${cssRuleContext.resolvedBreakpoint ? ` (${cssRuleContext.resolvedBreakpoint})` : ""}`,
+          })}
         </p>
       {:else if classRules.length === 0}
-        <p class="hint">Regula <code>{effectiveSelector}</code> nu există încă pentru {viewportLabel} — modifică proprietăți și salvează cu Ctrl+S.</p>
+        <p class="hint">{t("inspector-css-rule-not-yet", { selector: effectiveSelector ?? "", viewport: viewportLabel })}</p>
       {/if}
       <ClassEditor
         {classRules}
         {pendingValues}
         {scssVariables}
+        {fontFamilies}
+        {installedFontAxes}
         {scannedAssets}
         {cssPropertyEdit}
       />
     {/if}
   </section>
-{:else if !selectedElement}
-  <p class="hint">Dă click pe un element din preview sau pe un selector de clasă din Code.</p>
-{:else if selectedElement.classes.length}
-  <p class="hint">Dă click pe o clasă din cardul de sus pentru a vedea regulile SCSS.</p>
-{:else if cssFileCount === 0}
-  <p class="hint">Nu există fișiere SCSS/CSS detectate pentru editarea claselor.</p>
+{:else if !hasElementSelection}
+  <p class="hint">{t("inspector-css-select-element")}</p>
+{:else if selectionSummary?.classes.length}
+  <p class="hint">{t("inspector-css-select-class")}</p>
 {/if}
 
 <style>
   .hint {
-    margin: 0;
+    margin: 10px 12px;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.45;
   }
 
-  .inspector-group {
-    display: grid;
-    gap: 9px;
-    padding: 10px;
-    border: 1px solid var(--border-2);
-    border-radius: 9px;
-    background: var(--surface-2);
+  .css-pane {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  .css-context {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding: 9px 10px 10px;
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .group-header {
     display: flex;
     align-items: center;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 5px;
+    min-width: 0;
   }
 
   .group-header h3 {
     margin: 0;
     font-size: 12px;
-    font-weight: 900;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: 700;
+    letter-spacing: 0;
   }
 
   .group-header code {
+    overflow: hidden;
+    max-width: 100%;
     font-size: 12px;
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: calc(var(--radius-control) - 3px);
     background: var(--code-bg);
     color: var(--code-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .viewport-pill {
@@ -199,78 +235,79 @@
     align-items: center;
     min-height: 18px;
     padding: 0 6px;
-    border: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
+    margin-left: auto;
+    border: 1px solid var(--border-subtle);
     border-radius: 999px;
-    color: var(--brand-strong);
-    background: var(--brand-soft);
-    font-size: 12px;
-    font-weight: 800;
+    color: var(--text-muted);
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
+    font-size: 11px;
+    font-weight: 700;
     letter-spacing: 0;
     text-transform: none;
   }
 
   .pseudo-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) var(--control-height-compact);
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-control);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
   }
 
   .pseudo-btn {
-    padding: 2px 7px;
-    border: 1px solid var(--border-4);
-    border-radius: 6px;
-    background: var(--surface-5);
+    min-width: 0;
+    min-height: var(--control-height-compact);
+    padding: 0 5px;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius-control) - 2px);
+    background: transparent;
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 11px;
     font-family: "JetBrains Mono", monospace;
     cursor: pointer;
-    transition: border-color 80ms, color 80ms, background 80ms;
+    transition:
+      border-color 100ms ease,
+      color 100ms ease,
+      background 100ms ease,
+      box-shadow 100ms ease;
     white-space: nowrap;
   }
 
   .pseudo-btn:hover {
-    border-color: var(--brand);
+    border-color: var(--border-subtle);
     color: var(--text);
+    background: var(--material-control-hover);
+    box-shadow: var(--shadow-control-hover);
   }
 
   .pseudo-btn.active {
-    border-color: var(--brand);
+    border-color: color-mix(in srgb, var(--brand) 34%, var(--border-subtle));
     color: var(--brand-strong);
-    background: var(--brand-soft);
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
   }
 
   .pseudo-custom-btn {
     font-family: inherit;
     font-size: 14px;
-    padding: 2px 8px;
+    padding: 0;
   }
 
   .custom-selector-input {
     width: 100%;
-    height: 26px;
+    height: 28px;
     padding: 0 7px;
     border: 1px solid var(--brand);
-    border-radius: 6px;
-    background: var(--surface-5);
+    border-radius: var(--radius-control);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
     color: var(--text);
     font-family: "JetBrains Mono", monospace;
     font-size: 12px;
     outline: none;
-  }
-
-  .save-css {
-    min-height: 32px;
-    border: 1px solid var(--brand);
-    border-radius: 8px;
-    color: #ffffff;
-    font-size: 13px;
-    font-weight: 800;
-    background: var(--brand);
-    cursor: pointer;
-  }
-
-  .save-css:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
   }
 </style>

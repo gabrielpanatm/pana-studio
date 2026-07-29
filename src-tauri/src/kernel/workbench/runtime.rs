@@ -7,7 +7,8 @@ use crate::kernel::{
 use super::model::{
     WorkbenchActivity, WorkbenchBottomPanelSnapshot, WorkbenchCanvasViewportSnapshot,
     WorkbenchCommandReceipt, WorkbenchDocumentSnapshot, WorkbenchGroupId, WorkbenchGroupSnapshot,
-    WorkbenchIdentity, WorkbenchIntent, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
+    WorkbenchIdentity, WorkbenchIntent, WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap,
+    WorkbenchProjectEntrySelection, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
     WORKBENCH_COMMAND_SCHEMA_VERSION, WORKBENCH_DEFAULT_SPLIT_RATIO_BASIS_POINTS,
     WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_MAX_SPLIT_RATIO_BASIS_POINTS,
     WORKBENCH_MAX_VIEWPORT_WIDTH_PX, WORKBENCH_MAX_VIEWPORT_ZOOM_PERCENT,
@@ -28,6 +29,7 @@ struct WorkbenchSession {
     canvas_viewport: WorkbenchCanvasViewportSnapshot,
     groups: Vec<WorkbenchGroupSnapshot>,
     bottom_panel: WorkbenchBottomPanelSnapshot,
+    selected_project_entry: Option<WorkbenchProjectEntrySelection>,
 }
 
 impl WorkbenchSession {
@@ -47,6 +49,7 @@ impl WorkbenchSession {
                 open: false,
                 active_view: Default::default(),
             },
+            selected_project_entry: None,
         }
     }
 
@@ -68,7 +71,7 @@ impl WorkbenchSession {
                     .to_string(),
             );
         }
-        let candidate = Self {
+        let mut candidate = Self {
             project_root: session.project_root.clone(),
             project_session_id: session.id.clone(),
             runtime_session_id: session.runtime_instance_id(),
@@ -80,7 +83,11 @@ impl WorkbenchSession {
             canvas_viewport: snapshot.canvas_viewport,
             groups: snapshot.groups,
             bottom_panel: snapshot.bottom_panel,
+            selected_project_entry: snapshot.selected_project_entry,
         };
+        if candidate.selected_project_entry.is_none() {
+            candidate.select_active_document();
+        }
         candidate.require_invariants()?;
         Ok(candidate)
     }
@@ -99,6 +106,7 @@ impl WorkbenchSession {
             canvas_viewport: self.canvas_viewport.clone(),
             groups: self.groups.clone(),
             bottom_panel: self.bottom_panel.clone(),
+            selected_project_entry: self.selected_project_entry.clone(),
         }
     }
 
@@ -130,15 +138,41 @@ impl WorkbenchSession {
                 group_id,
                 surface,
                 pinned,
-            } => self.open_document(relative_path, group_id, surface, pinned),
+            } => {
+                let selection_path = normalize_project_relative_path(&relative_path)?;
+                self.open_document(selection_path.clone(), group_id, surface, pinned)?;
+                self.selected_project_entry = Some(WorkbenchProjectEntrySelection {
+                    relative_path: selection_path,
+                    kind: WorkbenchProjectEntryKind::Text,
+                });
+                Ok(())
+            }
+            WorkbenchIntent::SelectProjectEntry {
+                relative_path,
+                entry_kind,
+                open_surface,
+            } => self.select_project_entry(relative_path, entry_kind, open_surface),
+            WorkbenchIntent::ReconcileProjectEntries {
+                remaps,
+                deleted_prefixes,
+                selection_override,
+            } => self.reconcile_project_entries(remaps, deleted_prefixes, selection_override),
             WorkbenchIntent::ActivateDocument {
                 document_id,
                 group_id,
-            } => self.activate_document(&document_id, group_id),
+            } => {
+                self.activate_document(&document_id, group_id)?;
+                self.select_active_document();
+                Ok(())
+            }
             WorkbenchIntent::CloseDocument {
                 document_id,
                 group_id,
-            } => self.close_document(&document_id, group_id),
+            } => {
+                self.close_document(&document_id, group_id)?;
+                self.select_active_document();
+                Ok(())
+            }
             WorkbenchIntent::MoveDocument {
                 document_id,
                 from_group_id,
@@ -150,12 +184,28 @@ impl WorkbenchSession {
                 group_id,
                 surface,
             } => self.set_document_surface(&document_id, group_id, surface),
-            WorkbenchIntent::SetSplit { split } => self.set_split(split),
+            WorkbenchIntent::SetSplit { split } => {
+                self.set_split(split)?;
+                self.select_active_document();
+                Ok(())
+            }
             WorkbenchIntent::ConfigureSynchronizedSplit {
                 split,
                 relative_path,
                 secondary_surface,
-            } => self.configure_synchronized_split(split, relative_path, secondary_surface),
+            } => {
+                let selection_path = normalize_project_relative_path(&relative_path)?;
+                self.configure_synchronized_split(
+                    split,
+                    selection_path.clone(),
+                    secondary_surface,
+                )?;
+                self.selected_project_entry = Some(WorkbenchProjectEntrySelection {
+                    relative_path: selection_path,
+                    kind: WorkbenchProjectEntryKind::Text,
+                });
+                Ok(())
+            }
             WorkbenchIntent::SetSplitRatio { ratio_basis_points } => {
                 self.set_split_ratio(ratio_basis_points)
             }
@@ -174,6 +224,153 @@ impl WorkbenchSession {
             }
         }?;
         self.require_invariants()
+    }
+
+    fn select_project_entry(
+        &mut self,
+        relative_path: String,
+        entry_kind: WorkbenchProjectEntryKind,
+        open_surface: Option<WorkbenchSurface>,
+    ) -> Result<(), String> {
+        let relative_path = normalize_project_relative_path(&relative_path)?;
+        if entry_kind == WorkbenchProjectEntryKind::Directory && open_surface.is_some() {
+            return Err("Workbench a refuzat deschiderea unui director ca document.".to_string());
+        }
+        if let Some(surface) = open_surface {
+            if entry_kind != WorkbenchProjectEntryKind::Text {
+                return Err("Workbench poate deschide în editor numai intrări text.".to_string());
+            }
+            self.open_document(relative_path.clone(), self.active_group_id, surface, false)?;
+        }
+        self.selected_project_entry = Some(WorkbenchProjectEntrySelection {
+            relative_path,
+            kind: entry_kind,
+        });
+        Ok(())
+    }
+
+    fn select_active_document(&mut self) {
+        let selected = self
+            .group(self.active_group_id)
+            .and_then(|group| {
+                let active = group.active_document_id.as_deref()?;
+                group
+                    .documents
+                    .iter()
+                    .find(|document| document.document_id == active)
+            })
+            .map(|document| WorkbenchProjectEntrySelection {
+                relative_path: document.relative_path.clone(),
+                kind: WorkbenchProjectEntryKind::Text,
+            });
+        self.selected_project_entry = selected;
+    }
+
+    fn reconcile_project_entries(
+        &mut self,
+        remaps: Vec<WorkbenchProjectEntryRemap>,
+        deleted_prefixes: Vec<String>,
+        selection_override: Option<WorkbenchProjectEntrySelection>,
+    ) -> Result<(), String> {
+        let remaps = remaps
+            .into_iter()
+            .map(|remap| {
+                Ok((
+                    normalize_project_relative_path(&remap.source_prefix)?,
+                    normalize_project_relative_path(&remap.destination_prefix)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let deleted_prefixes = deleted_prefixes
+            .into_iter()
+            .map(|path| normalize_project_relative_path(&path))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for group in &mut self.groups {
+            let active_path = group
+                .active_document_id
+                .as_deref()
+                .and_then(|active| {
+                    group
+                        .documents
+                        .iter()
+                        .find(|document| document.document_id == active)
+                })
+                .map(|document| document.relative_path.clone());
+            group.documents.retain_mut(|document| {
+                if deleted_prefixes
+                    .iter()
+                    .any(|prefix| path_is_in_prefix(&document.relative_path, prefix))
+                {
+                    return false;
+                }
+                if let Some((source, destination)) = remaps
+                    .iter()
+                    .find(|(source, _)| path_is_in_prefix(&document.relative_path, source))
+                {
+                    document.relative_path =
+                        remap_path_prefix(&document.relative_path, source, destination);
+                    document.document_id = document_id(&document.relative_path);
+                    document.title = document_title(&document.relative_path);
+                }
+                true
+            });
+            let remapped_active_path = active_path.and_then(|path| {
+                if deleted_prefixes
+                    .iter()
+                    .any(|prefix| path_is_in_prefix(&path, prefix))
+                {
+                    None
+                } else if let Some((source, destination)) = remaps
+                    .iter()
+                    .find(|(source, _)| path_is_in_prefix(&path, source))
+                {
+                    Some(remap_path_prefix(&path, source, destination))
+                } else {
+                    Some(path)
+                }
+            });
+            group.active_document_id = remapped_active_path
+                .as_deref()
+                .map(document_id)
+                .filter(|active| {
+                    group
+                        .documents
+                        .iter()
+                        .any(|document| &document.document_id == active)
+                })
+                .or_else(|| {
+                    group
+                        .documents
+                        .last()
+                        .map(|document| document.document_id.clone())
+                });
+        }
+
+        let next_selection = self
+            .selected_project_entry
+            .clone()
+            .and_then(|mut selection| {
+                if deleted_prefixes
+                    .iter()
+                    .any(|prefix| path_is_in_prefix(&selection.relative_path, prefix))
+                {
+                    return None;
+                }
+                if let Some((source, destination)) = remaps
+                    .iter()
+                    .find(|(source, _)| path_is_in_prefix(&selection.relative_path, source))
+                {
+                    selection.relative_path =
+                        remap_path_prefix(&selection.relative_path, source, destination);
+                }
+                Some(selection)
+            });
+        self.selected_project_entry = selection_override.or(next_selection);
+        if self.selected_project_entry.is_none() {
+            self.select_active_document();
+        }
+        Ok(())
     }
 
     fn open_document(
@@ -491,6 +688,12 @@ impl WorkbenchSession {
                 ));
             }
         }
+        if let Some(selected) = &self.selected_project_entry {
+            let normalized = normalize_project_relative_path(&selected.relative_path)?;
+            if normalized != selected.relative_path {
+                return Err("Workbench conține o selecție ProjectEntry necanonică.".to_string());
+            }
+        }
         self.require_group(self.active_group_id)?;
         Ok(())
     }
@@ -599,6 +802,88 @@ impl WorkbenchRuntime {
             snapshot,
         })
     }
+
+    /// Applies a kernel-internal reconciliation to the latest Workbench
+    /// revision while holding the Workbench mutex across persistence. This is
+    /// reserved for effects that follow an already committed Rust authority
+    /// (for example ProjectWorkspace topology); they must reconcile whatever
+    /// UI selection won the race instead of failing after the primary commit.
+    pub fn apply_latest_persisted(
+        &self,
+        session: &ProjectSessionSnapshot,
+        intent: WorkbenchIntent,
+        persist: impl FnOnce(&WorkbenchSnapshot) -> Result<(), String>,
+    ) -> Result<WorkbenchCommandReceipt, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "WorkbenchRuntime mutex este compromis.".to_string())?;
+        let current = ensure_bound_session(&mut state, session);
+        current.require_invariants()?;
+        let before = current.snapshot();
+        let mut candidate = current.clone();
+        candidate.apply(intent)?;
+        let changed = candidate.snapshot() != before;
+        if changed {
+            candidate.revision = current.revision.saturating_add(1);
+            persist(&candidate.snapshot())?;
+            *current = candidate;
+        }
+        let snapshot = current.snapshot();
+        Ok(WorkbenchCommandReceipt {
+            schema_version: WORKBENCH_COMMAND_SCHEMA_VERSION,
+            changed,
+            project_root: snapshot.project_root.clone(),
+            runtime_session_id: snapshot.runtime_session_id.clone(),
+            revision_before: before.revision,
+            revision_after: snapshot.revision,
+            snapshot,
+        })
+    }
+
+    /// Same latest-revision reconciliation, but a persistence failure is
+    /// reported as a warning after the in-memory authority is published.
+    /// Use only after another Rust authority has already crossed its commit
+    /// point, where returning an error would falsely describe that primary
+    /// mutation as unapplied.
+    pub fn apply_latest_after_primary_commit(
+        &self,
+        session: &ProjectSessionSnapshot,
+        intent: WorkbenchIntent,
+        persist: impl FnOnce(&WorkbenchSnapshot) -> Result<(), String>,
+    ) -> Result<(WorkbenchCommandReceipt, Option<String>), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "WorkbenchRuntime mutex este compromis.".to_string())?;
+        let current = ensure_bound_session(&mut state, session);
+        current.require_invariants()?;
+        let before = current.snapshot();
+        let mut candidate = current.clone();
+        candidate.apply(intent)?;
+        let changed = candidate.snapshot() != before;
+        let persistence_warning = if changed {
+            candidate.revision = current.revision.saturating_add(1);
+            let warning = persist(&candidate.snapshot()).err();
+            *current = candidate;
+            warning
+        } else {
+            None
+        };
+        let snapshot = current.snapshot();
+        Ok((
+            WorkbenchCommandReceipt {
+                schema_version: WORKBENCH_COMMAND_SCHEMA_VERSION,
+                changed,
+                project_root: snapshot.project_root.clone(),
+                runtime_session_id: snapshot.runtime_session_id.clone(),
+                revision_before: before.revision,
+                revision_after: snapshot.revision,
+                snapshot,
+            },
+            persistence_warning,
+        ))
+    }
 }
 
 fn ensure_bound_session<'a>(
@@ -640,6 +925,18 @@ fn document_title(relative_path: &str) -> String {
         .to_string()
 }
 
+fn path_is_in_prefix(path: &str, prefix: &str) -> bool {
+    path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
+fn remap_path_prefix(path: &str, source: &str, destination: &str) -> String {
+    if path == source {
+        destination.to_string()
+    } else {
+        format!("{destination}{}", &path[source.len()..])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::kernel::project_session::{
@@ -671,8 +968,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: 1,
                 directory_count: 1,
@@ -1030,5 +1325,165 @@ mod tests {
             restored.runtime_session_id,
             next_session.runtime_instance_id()
         );
+    }
+
+    #[test]
+    fn project_entry_reconciliation_remaps_and_invalidates_selection_with_documents() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let opened = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::OpenDocument {
+                    relative_path: "templates/partials/header.html".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                    surface: WorkbenchSurface::Code,
+                    pinned: false,
+                },
+            )
+            .unwrap()
+            .snapshot;
+
+        let remapped = runtime
+            .apply(
+                &project,
+                &identity(&opened),
+                WorkbenchIntent::ReconcileProjectEntries {
+                    remaps: vec![WorkbenchProjectEntryRemap {
+                        source_prefix: "templates/partials".to_string(),
+                        destination_prefix: "templates/components".to_string(),
+                    }],
+                    deleted_prefixes: Vec::new(),
+                    selection_override: None,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        assert_eq!(
+            remapped.groups[0].documents[0].relative_path,
+            "templates/components/header.html"
+        );
+        assert_eq!(
+            remapped
+                .selected_project_entry
+                .as_ref()
+                .map(|selection| selection.relative_path.as_str()),
+            Some("templates/components/header.html")
+        );
+
+        let with_fallback = runtime
+            .apply(
+                &project,
+                &identity(&remapped),
+                WorkbenchIntent::OpenDocument {
+                    relative_path: "sass/app.scss".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                    surface: WorkbenchSurface::Code,
+                    pinned: false,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let reactivated = runtime
+            .apply(
+                &project,
+                &identity(&with_fallback),
+                WorkbenchIntent::ActivateDocument {
+                    document_id: "project:templates/components/header.html".to_string(),
+                    group_id: WorkbenchGroupId::Primary,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let deleted = runtime
+            .apply(
+                &project,
+                &identity(&reactivated),
+                WorkbenchIntent::ReconcileProjectEntries {
+                    remaps: Vec::new(),
+                    deleted_prefixes: vec!["templates/components".to_string()],
+                    selection_override: None,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        assert_eq!(deleted.groups[0].documents.len(), 1);
+        assert_eq!(
+            deleted.groups[0].active_document_id.as_deref(),
+            Some("project:sass/app.scss")
+        );
+        assert_eq!(
+            deleted
+                .selected_project_entry
+                .as_ref()
+                .map(|selection| selection.relative_path.as_str()),
+            Some("sass/app.scss")
+        );
+    }
+
+    #[test]
+    fn latest_reconciliation_applies_after_a_concurrent_selection_revision() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let selected = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::SelectProjectEntry {
+                    relative_path: "templates/partials".to_string(),
+                    entry_kind: WorkbenchProjectEntryKind::Directory,
+                    open_surface: None,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let receipt = runtime
+            .apply_latest_persisted(
+                &project,
+                WorkbenchIntent::ReconcileProjectEntries {
+                    remaps: vec![WorkbenchProjectEntryRemap {
+                        source_prefix: "templates/partials".to_string(),
+                        destination_prefix: "templates/components".to_string(),
+                    }],
+                    deleted_prefixes: Vec::new(),
+                    selection_override: None,
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+
+        assert_eq!(receipt.revision_before, selected.revision);
+        assert_eq!(
+            receipt
+                .snapshot
+                .selected_project_entry
+                .as_ref()
+                .map(|selection| selection.relative_path.as_str()),
+            Some("templates/components")
+        );
+    }
+
+    #[test]
+    fn post_commit_reconciliation_publishes_runtime_state_with_persistence_warning() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let (receipt, warning) = runtime
+            .apply_latest_after_primary_commit(
+                &project,
+                WorkbenchIntent::SetActivity {
+                    activity: WorkbenchActivity::Assets,
+                },
+                |_| Err("projection storage unavailable".to_string()),
+            )
+            .unwrap();
+
+        assert_eq!(warning.as_deref(), Some("projection storage unavailable"));
+        assert_eq!(receipt.revision_before, before.revision);
+        assert_eq!(receipt.snapshot.active_activity, WorkbenchActivity::Assets);
+        assert_eq!(runtime.read(&project).unwrap(), receipt.snapshot);
     }
 }

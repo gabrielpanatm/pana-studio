@@ -3,6 +3,12 @@
   import PanelLayoutButtons from "$lib/components/topbar/PanelLayoutButtons.svelte";
   import ThemeButton from "$lib/components/topbar/ThemeButton.svelte";
   import ToolbarButton from "$lib/components/topbar/ToolbarButton.svelte";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
   import { IconExternalLink, IconFolderOpen, IconSearch } from "@tabler/icons-svelte";
   type UiTheme = "dark" | "light";
 
@@ -31,14 +37,16 @@
 
   $: currentProjectName = currentProjectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? currentProjectPath;
   $: title = noProject ? "Pană Studio" : currentProjectName;
-  $: subtitle = noProject ? "Studio local pentru proiecte web Zola" : currentProjectPath;
 </script>
 
 <header class="topbar">
   <div class="topbar-left">
     <div class="project-meta">
       <p class="app-name" title={title}>{title}</p>
-      <p class="project-path" title={subtitle}>{subtitle}</p>
+      <p
+        class="project-path"
+        title={noProject ? t("workbench-local-studio-description") : currentProjectPath}
+      >{noProject ? t("workbench-local-studio-description") : currentProjectPath}</p>
     </div>
   </div>
 
@@ -46,19 +54,19 @@
     type="button"
     class="command-center-trigger"
     aria-keyshortcuts="Control+K Meta+K"
-    title="Deschide centrul de comenzi (Ctrl+K)"
+    title={`${t("workbench-command-center-open")} (Ctrl+K)`}
     onclick={openCommandCenter}
   >
     <IconSearch size={16} stroke={1.8} />
-    <span>Caută comenzi, fișiere și simboluri…</span>
+    <span>{t("workbench-command-center-search")}</span>
     <kbd>Ctrl K</kbd>
   </button>
 
-  <div class="workspace-toolbar" aria-label="Acțiuni ale spațiului de lucru">
+  <div class="workspace-toolbar" aria-label={t("workbench-workspace-actions")}>
     {#if noProject}
-      <div class="toolbar-group project-actions" aria-label="Proiect">
+      <div class="toolbar-group project-actions" aria-label={t("workbench-project")}>
         <ToolbarButton
-          title="Deschide dosar proiect"
+          title={t("workbench-open-project-folder")}
           cta
           onclick={() => openProjectFolder()}
         >
@@ -66,9 +74,9 @@
         </ToolbarButton>
       </div>
     {:else if canOpenInBrowser}
-      <div class="toolbar-group project-actions" aria-label="Rulează">
+      <div class="toolbar-group project-actions" aria-label={t("workbench-run")}>
         <ToolbarButton
-          title="Deschide site-ul în browser"
+          title={t("workbench-open-site-browser")}
           onclick={() => { void openCurrentProjectInBrowser(); }}
         >
           <IconExternalLink size={17} stroke={1.8} />
@@ -76,7 +84,7 @@
       </div>
     {/if}
 
-    <div class="toolbar-group history-actions" aria-label="Salvare, anulare și refacere">
+    <div class="toolbar-group history-actions" aria-label={t("workbench-history-actions")}>
       <HistoryActionButtons
         {canUndo}
         {canRedo}
@@ -87,12 +95,12 @@
       />
     </div>
 
-    <div class="toolbar-group theme-actions" aria-label="Tema">
+    <div class="toolbar-group theme-actions" aria-label={t("workbench-theme")}>
       <ThemeButton {uiTheme} {toggleUiTheme} />
     </div>
 
     {#if !noProject}
-      <div class="toolbar-group segmented-group panel-layout-controls" aria-label="Panourile spațiului de lucru">
+      <div class="toolbar-group segmented-group panel-layout-controls" aria-label={t("workbench-workspace-panels")}>
         <PanelLayoutButtons
           {leftPaneCollapsed}
           {rightPaneCollapsed}
@@ -114,10 +122,12 @@
     grid-template-columns: minmax(160px, 1fr) minmax(260px, 520px) minmax(220px, 1fr);
     align-items: center;
     gap: 12px;
-    min-height: 48px;
+    min-height: 50px;
     padding: 0 10px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface-panel);
+    border-top: 1px solid var(--skeuo-edge-highlight);
+    border-bottom: 1px solid var(--border-strong);
+    background: var(--material-panel);
+    box-shadow: var(--shadow-panel);
   }
 
   .topbar-left {
@@ -187,16 +197,46 @@
     top: 50%;
     width: 1px;
     height: 22px;
-    background: var(--border-subtle);
+    background: linear-gradient(
+      180deg,
+      transparent,
+      var(--border-strong) 22% 78%,
+      transparent
+    );
     transform: translateY(-50%);
   }
 
   .segmented-group {
     gap: 0;
     padding: 2px;
-    border: 1px solid var(--border-3);
-    border-radius: var(--radius-control);
-    background: var(--surface-base);
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+    border-radius: calc(var(--radius-control) + 1px);
+    background: var(--material-inset);
+    box-shadow:
+      inset 0 1px 2px var(--skeuo-shade-soft),
+      inset 0 -1px 0 var(--skeuo-edge-highlight);
+  }
+
+  .segmented-group > :global(.toolbar-icon-button.segmented:first-child) {
+    border-radius: calc(var(--radius-control) - 3px) 0 0 calc(var(--radius-control) - 3px);
+  }
+
+  .segmented-group > :global(.toolbar-icon-button.segmented:last-child) {
+    border-radius: 0 calc(var(--radius-control) - 3px) calc(var(--radius-control) - 3px) 0;
+  }
+
+  .segmented-group > :global(.toolbar-icon-button.segmented:only-child) {
+    border-radius: calc(var(--radius-control) - 3px);
+  }
+
+  .segmented-group > :global(.toolbar-icon-button.segmented + .toolbar-icon-button.segmented)::before {
+    position: absolute;
+    inset: 7px auto 7px 0;
+    width: 1px;
+    background: color-mix(in srgb, var(--border-strong) 72%, transparent);
+    content: "";
+    pointer-events: none;
   }
 
   .command-center-trigger {
@@ -210,13 +250,14 @@
     border-radius: var(--radius-control);
     color: var(--wb-text-muted, var(--text-muted));
     text-align: left;
-    background: var(--surface-raised);
+    background: var(--material-inset);
+    box-shadow: var(--shadow-inset);
   }
 
   .command-center-trigger:hover {
     border-color: var(--border-strong);
     color: var(--wb-text-primary, var(--text));
-    background: var(--control-hover);
+    background: color-mix(in srgb, var(--surface-inset) 92%, var(--brand));
   }
 
   .command-center-trigger:focus-visible {
@@ -241,7 +282,8 @@
     color: var(--wb-text-muted, var(--text-muted));
     font-family: inherit;
     font-size: var(--font-meta);
-    background: var(--surface-base);
+    background: var(--material-control);
+    box-shadow: var(--shadow-control);
   }
 
   @media (max-width: 1080px) {

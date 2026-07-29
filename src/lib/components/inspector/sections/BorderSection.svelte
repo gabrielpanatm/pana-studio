@@ -14,6 +14,7 @@
   import PropInput from "../controls/PropInput.svelte";
   import ColorInput from "../controls/ColorInput.svelte";
   import SegmentedControl from "../controls/SegmentedControl.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
 
   let {
     pendingValues,
@@ -39,12 +40,12 @@
   ];
   const hasValues = $derived(PROPS.some((p) => getValue(p) !== ""));
 
-  const borderStyleOpts = [
-    { value: "none",   label: "—",    title: "Niciuna"   },
-    { value: "solid",  label: "─",    title: "Solid"  },
-    { value: "dashed", label: "- -",  title: "Dashed" },
-    { value: "dotted", label: "···",  title: "Dotted" },
-  ];
+  const borderStyleOpts = $derived([
+    { value: "none",   label: "—",    title: t("inspector-none") },
+    { value: "solid",  label: "─",    title: t("inspector-border-solid") },
+    { value: "dashed", label: "- -",  title: t("inspector-border-dashed") },
+    { value: "dotted", label: "···",  title: t("inspector-border-dotted") },
+  ]);
 
   let expandRadius = $state(false);
   const hasIndivRadius = $derived(
@@ -54,19 +55,19 @@
   $effect(() => { if (hasIndivRadius) expandRadius = true; });
 </script>
 
-<InspectorSection title="Border" {hasValues}>
+<InspectorSection title={t("inspector-border-title")} {hasValues}>
   {#snippet icon()}<IconBorderAll size={13} stroke={1.7} />{/snippet}
 
-  <div class="row-label">Border shorthand</div>
+  <div class="row-label">{t("inspector-border-shorthand")}</div>
   <PropInput label="B" value={getValue("border")} placeholder="—" {...edit.continuous("border")} />
 
   <div class="row-2">
     <div class="col">
-      <div class="row-label">Width</div>
+      <div class="row-label">{t("inspector-border-width")}</div>
       <PropInput label="W" value={getValue("border-width")} placeholder="0" {...edit.continuous("border-width")} />
     </div>
     <div class="col">
-      <div class="row-label">Style</div>
+      <div class="row-label">{t("inspector-border-style")}</div>
       <SegmentedControl
         options={borderStyleOpts}
         value={getValue("border-style")}
@@ -75,7 +76,7 @@
     </div>
   </div>
 
-  <div class="row-label">Color</div>
+  <div class="row-label">{t("inspector-border-color")}</div>
   <ColorInput
     property="border-color"
     value={getValue("border-color")}
@@ -84,15 +85,15 @@
   />
 
   <div class="sub-header">
-    <span class="row-label">Radius</span>
-    <button type="button" class="expand-btn" title="Individual corners" onclick={() => (expandRadius = !expandRadius)}>
+    <span class="row-label">{t("inspector-border-radius")}</span>
+    <button type="button" class="expand-btn" title={t("inspector-border-individual-corners")} onclick={() => (expandRadius = !expandRadius)}>
       <IconBorderRadius size={12} stroke={1.7} />
     </button>
   </div>
 
   {#if expandRadius}
     {#if getValue("border-radius") !== ""}
-      <div class="conflict-note">Shorthand radius activ</div>
+      <div class="conflict-note">{t("inspector-border-radius-shorthand-active")}</div>
       <PropInput value={getValue("border-radius")} suggestions={variablesForProperty("border-radius", scssVariables)} placeholder="0" {...edit.continuous("border-radius")}>
         {#snippet prefix()}<IconBorderRadius size={11} stroke={1.8} />{/snippet}
       </PropInput>
@@ -120,7 +121,7 @@
   {/if}
 
   <div class="sub-header" style="margin-top:4px">
-    <span class="row-label">Outline</span>
+    <span class="row-label">{t("inspector-border-outline")}</span>
   </div>
   <PropInput label="O" value={getValue("outline")} placeholder="—" {...edit.continuous("outline")} />
   <div class="row-2">

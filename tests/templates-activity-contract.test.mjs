@@ -41,10 +41,20 @@ test("catalogul semantic și impactul șabloanelor au autoritate Rust unică", (
     false,
   );
   assert.match(catalog, /pub enum TemplateCatalogRole/);
+  assert.match(catalog, /pub struct TemplateResource/);
+  assert.match(catalog, /pub struct TemplateSemanticEntry/);
+  assert.match(catalog, /pub enum TemplateSemanticCategory/);
+  assert.match(catalog, /pub enum TemplateSemanticRole/);
+  assert.match(catalog, /pub enum TemplateAssignmentSource/);
   assert.match(catalog, /fn affected_pages/);
+  assert.match(catalog, /fn semantic_template_assignments/);
+  assert.match(catalog, /fn build_semantic_entries/);
+  assert.doesNotMatch(catalog, /TemplateCatalogCollection|fn template_collections/);
   assert.match(catalog, /local_template_names/);
-  assert.match(command, /read_template_catalog[\s\S]*build_template_catalog/);
+  assert.match(command, /read_template_catalog[\s\S]*build_template_catalog_with_taxonomies/);
   assert.match(templates, /readTemplateCatalog/);
+  assert.match(templates, /catalog\?\.semanticEntries/);
+  assert.doesNotMatch(templates, /catalog\?\.collections|selectedCollection/);
   assert.match(source("../src/lib/project/io.ts"), /TEMPLATE_CATALOG_SCHEMA_VERSION/);
   assert.doesNotMatch(templates, /CodeMirror|Monaco|contenteditable|<textarea/);
 });
@@ -56,9 +66,12 @@ test("operațiile șabloanelor trec prin ProjectWorkspace și păstrează o rede
 
   for (const command of [
     "workspace_create_template",
+    "workspace_create_semantic_template",
     "workspace_duplicate_template",
     "workspace_override_theme_template",
     "workspace_rename_template",
+    "workspace_set_template_parent",
+    "workspace_set_template_assignment",
     "workspace_delete_template",
   ]) {
     assert.match(registry, new RegExp(command));
@@ -74,34 +87,67 @@ test("operațiile șabloanelor trec prin ProjectWorkspace și păstrează o rede
   );
   assert.match(commands, /plan_template_reference_workspace_mutation_from_graph/);
   assert.match(commands, /stage_composite_changes/);
-  assert.match(commands, /delete_blocked_reason/);
+  assert.match(commands, /delete_blocked_diagnostic/);
   assert.doesNotMatch(commands, /std::fs::(?:write|remove_file|rename)/);
 });
 
 test("Deschide în Editor folosește editorul existent, nu creează o suprafață duplicată", () => {
   const templates = source("../src/lib/components/templates/TemplatesWorkspace.svelte");
-  const open = templates.slice(
-    templates.indexOf("async function openPathInEditor"),
-    templates.indexOf("function roleLabel"),
+  assert.match(
+    templates,
+    /async function openResource[\s\S]*await openWorkspaceSource\(resource\.file/,
   );
-
-  assert.match(open, /await openWorkspaceSource\(path\)/);
-  assert.match(open, /await app\.setWorkbenchActivity\("editor"\)/);
-  assert.match(templates, /openPathInEditor\(usage\.file\)/);
-  assert.match(templates, /openPathInEditor\(page\.file\)/);
-  assert.match(templates, />\s*Deschide în Editor\s*</);
+  assert.match(templates, /await app\.setWorkbenchActivity\("editor"\)/);
+  assert.match(templates, /t\("templates-edit-visual"\)/);
 });
 
-test("panoul contextual al șabloanelor separă informarea, crearea și editarea", () => {
+test("rolurile semantice se deschid vizual numai în contextul exact proiectat de Rust", () => {
+  const templates = source("../src/lib/components/templates/TemplatesWorkspace.svelte");
+  const controller = source("../src/lib/state/project-controller.ts");
+
+  assert.match(
+    templates,
+    /const context = entry\.previewContext/,
+  );
+  assert.match(
+    templates,
+    /context\?\.available && context\.pageFile[\s\S]*surface:\s*"visual"[\s\S]*templateContextPagePath:\s*context\.pageFile/,
+  );
+  assert.match(
+    templates,
+    /context\?\.available && context\.url[\s\S]*surface:\s*"visual"[\s\S]*templateContextUrl:\s*context\.url/,
+  );
+  assert.match(templates, /previewContext\?\.unavailableDiagnostic/);
+  assert.match(
+    controller,
+    /preferredTemplatePagePath !== undefined[\s\S]*options\.preferredTemplatePagePath/,
+  );
+  assert.match(controller, /t\("project-controller-template-page-unconfirmed"/);
+  assert.match(controller, /preferredRoute:[\s\S]*options\.preferredTemplateRoute/);
+  assert.match(controller, /t\("project-controller-template-route-unconfirmed"/);
+});
+
+test("activitatea prezintă ierarhia Mosaic adaptată la Zola fără tabul Toate", () => {
   const templates = source("../src/lib/components/templates/TemplatesWorkspace.svelte");
 
-  assert.match(templates, /type DetailMode = "info" \| "create" \| "edit"/);
+  assert.match(templates, /type DetailMode = "info" \| "create" \| "rename"/);
+  assert.match(templates, /\{ id: "layout" as const, label: t\("templates-view-layouts"\) \}/);
+  assert.match(templates, /\{ id: "page" as const, label: t\("templates-view-pages"\) \}/);
+  assert.match(templates, /\{ id: "archive" as const, label: t\("templates-view-archives"\) \}/);
+  assert.match(templates, /\{ id: "element" as const, label: t\("templates-view-elements"\) \}/);
+  assert.match(templates, /\{ id: "taxonomy" as const, label: t\("templates-view-taxonomies"\) \}/);
+  assert.match(templates, /\{ id: "system" as const, label: t\("templates-view-system"\) \}/);
+  assert.doesNotMatch(templates, /\{ id: "all"/);
+  assert.doesNotMatch(templates, /templates-view-(?:partials|macros)/);
   assert.match(templates, /function beginCreate\(\)[\s\S]*detailMode = "create"/);
-  assert.match(templates, /function beginEdit\(entry: TemplateCatalogEntry\)[\s\S]*detailMode = "edit"/);
+  assert.match(templates, /function beginRename\(resource: TemplateResource\)[\s\S]*detailMode = "rename"/);
   assert.match(templates, /detailMode === "create"[\s\S]*onsubmit=\{submitCreate\}/);
-  assert.match(templates, /detailMode === "edit"[\s\S]*submitEdit\(event, selected\)/);
-  assert.match(templates, />\s*Editează\s*</);
-  assert.match(templates, />\s*Adaugă șablon\s*</);
+  assert.match(templates, /detailMode === "rename"[\s\S]*submitRename\(event, selectedResource\)/);
+  assert.doesNotMatch(templates, /Colecție \(listă \+ element\)|createTemplateCollection/);
+  assert.match(templates, /t\("templates-assignment-source-explicit"\)/);
+  assert.match(templates, /t\("templates-assignment-source-inherited"\)/);
+  assert.match(templates, /t\("templates-assignment-source-default"\)/);
+  assert.match(templates, /t\("templates-assignment-source-convention"\)/);
   assert.match(templates, /deleteConfirmationOpen/);
   assert.doesNotMatch(templates, /window\.(?:prompt|confirm)/);
 });
@@ -110,16 +156,22 @@ test("formularele șabloanelor păstrează comenzile Rust drept autoritate de mu
   const templates = source("../src/lib/components/templates/TemplatesWorkspace.svelte");
   const createFlow = templates.slice(
     templates.indexOf("async function submitCreate"),
-    templates.indexOf("async function submitEdit"),
+    templates.indexOf("async function submitRename"),
   );
   const editFlow = templates.slice(
-    templates.indexOf("async function submitEdit"),
-    templates.indexOf("async function overrideSelected"),
+    templates.indexOf("async function submitRename"),
+    templates.indexOf("async function saveAssignment"),
   );
 
   assert.match(createFlow, /duplicateTemplate/);
-  assert.match(createFlow, /createTemplate/);
+  assert.match(createFlow, /createSemanticTemplate/);
+  assert.doesNotMatch(createFlow, /createTemplateCollection/);
   assert.match(editFlow, /renameTemplate/);
-  assert.match(templates, /app\.rescanCurrentProject\(receipt\.relativePath, \{ strict: true \}\)/);
-  assert.match(templates, /Ctrl\+S persistă pe disc/);
+  assert.match(templates, /setTemplateParent/);
+  assert.match(templates, /setTemplateAssignment/);
+  assert.match(templates, /settleProjectWorkspaceMutation\(app, receipt,/);
+  assert.match(templates, /preferredRelativePath: receipt\.relativePath/);
+  assert.match(templates, /warningLabel: t\("templates-operation-label"\)/);
+  assert.doesNotMatch(templates, /app\.rescanCurrentProject\(receipt\.relativePath/);
+  assert.doesNotMatch(templates, /\bwriteProjectFile\b/);
 });

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::source_graph::{
-    model::{SourceCapabilities, SourceNodeKind, SourceOrigin},
+    model::{SourceCapabilities, SourceCapabilityReason, SourceNodeKind, SourceOrigin},
     scan::{builder::SourceGraphBuilder, files::relative_project_path, summary::AssetSummary},
     zola::static_asset_logical_path,
 };
@@ -34,9 +34,9 @@ pub(super) fn scan_asset(
         None,
         None,
         SourceCapabilities::code_only(if is_script {
-            "Fișier JavaScript static Zola."
+            SourceCapabilityReason::StaticJavaScript
         } else {
-            "Asset static Zola."
+            SourceCapabilityReason::StaticAsset
         }),
     );
     AssetSummary {

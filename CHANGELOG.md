@@ -5,6 +5,42 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-29
+
+### Added
+
+- localizare completă română/engleză și preferințe de sistem pentru limbă,
+  temă, accent și scalarea interfeței;
+- navigare Rust-first pentru Canvas, selecție coordonată, explorator de
+  fișiere, taxonomii, fonturi locale și tokeni de design;
+- flux de pornire și creare a proiectelor validat de nucleul Rust, plus stare
+  globală unificată pentru notificări și operații;
+- audit de performanță reproductibil pe un proiect Zola real cu 35 de rute.
+
+### Changed
+
+- Canvas-ul și inspectorul folosesc identități și receipt-uri Rust autoritative
+  pentru hover, selecție, mutare și editare;
+- modelul de animații, gestionarea fonturilor, șabloanelor, taxonomiilor și
+  exploratorului de fișiere au fost consolidate în contracte Rust-first;
+- construcția SourceGraph, procesarea rutelor Preview și legarea identității
+  Canvas rulează indexat și, unde operațiile sunt independente, paralel;
+- suprafețele Preview Motion și Interactive sunt generate la cerere, nu la
+  fiecare deschidere a proiectului.
+
+### Fixed
+
+- timpul până la Canvas verificat pentru proiectul de audit a scăzut de la
+  aproximativ 14,7 secunde la 6,1–6,8 secunde în build-ul de dezvoltare;
+- evenimentele redundante de hover Canvas–Rust au fost reduse cu 98,7% atunci
+  când cursorul rămâne pe același element semantic;
+- adnotarea șabloanelor mari nu mai rescanează sursa pentru fiecare nod și nu
+  mai mută repetat sufixul unui șir în creștere;
+- monitorizarea modificărilor externe rulează scanarea discului în worker și
+  nu mai invalidează întreaga stare reactivă la fiecare heartbeat;
+- materializarea Preview nu mai recreează tranzacții pentru directoare deja
+  validate.
+
 ## [0.1.1] - 2026-07-24
 
 ### Added
@@ -121,6 +157,7 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - documentația publică, politica de securitate și atribuirea componentelor terțe
   completate.
 
-[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gabrielpanatm/pana-studio/releases/tag/v0.1.0

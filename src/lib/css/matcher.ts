@@ -1,4 +1,4 @@
-import type { CssRuleMatch, CssVariableRow, EditableStyles, SelectionInfo } from "$lib/types";
+import type { CssRuleMatch, CssVariableRow, EditableStyles, CanvasElementObservation } from "$lib/types";
 
 export function formatBox(style: CSSStyleDeclaration, property: "margin" | "padding") {
   const top = style.getPropertyValue(`${property}-top`);
@@ -55,7 +55,7 @@ export function getEditableStyles(element: Element, previewWindow: Window): Edit
   };
 }
 
-export function getEditableStylesFromSelection(selection: SelectionInfo): EditableStyles {
+export function getEditableStylesFromObservation(selection: CanvasElementObservation): EditableStyles {
   const color = selection.styles.find((style) => style.label === "color")?.value ?? "#17211d";
   const background = selection.styles.find((style) => style.label === "background")?.value ?? "#ffffff";
   const fontSize = selection.styles.find((style) => style.label === "font-size")?.value ?? "16px";

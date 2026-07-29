@@ -1,7 +1,26 @@
 import schemaDocument from "./editor-schema.json" with { type: "json" };
+import { t } from "$lib/i18n/runtime.svelte";
+import type { MessageId } from "$lib/i18n/generated/catalog";
 
 export type HtmlPreviewMode = "live" | "sourceOnly" | "inert" | "blocked";
 export type HtmlAttributeEmptyPolicy = "preserve" | "remove";
+export type HtmlSchemaGroup =
+  | "document"
+  | "structure"
+  | "text"
+  | "lists"
+  | "media"
+  | "actions"
+  | "forms"
+  | "tables"
+  | "interactive"
+  | "indicators";
+export type HtmlSchemaReason =
+  | "iframeInert"
+  | "navigationDisabled"
+  | "downloadDisabled"
+  | "formSubmissionDisabled"
+  | "activeDocumentInjection";
 export type HtmlAttributeSemantic =
   | "ariaBoolean"
   | "ariaToken"
@@ -53,6 +72,15 @@ export type HtmlAttributeDefinition = {
   reason?: string;
 };
 
+type RawHtmlTagCapability = Omit<HtmlTagCapability, "group" | "reason"> & {
+  group: HtmlSchemaGroup;
+  reasonCode?: HtmlSchemaReason;
+};
+
+type RawHtmlAttributeDefinition = Omit<HtmlAttributeDefinition, "reason"> & {
+  reasonCode?: HtmlSchemaReason;
+};
+
 type HtmlEditorSchema = {
   schemaVersion: number;
   designSafe: {
@@ -62,13 +90,42 @@ type HtmlEditorSchema = {
     activeSchemes: string[];
     forbiddenMetaHttpEquiv: string[];
   };
-  paletteGroups: Array<{ label: string; tags: string[] }>;
-  tags: Record<string, HtmlTagCapability>;
-  attributes: Record<string, HtmlAttributeDefinition>;
-  dynamicAttributes: Record<string, HtmlAttributeDefinition>;
+  paletteGroups: Array<{ label: HtmlSchemaGroup; tags: string[] }>;
+  tags: Record<string, RawHtmlTagCapability>;
+  attributes: Record<string, RawHtmlAttributeDefinition>;
+  dynamicAttributes: Record<string, RawHtmlAttributeDefinition>;
 };
 
 export const htmlEditorSchema = schemaDocument as HtmlEditorSchema;
+
+const groupMessageIds: Record<HtmlSchemaGroup, MessageId> = {
+  document: "inspector-schema-group-document",
+  structure: "inspector-schema-group-structure",
+  text: "inspector-schema-group-text",
+  lists: "inspector-schema-group-lists",
+  media: "inspector-schema-group-media",
+  actions: "inspector-schema-group-actions",
+  forms: "inspector-schema-group-forms",
+  tables: "inspector-schema-group-tables",
+  interactive: "inspector-schema-group-interactive",
+  indicators: "inspector-schema-group-indicators",
+};
+
+const reasonMessageIds: Record<HtmlSchemaReason, MessageId> = {
+  iframeInert: "inspector-schema-reason-iframe",
+  navigationDisabled: "inspector-schema-reason-navigation",
+  downloadDisabled: "inspector-schema-reason-download",
+  formSubmissionDisabled: "inspector-schema-reason-form-submit",
+  activeDocumentInjection: "inspector-schema-reason-srcdoc",
+};
+
+export function htmlSchemaGroupLabel(group: HtmlSchemaGroup): string {
+  return t(groupMessageIds[group]);
+}
+
+function localizedReason(reasonCode?: HtmlSchemaReason): string | undefined {
+  return reasonCode ? t(reasonMessageIds[reasonCode]) : undefined;
+}
 
 export type HtmlTagOption = {
   value: string;
@@ -77,21 +134,35 @@ export type HtmlTagOption = {
 };
 
 export function htmlTagCapability(tag: string): HtmlTagCapability | null {
-  return htmlEditorSchema.tags[tag.trim().toLowerCase()] ?? null;
+  const capability = htmlEditorSchema.tags[tag.trim().toLowerCase()] ?? null;
+  return capability
+    ? {
+        ...capability,
+        group: htmlSchemaGroupLabel(capability.group),
+        reason: localizedReason(capability.reasonCode),
+      }
+    : null;
+}
+
+export function htmlTagAcceptsChildren(tag: string): boolean {
+  return htmlEditorSchema.tags[tag.trim().toLowerCase()]?.acceptsChildren === true;
 }
 
 export function htmlAttributeDefinition(name: string): HtmlAttributeDefinition | null {
   const normalized = name.trim().toLowerCase();
   const fixed = htmlEditorSchema.attributes[normalized];
-  if (fixed) return fixed;
+  if (fixed) return { ...fixed, reason: localizedReason(fixed.reasonCode) };
   if (normalized.startsWith("data-") && normalized.length > 5) {
-    return htmlEditorSchema.dynamicAttributes["data-*"] ?? null;
+    const definition = htmlEditorSchema.dynamicAttributes["data-*"] ?? null;
+    return definition ? { ...definition, reason: localizedReason(definition.reasonCode) } : null;
   }
   if (normalized.startsWith("aria-") && normalized.length > 5) {
-    return htmlEditorSchema.dynamicAttributes["aria-*"] ?? null;
+    const definition = htmlEditorSchema.dynamicAttributes["aria-*"] ?? null;
+    return definition ? { ...definition, reason: localizedReason(definition.reasonCode) } : null;
   }
   if (normalized.startsWith("on") && normalized.length > 2) {
-    return htmlEditorSchema.dynamicAttributes["on*"] ?? null;
+    const definition = htmlEditorSchema.dynamicAttributes["on*"] ?? null;
+    return definition ? { ...definition, reason: localizedReason(definition.reasonCode) } : null;
   }
   return null;
 }
@@ -130,7 +201,11 @@ export function htmlTagTransitionOptions(currentTag: string): HtmlTagOption[] {
       && candidate.previewMode === "live"
       && candidate.family === current.family
     ))
-    .map(([tag, candidate]) => ({ value: tag, label: tag, group: candidate.group }));
+    .map(([tag, candidate]) => ({
+      value: tag,
+      label: tag,
+      group: htmlSchemaGroupLabel(candidate.group),
+    }));
 }
 
 export function htmlAttributePreviewMode(name: string, tag: string): HtmlPreviewMode {
@@ -156,26 +231,26 @@ export function htmlAttributeValueError(name: string, value: string): string | n
   const normalized = value.trim().toLowerCase();
   if (definition.values?.length && definition.semantic !== "enumeratedOrString") {
     if (!definition.values.includes(normalized)) {
-      return `Valoarea trebuie să fie una dintre: ${definition.values.join(", ")}.`;
+      return t("inspector-schema-value-enum", { values: definition.values.join(", ") });
     }
   }
   if (definition.semantic === "integer" && !/^-?\d+$/.test(value.trim())) {
-    return "Valoarea trebuie să fie un număr întreg.";
+    return t("inspector-schema-value-integer");
   }
   if (definition.semantic === "nonNegativeInteger" && !/^\d+$/.test(value.trim())) {
-    return "Valoarea trebuie să fie un număr întreg pozitiv sau zero.";
+    return t("inspector-schema-value-non-negative");
   }
   if (definition.semantic === "positiveInteger" && !/^[1-9]\d*$/.test(value.trim())) {
-    return "Valoarea trebuie să fie un număr întreg mai mare ca zero.";
+    return t("inspector-schema-value-positive");
   }
   if (definition.semantic === "number" && !Number.isFinite(Number(value.trim()))) {
-    return "Valoarea trebuie să fie numerică.";
+    return t("inspector-schema-value-number");
   }
   if (definition.semantic === "numberOrAny" && normalized !== "any" && !Number.isFinite(Number(value.trim()))) {
-    return "Valoarea trebuie să fie numerică sau «any».";
+    return t("inspector-schema-value-number-any");
   }
   if (definition.semantic === "ariaBoolean" && normalized !== "true" && normalized !== "false") {
-    return "ARIA boolean acceptă explicit doar «true» sau «false».";
+    return t("inspector-schema-value-aria-boolean");
   }
   return null;
 }

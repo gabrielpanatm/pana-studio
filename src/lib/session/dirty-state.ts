@@ -1,4 +1,5 @@
 import type { HtmlPendingArea, InspectorPendingArea } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type SessionDirtyArea = "workspace" | "html" | "css" | "js";
 
@@ -33,7 +34,7 @@ export function deriveGlobalDirtyState(input: DirtyStateInput): GlobalDirtyState
     requiresImmediateDiskWrite: false,
     blocksImmediateDiskOperations: uniqueAreas.length > 0,
     immediateDiskOperationBlockedReason: uniqueAreas.length > 0
-      ? "Salvează sau renunță la modificările curente înainte de operații directe pe disc."
+      ? t("dirty-state-save-or-discard")
       : "",
   };
 }

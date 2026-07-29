@@ -1,13 +1,12 @@
 use tauri::{AppHandle, Manager, State};
 
 use super::kernel_preview_context::require_preview_command_identity;
-use super::kernel_preview_pipeline::{
-    run_preview_read_command, run_preview_structural_write_command,
-};
+use super::kernel_preview_pipeline::run_preview_structural_write_command;
 
 use crate::{
     kernel::{
         disk_conflict::{scan_disk_conflicts, KernelDiskConflictSnapshot},
+        global_status::{GlobalStatusInput, GlobalStatusSnapshot},
         observability::{
             append_event, read_kernel_observability_log_snapshot, KernelEventKind, KernelLogEvent,
             KernelLogLevel, KernelObservabilityLogRequest, KernelObservabilityLogSnapshot,
@@ -16,23 +15,18 @@ use crate::{
         preview_projection::{
             execute_preview_html_attributes, execute_preview_html_delete,
             execute_preview_html_duplicate, execute_preview_html_insert_drop,
-            execute_preview_html_tag, execute_preview_html_text, execute_preview_layer_drop,
-            execute_preview_template_edit_permission, execute_preview_tera_delete,
-            execute_preview_tera_insert_drop, execute_preview_tera_move_drop,
-            preflight_preview_projection_intent, PreviewHtmlAttributesExecutionInput,
-            PreviewHtmlAttributesExecutionReceipt, PreviewHtmlDeleteExecutionInput,
-            PreviewHtmlDeleteExecutionReceipt, PreviewHtmlDuplicateExecutionInput,
-            PreviewHtmlDuplicateExecutionReceipt, PreviewHtmlInsertDropExecutionInput,
-            PreviewHtmlInsertDropExecutionReceipt, PreviewHtmlTagExecutionInput,
-            PreviewHtmlTagExecutionReceipt, PreviewHtmlTextExecutionInput,
-            PreviewHtmlTextExecutionReceipt, PreviewLayerDropExecutionInput,
-            PreviewLayerDropExecutionReceipt, PreviewProjectionIntentInput,
-            PreviewProjectionIntentReceipt, PreviewProjectionIntentStatus,
-            PreviewStructuralCommandIdentity, PreviewTemplateEditPermissionInput,
-            PreviewTemplateEditPermissionReceipt, PreviewTeraDeleteExecutionInput,
-            PreviewTeraDeleteExecutionReceipt, PreviewTeraInsertDropExecutionInput,
-            PreviewTeraInsertDropExecutionReceipt, PreviewTeraMoveDropExecutionInput,
-            PreviewTeraMoveDropExecutionReceipt,
+            execute_preview_html_tag, execute_preview_html_text, execute_preview_tera_delete,
+            execute_preview_tera_insert_drop, preflight_preview_projection_intent,
+            PreviewHtmlAttributesExecutionInput, PreviewHtmlAttributesExecutionReceipt,
+            PreviewHtmlDeleteExecutionInput, PreviewHtmlDeleteExecutionReceipt,
+            PreviewHtmlDuplicateExecutionInput, PreviewHtmlDuplicateExecutionReceipt,
+            PreviewHtmlInsertDropExecutionInput, PreviewHtmlInsertDropExecutionReceipt,
+            PreviewHtmlTagExecutionInput, PreviewHtmlTagExecutionReceipt,
+            PreviewHtmlTextExecutionInput, PreviewHtmlTextExecutionReceipt,
+            PreviewProjectionIntentInput, PreviewProjectionIntentReceipt,
+            PreviewProjectionIntentStatus, PreviewStructuralCommandIdentity,
+            PreviewTeraDeleteExecutionInput, PreviewTeraDeleteExecutionReceipt,
+            PreviewTeraInsertDropExecutionInput, PreviewTeraInsertDropExecutionReceipt,
         },
         project_session::ProjectSessionSnapshot,
         project_state::{
@@ -55,6 +49,27 @@ use crate::{
     },
     state::AppState,
 };
+
+#[tauri::command]
+pub fn publish_global_status(
+    state: State<AppState>,
+    input: GlobalStatusInput,
+) -> Result<GlobalStatusSnapshot, String> {
+    state.global_status.publish(input)
+}
+
+#[tauri::command]
+pub fn resolve_global_status(
+    state: State<AppState>,
+    key: String,
+) -> Result<GlobalStatusSnapshot, String> {
+    state.global_status.resolve(&key)
+}
+
+#[tauri::command]
+pub fn read_global_status(state: State<AppState>) -> Result<GlobalStatusSnapshot, String> {
+    state.global_status.read()
+}
 
 #[tauri::command]
 pub async fn read_write_authority_recovery_scan(
@@ -99,50 +114,6 @@ pub fn normalize_preview_projection_intent(
     let receipt = preflight_preview_projection_intent(input, session.as_ref());
     log_preview_projection_intent(&app, &receipt);
     Ok(receipt)
-}
-
-#[tauri::command(async)]
-pub fn execute_preview_template_edit_intent(
-    app: AppHandle,
-    state: State<AppState>,
-    input: PreviewTemplateEditPermissionInput,
-    identity: PreviewStructuralCommandIdentity,
-) -> Result<PreviewTemplateEditPermissionReceipt, String> {
-    run_preview_read_command(&state, &identity, |context, store| {
-        execute_preview_template_edit_permission(
-            &app,
-            &context.session,
-            &context.root,
-            store,
-            input,
-        )
-        .map(|outcome| outcome.receipt)
-    })
-}
-
-#[tauri::command(async)]
-pub fn execute_preview_layer_drop_intent(
-    app: AppHandle,
-    state: State<AppState>,
-    input: PreviewLayerDropExecutionInput,
-    identity: PreviewStructuralCommandIdentity,
-) -> Result<PreviewLayerDropExecutionReceipt, String> {
-    run_preview_structural_write_command(
-        &app,
-        &state,
-        &identity,
-        "Preview layer drop",
-        |context, workspace| {
-            execute_preview_layer_drop(
-                &app,
-                &context.session,
-                &context.root,
-                workspace,
-                input,
-                &context.aliases,
-            )
-        },
-    )
 }
 
 #[tauri::command(async)]
@@ -326,24 +297,6 @@ pub fn execute_preview_tera_insert_drop_intent(
 }
 
 #[tauri::command(async)]
-pub fn execute_preview_tera_move_drop_intent(
-    app: AppHandle,
-    state: State<AppState>,
-    input: PreviewTeraMoveDropExecutionInput,
-    identity: PreviewStructuralCommandIdentity,
-) -> Result<PreviewTeraMoveDropExecutionReceipt, String> {
-    run_preview_structural_write_command(
-        &app,
-        &state,
-        &identity,
-        "Preview Tera move drop",
-        |context, workspace| {
-            execute_preview_tera_move_drop(&app, &context.session, &context.root, workspace, input)
-        },
-    )
-}
-
-#[tauri::command(async)]
 pub fn execute_preview_tera_delete_intent(
     app: AppHandle,
     state: State<AppState>,
@@ -378,7 +331,7 @@ fn log_preview_projection_intent(app: &AppHandle, receipt: &PreviewProjectionInt
         .diagnostics
         .iter()
         .find(|diagnostic| diagnostic.blocking)
-        .map(|diagnostic| diagnostic.message.clone());
+        .map(|diagnostic| diagnostic.diagnostic.code.clone());
     let mut event = KernelLogEvent::new(
         level,
         kind,
@@ -386,7 +339,7 @@ fn log_preview_projection_intent(app: &AppHandle, receipt: &PreviewProjectionInt
         "preview_projection",
         receipt.kind.operation_label(),
         receipt.project_session_id.clone(),
-        receipt.message.clone(),
+        receipt.message_diagnostic.code.clone(),
         diagnostic,
     )
     .with_attribute("intentId", &receipt.intent_id)

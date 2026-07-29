@@ -1,21 +1,26 @@
 use std::collections::HashMap;
 
-use crate::source_graph::{
-    model::{SourceDiagnosticSeverity, SourceGraphPage, SourceRelationKind},
-    scan::{
-        builder::SourceGraphBuilder,
-        style::{conventional_script_files_for_template, conventional_style_files_for_template},
-        summary::{AssetSummary, DataFileSummary, TemplateSummary},
-    },
-    zola::{
-        data_file_reference_keys, normalize_static_asset_reference,
-        normalize_zola_content_reference, normalize_zola_data_file_reference,
-        normalize_zola_template_reference, static_asset_reference_keys,
-        zola_content_load_reference, zola_content_project_file_reference,
-        zola_template_reference_keys,
+use crate::zola_theme::ZolaThemeResolver;
+use crate::{
+    localization::LocalizedDiagnostic,
+    source_graph::{
+        model::{SourceDiagnosticSeverity, SourceGraphPage, SourceRelationKind},
+        scan::{
+            builder::SourceGraphBuilder,
+            style::{
+                conventional_script_files_for_template, conventional_style_files_for_template,
+            },
+            summary::{AssetSummary, DataFileSummary, TemplateSummary},
+        },
+        zola::{
+            data_file_reference_keys, normalize_static_asset_reference,
+            normalize_zola_content_reference, normalize_zola_data_file_reference,
+            normalize_zola_template_reference, static_asset_reference_keys,
+            zola_content_load_reference, zola_content_project_file_reference,
+            zola_template_reference_keys,
+        },
     },
 };
-use crate::zola_theme::ZolaThemeResolver;
 
 pub(super) fn add_template_relations(
     templates: &[TemplateSummary],
@@ -227,7 +232,10 @@ pub(super) fn asset_reference_map(assets: &[AssetSummary]) -> HashMap<String, St
 pub(super) fn data_file_reference_map(data_files: &[DataFileSummary]) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for data_file in data_files {
-        for key in data_file_reference_keys(&data_file.logical_path) {
+        for key in data_file_reference_keys(&data_file.logical_path)
+            .into_iter()
+            .chain(data_file.load_paths.iter().cloned())
+        {
             map.entry(key).or_insert_with(|| data_file.node_id.clone());
         }
     }
@@ -285,7 +293,8 @@ fn add_content_target_relation(
     } else {
         builder.add_diagnostic(
             SourceDiagnosticSeverity::Warning,
-            format!("Conținut Zola referențiat dar negăsit: {}", target),
+            LocalizedDiagnostic::new("source-graph-content-target-missing")
+                .with_argument("target", target),
             Some(template.file.clone()),
             None,
         );
@@ -310,7 +319,8 @@ fn add_template_target_relation(
     } else {
         builder.add_diagnostic(
             SourceDiagnosticSeverity::Warning,
-            format!("Template referențiat dar negăsit: {}", target),
+            LocalizedDiagnostic::new("source-graph-template-target-missing")
+                .with_argument("target", target),
             Some(template.file.clone()),
             None,
         );
@@ -389,10 +399,8 @@ fn add_load_data_target_relation(
     } else {
         builder.add_diagnostic(
             SourceDiagnosticSeverity::Warning,
-            format!(
-                "Fișier local Zola referențiat de load_data dar negăsit: {}",
-                target
-            ),
+            LocalizedDiagnostic::new("source-graph-load-data-missing")
+                .with_argument("path", target),
             Some(template.file.clone()),
             None,
         );

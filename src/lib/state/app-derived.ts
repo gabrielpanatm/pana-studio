@@ -12,8 +12,10 @@ import {
   canPreviewCurrentSource as canPreviewCurrentSourceForWorkflow,
 } from "$lib/project/workflow";
 import { deriveGlobalDirtyState } from "$lib/session/dirty-state";
+import { workbenchSourceStatusFromSelection } from "$lib/source-provenance";
 import type { AppState } from "$lib/state/app.svelte";
 import type { ProjectFile } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export function deriveCurrentSourcePath(app: AppState) {
   return app.activeScannedPath ?? "";
@@ -92,21 +94,47 @@ export function deriveIsActiveRenderedPreviewPage(app: AppState) {
 }
 
 export function deriveSelectedSourceEditTarget(app: AppState) {
-  return app.resolveSourceEditTargetForSourceId(app.selectedElement?.sourceId);
+  return app.resolveSourceEditTargetForSourceId(
+    app.selectionSnapshot?.anchor?.sourceNodeId,
+  );
 }
 
 export function deriveSelectedTemplateSourceNode(app: AppState) {
-  return app.selectedTemplateSourceId
-    ? (app.sourceGraph?.nodes.find((node) => node.id === app.selectedTemplateSourceId) ?? null)
+  const sourceNodeId = app.selectionSnapshot?.subject?.kind === "teraBoundary"
+    ? app.selectionSnapshot.anchor?.sourceNodeId
+    : null;
+  return sourceNodeId
+    ? (app.sourceGraph?.nodes.find((node) => node.id === sourceNodeId) ?? null)
     : null;
 }
 
-export function deriveSelectedSessionSourceLocation(app: AppState) {
-  return Boolean(app.selectedElement?.sessionId && app.selectedElement?.sourceLocation);
+export function deriveSelectedEditorNavigationNode(app: AppState) {
+  const editorNodeId = app.selectionSnapshot?.projections.layers.editorNodeId ?? null;
+  return editorNodeId
+    ? (app.editorNavigationSnapshot?.nodes.find(
+        (node) => node.id === editorNodeId,
+      ) ?? null)
+    : null;
+}
+
+export function deriveSelectedSemanticSourceLocation(app: AppState) {
+  const selection = app.selectionSnapshot;
+  return Boolean(
+    selection
+    && selection.resolution === "resolved"
+    && selection.anchor?.file
+    && selection.anchor.range,
+  );
+}
+
+export function deriveWorkbenchSourceStatus(app: AppState) {
+  return workbenchSourceStatusFromSelection(app.selectionSnapshot);
 }
 
 export function deriveCanEditHtml(app: AppState) {
-  return app.isActivePreviewHtmlSource || Boolean(app.selectedSourceEditTarget) || app.selectedSessionSourceLocation;
+  return app.isActivePreviewHtmlSource
+    || Boolean(app.selectedSourceEditTarget)
+    || app.selectedSemanticSourceLocation;
 }
 
 export function deriveAppDirtyState(app: AppState) {
@@ -122,7 +150,12 @@ export function deriveSessionHasPending(app: AppState) {
 }
 
 export function deriveCanAddChildToSelectedElement(app: AppState) {
-  return Boolean(app.selectedElement && canElementAcceptChildren(app.selectedElement.tag, htmlVoidTags));
+  const summary = app.inspectorSelectionSummary;
+  return Boolean(
+    summary?.state === "resolved"
+    && summary.tag
+    && canElementAcceptChildren(summary.tag, htmlVoidTags),
+  );
 }
 
 export function deriveCanPreviewCurrentSource(app: AppState) {
@@ -135,16 +168,16 @@ export function deriveCanPreviewCurrentSource(app: AppState) {
 
 export function deriveHtmlSourceMutationBlockedReason(app: AppState) {
   if (app.activeScannedPath?.endsWith(".md")) {
-    return "Pagina activa vine din Markdown Zola. Editarea HTML directa pentru content-ul randat nu este disponibila inca.";
+    return t("workbench-html-mutation-markdown-blocked");
   }
   if (app.activeScannedPath && isZolaTemplatePath(zolaRelativePath(app.activeScannedPath))) {
-    return "Template-urile Tera sunt doar pentru preview si inspectie acum. Editarea structurala directa vine mai tarziu.";
+    return t("workbench-html-mutation-tera-blocked");
   }
-  return "Comuta pe preview-ul unei pagini HTML editabile sau pe sursa HTML activa.";
+  return t("workbench-html-mutation-preview-required");
 }
 
 function normalizedProjectPath(path: string | null | undefined) {
-  if (!path || path === "about:blank" || path.startsWith("Context de template:")) return "";
+  if (!path || path === "about:blank") return "";
   return projectRelativeZolaPath(path)
     .replaceAll("\\", "/")
     .replace(/\/+/g, "/")

@@ -1,8 +1,5 @@
 import { serializeOverrides } from "$lib/css/serializer";
-import {
-  buildPreviewStatusDocument,
-  hidePreviewHtmlSelectionOverlay,
-} from "$lib/preview/bridge";
+import { buildPreviewStatusDocument } from "$lib/preview/bridge";
 import { collectDomTree } from "$lib/preview/selection";
 import {
   previewFrameAllowsDocumentAccess,
@@ -20,13 +17,13 @@ import type {
   EditableStyles,
   PageSection,
   ProjectFile,
-  SelectionInfo,
 } from "$lib/types";
 import {
   PreviewRuntimeTransportError,
   type PreviewRuntime,
 } from "$lib/editor-runtime/preview-runtime";
 import { errorMessage } from "$lib/util";
+import { t } from "$lib/i18n/runtime.svelte";
 
 export type PreviewRefreshLeaseHost = {
   sessionProjectRoot: string;
@@ -38,6 +35,8 @@ export type PreviewRefreshLeaseHost = {
 
 export type PreviewControllerHost = PreviewRefreshLeaseHost & {
   previewFrame: HTMLIFrameElement | undefined;
+  canvasSurfaceElement: HTMLIFrameElement | null;
+  canvasSurfaceGeneration: number;
   previewSrc: string;
   previewReloadSerial: number;
   previewWorkspaceRevision: string | null;
@@ -50,8 +49,6 @@ export type PreviewControllerHost = PreviewRefreshLeaseHost & {
   previewDocumentMarkup: string | null;
   activeRenderedPreviewPageFile: ProjectFile | null;
   isActiveRenderedPreviewPage: boolean;
-  selectedPreviewElement: Element | null;
-  selectedElement: SelectionInfo | null;
   projectStatus: string;
   overrideRules: Record<string, EditableStyles>;
   variableOverrides: Record<string, string>;
@@ -64,16 +61,100 @@ export type PreviewControllerHost = PreviewRefreshLeaseHost & {
     durationMs: number,
     diagnostic: string | null,
   ) => Promise<void>;
+  refreshEditorNavigationSnapshot?: (
+    identity?: CanvasProjectionIdentity,
+    previewUrl?: string,
+  ) => Promise<void>;
   setPageSections?: (sections: PageSection[]) => void;
 };
 
 export type CanvasProjectionConfirmation = {
   transactionId: string;
+  surfaceGeneration: number;
+  startedAt: number;
+  lastPhase: "prepared";
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof globalThis.setTimeout>;
 };
+
+export class CanvasProjectionSurfaceUnavailableError extends Error {
+  readonly code = "canvas_surface_unavailable";
+  readonly reason: "surface_not_mounted" | "surface_unmounted";
+
+  constructor(
+    reason: "surface_not_mounted" | "surface_unmounted",
+    message = reason === "surface_unmounted"
+      ? t("preview-controller-surface-unmounted")
+      : t("preview-controller-surface-missing"),
+  ) {
+    super(message);
+    this.name = "CanvasProjectionSurfaceUnavailableError";
+    this.reason = reason;
+  }
+}
+
+export function isCanvasProjectionSurfaceUnavailableError(
+  error: unknown,
+): error is CanvasProjectionSurfaceUnavailableError {
+  return error instanceof CanvasProjectionSurfaceUnavailableError
+    || (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && error.code === "canvas_surface_unavailable"
+    );
+}
+
+export function hasMountedCanvasProjectionSurface(host: PreviewControllerHost) {
+  return Boolean(
+    host.canvasSurfaceElement
+    && host.canvasSurfaceElement === host.previewFrame
+    && host.canvasSurfaceElement.contentWindow,
+  );
+}
+
+export function mountCanvasProjectionSurface(
+  host: PreviewControllerHost,
+  frame: HTMLIFrameElement,
+) {
+  if (host.canvasSurfaceElement === frame) return host.canvasSurfaceGeneration;
+  if (host.canvasSurfaceElement) {
+    invalidatePreviewRefreshLease(host);
+    cancelCanvasProjectionConfirmation(
+      host,
+      new CanvasProjectionSurfaceUnavailableError(
+        "surface_unmounted",
+        t("preview-controller-surface-replaced"),
+      ),
+    );
+    host.pendingCanvasProjection = null;
+    host.previewWorkspaceRevision = null;
+  }
+  host.canvasSurfaceGeneration += 1;
+  host.canvasSurfaceElement = frame;
+  host.previewFrame = frame;
+  return host.canvasSurfaceGeneration;
+}
+
+export function unmountCanvasProjectionSurface(
+  host: PreviewControllerHost,
+  frame: HTMLIFrameElement,
+) {
+  if (host.canvasSurfaceElement !== frame) return false;
+  host.canvasSurfaceElement = null;
+  if (host.previewFrame === frame) host.previewFrame = undefined;
+  host.canvasSurfaceGeneration += 1;
+  invalidatePreviewRefreshLease(host);
+  cancelCanvasProjectionConfirmation(
+    host,
+    new CanvasProjectionSurfaceUnavailableError("surface_unmounted"),
+  );
+  host.pendingCanvasProjection = null;
+  host.previewWorkspaceRevision = null;
+  return true;
+}
 
 export type PreviewRefreshLease = Readonly<{
   projectRoot: string;
@@ -192,14 +273,14 @@ async function waitForRenderedPreviewUrl(
       if (!requiredRevision || previewDocumentHasRevision(html, requiredRevision)) {
         return { url: lastUrl, revision: requiredRevision, html };
       }
-      lastError = new Error("Randarea Zola nu a ajuns încă la ultima generație de preview.");
+      lastError = new Error(t("preview-controller-render-generation-pending"));
     } catch (error) {
       if (!previewRefreshLeaseMatches(host, lease)) return null;
       lastError = error;
     }
   }
 
-  throw lastError ?? new Error("Randarea Zola nu a răspuns cu generația cerută de preview.");
+  throw lastError ?? new Error(t("preview-controller-render-generation-missing"));
 }
 
 async function waitForPreviewDocumentUrl(
@@ -224,7 +305,7 @@ async function waitForPreviewDocumentUrl(
         return { url: lastUrl, revision: requiredRevision, html };
       }
       lastError = new Error(
-        "Context de template nu a ajuns încă la generația Canvas cerută.",
+        t("preview-controller-template-generation-pending"),
       );
     } catch (error) {
       if (!previewRefreshLeaseMatches(host, lease)) return null;
@@ -232,7 +313,7 @@ async function waitForPreviewDocumentUrl(
     }
   }
 
-  throw lastError ?? new Error("Context de template nu a răspuns cu generația cerută.");
+  throw lastError ?? new Error(t("preview-controller-template-generation-missing"));
 }
 
 function samePreviewRoute(currentUrl: string, nextUrl: string) {
@@ -266,7 +347,7 @@ async function confirmPendingCanvasProjection(
   receipts: PreviewPhaseReceipt[],
 ) {
   if (!canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
-    throw new Error("Canvas ACK a devenit stale înainte de confirmarea Rust.");
+    throw new Error(t("preview-controller-ack-stale"));
   }
 
   const phases = receipts.map((receipt) => receipt.phase);
@@ -280,7 +361,7 @@ async function confirmPendingCanvasProjection(
       || phases[2] !== "styledReady"
     )
   ) {
-    throw new Error("Browserul nu a furnizat secvența ACK Canvas completă și ordonată.");
+    throw new Error(t("preview-controller-ack-sequence-invalid"));
   }
 
   let confirmed: CanvasProjectionPlan | null = null;
@@ -291,7 +372,7 @@ async function confirmPendingCanvasProjection(
       || !receipt.phaseTimingsMs
       || typeof receipt.phaseTimingsMs !== "object"
     ) {
-      throw new Error("Browserul a furnizat un ACK Canvas din altă tranzacție.");
+      throw new Error(t("preview-controller-ack-transaction-mismatch"));
     }
     confirmed = await acknowledgeCanvasProjectionPhase(receipt);
     const expectedPhase = receipt.phase === "styledReady"
@@ -301,7 +382,9 @@ async function confirmPendingCanvasProjection(
       confirmed.phase !== expectedPhase
       || !canvasIdentityMatches(confirmed.identity, plan.identity)
     ) {
-      throw new Error(`Rust nu a confirmat exact faza Canvas ${receipt.phase}.`);
+      throw new Error(t("preview-controller-phase-unconfirmed", {
+        phase: receipt.phase,
+      }));
     }
   }
 
@@ -311,14 +394,15 @@ async function confirmPendingCanvasProjection(
     }
     throw new PreviewProjectionDiagnosticError(
       "preview_reconcile_failed",
-      receipts[0]?.diagnostic || "Browserul a raportat eșecul tranzacției Canvas.",
+      receipts[0]?.diagnostic || t("preview-controller-browser-transaction-failed"),
     );
   }
   if (!confirmed || confirmed.phase !== "canonicalVerified") {
-    throw new Error("Rust nu a confirmat canonic exact tranzacția Canvas stilizată.");
+    throw new Error(t("preview-controller-rust-transaction-unconfirmed"));
   }
   host.activeCanvasIdentity = { ...plan.identity };
   host.activeCanvasUrl = host.previewSrc;
+  void host.refreshEditorNavigationSnapshot?.(plan.identity, host.previewSrc);
   if (canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
     host.pendingCanvasProjection = null;
   }
@@ -333,10 +417,15 @@ function beginCanvasProjectionConfirmation(
   host: PreviewControllerHost,
   plan: CanvasProjectionPlan,
 ) {
+  if (!hasMountedCanvasProjectionSurface(host)) {
+    throw new CanvasProjectionSurfaceUnavailableError("surface_not_mounted");
+  }
   cancelCanvasProjectionConfirmation(
     host,
-    "Confirmarea Canvas a fost înlocuită de altă tranzacție.",
+    t("preview-controller-confirmation-superseded"),
   );
+  const surfaceGeneration = host.canvasSurfaceGeneration;
+  const startedAt = performance.now();
   let resolve!: () => void;
   let reject!: (error: Error) => void;
   const promise = new Promise<void>((accept, deny) => {
@@ -344,12 +433,28 @@ function beginCanvasProjectionConfirmation(
     reject = deny;
   });
   const timeout = globalThis.setTimeout(() => {
-    if (host.canvasProjectionConfirmation?.transactionId !== plan.identity.transactionId) return;
+    const confirmation = host.canvasProjectionConfirmation;
+    if (
+      confirmation?.transactionId !== plan.identity.transactionId
+      || confirmation.surfaceGeneration !== surfaceGeneration
+      || host.canvasSurfaceGeneration !== surfaceGeneration
+      || !hasMountedCanvasProjectionSurface(host)
+    ) return;
     host.canvasProjectionConfirmation = null;
-    reject(new Error("Canvas-ul navigat nu a confirmat styledReady în 15 secunde."));
+    const durationMs = Math.max(0, performance.now() - startedAt);
+    void host.recordCanvasProjectionRuntimeEvent?.(
+      "canvas_ack_timeout",
+      plan.identity,
+      durationMs,
+      `surfaceGeneration=${surfaceGeneration};lastPhase=prepared`,
+    );
+    reject(new Error(t("preview-controller-styled-ready-timeout")));
   }, 15_000);
   host.canvasProjectionConfirmation = {
     transactionId: plan.identity.transactionId,
+    surfaceGeneration,
+    startedAt,
+    lastPhase: "prepared",
     promise,
     resolve,
     reject,
@@ -363,7 +468,12 @@ export function prepareCanvasProjectionNavigation(
   plan: CanvasProjectionPlan,
 ) {
   if (plan.phase !== "prepared") {
-    throw new Error(`Canvas navigation cere faza prepared, nu ${plan.phase}.`);
+    throw new Error(t("preview-controller-navigation-phase-invalid", {
+      phase: plan.phase,
+    }));
+  }
+  if (!hasMountedCanvasProjectionSurface(host)) {
+    throw new CanvasProjectionSurfaceUnavailableError("surface_not_mounted");
   }
   host.pendingCanvasProjection = plan;
   host.previewWorkspaceRevision = plan.identity.previewRevision;
@@ -372,13 +482,13 @@ export function prepareCanvasProjectionNavigation(
 
 export function cancelCanvasProjectionConfirmation(
   host: PreviewControllerHost,
-  reason = "Confirmarea Canvas a fost anulată.",
+  reason: string | Error = t("preview-controller-confirmation-cancelled"),
 ) {
   const confirmation = host.canvasProjectionConfirmation;
   if (!confirmation) return;
   globalThis.clearTimeout(confirmation.timeout);
   host.canvasProjectionConfirmation = null;
-  confirmation.reject(new Error(reason));
+  confirmation.reject(reason instanceof Error ? reason : new Error(reason));
 }
 
 export async function confirmMountedCanvasProjection(
@@ -387,7 +497,14 @@ export async function confirmMountedCanvasProjection(
   phaseReceipts: PreviewPhaseReceipt[],
 ) {
   const plan = host.pendingCanvasProjection;
-  if (!plan || !canvasIdentityMatches(documentCanvasIdentity, plan.identity)) return false;
+  const confirmation = host.canvasProjectionConfirmation;
+  if (
+    !plan
+    || !confirmation
+    || confirmation.surfaceGeneration !== host.canvasSurfaceGeneration
+    || !hasMountedCanvasProjectionSurface(host)
+    || !canvasIdentityMatches(documentCanvasIdentity, plan.identity)
+  ) return false;
   try {
     await confirmPendingCanvasProjection(host, plan, phaseReceipts);
     return true;
@@ -415,21 +532,15 @@ async function replaceMountedPreviewWithCanonicalDocument(
   if (!samePreviewRoute(host.previewSrc, ready.url)) {
     return { kind: "unsupported", reason: "route_changed" };
   }
-  const selector = host.selectedElement?.domPath
-    ?? host.selectedElement?.cssSelector
-    ?? null;
   const plan = host.pendingCanvasProjection;
   if (!plan || plan.identity.previewRevision !== ready.revision) {
     return { kind: "unsupported", reason: "plan_missing" };
   }
-  hidePreviewHtmlSelectionOverlay(getPreviewDocument(host));
-  host.selectedPreviewElement = null;
   let ack;
   try {
     ack = await host.previewRuntime.sendAndWait({
       type: "replace-document",
       html: ready.html,
-      selector,
       liveCss: serializeOverrides(host.overrideRules, host.variableOverrides),
       canvasIdentity: plan.identity,
     });
@@ -443,14 +554,14 @@ async function replaceMountedPreviewWithCanonicalDocument(
   if (!canvasIdentityMatches(ack.canvasIdentity, plan.identity)) {
     throw new PreviewProjectionDiagnosticError(
       "preview_canvas_identity_mismatch",
-      "Legătura previzualizării a confirmat altă tranzacție Canvas.",
+      t("preview-controller-bridge-transaction-mismatch"),
     );
   }
   await confirmPendingCanvasProjection(host, plan, ack.canvasPhaseReceipts ?? []);
   if (!ack.ok) {
     throw new PreviewProjectionDiagnosticError(
       "preview_reconcile_failed",
-      ack.error || "Legătura previzualizării a refuzat documentul Zola canonic.",
+      ack.error || t("preview-controller-bridge-document-rejected"),
     );
   }
   if (!previewRefreshLeaseMatches(host, lease)) return { kind: "stale" };
@@ -542,12 +653,12 @@ export async function refreshRenderedPreviewDocument(
   } catch (error) {
     if (!previewRefreshLeaseMatches(host, lease)) return false;
     const message = errorMessage(error);
-    host.projectStatus = `Randarea previzualizării a eșuat: ${message}`;
+    host.projectStatus = t("preview-controller-render-failed", { message });
     if (!host.previewSrc || host.previewSrc === "about:blank" || !host.previewFrame) {
       host.previewSrc = "about:blank";
       host.previewDocumentMarkup = buildPreviewStatusDocument(
-        "Previzualizare indisponibilă",
-        `Previzualizarea Zola nu răspunde momentan.\n\n${message}`,
+        t("preview-controller-unavailable-title"),
+        t("preview-controller-unavailable-message", { message }),
       );
     }
     return false;
@@ -557,7 +668,7 @@ export async function refreshRenderedPreviewDocument(
 /**
  * Confirmă un candidat Canvas prin documentul Workbench deja montat. Când
  * ruta rămâne aceeași, bridge-ul reconciliază DOM-ul în loc și păstrează
- * selecția/gate-ul; navigarea iframe este doar fallback pentru prima montare.
+ * selecția semantică; navigarea iframe este doar fallback pentru prima montare.
  */
 export async function reconcileTemplateWorkbenchPreviewDocument(
   host: PreviewControllerHost,
@@ -565,7 +676,9 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
   plan: CanvasProjectionPlan,
 ) {
   if (plan.phase !== "prepared") {
-    throw new Error(`Reconcilierea Workbench cere faza prepared, nu ${plan.phase}.`);
+    throw new Error(t("preview-controller-workbench-phase-invalid", {
+      phase: plan.phase,
+    }));
   }
   const requestedUrl = new URL(previewUrl);
   if (
@@ -573,7 +686,7 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
     || requestedUrl.searchParams.get("__pana_preview_revision") !== plan.identity.previewRevision
     || requestedUrl.searchParams.get("__pana_canvas_transaction") !== plan.identity.transactionId
   ) {
-    throw new Error("URL-ul Context de template nu aparține candidatului Canvas primit.");
+    throw new Error(t("preview-controller-template-url-mismatch"));
   }
 
   const lease = beginPreviewRefreshLease(host);
@@ -624,8 +737,6 @@ export async function reloadPreview(
 ) {
   const lease = providedLease ?? beginPreviewRefreshLease(host);
   if (!lease || !previewRefreshLeaseMatches(host, lease)) return false;
-  hidePreviewHtmlSelectionOverlay(getPreviewDocument(host));
-  host.selectedPreviewElement = null;
   const rendered = await refreshRenderedPreviewDocument(host, lease);
   if (!previewRefreshLeaseMatches(host, lease)) return false;
   if (rendered) return true;

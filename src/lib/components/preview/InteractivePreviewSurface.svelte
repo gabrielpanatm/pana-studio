@@ -5,7 +5,17 @@
     type InteractivePreviewDomNode,
   } from "$lib/preview/interactive";
   import type { WorkbenchCanvasMode } from "$lib/types";
-  import { UI_TERMS } from "$lib/i18n/ui-terms";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
+  import type {
+    MotionPreviewMode,
+    MotionPreviewRequest,
+    MotionPreviewStatus,
+  } from "$lib/state/motion-workspace.svelte";
 
   type FrameSlot = {
     id: number;
@@ -13,8 +23,19 @@
     previewRevision: string;
     startedAt: number;
   };
+  type InteractiveStatus =
+    | "preparing"
+    | "unavailable"
+    | "invalid-url"
+    | "starting"
+    | "checking"
+    | "timeout"
+    | "revision-failed"
+    | "active";
 
   export let desiredUrl = "";
+  export let executionMode: MotionPreviewMode = "interactive";
+  export let motionRequest: MotionPreviewRequest | null = null;
   export let canvasMode: WorkbenchCanvasMode = "fit";
   export let canvasWidthPx = 1_440;
   export let previewZoom = 100;
@@ -22,18 +43,50 @@
   export let onLifecycleError: (message: string) => void = () => {};
   export let onRealmRestarted: (previewRevision: string, durationMs: number) => void = () => {};
   export let onRealmFailed: (previewRevision: string, durationMs: number, diagnostic: string) => void = () => {};
+  export let onMotionStatus: (status: MotionPreviewStatus) => void = () => {};
 
   let frames: FrameSlot[] = [];
   let activeId: number | null = null;
   let observedDesiredUrl = "";
   let nextId = 1;
-  let status = `${UI_TERMS.interactivePreview} se pregătește…`;
+  let statusCode: InteractiveStatus = "preparing";
+  $: status = statusText(statusCode);
   const frameNodes = new Map<number, HTMLIFrameElement>();
   const timeouts = new Map<number, number>();
+  let observedMotionRequest = 0;
+
+  function statusText(code: InteractiveStatus) {
+    switch (code) {
+      case "preparing": return t("workbench-interactive-preparing");
+      case "unavailable": return t("workbench-interactive-unavailable");
+      case "invalid-url": return t("workbench-interactive-invalid-url");
+      case "starting": return t("workbench-interactive-starting");
+      case "checking": return t("workbench-interactive-checking");
+      case "timeout": return t("workbench-interactive-timeout");
+      case "revision-failed": return t("workbench-interactive-revision-failed");
+      case "active": return t("workbench-interactive-active");
+    }
+  }
 
   $: if (desiredUrl !== observedDesiredUrl) {
     observedDesiredUrl = desiredUrl;
     stageDesiredUrl(desiredUrl);
+  }
+
+  $: if (motionRequest && motionRequest.serial !== observedMotionRequest) {
+    observedMotionRequest = motionRequest.serial;
+    sendMotionRequest(motionRequest);
+  }
+
+  function sendMotionRequest(request: MotionPreviewRequest) {
+    const frame = activeId === null ? null : frameNodes.get(activeId);
+    frame?.contentWindow?.postMessage({
+      source: "pana-studio-motion",
+      type: "command",
+      interactionId: request.interactionId,
+      command: request.command,
+      value: request.value,
+    }, "*");
   }
 
   function previewRevisionFromUrl(url: string) {
@@ -47,33 +100,29 @@
   function stageDesiredUrl(url: string) {
     if (!url) {
       clearAllFrames();
-      status = `${UI_TERMS.interactivePreview} este indisponibilă.`;
+      statusCode = "unavailable";
       return;
     }
     const active = frames.find((slot) => slot.id === activeId);
     if (active?.url === url || frames.some((slot) => slot.id !== activeId && slot.url === url)) return;
     const previewRevision = previewRevisionFromUrl(url);
     if (!previewRevision) {
-      status = `${UI_TERMS.interactivePreview} a refuzat un URL fără revizie canonică.`;
+      statusCode = "invalid-url";
       return;
     }
 
     for (const slot of frames.filter((entry) => entry.id !== activeId)) removeFrame(slot.id);
     const slot = { id: nextId++, url, previewRevision, startedAt: performance.now() };
     frames = [...frames.filter((entry) => entry.id === activeId), slot];
-    status = activeId === null
-      ? `${UI_TERMS.interactivePreview} pornește într-un mediu izolat…`
-      : "Se verifică noua revizie interactivă…";
+    statusCode = activeId === null ? "starting" : "checking";
     const timeout = window.setTimeout(() => {
       if (slot.id === activeId) return;
       removeFrame(slot.id);
-      status = activeId === null
-        ? `${UI_TERMS.interactivePreview} nu a confirmat pornirea în 15 secunde.`
-        : "Noua revizie JS a eșuat; ultima revizie interactivă validă rămâne activă.";
+      statusCode = activeId === null ? "timeout" : "revision-failed";
       onRealmFailed(
         slot.previewRevision,
         Math.max(0, performance.now() - slot.startedAt),
-        status,
+        statusText(statusCode),
       );
     }, 15_000);
     timeouts.set(slot.id, timeout);
@@ -94,6 +143,38 @@
       return frame?.contentWindow && event.source === frame.contentWindow;
     });
     if (!slot) return;
+    const runtimeMessage = event.data;
+    if (
+      runtimeMessage
+      && runtimeMessage.source === "pana-studio-motion-runtime"
+      && runtimeMessage.type === "state"
+      && slot.id === activeId
+    ) {
+      const value = Number(runtimeMessage.value);
+      const duration = Number(runtimeMessage.duration);
+      const progress = Number(runtimeMessage.progress);
+      if (
+        typeof runtimeMessage.interactionId === "string"
+        && Number.isFinite(value)
+        && Number.isFinite(duration)
+        && Number.isFinite(progress)
+      ) {
+        onMotionStatus({
+          interactionId: runtimeMessage.interactionId,
+          value,
+          duration,
+          progress,
+          paused: runtimeMessage.paused !== false,
+          reversed: runtimeMessage.reversed === true,
+        });
+      }
+      return;
+    }
+    if (
+      runtimeMessage
+      && runtimeMessage.source === "pana-studio-motion-runtime"
+      && runtimeMessage.type === "command-applied"
+    ) return;
     const message = parseInteractivePreviewMessage(
       frameNodes.get(slot.id),
       event,
@@ -104,11 +185,14 @@
     if (message.type === "ready") {
       clearFrameTimeout(slot.id);
       activeId = slot.id;
-      status = `${UI_TERMS.interactivePreview} activă · JavaScript izolat`;
+      statusCode = "active";
       onRealmRestarted(
         slot.previewRevision,
         Math.max(0, performance.now() - slot.startedAt),
       );
+      if (executionMode === "motion" && motionRequest) {
+        window.requestAnimationFrame(() => sendMotionRequest(motionRequest as MotionPreviewRequest));
+      }
       window.requestAnimationFrame(() => {
         for (const previous of frames.filter((entry) => entry.id !== slot.id)) {
           removeFrame(previous.id);
@@ -123,7 +207,11 @@
     }
     if (message.type === "lifecycle-error") {
       onLifecycleError(
-        `${message.componentId || "componentă"} · ${message.phase || "runtime"}: ${message.message}`,
+        t("workbench-interactive-lifecycle-error", {
+          component: message.componentId || t("workbench-interactive-component"),
+          phase: message.phase || "runtime",
+          detail: message.message,
+        }),
       );
     }
   }
@@ -158,16 +246,17 @@
 <div
   class:canvas-fit={canvasMode === "fit"}
   class:canvas-fixed={canvasMode === "fixed"}
+  class:motion-mode={executionMode === "motion"}
   class="interactive-stage"
   style={`--preview-zoom-scale: ${previewZoom / 100}; --canvas-width-px: ${canvasWidthPx}px;`}
-  aria-label="Previzualizare interactivă izolată"
+  aria-label={t("workbench-interactive-aria")}
 >
   {#each frames as slot (slot.id)}
     <iframe
       use:registerFrame={slot.id}
       class:active={slot.id === activeId}
       class="interactive-frame"
-      title="Previzualizare interactivă izolată"
+      title={t("workbench-interactive-aria")}
       src={slot.url}
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
@@ -205,6 +294,10 @@
     z-index: 2;
     opacity: 1;
     pointer-events: auto;
+  }
+
+  .motion-mode .interactive-frame.active {
+    pointer-events: none;
   }
 
   .canvas-fixed .interactive-frame {

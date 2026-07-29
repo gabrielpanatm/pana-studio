@@ -17,6 +17,8 @@
     applyComponentMutation,
     readFileBufferText,
   } from "$lib/project/io";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
   import type { AppState } from "$lib/state/app.svelte";
   import type {
     ComponentCompanionDraft,
@@ -39,13 +41,13 @@
   type ComponentView = "all" | "partials" | "macros" | "shortcodes" | "repeats";
   type DetailMode = "info" | "create" | "edit";
 
-  const componentViews: Array<{ id: ComponentView; label: string }> = [
-    { id: "all", label: "Toate" },
-    { id: "partials", label: "Parțiale" },
-    { id: "macros", label: "Macro-uri" },
-    { id: "shortcodes", label: "Shortcode-uri" },
-    { id: "repeats", label: "Liste Tera" },
-  ];
+  const componentViews = $derived([
+    { id: "all" as const, label: t("components-view-all") },
+    { id: "partials" as const, label: t("components-view-partials") },
+    { id: "macros" as const, label: t("components-view-macros") },
+    { id: "shortcodes" as const, label: t("components-view-shortcodes") },
+    { id: "repeats" as const, label: t("components-view-repeats") },
+  ]);
 
   let activeView = $state<ComponentView>("all");
   let detailMode = $state<DetailMode>("info");
@@ -55,7 +57,6 @@
   let mutating = $state(false);
   let loadingSource = $state(false);
   let deleteConfirmationOpen = $state(false);
-  let graphRefreshKey = "";
 
   let formKind = $state<ComponentDraftKind>("partial");
   let formName = $state("");
@@ -73,7 +74,7 @@
       definition.kind !== "templateFile" && definition.kind !== "templateBlock"
     )),
   );
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase("ro"));
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredDefinitions = $derived(
     definitions.filter((definition) => (
       definitionMatchesView(definition, activeView)
@@ -86,7 +87,7 @@
           definition.templateName ?? "",
           definition.symbol ?? "",
           definition.origin,
-        ].join(" ").toLocaleLowerCase("ro").includes(normalizedQuery)
+        ].join(" ").toLocaleLowerCase(l10n.locale).includes(normalizedQuery)
       )
     )),
   );
@@ -108,19 +109,6 @@
   const themeDefinitionCount = $derived(
     definitions.filter((definition) => definition.origin === "theme").length,
   );
-
-  $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const sessionId = app.kernelProjectSessionId;
-    const revision = app.projectWorkspaceSnapshot?.revision;
-    if (!projectRoot || !sessionId || revision === undefined) return;
-    const key = `${projectRoot}\u0000${sessionId}\u0000${revision}`;
-    if (key === graphRefreshKey) return;
-    graphRefreshKey = key;
-    void app.refreshSourceGraph({ strict: true }).catch((cause) => {
-      if (graphRefreshKey === key) formError = errorMessage(cause);
-    });
-  });
 
   function identity(): FileBufferRequestIdentity {
     return {
@@ -146,21 +134,21 @@
   }
 
   function kindLabel(kind: ComponentDefinitionKind) {
-    const labels: Record<ComponentDefinitionKind, string> = {
-      templateFile: "Șablon",
-      partial: "Parțială",
-      macroLibrary: "Bibliotecă macro",
-      macro: "Macro",
-      shortcode: "Shortcode",
-      templateBlock: "Bloc",
-      inlineRepeat: "Listă Tera",
+    const labels: Record<ComponentDefinitionKind, ReturnType<typeof t>> = {
+      templateFile: t("components-kind-template"),
+      partial: t("components-kind-partial"),
+      macroLibrary: t("components-kind-macro-library"),
+      macro: t("components-kind-macro"),
+      shortcode: t("components-kind-shortcode"),
+      templateBlock: t("components-kind-block"),
+      inlineRepeat: t("components-kind-repeat"),
     };
     return labels[kind];
   }
 
   function originLabel(origin: ComponentDefinition["origin"]) {
-    if (origin === "project") return "Proiect";
-    return "Temă";
+    if (origin === "project") return t("components-origin-project");
+    return t("components-origin-theme");
   }
 
   function iconForDefinition(definition: ComponentDefinition) {
@@ -206,11 +194,11 @@
     if (kind === "macro_library") {
       return `{% macro ${safeName}(text) %}\n  <span>{{ text }}</span>\n{% endmacro ${safeName} %}\n`;
     }
-    if (kind === "shortcode_markdown") return "**Shortcode nou**\n";
+    if (kind === "shortcode_markdown") return `**${t("components-new-shortcode")}**\n`;
     if (kind === "shortcode_html") {
-      return `<span class="shortcode-${safeName}">Shortcode nou</span>\n`;
+      return `<span class="shortcode-${safeName}">${t("components-new-shortcode")}</span>\n`;
     }
-    return `<section class="${safeName}">\n  Componentă nouă\n</section>\n`;
+    return `<section class="${safeName}">\n  ${t("components-new-placeholder")}\n</section>\n`;
   }
 
   function beginCreate() {
@@ -290,7 +278,10 @@
 
   async function applyMutation(input: ComponentMutationInput, successMessage: string) {
     const receipt = await applyComponentMutation(input, identity());
-    await app.rescanCurrentProject(receipt.workspace.relativePath, { strict: true });
+    const settlement = await settleProjectWorkspaceMutation(app, receipt.workspace, {
+      preferredRelativePath: receipt.workspace.relativePath,
+      warningLabel: t("components-mutation-operation"),
+    });
     const destination = receipt.plan.destinationRelativePath;
     if (destination) {
       selectedDefinitionId = app.sourceGraph?.componentGraph.definitions.find((definition) => (
@@ -299,7 +290,12 @@
     } else {
       selectedDefinitionId = "";
     }
-    app.setGlobalStatus(`${successMessage} — Ctrl+S persistă pe disc`, "unsaved");
+    app.setGlobalStatus(
+      settlement.warnings.length > 0
+        ? t("components-mutation-warning", { message: successMessage })
+        : t("components-mutation-success", { message: successMessage }),
+      "unsaved",
+    );
     resetPanel();
   }
 
@@ -319,7 +315,7 @@
           sourceFile: null,
           sourceRange: null,
           companions: createCompanions(),
-        }, `Componentă creată: ${formName}`);
+        }, t("components-created-status", { name: formName }));
       } else if (detailMode === "edit" && selectedDefinition) {
         await applyMutation({
           operation: "update",
@@ -331,7 +327,7 @@
           sourceFile: null,
           sourceRange: null,
           companions: [],
-        }, `Componentă actualizată: ${formName}`);
+        }, t("components-updated-status", { name: formName }));
       }
     } catch (cause) {
       formError = errorMessage(cause);
@@ -350,12 +346,12 @@
         definitionId: selectedDefinition.id,
         kind: null,
         name: null,
-        destinationName: `${logicalName(selectedDefinition)}-copie`,
+        destinationName: `${logicalName(selectedDefinition)}-${t("components-copy-suffix")}`,
         contents: null,
         sourceFile: null,
         sourceRange: null,
         companions: [],
-      }, `Componentă duplicată: ${selectedDefinition.displayName}`);
+      }, t("components-duplicated-status", { name: selectedDefinition.displayName }));
     } catch (cause) {
       formError = errorMessage(cause);
     } finally {
@@ -378,7 +374,7 @@
         sourceFile: null,
         sourceRange: null,
         companions: [],
-      }, `Override local creat: ${selectedDefinition.displayName}`);
+      }, t("components-override-status", { name: selectedDefinition.displayName }));
     } catch (cause) {
       formError = errorMessage(cause);
     } finally {
@@ -401,7 +397,7 @@
         sourceFile: null,
         sourceRange: null,
         companions: [],
-      }, `Componentă eliminată: ${selectedDefinition.displayName}`);
+      }, t("components-removed-status", { name: selectedDefinition.displayName }));
     } catch (cause) {
       formError = errorMessage(cause);
     } finally {
@@ -424,23 +420,23 @@
   }
 </script>
 
-<section class="components-workspace" aria-labelledby="components-title">
+<section class="activity-workspace components-workspace" aria-labelledby="components-title">
   <header class="workspace-header">
     <div>
-      <span class="eyebrow"><IconBraces size={15} stroke={1.9} /> Graph semantic Rust</span>
-      <h1 id="components-title">Componente</h1>
-      <p>Definițiile, invocările, datele și dependențele sunt proiectate direct din sursele Zola și Tera.</p>
+      <span class="eyebrow"><IconBraces size={15} stroke={1.9} /> {t("components-eyebrow")}</span>
+      <h1 id="components-title">{t("components-title")}</h1>
+      <p>{t("components-description")}</p>
     </div>
     <dl>
-      <div><dt>Definiții</dt><dd>{definitions.length}</dd></div>
-      <div><dt>Proiect</dt><dd>{projectDefinitionCount}</dd></div>
-      <div><dt>Temă</dt><dd>{themeDefinitionCount}</dd></div>
-      <div><dt>Invocări</dt><dd>{componentGraph?.invocations.length ?? 0}</dd></div>
+      <div><dt>{t("components-stat-definitions")}</dt><dd>{l10n.formatNumber(definitions.length)}</dd></div>
+      <div><dt>{t("components-stat-project")}</dt><dd>{l10n.formatNumber(projectDefinitionCount)}</dd></div>
+      <div><dt>{t("components-stat-theme")}</dt><dd>{l10n.formatNumber(themeDefinitionCount)}</dd></div>
+      <div><dt>{t("components-stat-invocations")}</dt><dd>{l10n.formatNumber(componentGraph?.invocations.length ?? 0)}</dd></div>
     </dl>
   </header>
 
   <div class="workspace-toolbar">
-    <div class="ui-tabs view-tabs" role="tablist" aria-label="Tipuri de componente">
+    <div class="ui-tabs view-tabs" role="tablist" aria-label={t("components-types-label")}>
       {#each componentViews as view, index (view.id)}
         <button
           id={`components-tab-${view.id}`}
@@ -457,18 +453,18 @@
       {/each}
     </div>
     <label class="search-field">
-      <span class="sr-only">Caută componente</span>
+      <span class="sr-only">{t("components-search-label")}</span>
       <IconSearch size={14} stroke={1.9} />
-      <input class="ui-field compact" bind:value={query} type="search" placeholder="Caută definiții, fișiere sau simboluri" />
+      <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("components-search-placeholder")} />
     </label>
     <button
-      class="ui-button primary compact toolbar-action"
+      class="ui-button primary toolbar toolbar-action"
       type="button"
       disabled={mutating || activeView === "repeats"}
-      title={activeView === "repeats" ? "Listele Tera sunt derivate din blocurile for reale din Editor." : ""}
+      title={activeView === "repeats" ? t("components-repeat-derived-title") : ""}
       onclick={beginCreate}
     >
-      <IconPlus size={14} stroke={2} /> Adaugă
+      <IconPlus size={14} stroke={2} /> {t("components-add")}
     </button>
   </div>
 
@@ -480,14 +476,15 @@
       aria-labelledby={`components-tab-${activeView}`}
     >
       {#if !componentGraph}
-        <div class="workspace-state">Se construiește ComponentGraph…</div>
+        <div class="workspace-state">{t("components-loading")}</div>
       {:else}
         {#each filteredDefinitions as definition (definition.id)}
           {@const DefinitionIcon = iconForDefinition(definition)}
           <button
             type="button"
-            class="resource-card"
-            class:selected={selectedDefinition?.id === definition.id}
+            class="resource-card ui-entity-selectable"
+            data-ui-selected={selectedDefinition?.id === definition.id ? "true" : undefined}
+            aria-pressed={selectedDefinition?.id === definition.id}
             class:shadowed={!definition.active}
             onclick={() => selectDefinition(definition.id)}
           >
@@ -502,61 +499,65 @@
             </span>
           </button>
         {:else}
-          <div class="workspace-state">Nu există definiții pentru filtrul curent.</div>
+          <div class="workspace-state">{t("components-empty-filter")}</div>
         {/each}
       {/if}
     </div>
 
-    <aside class="resource-detail" aria-label="Informații și editare componentă">
+    <aside class="resource-detail" aria-label={t("components-detail-label")}>
       {#if detailMode === "create" || detailMode === "edit"}
         <form class="component-form" onsubmit={(event) => { event.preventDefault(); void submitComponent(); }}>
           <header class="detail-heading">
             <div>
-              <span class="detail-kicker">{detailMode === "create" ? "Definiție nouă" : "Editare atomică"}</span>
-              <h2>{detailMode === "create" ? "Creează componentă" : selectedDefinition?.displayName}</h2>
-              <p>Rust validează candidatul complet înainte să creeze o singură intrare Undo/Redo.</p>
+              <span class="detail-kicker">{detailMode === "create"
+                ? t("components-new-definition")
+                : t("components-atomic-edit")}</span>
+              <h2>{detailMode === "create" ? t("components-create-title") : selectedDefinition?.displayName}</h2>
+              <p>{t("components-form-description")}</p>
             </div>
-            <button type="button" aria-label="Renunță" disabled={mutating} onclick={resetPanel}><IconX size={14} /></button>
+            <button class="ui-icon-button ui-close-button" type="button" aria-label={t("components-cancel")} disabled={mutating} onclick={resetPanel}><IconX size={14} /></button>
           </header>
 
           {#if detailMode === "create"}
             <label>
-              <span>Tip</span>
+              <span>{t("components-type")}</span>
               <select value={formKind} disabled={mutating} onchange={(event) => updateCreateKind(event.currentTarget.value)}>
-                <option value="partial">Parțială Tera</option>
-                <option value="macro_library">Bibliotecă macro</option>
-                <option value="shortcode_html">Shortcode HTML</option>
-                <option value="shortcode_markdown">Shortcode Markdown</option>
+                <option value="partial">{t("components-type-tera-partial")}</option>
+                <option value="macro_library">{t("components-type-macro-library")}</option>
+                <option value="shortcode_html">{t("components-type-html-shortcode")}</option>
+                <option value="shortcode_markdown">{t("components-type-markdown-shortcode")}</option>
               </select>
             </label>
           {/if}
           <label>
-            <span>Nume logic</span>
+            <span>{t("components-logical-name")}</span>
             <input bind:value={formName} disabled={mutating || loadingSource} placeholder="catalog/card" />
-            <small>Folderul semantic și extensia sunt stabilite de tip; subdirectoarele sunt permise.</small>
+            <small>{t("components-logical-name-help")}</small>
           </label>
           <label>
-            <span>Sursă {formKind === "shortcode_markdown" ? "Markdown + Tera" : "HTML + Tera"}</span>
+            <span>{t("components-source", {
+              format: formKind === "shortcode_markdown" ? "Markdown + Tera" : "HTML + Tera",
+            })}</span>
             <textarea bind:value={formSource} disabled={mutating || loadingSource} spellcheck="false"></textarea>
           </label>
 
           {#if detailMode === "create"}
             <details>
-              <summary>Resurse companion în aceeași tranzacție</summary>
+              <summary>{t("components-companions")}</summary>
               <div class="companion-fields">
                 <label>
-                  <span>Stil SCSS/CSS</span>
-                  <input bind:value={formStylePath} disabled={mutating} placeholder="sass/componente/_card.scss" />
+                  <span>{t("components-style")}</span>
+                  <input bind:value={formStylePath} disabled={mutating} placeholder={t("components-style-path-placeholder")} />
                   <textarea bind:value={formStyleSource} disabled={mutating} spellcheck="false" placeholder={".card { }"}></textarea>
                 </label>
                 <label>
-                  <span>Script</span>
+                  <span>{t("components-script")}</span>
                   <input bind:value={formScriptPath} disabled={mutating} placeholder="static/js/card.js" />
-                  <textarea bind:value={formScriptSource} disabled={mutating} spellcheck="false" placeholder="// JavaScript opțional"></textarea>
+                  <textarea bind:value={formScriptSource} disabled={mutating} spellcheck="false" placeholder={`// ${t("components-script-placeholder")}`}></textarea>
                 </label>
                 <label>
-                  <span>Date TOML canonice</span>
-                  <input bind:value={formDataPath} disabled={mutating} placeholder="date/card.toml" />
+                  <span>{t("components-canonical-data")}</span>
+                  <input bind:value={formDataPath} disabled={mutating} placeholder={t("components-data-path-placeholder")} />
                   <textarea bind:value={formDataSource} disabled={mutating} spellcheck="false" placeholder="[[items]]"></textarea>
                 </label>
               </div>
@@ -565,10 +566,14 @@
 
           {#if formError}<p class="ui-message error form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
           <div class="form-actions">
-            <button type="button" disabled={mutating} onclick={resetPanel}>Renunță</button>
-            <button class="primary" type="submit" disabled={mutating || loadingSource || !formName.trim()}>
+            <button type="button" disabled={mutating} onclick={resetPanel}>{t("components-cancel")}</button>
+            <button class="ui-button primary" type="submit" disabled={mutating || loadingSource || !formName.trim()}>
               <IconDeviceFloppy size={14} />
-              {mutating ? "Se validează…" : detailMode === "create" ? "Creează în sesiune" : "Salvează modificările"}
+              {mutating
+                ? t("components-validating")
+                : detailMode === "create"
+                  ? t("components-create-session")
+                  : t("components-save-changes")}
             </button>
           </div>
         </form>
@@ -576,26 +581,26 @@
         <div class="detail-kicker-row">
           <span class="detail-kicker">{kindLabel(selectedDefinition.kind)}</span>
           <span class:inactive={!selectedDefinition.active}>
-            {selectedDefinition.active ? originLabel(selectedDefinition.origin) : "Înlocuită"}
+            {selectedDefinition.active ? originLabel(selectedDefinition.origin) : t("components-shadowed")}
           </span>
         </div>
         <h2>{selectedDefinition.displayName}</h2>
         <p>{selectedDefinition.file ?? selectedDefinition.name}</p>
 
         <dl class="component-contract">
-          <div><dt>Utilizări</dt><dd>{selectedInvocations.length}</dd></div>
-          <div><dt>Parametri</dt><dd>{selectedDefinition.parameters.length}</dd></div>
-          <div><dt>Dependențe</dt><dd>{selectedDefinition.dependencies.length}</dd></div>
-          <div><dt>Binding-uri</dt><dd>{selectedDefinition.dataBindings.length}</dd></div>
+          <div><dt>{t("components-uses")}</dt><dd>{l10n.formatNumber(selectedInvocations.length)}</dd></div>
+          <div><dt>{t("components-parameters")}</dt><dd>{l10n.formatNumber(selectedDefinition.parameters.length)}</dd></div>
+          <div><dt>{t("components-dependencies")}</dt><dd>{l10n.formatNumber(selectedDefinition.dependencies.length)}</dd></div>
+          <div><dt>{t("components-bindings")}</dt><dd>{l10n.formatNumber(selectedDefinition.dataBindings.length)}</dd></div>
         </dl>
 
         {#if selectedDefinition.parameters.length}
           <section class="detail-section">
-            <h3>Parametri</h3>
+            <h3>{t("components-parameters")}</h3>
             {#each selectedDefinition.parameters as parameter (parameter.name)}
               <div class="semantic-row">
                 <code>{parameter.name}</code>
-                <span>{parameter.required ? "obligatoriu" : "opțional"}</span>
+                <span>{parameter.required ? t("components-required") : t("components-optional")}</span>
               </div>
             {/each}
           </section>
@@ -603,19 +608,19 @@
 
         {#if selectedDefinition.dataBindings.length || selectedDefinition.contextDependencies.length}
           <section class="detail-section">
-            <h3>Date și context</h3>
+            <h3>{t("components-data-context")}</h3>
             {#each selectedDefinition.dataBindings as binding (`${binding.name}:${binding.path}`)}
               <div class="semantic-row"><code>{binding.name}</code><span>{binding.path} · {binding.producer}</span></div>
             {/each}
             {#each selectedDefinition.contextDependencies as dependency (dependency)}
-              <div class="semantic-row"><code>context</code><span>{dependency}</span></div>
+              <div class="semantic-row"><code>{t("components-context")}</code><span>{dependency}</span></div>
             {/each}
           </section>
         {/if}
 
         {#if selectedDefinition.dependencies.length}
           <section class="detail-section">
-            <h3>Dependențe</h3>
+            <h3>{t("components-dependencies")}</h3>
             {#each selectedDefinition.dependencies as dependency (`${dependency.kind}:${dependency.reference}`)}
               <div class="semantic-row">
                 <code>{dependency.kind}</code>
@@ -627,9 +632,9 @@
 
         {#if selectedDefinition.diagnostics.length}
           <section class="detail-section diagnostics">
-            <h3>Diagnostice</h3>
-            {#each selectedDefinition.diagnostics as diagnostic (`${diagnostic.code}:${diagnostic.message}`)}
-              <p><IconAlertTriangle size={13} /> {diagnostic.message}</p>
+            <h3>{t("components-diagnostics")}</h3>
+            {#each selectedDefinition.diagnostics as diagnostic (diagnostic.code)}
+              <p><IconAlertTriangle size={13} /> {errorMessage(diagnostic.diagnostic)}</p>
             {/each}
           </section>
         {/if}
@@ -637,75 +642,54 @@
         {#if formError}<p class="ui-message error form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
         <div class="detail-actions">
           {#if selectedDefinition.origin === "theme" && isMutableFileDefinition(selectedDefinition)}
-            <button class="primary-action" type="button" disabled={mutating} onclick={() => { void overrideSelected(); }}>
-              <IconCopy size={14} /> Creează override local
+            <button class="ui-button primary primary-action" type="button" disabled={mutating} onclick={() => { void overrideSelected(); }}>
+              <IconCopy size={14} /> {t("components-create-override")}
             </button>
           {:else if selectedDefinition.file && selectedDefinition.capabilities.canEdit}
-            <button class="primary-action" type="button" disabled={mutating} onclick={() => { void beginEdit(); }}>
-              <IconEdit size={14} /> Editează
+            <button class="ui-button primary primary-action" type="button" disabled={mutating} onclick={() => { void beginEdit(); }}>
+              <IconEdit size={14} /> {t("components-edit")}
             </button>
           {/if}
           {#if selectedDefinition.file}
             <button type="button" disabled={mutating} onclick={() => { void openWorkspaceSource(selectedDefinition.file!); }}>
-              <IconExternalLink size={14} /> Deschide sursa
+              <IconExternalLink size={14} /> {t("components-open-source")}
             </button>
           {/if}
           {#if selectedDefinition.capabilities.canDuplicate && isMutableFileDefinition(selectedDefinition)}
             <button type="button" disabled={mutating} onclick={() => { void duplicateSelected(); }}>
-              <IconCopy size={14} /> Duplică
+              <IconCopy size={14} /> {t("components-duplicate")}
             </button>
           {/if}
           {#if selectedDefinition.capabilities.canDelete && selectedDefinition.origin === "project" && isMutableFileDefinition(selectedDefinition)}
-            <button class="danger" type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = true; }}>
-              <IconTrash size={14} /> Șterge
+            <button class="ui-button danger" type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = true; }}>
+              <IconTrash size={14} /> {t("components-delete")}
             </button>
           {/if}
         </div>
 
         {#if deleteConfirmationOpen}
           <div class="delete-confirmation" role="alert">
-            <strong>Elimini „{selectedDefinition.displayName}”?</strong>
-            <span>Plannerul refuză automat ștergerea dacă există invocări active.</span>
+            <strong>{t("components-delete-title", { name: selectedDefinition.displayName })}</strong>
+            <span>{t("components-delete-description")}</span>
             <div>
-              <button type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = false; }}>Renunță</button>
-              <button class="danger" type="button" disabled={mutating} onclick={() => { void deleteSelected(); }}>
-                {mutating ? "Se verifică…" : "Elimină din sesiune"}
+              <button type="button" disabled={mutating} onclick={() => { deleteConfirmationOpen = false; }}>{t("components-cancel")}</button>
+              <button class="ui-button danger" type="button" disabled={mutating} onclick={() => { void deleteSelected(); }}>
+                {mutating ? t("components-checking") : t("components-remove-session")}
               </button>
             </div>
           </div>
         {/if}
       {:else}
-        <div class="workspace-state">Selectează o definiție.</div>
+        <div class="workspace-state">{t("components-select-help")}</div>
       {/if}
     </aside>
   </div>
 </section>
 
 <style>
-  .components-workspace { display: grid; grid-template-rows: auto 42px minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-panel); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 17px 20px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .workspace-header > div { min-width: 0; }
-  .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--wb-accent-strong); font-size: 11px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
-  h1 { margin: 6px 0 0; color: var(--text-strong); font-size: 20px; }
-  .workspace-header p { margin: 4px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.4; }
-  .workspace-header dl { display: grid; grid-template-columns: repeat(4, minmax(68px, auto)); gap: 7px; margin: 0; }
-  .workspace-header dl div { min-width: 68px; padding: 7px 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
   dt { color: var(--wb-text-muted); font-size: var(--font-meta); font-weight: 800; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 16px; font-weight: 750; }
-  .workspace-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 9px; border-bottom: 1px solid var(--wb-border-subtle); }
-  .view-tabs { display: flex; align-self: stretch; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  .view-tabs::-webkit-scrollbar { display: none; }
-  .view-tabs button { flex: 0 0 auto; height: 100%; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; font-size: 12px; font-weight: 650; }
-  .view-tabs button.active { border-bottom-color: var(--wb-accent); color: var(--wb-accent-strong); }
-  .search-field { position: relative; display: flex; flex: 1; min-width: 150px; margin-left: auto; }
-  .search-field :global(svg) { position: absolute; left: 8px; top: 7px; color: var(--wb-text-muted); pointer-events: none; }
-  .search-field input { width: 100%; height: 28px; padding: 0 8px 0 28px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
-  .toolbar-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 10px; border: 1px solid var(--wb-accent); border-radius: var(--radius-control); color: #fff; background: var(--wb-accent); font-size: 12px; font-weight: 700; }
   .workspace-body { display: grid; grid-template-columns: minmax(330px, 1fr) minmax(330px, .62fr); min-width: 0; min-height: 0; }
-  .resource-list { min-width: 0; min-height: 0; overflow: auto; padding: 9px; border-right: 1px solid var(--wb-border-subtle); }
-  .resource-card { display: flex; align-items: center; width: 100%; gap: 9px; min-height: 54px; padding: 7px 9px; border: 1px solid transparent; border-radius: 7px; color: var(--wb-text-primary); background: transparent; text-align: left; }
-  .resource-card:hover, .resource-card.selected { border-color: var(--wb-border-subtle); background: var(--wb-control-hover); }
-  .resource-card.selected { box-shadow: inset 3px 0 0 var(--wb-accent); }
   .resource-card.shadowed { opacity: .6; }
   .resource-icon { display: grid; flex: 0 0 auto; width: 30px; height: 30px; place-items: center; border-radius: 7px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); }
   .resource-card > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
@@ -713,7 +697,6 @@
   .resource-card small { overflow: hidden; color: var(--wb-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
   .resource-badges { display: grid; justify-items: end; gap: 3px; }
   .resource-badges code { padding: 2px 4px; border-radius: 4px; color: var(--wb-text-muted); background: var(--wb-surface-chrome); font-size: var(--font-meta); }
-  .resource-detail { min-width: 0; min-height: 0; overflow: auto; padding: 17px; background: var(--wb-surface-chrome); }
   .detail-kicker-row, .detail-heading, .form-actions, .detail-actions { display: flex; align-items: center; }
   .detail-kicker-row { justify-content: space-between; gap: 8px; }
   .detail-kicker-row > span:last-child { padding: 3px 6px; border-radius: 999px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); font-size: var(--font-meta); font-weight: 750; }

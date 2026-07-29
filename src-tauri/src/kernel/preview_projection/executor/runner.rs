@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::{
     kernel::project_workspace::ProjectWorkspace,
+    localization::LocalizedDiagnostic,
     project_model::{
         attribute_engine::{ProjectHtmlAttributePatch, ProjectHtmlAttributePlan},
         delete_engine::{ProjectHtmlDeletePatch, ProjectHtmlDeletePlan},
@@ -119,12 +120,12 @@ where
     P: PreviewStructuralPatch,
     Plan: PreviewStructuralPlan<Patch = P>,
 {
-    let (model_revision, diagnostic, patch) = plan.into_parts();
+    let (model_revision, _diagnostic, patch) = plan.into_parts();
     patch.ok_or_else(|| PreviewStructuralPlanBlocked {
         model_revision,
         diagnostic: PreviewProjectionDiagnostic::blocking(
             spec.blocked_code,
-            diagnostic.unwrap_or_else(|| spec.blocked_fallback.to_string()),
+            LocalizedDiagnostic::new("preview-projection-structural-plan-blocked"),
         ),
     })
 }
@@ -244,7 +245,7 @@ preview_structural_plan!(ProjectTeraDeletePlan, ProjectTeraDeletePatch);
 
 #[cfg(test)]
 mod tests {
-    use super::super::spec::{HTML_INSERT_DROP_PLAN, LAYER_DROP_PLAN};
+    use super::super::spec::{EDITOR_MOVE_PLAN, HTML_INSERT_DROP_PLAN};
     use super::*;
 
     #[test]
@@ -257,20 +258,17 @@ mod tests {
         };
 
         let blocked =
-            structural_plan_patch_or_block::<ProjectHtmlMovePatch, _>(plan, LAYER_DROP_PLAN)
+            structural_plan_patch_or_block::<ProjectHtmlMovePatch, _>(plan, EDITOR_MOVE_PLAN)
                 .expect_err("plan fără patch trebuie blocat");
 
         assert_eq!(blocked.model_revision, "model-1");
-        assert_eq!(
-            blocked.diagnostic.code,
-            "preview_layer_drop_move_plan_blocked"
-        );
-        assert_eq!(blocked.diagnostic.message, "Ancora nu mai există.");
+        assert_eq!(blocked.diagnostic.code, "editor_move_plan_became_stale");
+        assert!(blocked.diagnostic.diagnostic.arguments.is_empty());
         assert!(blocked.diagnostic.blocking);
     }
 
     #[test]
-    fn structural_plan_patch_or_block_uses_fallback_when_plan_has_no_diagnostic() {
+    fn structural_plan_patch_or_block_stays_semantic_without_engine_diagnostic() {
         let plan = ProjectHtmlInsertPlan {
             allowed: false,
             diagnostic: None,
@@ -289,10 +287,7 @@ mod tests {
             blocked.diagnostic.code,
             "preview_html_insert_drop_plan_blocked"
         );
-        assert_eq!(
-            blocked.diagnostic.message,
-            HTML_INSERT_DROP_PLAN.blocked_fallback
-        );
+        assert!(blocked.diagnostic.diagnostic.arguments.is_empty());
         assert!(blocked.diagnostic.blocking);
     }
 }

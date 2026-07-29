@@ -2,9 +2,12 @@
   import { IconClock, IconDeviceFloppy, IconRefresh } from "@tabler/icons-svelte";
   import type {
     ProjectWorkspaceSaveHotJournal,
+    ProjectWorkspaceSaveHotJournalDiskState,
+    ProjectWorkspaceSaveHotJournalFileDiskState,
     ProjectWorkspaceSaveRecoveryAction,
   } from "$lib/types";
   import { compactKernelPath, formatRecoveryTime, shortHash } from "$lib/kernel/recovery-control";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
 
   let {
     journal,
@@ -41,16 +44,30 @@
   const noteId = $derived(`workspace-save-note-${journal.transactionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
 
   function actionLabel(action: ProjectWorkspaceSaveRecoveryAction): string {
-    if (action === "clear_stale_journal") return "Curăță jurnalul stale";
-    if (action === "rollback_to_before") return "Revino la starea dinainte de salvare";
-    return "Revizuire manuală obligatorie";
+    if (action === "clear_stale_journal") return t("project-recovery-save-clear-stale");
+    if (action === "rollback_to_before") return t("project-recovery-save-rollback");
+    return t("project-recovery-status-manual");
+  }
+
+  function diskStateLabel(state: ProjectWorkspaceSaveHotJournalDiskState) {
+    if (state === "before_state") return t("project-recovery-save-state-before");
+    if (state === "planned_state") return t("project-recovery-save-state-planned");
+    if (state === "mixed_state") return t("project-recovery-save-state-mixed");
+    return t("project-recovery-save-state-conflict");
+  }
+
+  function fileStateLabel(state: ProjectWorkspaceSaveHotJournalFileDiskState) {
+    if (state === "before") return t("project-recovery-save-file-before");
+    if (state === "planned") return t("project-recovery-save-file-planned");
+    if (state === "conflict") return t("project-recovery-save-state-conflict");
+    return t("project-recovery-status-unreadable");
   }
 </script>
 
 <article class={`workspace-save-journal ${journal.diskState}`}>
   <header>
     <div>
-      <span>Jurnal de salvare</span>
+      <span>{t("project-recovery-save-journal")}</span>
       <h3>{journal.transactionId}</h3>
     </div>
     <time>
@@ -60,13 +77,16 @@
   </header>
 
   <div class="facts">
-    <span><em>REVIZIE</em><strong>{journal.revision}</strong></span>
-    <span><em>STARE DISC</em><strong>{journal.diskState.replaceAll("_", " ")}</strong></span>
-    <span><em>FIȘIERE</em><strong>{journal.fileCount}</strong></span>
-    <span><em>RECUPERARE</em><strong>{actionLabel(journal.recoveryPlan.action)}</strong></span>
+    <span><em>{t("project-recovery-save-revision")}</em><strong>{l10n.formatNumber(journal.revision)}</strong></span>
+    <span><em>{t("project-recovery-retention-disk-state")}</em><strong>{diskStateLabel(journal.diskState)}</strong></span>
+    <span><em>{t("project-recovery-save-files")}</em><strong>{l10n.formatNumber(journal.fileCount)}</strong></span>
+    <span><em>{t("project-recovery-save-recovery")}</em><strong>{actionLabel(journal.recoveryPlan.action)}</strong></span>
   </div>
 
-  <p class="plan">{journal.recoveryPlan.summary}</p>
+  <p class="plan">{t("project-recovery-save-plan", {
+    state: diskStateLabel(journal.diskState),
+    action: actionLabel(journal.recoveryPlan.action),
+  })}</p>
 
   <div class="path" title={journal.path}>
     <IconDeviceFloppy size={15} stroke={1.8} />
@@ -77,8 +97,13 @@
     {#each journal.files as file (file.relativePath)}
       <div class={`file ${file.diskState}`}>
         <strong title={file.relativePath}>{compactKernelPath(file.relativePath, 62)}</strong>
-        <span>{file.diskState} · before {shortHash(file.beforeHash)} · planned {shortHash(file.plannedHash)} · disk {shortHash(file.diskHash)}</span>
-        {#if file.diagnostic}<p>{file.diagnostic}</p>{/if}
+        <span>{t("project-recovery-save-file-state", {
+          state: fileStateLabel(file.diskState),
+          before: shortHash(file.beforeHash),
+          planned: shortHash(file.plannedHash),
+          disk: shortHash(file.diskHash),
+        })}</span>
+        {#if file.diagnostic}<p>{t("project-recovery-save-file-diagnostic")}</p>{/if}
       </div>
     {/each}
   </div>
@@ -86,7 +111,7 @@
   {#if journal.recoveryPlan.canClearJournal || journal.recoveryPlan.canRollback}
     <div class="action">
       <label for={noteId}>
-        <span>Diagnostic operator</span>
+        <span>{t("project-transition-operator-diagnostic")}</span>
         <textarea
           id={noteId}
           rows="2"
@@ -103,7 +128,7 @@
         onclick={() => onRecover?.(journal, journal.recoveryPlan.action)}
       >
         <IconRefresh size={14} stroke={1.9} />
-        {busy ? "Se execută..." : actionLabel(journal.recoveryPlan.action)}
+        {busy ? t("project-recovery-running") : actionLabel(journal.recoveryPlan.action)}
       </button>
     </div>
   {/if}

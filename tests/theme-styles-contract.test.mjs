@@ -12,12 +12,59 @@ test("Stiluri is the first Design tab and has no create state", () => {
 
   assert.match(
     workspace,
-    /const designViews[\s\S]*\{ id: "global-styles", label: "Stiluri" \}[\s\S]*\{ id: "tokens"/,
+    /const designViews[\s\S]*\{ id: "global-styles" as const, label: t\("design-view-styles"\) \}[\s\S]*\{ id: "tokens" as const/,
   );
-  assert.match(workspace, /\{#if activeView !== "global-styles"\}[\s\S]*Adaugă/);
+  assert.match(workspace, /\{#if activeView !== "global-styles"\}[\s\S]*t\("design-add"\)/);
   assert.match(workspace, /<ThemeStylesWorkspace/);
   assert.match(themeStyles, /type DetailMode = "info" \| "edit"/);
   assert.doesNotMatch(themeStyles, /"create"|window\.(?:prompt|confirm)/);
+});
+
+test("stilurile rămân listă, sunt grupate discret și folosesc pictograme relevante", () => {
+  const component = source("src/lib/components/creation/ThemeStylesWorkspace.svelte");
+
+  assert.match(component, /const visibleCategories = \$derived/);
+  assert.match(component, /\{#each visibleCategories as section/);
+  assert.match(component, /class="style-category" aria-label=\{section\.label\}/);
+  assert.match(component, /class="style-category-rows"/);
+  assert.doesNotMatch(component, /class="category-(?:heading|icon)"/);
+  for (const icon of [
+    "IconBrowser",
+    "IconTypography",
+    "IconLink",
+    "IconPhoto",
+    "IconList",
+    "IconQuote",
+    "IconCode",
+    "IconTable",
+    "IconForms",
+    "IconSeparatorHorizontal",
+  ]) {
+    assert.match(component, new RegExp(`<${icon}\\s`), icon);
+  }
+  assert.match(
+    component,
+    /\.style-category\s*\{[\s\S]*border-bottom:\s*1px solid var\(--wb-border-subtle\)/,
+  );
+  assert.doesNotMatch(component, /\.style-category\s*\{[^}]*border:\s*1px/);
+});
+
+test("mostra informativă folosește proiecția Rust rezolvată, fără a intra în editare", () => {
+  const component = source("src/lib/components/creation/ThemeStylesWorkspace.svelte");
+
+  assert.match(component, /detailMode !== "info"/);
+  assert.match(
+    component,
+    /previewThemeStyleDraft\(\s*target\.id,\s*inputsFor\(target, requestMode\),\s*expectedRevision/,
+  );
+  assert.match(component, /preview\?\.targetId === selected\?\.id/);
+  assert.match(component, /\{#snippet renderSpecimen\(target: ThemeStyleTargetSnapshot\)\}/);
+  assert.match(
+    component,
+    /class="specimen info-specimen"[\s\S]*\{@render renderSpecimen\(selected\)\}/,
+  );
+  assert.match(component, /style=\{specimenStyle\}/);
+  assert.match(component, /if \(requestMode === "edit"\) app\.injectRawCss/);
 });
 
 test("theme style draft previews are read-only and Apply is one Rust workspace mutation", () => {

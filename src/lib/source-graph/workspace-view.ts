@@ -6,6 +6,7 @@ import {
   sourceOriginLabel,
   sourceTemplateByNodeId,
 } from "$lib/source-graph/view";
+import { t } from "$lib/i18n/runtime.svelte";
 import type {
   SourceGraph,
   SourceGraphNode,
@@ -58,6 +59,6 @@ export function sourceNodeSubtitle(node: SourceGraphNode | null) {
 }
 
 export function templateBlocksLabel(template: SourceGraphTemplate) {
-  if (!template.blocks.length) return "fără block-uri";
+  if (!template.blocks.length) return t("source-workspace-no-blocks");
   return template.blocks.join(", ");
 }

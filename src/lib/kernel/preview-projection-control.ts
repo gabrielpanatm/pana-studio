@@ -1,7 +1,9 @@
-import type { PreviewRefreshReason } from "$lib/preview/controlled";
-import { readProjectWorkspaceState, type CanvasProjectionPlan } from "$lib/project/io";
-import { isZolaTemplatePath } from "$lib/project/files";
-import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
+import { readProjectWorkspaceState } from "$lib/project/io";
+import {
+  settleProjectWorkspaceMutation,
+  type WorkspaceMutationSettlement,
+  type WorkspaceMutationSettlementHost,
+} from "$lib/session/workspace-mutation-coordinator";
 import {
   requireCurrentPreviewStructuralSession,
   requirePreviewStructuralReceiptIdentity,
@@ -15,17 +17,19 @@ import type {
   PreviewHtmlInsertDropExecutionReceipt,
   PreviewHtmlTagExecutionReceipt,
   PreviewHtmlTextExecutionReceipt,
-  PreviewLayerDropExecutionReceipt,
   PreviewProjectionDiagnostic,
   PreviewTeraDeleteExecutionReceipt,
   PreviewTeraInsertDropExecutionReceipt,
-  PreviewTeraMoveDropExecutionReceipt,
+  EditorMoveExecutionReceipt,
   CanvasPatch,
+  LocalizedDiagnostic,
   ProjectWorkspaceMutationReceipt,
 } from "$lib/types";
+import { PROJECT_WORKSPACE_SCHEMA_VERSION } from "$lib/types";
+import { t } from "$lib/i18n/runtime.svelte";
+import { errorMessage } from "$lib/util";
 
 export type PreviewStructuralExecutionReceipt =
-  | PreviewLayerDropExecutionReceipt
   | PreviewHtmlInsertDropExecutionReceipt
   | PreviewHtmlAttributesExecutionReceipt
   | PreviewHtmlTextExecutionReceipt
@@ -33,21 +37,14 @@ export type PreviewStructuralExecutionReceipt =
   | PreviewHtmlDuplicateExecutionReceipt
   | PreviewHtmlDeleteExecutionReceipt
   | PreviewTeraInsertDropExecutionReceipt
-  | PreviewTeraMoveDropExecutionReceipt
   | PreviewTeraDeleteExecutionReceipt;
 
 export type PreviewStructuralPatch = NonNullable<PreviewStructuralExecutionReceipt["patch"]>;
 
-export type PreviewStructuralCanonicalProjectionHost = PreviewStructuralSessionHost & {
-  scannedProject: { isZola: boolean } | null;
-  previewWorkspaceRevision: string | null;
-  pendingCanvasProjection: CanvasProjectionPlan | null;
+export type PreviewStructuralCanonicalProjectionHost =
+  PreviewStructuralSessionHost & WorkspaceMutationSettlementHost & {
   applyCanvasPatchToPreview: (patch: CanvasPatch) => Promise<unknown>;
   rollbackCanvasPatchInPreview: (patch: CanvasPatch) => Promise<unknown>;
-  refreshSourceGraph: (options?: { strict?: boolean }) => Promise<void>;
-  requestPreviewRefresh: (
-    reason: Extract<PreviewRefreshReason, "html-structural" | "tera-structural">,
-  ) => Promise<boolean>;
 };
 
 export function previewStructuralBlockingDiagnostic(
@@ -59,7 +56,7 @@ export function previewStructuralBlockingDiagnostic(
 export function requireCommittedPreviewStructuralPatch<TPatch extends PreviewStructuralPatch>(
   receipt: {
     status: "committed" | "blocked";
-    message: string;
+    messageDiagnostic: LocalizedDiagnostic;
     patch: TPatch | null;
     diagnostics: PreviewProjectionDiagnostic[];
   },
@@ -67,7 +64,11 @@ export function requireCommittedPreviewStructuralPatch<TPatch extends PreviewStr
 ): TPatch {
   if (receipt.status === "committed" && receipt.patch) return receipt.patch;
   const blocking = receipt.diagnostics.find((diagnostic) => diagnostic.blocking);
-  throw new Error(blocking?.message ?? receipt.message ?? fallbackMessage);
+  throw new Error(
+    (blocking ? errorMessage(blocking.diagnostic) : "")
+      || errorMessage(receipt.messageDiagnostic)
+      || fallbackMessage,
+  );
 }
 
 /**
@@ -86,46 +87,227 @@ export async function projectCommittedPreviewStructuralMutation(
   >,
   patch: { file?: string } | null,
   projectLocalState: () => Promise<void> | void,
-) {
-  requireCurrentPreviewStructuralSession(host, lease);
-  requirePreviewStructuralReceiptIdentity(receipt.intent, lease);
-  const mutation = requireWorkspaceMutation(receipt.workspaceMutation);
+): Promise<WorkspaceMutationSettlement> {
+  return projectCommittedStructuralMutation(
+    host,
+    lease,
+    receipt.intent,
+    receipt,
+    patch,
+    projectLocalState,
+    structuralRefreshReason(receipt),
+  );
+}
 
-  await projectLocalState();
+export async function projectCommittedEditorMoveMutation(
+  host: PreviewStructuralCanonicalProjectionHost,
+  lease: PreviewStructuralSessionLease,
+  receipt: Pick<
+    EditorMoveExecutionReceipt,
+    | "operation"
+    | "projectRoot"
+    | "runtimeSessionId"
+    | "touchedFiles"
+    | "workspaceMutation"
+    | "canvasPatch"
+  >,
+  projectLocalState: () => Promise<void> | void = () => {},
+): Promise<WorkspaceMutationSettlement> {
+  return projectCommittedStructuralMutation(
+    host,
+    lease,
+    receipt,
+    receipt,
+    null,
+    projectLocalState,
+    receipt.canvasPatch ? "html-structural" : "tera-structural",
+  );
+}
+
+async function projectCommittedStructuralMutation(
+  host: PreviewStructuralCanonicalProjectionHost,
+  lease: PreviewStructuralSessionLease,
+  receiptIdentity: { projectRoot: string | null; runtimeSessionId: string | null },
+  receipt: {
+    touchedFiles: string[];
+    workspaceMutation: ProjectWorkspaceMutationReceipt | null;
+    canvasPatch: CanvasPatch | null;
+  },
+  patch: { file?: string } | null,
+  projectLocalState: () => Promise<void> | void,
+  previewReason: "html-structural" | "tera-structural",
+): Promise<WorkspaceMutationSettlement> {
   requireCurrentPreviewStructuralSession(host, lease);
-  const canvasPatchApplied = receipt.canvasPatch
-    ? await applyCommittedCanvasPatch(host, lease, receipt.canvasPatch, mutation)
-    : false;
-  requireCurrentPreviewStructuralSession(host, lease);
-  await host.refreshSourceGraph({ strict: true });
-  requireCurrentPreviewStructuralSession(host, lease);
+  requirePreviewStructuralReceiptIdentity(receiptIdentity, lease);
+  const mutation = requireWorkspaceMutation(receipt.workspaceMutation);
+  let snapshot: NonNullable<Awaited<ReturnType<typeof readProjectWorkspaceState>>>;
   try {
-    await projectCanonicalPreviewWorkspaceRevision(
-      host,
-      lease,
-      receipt,
-      patch,
-      mutation,
-      canvasPatchApplied ? receipt.canvasPatch : null,
-    );
-  } catch (projectionError) {
-    if (canvasPatchApplied && receipt.canvasPatch) {
-      try {
-        await host.rollbackCanvasPatchInPreview(receipt.canvasPatch);
-      } catch (rollbackError) {
-        const projectionMessage = projectionError instanceof Error
-          ? projectionError.message
-          : String(projectionError);
-        const rollbackMessage = rollbackError instanceof Error
-          ? rollbackError.message
-          : String(rollbackError);
-        throw new Error(
-          `Proiecția canonică a eșuat (${projectionMessage}), iar rollback-ul CanvasPatch a fost refuzat (${rollbackMessage}).`,
-        );
-      }
+    const candidate = await readProjectWorkspaceState();
+    requireCurrentPreviewStructuralSession(host, lease);
+    if (
+      !candidate
+      || candidate.projectRoot !== lease.projectRoot
+      || candidate.runtimeSessionId !== lease.sessionId
+    ) {
+      throw new Error(
+        t("structural-projection-workspace-snapshot-missing"),
+      );
     }
-    throw projectionError;
+    if (candidate.revision > mutation.revisionAfter) {
+      host.projectWorkspaceSnapshot = candidate;
+      return supersededCommittedStructuralSettlement(
+        mutation,
+        candidate.revision,
+      );
+    }
+    if (candidate.revision !== mutation.revisionAfter) {
+      throw new Error(
+        t("structural-projection-exact-snapshot-missing"),
+      );
+    }
+    snapshot = candidate;
+  } catch (error) {
+    requireCurrentPreviewStructuralSession(host, lease);
+    const warnings = [
+      t("structural-projection-workspace-resync", {
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    ];
+    try {
+      await projectLocalState();
+    } catch (localError) {
+      warnings.push(
+        t("structural-projection-local-resync", {
+          message: localError instanceof Error ? localError.message : String(localError),
+        }),
+      );
+    }
+    requireCurrentPreviewStructuralSession(host, lease);
+    const settlement = degradedCommittedStructuralSettlement(mutation, warnings);
+    publishStructuralProjectionWarning(host, settlement);
+    return settlement;
   }
+  host.projectWorkspaceSnapshot = snapshot;
+
+  const localWarnings: string[] = [];
+  try {
+    await projectLocalState();
+  } catch (error) {
+    localWarnings.push(
+      t("structural-projection-local-resync", {
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+  requireCurrentPreviewStructuralSession(host, lease);
+
+  let canvasPatchApplied = false;
+  if (receipt.canvasPatch) {
+    try {
+      canvasPatchApplied = await applyCommittedCanvasPatch(
+        host,
+        lease,
+        receipt.canvasPatch,
+        mutation,
+        snapshot,
+      );
+    } catch (error) {
+      localWarnings.push(
+        t("structural-projection-canvas-patch-skipped", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
+  requireCurrentPreviewStructuralSession(host, lease);
+
+  const settlement = await settleProjectWorkspaceMutation(host, {
+    projectRoot: lease.projectRoot,
+    runtimeSessionId: lease.sessionId,
+    mutation,
+    workspace: snapshot,
+  }, {
+    preferredRelativePath: patch?.file ?? receipt.touchedFiles[0] ?? null,
+    refreshSourceGraph: true,
+    refreshScss: false,
+    previewReason,
+    warningLabel: t("structural-projection-operation"),
+  });
+  settlement.warnings.push(...localWarnings);
+
+  if (
+    settlement.projections.preview === "degraded"
+    && canvasPatchApplied
+    && receipt.canvasPatch
+  ) {
+    try {
+      await host.rollbackCanvasPatchInPreview(receipt.canvasPatch);
+    } catch (rollbackError) {
+      settlement.warnings.push(
+        t("structural-projection-canvas-rollback-refused", {
+          message: rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
+        }),
+      );
+    }
+  }
+  publishStructuralProjectionWarning(host, settlement);
+  return settlement;
+}
+
+function degradedCommittedStructuralSettlement(
+  mutation: ProjectWorkspaceMutationReceipt,
+  warnings: string[],
+): WorkspaceMutationSettlement {
+  return {
+    authority: "committed",
+    workspaceRevision: mutation.revisionAfter,
+    transactionId: mutation.transactionId,
+    projections: {
+      workspaceRevision: mutation.revisionAfter,
+      topology: "degraded",
+      sourceGraph: "degraded",
+      scss: "degraded",
+      preview: "degraded",
+      previewOutcome: null,
+      warnings,
+    },
+    warnings: [...new Set(warnings)],
+  };
+}
+
+function supersededCommittedStructuralSettlement(
+  mutation: ProjectWorkspaceMutationReceipt,
+  publishedWorkspaceRevision: number,
+): WorkspaceMutationSettlement {
+  return {
+    authority: "committed",
+    workspaceRevision: mutation.revisionAfter,
+    transactionId: mutation.transactionId,
+    projections: {
+      workspaceRevision: mutation.revisionAfter,
+      topology: "superseded",
+      sourceGraph: "superseded",
+      scss: "superseded",
+      preview: "superseded",
+      previewOutcome: {
+        status: "superseded",
+        workspaceRevision: publishedWorkspaceRevision,
+      },
+      warnings: [],
+    },
+    warnings: [],
+  };
+}
+
+function publishStructuralProjectionWarning(
+  host: PreviewStructuralCanonicalProjectionHost,
+  settlement: WorkspaceMutationSettlement,
+) {
+  if (settlement.warnings.length === 0) return;
+  host.setGlobalStatus?.(
+    t("structural-projection-committed-resync"),
+    "unsaved",
+  );
 }
 
 async function applyCommittedCanvasPatch(
@@ -133,6 +315,7 @@ async function applyCommittedCanvasPatch(
   lease: PreviewStructuralSessionLease,
   patch: CanvasPatch,
   mutation: ProjectWorkspaceMutationReceipt,
+  snapshot: NonNullable<Awaited<ReturnType<typeof readProjectWorkspaceState>>>,
 ) {
   const transactionId = mutation.transactionId?.trim() ?? "";
   if (
@@ -143,13 +326,10 @@ async function applyCommittedCanvasPatch(
     || patch.workspaceRevision !== mutation.revisionAfter
     || patch.workspaceTransactionId !== transactionId
   ) {
-    throw new Error("CanvasPatch nu corespunde mutației comise în sesiunea proiectului.");
+    throw new Error(t("structural-projection-canvas-patch-mismatch"));
   }
-  const snapshot = await readProjectWorkspaceState();
-  requireCurrentPreviewStructuralSession(host, lease);
   if (
-    !snapshot
-    || snapshot.projectRoot !== lease.projectRoot
+    snapshot.projectRoot !== lease.projectRoot
     || snapshot.runtimeSessionId !== lease.sessionId
     || snapshot.revision !== patch.workspaceRevision
     || snapshot.history.nextUndo?.transactionId !== patch.workspaceTransactionId
@@ -173,9 +353,16 @@ async function applyCommittedCanvasPatch(
 function requireWorkspaceMutation(
   mutation: ProjectWorkspaceMutationReceipt | null,
 ): ProjectWorkspaceMutationReceipt {
-  if (!mutation?.changed || mutation.revisionAfter <= mutation.revisionBefore) {
+  const transactionId = mutation?.transactionId?.trim() ?? "";
+  if (
+    !mutation?.changed
+    || mutation.schemaVersion !== PROJECT_WORKSPACE_SCHEMA_VERSION
+    || mutation.revisionAfter <= mutation.revisionBefore
+    || !transactionId
+    || mutation.entry?.transactionId !== transactionId
+  ) {
     throw new Error(
-      "Mutația structurală comisă nu conține o tranziție validă a sesiunii proiectului.",
+      t("structural-projection-transition-invalid"),
     );
   }
   return mutation;
@@ -184,53 +371,7 @@ function requireWorkspaceMutation(
 function structuralRefreshReason(
   receipt: Pick<PreviewStructuralExecutionReceipt, "intent">,
 ): "html-structural" | "tera-structural" {
-  return receipt.intent.kind.startsWith("tera_")
+  return receipt.intent.kind?.startsWith("tera_")
     ? "tera-structural"
     : "html-structural";
-}
-
-export async function projectCanonicalPreviewWorkspaceRevision(
-  host: PreviewStructuralCanonicalProjectionHost,
-  lease: PreviewStructuralSessionLease,
-  receipt: Pick<PreviewStructuralExecutionReceipt, "intent" | "touchedFiles">,
-  patch: { file?: string } | null,
-  mutation: ProjectWorkspaceMutationReceipt,
-  appliedCanvasPatch: CanvasPatch | null = null,
-) {
-  requireCurrentPreviewStructuralSession(host, lease);
-  requirePreviewStructuralReceiptIdentity(receipt.intent, lease);
-  const touchedFiles = previewStructuralTouchedFiles(receipt, patch);
-  if (touchedFiles.length === 0) {
-    throw new Error(
-      "Mutația structurală a fost comisă fără fișiere pentru previzualizare.",
-    );
-  }
-  if (!touchedFiles.some((file) => (
-    isZolaTemplatePath(file) && file.toLowerCase().endsWith(".html")
-  ))) {
-    throw new Error(
-      "Mutația structurală nu a identificat niciun template Zola proiectabil.",
-    );
-  }
-
-  await projectLatestProjectWorkspacePreview(host, {
-    reason: structuralRefreshReason(receipt),
-    minimumWorkspaceRevision: mutation.revisionAfter,
-    requestedPaths: touchedFiles,
-    expectedWorkspaceTransactionId: appliedCanvasPatch?.workspaceTransactionId,
-    expectedWorkspaceRevision: appliedCanvasPatch?.workspaceRevision,
-  });
-  requireCurrentPreviewStructuralSession(host, lease);
-}
-
-export function previewStructuralTouchedFiles(
-  receipt: Pick<PreviewStructuralExecutionReceipt, "touchedFiles">,
-  patch: { file?: string } | null,
-) {
-  const files = receipt.touchedFiles.length > 0
-    ? receipt.touchedFiles
-    : patch?.file
-      ? [patch.file]
-      : [];
-  return [...new Set(files.map((file) => file.trim()).filter(Boolean))].sort();
 }

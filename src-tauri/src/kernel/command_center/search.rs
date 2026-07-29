@@ -10,6 +10,7 @@ use crate::{
         },
         workbench::{WorkbenchActivity, WorkbenchSurface},
     },
+    localization::LocalizedDiagnostic,
     project_model::model::{ProjectModel, ProjectModelFileKind},
 };
 
@@ -18,27 +19,36 @@ struct Candidate {
     id: String,
     kind: CommandCenterItemKind,
     title: String,
+    title_diagnostic: Option<LocalizedDiagnostic>,
     subtitle: String,
+    subtitle_diagnostic: Option<LocalizedDiagnostic>,
     keywords: String,
     shortcut: Option<String>,
     enabled: bool,
-    disabled_reason: Option<String>,
+    disabled_diagnostic: Option<LocalizedDiagnostic>,
     priority: i32,
     action: CommandCenterAction,
 }
 
 impl Candidate {
     fn item(self, score: i32) -> CommandCenterItem {
+        let search_title = self.title;
         CommandCenterItem {
             id: self.id,
             kind: self.kind,
-            title: self.title,
-            subtitle: self.subtitle,
+            title: self
+                .title_diagnostic
+                .is_none()
+                .then(|| search_title.clone()),
+            title_diagnostic: self.title_diagnostic,
+            subtitle: self.subtitle_diagnostic.is_none().then_some(self.subtitle),
+            subtitle_diagnostic: self.subtitle_diagnostic,
             shortcut: self.shortcut,
             enabled: self.enabled,
-            disabled_reason: self.disabled_reason,
+            disabled_diagnostic: self.disabled_diagnostic,
             score,
             action: self.action,
+            search_title,
         }
     }
 }
@@ -48,11 +58,10 @@ pub fn search_command_center_index(
     project_root: Option<&str>,
     runtime_session_id: Option<&str>,
     model: Option<&ProjectModel>,
-) -> Result<CommandCenterSearchResponse, String> {
+) -> Result<CommandCenterSearchResponse, LocalizedDiagnostic> {
     if request.query.len() > COMMAND_CENTER_MAX_QUERY_BYTES {
-        return Err(format!(
-            "Command Center acceptă cel mult {COMMAND_CENTER_MAX_QUERY_BYTES} bytes în query."
-        ));
+        return Err(LocalizedDiagnostic::new("command-center-query-too-long")
+            .with_argument("limit", COMMAND_CENTER_MAX_QUERY_BYTES as u64));
     }
     let has_project = project_root.is_some() && runtime_session_id.is_some();
     let mut candidates = static_candidates(has_project);
@@ -87,7 +96,11 @@ pub fn search_command_center_index(
             .score
             .cmp(&left.score)
             .then_with(|| right.enabled.cmp(&left.enabled))
-            .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+            .then_with(|| {
+                left.search_title
+                    .to_lowercase()
+                    .cmp(&right.search_title.to_lowercase())
+            })
             .then_with(|| left.id.cmp(&right.id))
     });
 
@@ -454,15 +467,22 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
         (
             WorkbenchActivity::Content,
             "Conținut",
-            "Pagini, frontmatter, taxonomii și colecții",
+            "Pagini, frontmatter și colecții",
             "content pages markdown frontmatter continut",
             790,
         ),
         (
+            WorkbenchActivity::Taxonomies,
+            "Taxonomii",
+            "Definiții, termeni, rute și impact asupra conținutului",
+            "taxonomies taxonomy terms routes taxonomii termeni rute",
+            789,
+        ),
+        (
             WorkbenchActivity::Data,
             "Date",
-            "Fișiere TOML reutilizabile și relațiile load_data",
-            "data date toml load_data structured",
+            "Surse locale structurate și relațiile load_data",
+            "data date toml json yaml csv xml load_data structured",
             788,
         ),
         (
@@ -487,15 +507,19 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
             770,
         ),
     ] {
+        let id = format!("activity.{activity:?}").to_lowercase();
         candidates.push(Candidate {
-            id: format!("activity.{activity:?}").to_lowercase(),
+            title_diagnostic: Some(command_center_copy(&id, "title")),
+            subtitle_diagnostic: Some(command_center_copy(&id, "subtitle")),
+            id,
             kind: CommandCenterItemKind::Activity,
             title: title.to_string(),
             subtitle: subtitle.to_string(),
             keywords: keywords.to_string(),
             shortcut: None,
             enabled: has_project,
-            disabled_reason: (!has_project).then(|| "Deschide mai întâi un proiect.".to_string()),
+            disabled_diagnostic: (!has_project)
+                .then(|| LocalizedDiagnostic::new("command-center-open-project-first")),
             priority,
             action: CommandCenterAction::SetActivity { activity },
         });
@@ -520,15 +544,232 @@ fn push_app_command(
         id: id.to_string(),
         kind: CommandCenterItemKind::Command,
         title: title.to_string(),
+        title_diagnostic: Some(command_center_copy(id, "title")),
         subtitle: subtitle.to_string(),
+        subtitle_diagnostic: Some(command_center_copy(id, "subtitle")),
         keywords: keywords.to_string(),
         shortcut: shortcut.map(str::to_string),
         enabled: !requires_project || has_project,
-        disabled_reason: (requires_project && !has_project)
-            .then(|| "Deschide mai întâi un proiect.".to_string()),
+        disabled_diagnostic: (requires_project && !has_project)
+            .then(|| LocalizedDiagnostic::new("command-center-open-project-first")),
         priority,
         action: CommandCenterAction::AppCommand { command },
     });
+}
+
+const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
+    (
+        "command.open_project",
+        "command-center-command-open-project-title",
+        "command-center-command-open-project-subtitle",
+    ),
+    (
+        "command.save",
+        "command-center-command-save-title",
+        "command-center-command-save-subtitle",
+    ),
+    (
+        "command.undo",
+        "command-center-command-undo-title",
+        "command-center-command-undo-subtitle",
+    ),
+    (
+        "command.redo",
+        "command-center-command-redo-title",
+        "command-center-command-redo-subtitle",
+    ),
+    (
+        "command.validate",
+        "command-center-command-validate-title",
+        "command-center-command-validate-subtitle",
+    ),
+    (
+        "command.run_external",
+        "command-center-command-run-external-title",
+        "command-center-command-run-external-subtitle",
+    ),
+    (
+        "command.refresh_session",
+        "command-center-command-refresh-session-title",
+        "command-center-command-refresh-session-subtitle",
+    ),
+    (
+        "command.rescan_project",
+        "command-center-command-rescan-project-title",
+        "command-center-command-rescan-project-subtitle",
+    ),
+    (
+        "command.close_project",
+        "command-center-command-close-project-title",
+        "command-center-command-close-project-subtitle",
+    ),
+    (
+        "command.toggle_terminal",
+        "command-center-command-toggle-terminal-title",
+        "command-center-command-toggle-terminal-subtitle",
+    ),
+    (
+        "command.show_problems",
+        "command-center-command-show-problems-title",
+        "command-center-command-show-problems-subtitle",
+    ),
+    (
+        "command.show_output",
+        "command-center-command-show-output-title",
+        "command-center-command-show-output-subtitle",
+    ),
+    (
+        "command.show_timeline",
+        "command-center-command-show-timeline-title",
+        "command-center-command-show-timeline-subtitle",
+    ),
+    (
+        "command.split_vertical",
+        "command-center-command-split-vertical-title",
+        "command-center-command-split-vertical-subtitle",
+    ),
+    (
+        "command.split_horizontal",
+        "command-center-command-split-horizontal-title",
+        "command-center-command-split-horizontal-subtitle",
+    ),
+    (
+        "command.close_split",
+        "command-center-command-close-split-title",
+        "command-center-command-close-split-subtitle",
+    ),
+    (
+        "command.canvas_fit",
+        "command-center-command-canvas-fit-title",
+        "command-center-command-canvas-fit-subtitle",
+    ),
+    (
+        "command.canvas_desktop",
+        "command-center-command-canvas-desktop-title",
+        "command-center-command-canvas-desktop-subtitle",
+    ),
+    (
+        "command.canvas_tablet",
+        "command-center-command-canvas-tablet-title",
+        "command-center-command-canvas-tablet-subtitle",
+    ),
+    (
+        "command.canvas_mobile",
+        "command-center-command-canvas-mobile-title",
+        "command-center-command-canvas-mobile-subtitle",
+    ),
+    (
+        "command.toggle_left_sidebar",
+        "command-center-command-toggle-left-sidebar-title",
+        "command-center-command-toggle-left-sidebar-subtitle",
+    ),
+    (
+        "command.toggle_inspector",
+        "command-center-command-toggle-inspector-title",
+        "command-center-command-toggle-inspector-subtitle",
+    ),
+    (
+        "command.toggle_theme",
+        "command-center-command-toggle-theme-title",
+        "command-center-command-toggle-theme-subtitle",
+    ),
+    (
+        "command.open_settings",
+        "command-center-command-open-settings-title",
+        "command-center-command-open-settings-subtitle",
+    ),
+    (
+        "command.show_visual",
+        "command-center-command-show-visual-title",
+        "command-center-command-show-visual-subtitle",
+    ),
+    (
+        "command.show_code",
+        "command-center-command-show-code-title",
+        "command-center-command-show-code-subtitle",
+    ),
+    (
+        "command.show_markdown",
+        "command-center-command-show-markdown-title",
+        "command-center-command-show-markdown-subtitle",
+    ),
+    (
+        "activity.editor",
+        "command-center-activity-editor-title",
+        "command-center-activity-editor-subtitle",
+    ),
+    (
+        "activity.themes",
+        "command-center-activity-themes-title",
+        "command-center-activity-themes-subtitle",
+    ),
+    (
+        "activity.templates",
+        "command-center-activity-templates-title",
+        "command-center-activity-templates-subtitle",
+    ),
+    (
+        "activity.components",
+        "command-center-activity-components-title",
+        "command-center-activity-components-subtitle",
+    ),
+    (
+        "activity.blocks",
+        "command-center-activity-blocks-title",
+        "command-center-activity-blocks-subtitle",
+    ),
+    (
+        "activity.designsystem",
+        "command-center-activity-designsystem-title",
+        "command-center-activity-designsystem-subtitle",
+    ),
+    (
+        "activity.assets",
+        "command-center-activity-assets-title",
+        "command-center-activity-assets-subtitle",
+    ),
+    (
+        "activity.content",
+        "command-center-activity-content-title",
+        "command-center-activity-content-subtitle",
+    ),
+    (
+        "activity.taxonomies",
+        "command-center-activity-taxonomies-title",
+        "command-center-activity-taxonomies-subtitle",
+    ),
+    (
+        "activity.data",
+        "command-center-activity-data-title",
+        "command-center-activity-data-subtitle",
+    ),
+    (
+        "activity.versioning",
+        "command-center-activity-versioning-title",
+        "command-center-activity-versioning-subtitle",
+    ),
+    (
+        "activity.audit",
+        "command-center-activity-audit-title",
+        "command-center-activity-audit-subtitle",
+    ),
+    (
+        "activity.publish",
+        "command-center-activity-publish-title",
+        "command-center-activity-publish-subtitle",
+    ),
+];
+
+fn command_center_copy(id: &str, field: &str) -> LocalizedDiagnostic {
+    let (_, title, subtitle) = COMMAND_CENTER_COPY_CODES
+        .iter()
+        .find(|(candidate_id, _, _)| *candidate_id == id)
+        .unwrap_or_else(|| panic!("Command Center copy mapping missing for {id}"));
+    LocalizedDiagnostic::new(match field {
+        "title" => *title,
+        "subtitle" => *subtitle,
+        _ => panic!("unsupported Command Center copy field {field}"),
+    })
 }
 
 fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectModel) {
@@ -545,6 +786,12 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             page.file.clone(),
             WorkbenchSurface::Markdown,
             650,
+            None,
+            Some(
+                LocalizedDiagnostic::new("command-center-resource-page-subtitle")
+                    .with_argument("url", page.url.clone())
+                    .with_argument("path", page.file.clone()),
+            ),
         ));
     }
     for template in &graph.templates {
@@ -576,6 +823,15 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             template.file.clone(),
             WorkbenchSurface::Visual,
             if template.is_partial { 620 } else { 600 },
+            None,
+            Some(
+                LocalizedDiagnostic::new(if template.is_partial {
+                    "command-center-resource-tera-partial-subtitle"
+                } else {
+                    "command-center-resource-tera-template-subtitle"
+                })
+                .with_argument("path", template.file.clone()),
+            ),
         ));
         for macro_name in &template.macros {
             candidates.push(document_candidate(
@@ -587,6 +843,14 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
                 template.file.clone(),
                 WorkbenchSurface::Code,
                 540,
+                Some(
+                    LocalizedDiagnostic::new("command-center-resource-macro-title")
+                        .with_argument("name", macro_name.clone()),
+                ),
+                Some(
+                    LocalizedDiagnostic::new("command-center-resource-macro-subtitle")
+                        .with_argument("path", template.file.clone()),
+                ),
             ));
         }
         for block_name in &template.blocks {
@@ -599,6 +863,14 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
                 template.file.clone(),
                 WorkbenchSurface::Code,
                 520,
+                Some(
+                    LocalizedDiagnostic::new("command-center-resource-block-title")
+                        .with_argument("name", block_name.clone()),
+                ),
+                Some(
+                    LocalizedDiagnostic::new("command-center-resource-block-subtitle")
+                        .with_argument("path", template.file.clone()),
+                ),
             ));
         }
     }
@@ -613,6 +885,11 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             style.file.clone(),
             WorkbenchSurface::Code,
             570,
+            None,
+            Some(
+                LocalizedDiagnostic::new("command-center-resource-style-subtitle")
+                    .with_argument("path", style.file.clone()),
+            ),
         ));
     }
     for script in &graph.scripts {
@@ -626,6 +903,11 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             script.file.clone(),
             WorkbenchSurface::Code,
             550,
+            None,
+            Some(
+                LocalizedDiagnostic::new("command-center-resource-javascript-subtitle")
+                    .with_argument("path", script.file.clone()),
+            ),
         ));
     }
     for asset in &graph.assets {
@@ -634,14 +916,19 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             id: format!("asset.{}", asset.id),
             kind: CommandCenterItemKind::Asset,
             title: file_name(&asset.file).to_string(),
+            title_diagnostic: None,
             subtitle: format!("Asset · {}", asset.logical_path),
+            subtitle_diagnostic: Some(
+                LocalizedDiagnostic::new("command-center-resource-asset-subtitle")
+                    .with_argument("path", asset.logical_path.clone()),
+            ),
             keywords: format!(
                 "asset image font static {} {}",
                 asset.file, asset.logical_path
             ),
             shortcut: None,
             enabled: true,
-            disabled_reason: None,
+            disabled_diagnostic: None,
             priority: 500,
             action: CommandCenterAction::SetActivity {
                 activity: WorkbenchActivity::Assets,
@@ -650,16 +937,51 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
     }
     for data in &graph.data_files {
         specialized_paths.insert(data.file.clone());
-        candidates.push(document_candidate(
-            format!("data.{}", data.id),
-            CommandCenterItemKind::File,
-            file_name(&data.file).to_string(),
-            format!("Date · {}", data.file),
-            format!("data json toml yaml {}", data.logical_path),
-            data.file.clone(),
-            WorkbenchSurface::Code,
-            500,
-        ));
+        if data.capabilities.can_open_in_code {
+            candidates.push(document_candidate(
+                format!("data.{}", data.id),
+                CommandCenterItemKind::File,
+                file_name(&data.file).to_string(),
+                format!("Date · {}", data.file),
+                format!(
+                    "data json toml yaml {} {}",
+                    data.logical_path,
+                    data.load_paths.join(" ")
+                ),
+                data.file.clone(),
+                WorkbenchSurface::Code,
+                500,
+                None,
+                Some(
+                    LocalizedDiagnostic::new("command-center-resource-data-subtitle")
+                        .with_argument("path", data.file.clone()),
+                ),
+            ));
+        } else {
+            candidates.push(Candidate {
+                id: format!("data.{}", data.id),
+                kind: CommandCenterItemKind::File,
+                title: file_name(&data.file).to_string(),
+                title_diagnostic: None,
+                subtitle: format!("Date read-only · {}", data.file),
+                subtitle_diagnostic: Some(
+                    LocalizedDiagnostic::new("command-center-resource-data-readonly-subtitle")
+                        .with_argument("path", data.file.clone()),
+                ),
+                keywords: format!(
+                    "data read-only {} {}",
+                    data.logical_path,
+                    data.load_paths.join(" ")
+                ),
+                shortcut: None,
+                enabled: true,
+                disabled_diagnostic: None,
+                priority: 500,
+                action: CommandCenterAction::SetActivity {
+                    activity: WorkbenchActivity::Data,
+                },
+            });
+        }
     }
     for (index, diagnostic) in graph.diagnostics.iter().enumerate() {
         let action = diagnostic.file.as_ref().map_or(
@@ -674,15 +996,24 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
         candidates.push(Candidate {
             id: format!("diagnostic.{index}"),
             kind: CommandCenterItemKind::Diagnostic,
-            title: diagnostic.message.clone(),
+            title: format!(
+                "{} {}",
+                diagnostic.diagnostic.code,
+                serde_json::to_string(&diagnostic.diagnostic.arguments).unwrap_or_default()
+            ),
+            title_diagnostic: Some(diagnostic.diagnostic.clone()),
             subtitle: diagnostic
                 .file
                 .clone()
                 .unwrap_or_else(|| "ProjectModel".to_string()),
-            keywords: format!("diagnostic audit warning error {}", diagnostic.message),
+            subtitle_diagnostic: None,
+            keywords: format!(
+                "diagnostic audit warning error {}",
+                diagnostic.diagnostic.code
+            ),
             shortcut: None,
             enabled: true,
-            disabled_reason: None,
+            disabled_diagnostic: None,
             priority: 580,
             action,
         });
@@ -712,6 +1043,15 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             file.relative_path.clone(),
             surface,
             460,
+            None,
+            Some(
+                LocalizedDiagnostic::new(match file.kind {
+                    ProjectModelFileKind::Content => "command-center-resource-content-subtitle",
+                    ProjectModelFileKind::Style => "command-center-resource-style-subtitle",
+                    _ => "command-center-resource-file-subtitle",
+                })
+                .with_argument("path", file.relative_path.clone()),
+            ),
         ));
     }
 }
@@ -726,16 +1066,20 @@ fn document_candidate(
     relative_path: String,
     surface: WorkbenchSurface,
     priority: i32,
+    title_diagnostic: Option<LocalizedDiagnostic>,
+    subtitle_diagnostic: Option<LocalizedDiagnostic>,
 ) -> Candidate {
     Candidate {
         id,
         kind,
         title,
+        title_diagnostic,
         subtitle,
+        subtitle_diagnostic,
         keywords,
         shortcut: None,
         enabled: true,
-        disabled_reason: None,
+        disabled_diagnostic: None,
         priority,
         action: CommandCenterAction::OpenDocument {
             relative_path,
@@ -938,6 +1282,22 @@ mod tests {
     }
 
     #[test]
+    fn every_static_copy_code_formats_in_both_bundled_locales() {
+        for (_, title_code, subtitle_code) in COMMAND_CENTER_COPY_CODES {
+            for locale in ["en-US", "ro"] {
+                assert!(
+                    crate::localization::format_message(locale, title_code, None).is_ok(),
+                    "{locale} cannot format {title_code}"
+                );
+                assert!(
+                    crate::localization::format_message(locale, subtitle_code, None).is_ok(),
+                    "{locale} cannot format {subtitle_code}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn search_is_romanian_diacritic_insensitive() {
         let response = search_command_center_index(
             request("setari", CommandCenterScope::Commands),
@@ -970,7 +1330,13 @@ mod tests {
                 )
             })
             .expect("versioning activity");
-        assert_eq!(versioning.title, "Control versiuni");
+        assert_eq!(
+            versioning
+                .title_diagnostic
+                .as_ref()
+                .map(|copy| copy.code.as_str()),
+            Some("command-center-activity-versioning-title")
+        );
         assert!(versioning.enabled);
     }
 
@@ -989,7 +1355,7 @@ mod tests {
             .find(|item| item.id == "command.toggle_terminal")
             .expect("terminal command");
         assert!(!terminal.enabled);
-        assert!(terminal.disabled_reason.is_some());
+        assert!(terminal.disabled_diagnostic.is_some());
     }
 
     #[test]
@@ -1003,6 +1369,8 @@ mod tests {
             "templates/index.html".to_string(),
             WorkbenchSurface::Code,
             500,
+            None,
+            None,
         );
         assert!(!scope_accepts(CommandCenterScope::Commands, candidate.kind));
         assert!(scope_accepts(CommandCenterScope::Files, candidate.kind));
@@ -1062,6 +1430,6 @@ mod tests {
         let error =
             search_command_center_index(request(&query, CommandCenterScope::All), None, None, None)
                 .unwrap_err();
-        assert!(error.contains("cel mult"));
+        assert_eq!(error.code, "command-center-query-too-long");
     }
 }

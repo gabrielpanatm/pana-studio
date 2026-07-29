@@ -18,6 +18,7 @@ use crate::{
             SourceDataFormat, SourceDataNode, SourceDataNodeKind, SourceDataPathSegment,
             SourceDataValueKind,
         },
+        zola::editable_local_toml_path,
     },
 };
 
@@ -96,7 +97,7 @@ pub fn read_data_node_editor_snapshot(
     file: &str,
     node_id: &str,
 ) -> Result<DataNodeEditorSnapshot, String> {
-    let file = normalize_data_file_path(file)?;
+    let file = normalize_data_file_path(project_root, workspace, file)?;
     let projection = workspace.capture_projection_lease()?;
     let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
     let data_file = graph
@@ -107,6 +108,7 @@ pub fn read_data_node_editor_snapshot(
     if data_file.format != SourceDataFormat::Toml {
         return Err("Editorul tipizat este disponibil numai pentru TOML.".to_string());
     }
+    require_visual_data_capability(data_file)?;
     let node = data_file
         .nodes
         .iter()
@@ -144,7 +146,7 @@ pub fn stage_validated_data_mutation(
     input: DataMutationInput,
     now_ms: u128,
 ) -> Result<(DataMutationPlan, ProjectWorkspaceMutationReceipt), String> {
-    let file = normalize_data_file_path(&input.file)?;
+    let file = normalize_data_file_path(project_root, workspace, &input.file)?;
     let (contents, create_only) = match input.operation {
         DataMutationOperation::CreateFile => {
             if workspace.documents.files.contains_key(&file) {
@@ -176,6 +178,7 @@ pub fn stage_validated_data_mutation(
                     data_file.format
                 ));
             }
+            require_visual_data_capability(data_file)?;
             if let Some(error) = data_file.parse_error.as_deref() {
                 return Err(format!(
                     "Fișierul {file} trebuie corectat în editorul de cod înaintea editării vizuale: {error}"
@@ -253,16 +256,41 @@ fn current_identity(workspace: &ProjectWorkspace) -> ProjectWorkspaceIdentity {
     }
 }
 
-fn normalize_data_file_path(path: &str) -> Result<String, String> {
+fn normalize_data_file_path(
+    project_root: &Path,
+    workspace: &ProjectWorkspace,
+    path: &str,
+) -> Result<String, String> {
     let normalized = normalize_project_relative_path(path.trim())?;
-    if normalized.starts_with("date/")
-        && normalized.ends_with(".toml")
-        && normalized.len() > "date/.toml".len()
-    {
-        Ok(normalized)
-    } else {
-        Err("Fișierele vizuale TOML trebuie să fie în date/ și să aibă extensia .toml.".to_string())
+    let projected_config = workspace
+        .documents
+        .text_for("zola.toml")
+        .or_else(|| workspace.documents.text_for("config.toml"));
+    editable_local_toml_path(
+        project_root,
+        Path::new(&workspace.session.zola_root),
+        &normalized,
+        projected_config.as_deref(),
+    )?;
+    Ok(normalized)
+}
+
+fn require_visual_data_capability(
+    data_file: &crate::source_graph::model::SourceGraphDataFile,
+) -> Result<(), String> {
+    if data_file.capabilities.can_edit_visual {
+        return Ok(());
     }
+    Err(data_file
+        .capabilities
+        .technical_reason()
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            format!(
+                "Fișierul de date {} este read-only în activitatea Date.",
+                data_file.file
+            )
+        }))
 }
 
 fn mutate_toml_source(
@@ -895,6 +923,188 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn created_data_file_projects_each_visual_edit_back_to_the_editor_source() {
+        let root = test_root("created-file-editor-projection");
+        let mut workspace = test_workspace(
+            &root,
+            HashMap::from([(
+                "zola.toml".to_string(),
+                "base_url = \"https://example.test\"\n".to_string(),
+            )]),
+        );
+
+        let (_create_plan, create_receipt) = stage_validated_data_mutation(
+            &root,
+            &mut workspace,
+            DataMutationInput {
+                operation: DataMutationOperation::CreateFile,
+                file: "date/meniu.toml".to_string(),
+                node_id: None,
+                key: None,
+                draft_kind: None,
+                value: Some(String::new()),
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(create_receipt.documents.len(), 1);
+        assert_eq!(
+            create_receipt.documents[0]
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text.as_str()),
+            Some("")
+        );
+
+        let graph = build_source_graph_from_workspace_projection(
+            &root,
+            &workspace.capture_projection_lease().unwrap(),
+        )
+        .unwrap();
+        let root_node = graph
+            .data_files
+            .iter()
+            .find(|file| file.file == "date/meniu.toml")
+            .unwrap()
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceDataNodeKind::Document)
+            .unwrap();
+        let (_insert_plan, insert_receipt) = stage_validated_data_mutation(
+            &root,
+            &mut workspace,
+            DataMutationInput {
+                operation: DataMutationOperation::InsertChild,
+                file: "date/meniu.toml".to_string(),
+                node_id: Some(root_node.id.clone()),
+                key: Some("servicii".to_string()),
+                draft_kind: Some(DataDraftKind::String),
+                value: Some("Audit".to_string()),
+            },
+            3,
+        )
+        .unwrap();
+
+        let projected_text = insert_receipt.documents[0]
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.text.as_str());
+        assert_eq!(projected_text, Some("servicii = \"Audit\"\n"));
+        assert_eq!(
+            workspace.documents.text_for("date/meniu.toml").as_deref(),
+            projected_text
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn edits_a_referenced_local_toml_outside_the_conventional_date_directory() {
+        let root = test_root("workspace-outside-date");
+        let original = "titlu = \"Vechi\"\n";
+        let mut workspace = test_workspace(
+            &root,
+            HashMap::from([
+                (
+                    "zola.toml".to_string(),
+                    "base_url = \"https://example.test\"\n".to_string(),
+                ),
+                ("content/_index.md".to_string(), "+++\n+++\n".to_string()),
+                (
+                    "templates/index.html".to_string(),
+                    r#"{% set site = load_data(path="content/configurare-site.toml") %}"#
+                        .to_string(),
+                ),
+                (
+                    "content/configurare-site.toml".to_string(),
+                    original.to_string(),
+                ),
+            ]),
+        );
+        let graph = build_source_graph_from_workspace_projection(
+            &root,
+            &workspace.capture_projection_lease().unwrap(),
+        )
+        .unwrap();
+        let data_file = graph
+            .data_files
+            .iter()
+            .find(|file| file.file == "content/configurare-site.toml")
+            .unwrap();
+        assert!(data_file.capabilities.can_edit_visual);
+        let selected = data_file
+            .nodes
+            .iter()
+            .find(|node| node.key.as_deref() == Some("titlu"))
+            .unwrap();
+
+        stage_validated_data_mutation(
+            &root,
+            &mut workspace,
+            DataMutationInput {
+                operation: DataMutationOperation::UpdateNode,
+                file: "content/configurare-site.toml".to_string(),
+                node_id: Some(selected.id.clone()),
+                key: Some("titlu".to_string()),
+                draft_kind: Some(DataDraftKind::String),
+                value: Some("Nou".to_string()),
+            },
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(
+            workspace
+                .documents
+                .text_for("content/configurare-site.toml")
+                .as_deref(),
+            Some("titlu = \"Nou\"\n")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn create_rejects_protected_theme_and_output_toml_paths() {
+        let root = test_root("workspace-protected-paths");
+        let mut workspace = test_workspace(
+            &root,
+            HashMap::from([(
+                "zola.toml".to_string(),
+                "base_url = \"https://example.test\"\noutput_dir = \"generated/site\"\n"
+                    .to_string(),
+            )]),
+        );
+        for path in [
+            "config.toml",
+            "themes/demo/static/date.toml",
+            "generated/site/date.toml",
+            "../secret.toml",
+        ] {
+            let error = stage_validated_data_mutation(
+                &root,
+                &mut workspace,
+                DataMutationInput {
+                    operation: DataMutationOperation::CreateFile,
+                    file: path.to_string(),
+                    node_id: None,
+                    key: None,
+                    draft_kind: None,
+                    value: Some(String::new()),
+                },
+                2,
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("protejată")
+                    || error.contains("read-only")
+                    || error.contains("output_dir")
+                    || error.contains("relativ sigur"),
+                "diagnostic neașteptat pentru {path}: {error}"
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn test_root(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "pana-data-mutation-{label}-{}-{}",
@@ -934,8 +1144,6 @@ mod tests {
                 unix_inode: None,
             },
             scan_summary: ProjectSessionScanSummary {
-                is_zola: true,
-                is_empty: false,
                 active_theme: None,
                 file_count: sources.len(),
                 directory_count: 3,

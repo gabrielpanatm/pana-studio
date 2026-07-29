@@ -66,7 +66,7 @@ test("schema comenzii Undo/Redo este validată separat și are diagnostic explic
       receipt({ schemaVersion: 1 }),
       expected,
     ),
-    new RegExp(`schema comenzii 1; era necesară ${PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION}`),
+    new RegExp(`command schema .*1.*schema .*${PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION}.*required`),
   );
 });
 
@@ -94,14 +94,14 @@ test("receipt-ul este legat de tranzacția rezervată și de proiecția exactă 
       projected,
       { ...expected, transactionId: "altă-tranzacție" },
     ),
-    /nu ținta rezervată/,
+    /not the reserved target/,
   );
 
   const mismatchedProjection = structuredClone(projected);
   mismatchedProjection.result.documents[0].snapshot.relativePath = "content/alta.md";
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(mismatchedProjection, expected),
-    /snapshot FileBuffer invalid/,
+    /invalid FileBuffer snapshot/,
   );
 });
 
@@ -110,7 +110,7 @@ test("manifestul de topologie este obligatoriu și rămâne în resursele tranza
   delete withoutTopology.result.entry.topologyPaths;
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(withoutTopology, expected),
-    /manifest valid al topologiei/,
+    /valid transaction-topology manifest/,
   );
 
   const outsideTransaction = receipt();
@@ -121,7 +121,7 @@ test("manifestul de topologie este obligatoriu și rămâne în resursele tranza
   };
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(outsideTransaction, expected),
-    /în afara resurselor tranzacției/,
+    /outside the transaction resources/,
   );
 });
 
@@ -190,20 +190,67 @@ test("proiecția canonică UI a Undo/Redo nu depinde de succesul Preview", () =>
   assert.ok(previewCatch > preview);
 });
 
+test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () => {
+  const withWorkbench = receipt({
+    workbench: {
+      schemaVersion: 1,
+      changed: true,
+      projectRoot: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      revisionBefore: 4,
+      revisionAfter: 5,
+      snapshot: {
+        schemaVersion: 1,
+        projectRoot: "/project-a",
+        projectSessionId: "session-a",
+        runtimeSessionId: "session-a:runtime-1",
+        revision: 5,
+        activeActivity: "editor",
+        activeGroupId: "primary",
+        split: "none",
+        splitRatioBasisPoints: 5000,
+        canvasViewport: {
+          mode: "fit",
+          preset: "desktop",
+          widthPx: 1440,
+          zoomPercent: 100,
+          showRulers: true,
+        },
+        groups: [{
+          groupId: "primary",
+          documents: [],
+          activeDocumentId: null,
+        }],
+        bottomPanel: { open: false, activeView: "problems" },
+        selectedProjectEntry: null,
+      },
+    },
+  });
+  assert.equal(
+    requireProjectWorkspaceUndoRedoCommandReceipt(withWorkbench, expected),
+    withWorkbench,
+  );
+
+  const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
+  const assignment = route.indexOf("app.workbenchSnapshot = receipt.workbench.snapshot");
+  const topology = route.indexOf("await reconcileProjectWorkspaceTopologyAfterHistory");
+  assert.ok(assignment >= 0 && topology > assignment);
+});
+
 test("snapshot-ul și lanțul reviziilor Undo/Redo sunt validate independent", () => {
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(
       receipt({ workspace: { ...receipt().workspace, schemaVersion: 1 } }),
       expected,
     ),
-    new RegExp(`Snapshot-ul ProjectWorkspace.*schema 1; era necesară ${PROJECT_WORKSPACE_SCHEMA_VERSION}`),
+    new RegExp(`ProjectWorkspace snapshot.*schema .*1.*schema .*${PROJECT_WORKSPACE_SCHEMA_VERSION}.*required`),
   );
   assert.throws(
     () => requireProjectWorkspaceUndoRedoCommandReceipt(
       receipt({ workspace: { ...receipt().workspace, revision: 9 } }),
       expected,
     ),
-    /Snapshot-ul Undo\/Redo este la revizia 9.*confirmă revizia 8/,
+    /Undo\/Redo snapshot is at revision .*9.*result confirms revision .*8/,
   );
 });
 

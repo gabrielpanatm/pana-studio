@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-taxonomy-mutation"
+description = "Enables the apply_taxonomy_mutation command without any pre-configured scope."
+commands.allow = ["apply_taxonomy_mutation"]
+
+[[permission]]
+identifier = "deny-apply-taxonomy-mutation"
+description = "Denies the apply_taxonomy_mutation command without any pre-configured scope."
+commands.deny = ["apply_taxonomy_mutation"]

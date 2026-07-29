@@ -40,6 +40,57 @@ function emptyHtmlPending() {
   };
 }
 
+function resolvedSelectionSnapshot({
+  selectionRevision = 1,
+  editorNodeId = null,
+  sourceNodeId = null,
+  renderInstanceId = null,
+} = {}) {
+  return {
+    projectRoot: "/project",
+    runtimeSessionId: "session:runtime",
+    selectionRevision,
+    resolution: "resolved",
+    anchor: {
+      editorNodeId,
+      sourceNodeId,
+      renderInstanceId,
+    },
+  };
+}
+
+function coordinatedElementSelection({
+  selectionRevision = 1,
+  sourceNodeId,
+  renderInstanceId = "render-h1",
+  sourceLocation = { file: "templates/index.html", line: 3, column: 3 },
+  observation = {},
+}) {
+  return {
+    snapshot: resolvedSelectionSnapshot({
+      selectionRevision,
+      editorNodeId: "editor_render:h1",
+      sourceNodeId,
+      renderInstanceId,
+    }),
+    documentEpoch: 1,
+    renderInstanceId,
+    sourceNodeId,
+    sourceLocation,
+    observation: {
+      domPath: "main > h1:nth-of-type(1)",
+      cssSelector: "main > h1:nth-of-type(1)",
+      tag: "h1",
+      attributes: {},
+      classes: [],
+      hasChildElements: false,
+      rawText: "Titlu",
+      parentNode: null,
+      ...observation,
+    },
+  };
+}
+
 test("a generated attribute settles the untouched baseline but preserves a concurrent edit", () => {
   const baseline = JSON.stringify({ title: "Titlu" });
   const generated = JSON.stringify({ "data-anim": "ps-h1-generated", title: "Titlu" });
@@ -67,8 +118,19 @@ test("controllerul păstrează aria pending când kernelul blochează commit-ul 
     assert.equal(command, "execute_preview_html_attributes_intent");
     return {
       status: "blocked",
-      message: "HTML Attribute Engine a refuzat commit-ul.",
-      diagnostics: [{ blocking: true, message: "baseline HTML s-a schimbat" }],
+      messageDiagnostic: {
+        schemaVersion: 1,
+        code: "preview-projection-execution-blocked",
+      },
+      diagnostics: [{
+        code: "structural_plan_blocked",
+        severity: "error",
+        diagnostic: {
+          schemaVersion: 1,
+          code: "preview-projection-structural-plan-blocked",
+        },
+        blocking: true,
+      }],
     };
   });
 
@@ -80,19 +142,15 @@ test("controllerul păstrează aria pending când kernelul blochează commit-ul 
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectedElement: {
-      domPath: "main > h1:nth-of-type(1)",
-      cssSelector: "main > h1:nth-of-type(1)",
-      tag: "h1",
-      sourceId: "source-h1",
-      sourceLocation: { file: "templates/index.html", line: 3, column: 3 },
-      sessionId: "preview-h1",
-      attributes: { title: "vechi" },
-      classes: [],
-      hasChildElements: false,
-      rawText: "Titlu",
-      parentNode: null,
-    },
+    selectionSnapshot: resolvedSelectionSnapshot({
+      editorNodeId: "editor_render:h1",
+      sourceNodeId: "source-h1",
+      renderInstanceId: "render-h1",
+    }),
+    coordinatedElementSelection: coordinatedElementSelection({
+      sourceNodeId: "source-h1",
+      observation: { attributes: { title: "vechi" } },
+    }),
     attributeValues: { title: "nou" },
     attributeStatus: "",
     htmlPending,
@@ -110,7 +168,7 @@ test("controllerul păstrează aria pending când kernelul blochează commit-ul 
 
   const result = await applyAttributesToHtml(host);
   assert.equal(result.status, "blocked");
-  assert.match(result.reason, /baseline HTML/);
+  assert.match(result.reason, /not safe for this source/);
   assert.equal(host.htmlPending.attributes, true);
   assert.deepEqual(host.attributeValues, { title: "nou" });
 });
@@ -120,8 +178,19 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
     assert.equal(command, "execute_preview_html_attributes_intent");
     return {
       status: "blocked",
-      message: "HTML Attribute Engine a refuzat commit-ul.",
-      diagnostics: [{ blocking: true, message: "Source ID expirat" }],
+      messageDiagnostic: {
+        schemaVersion: 1,
+        code: "preview-projection-execution-blocked",
+      },
+      diagnostics: [{
+        code: "structural_plan_blocked",
+        severity: "error",
+        diagnostic: {
+          schemaVersion: 1,
+          code: "preview-projection-structural-plan-blocked",
+        },
+        blocking: true,
+      }],
     };
   });
 
@@ -134,19 +203,20 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectedElement: {
-      domPath: "main > h1:nth-of-type(1)",
-      cssSelector: "main > h1:nth-of-type(1)",
-      tag: "h1",
-      sourceId: "source-h1-stale",
-      sourceLocation: { file: "templates/index.html", line: 3, column: 3 },
-      sessionId: "preview-h1",
-      attributes: { title: "Titlu" },
-      classes: ["hero-title"],
-      hasChildElements: false,
-      rawText: "Titlu",
-      parentNode: null,
-    },
+    selectionSnapshot: resolvedSelectionSnapshot({
+      selectionRevision: 2,
+      editorNodeId: "editor_render:h1",
+      sourceNodeId: "source-h1-stale",
+      renderInstanceId: "render-h1",
+    }),
+    coordinatedElementSelection: coordinatedElementSelection({
+      selectionRevision: 2,
+      sourceNodeId: "source-h1-stale",
+      observation: {
+        attributes: { title: "Titlu" },
+        classes: ["hero-title"],
+      },
+    }),
     attributeValues: { title: "Titlu" },
     attributeStatus: "",
     classEditorValue: "hero-title",
@@ -176,7 +246,7 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
   assert.equal(result.status, "blocked");
   assert.equal(htmlPending.attributes, false);
   assert.deepEqual(host.attributeValues, { title: "Titlu" });
-  assert.match(host.attributeStatus, /Source ID expirat/);
+  assert.match(host.attributeStatus, /not safe for this source/);
   assert.deepEqual(statuses.at(-1), {
     text: host.attributeStatus,
     kind: "error",
@@ -237,10 +307,11 @@ test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS r
   assert.equal(host.htmlPending.attributes, true);
   assert.deepEqual(host.kernelSourceDirtyPaths, ["templates/index.html"]);
   assert.equal(host.saveRequest, 1);
-  assert.deepEqual(statuses.at(-1), {
-    text: "Salvarea sesiunii proiectului a eșuat: commit HTML refuzat de kernel",
-    kind: "error",
-  });
+  assert.equal(statuses.at(-1)?.kind, "error");
+  assert.match(
+    statuses.at(-1)?.text ?? "",
+    /Saving the project session was rejected:.*commit HTML refuzat de kernel/,
+  );
 });
 
 test("Save păstrează terminală eroarea saveSessionDrafts și nu o rescrie cu succes fals", async () => {
@@ -259,8 +330,6 @@ test("Save păstrează terminală eroarea saveSessionDrafts și nu o rescrie cu 
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
     saveRequest: 0,
-    saveState: "unsaved",
-    saveStatus: "",
     inspectorPending: { html: false },
     htmlPending: emptyHtmlPending(),
     pendingTag: null,
@@ -272,16 +341,14 @@ test("Save păstrează terminală eroarea saveSessionDrafts și nu o rescrie cu 
     centerView: "preview",
     currentSourceRelativePath: "",
     setGlobalStatus(text, kind) {
-      this.saveStatus = text;
-      this.saveState = kind;
       statuses.push({ text, kind });
     },
   };
 
   assert.equal(await saveActiveFile(host), false);
   assert.equal(flushCount, 2);
-  assert.equal(host.saveState, "error");
-  assert.match(host.saveStatus, /al doilea flush a eșuat/);
+  assert.equal(statuses.at(-1)?.kind, "error");
+  assert.match(statuses.at(-1)?.text ?? "", /al doilea flush a eșuat/);
   assert.equal(statuses.some(({ text, kind }) => kind === "saved" || /Nicio modificare/.test(text)), false);
 });
 
@@ -294,7 +361,7 @@ test("EditorRuntime nu raportează ok când controllerul contextual blochează m
     projectTransitionFrontendLeaseActive: false,
     async beginPreviewStructuralWriteBoundary() {},
     endPreviewStructuralWriteBoundary() {},
-    selectedElement: null,
+    coordinatedElementSelection: null,
     pageSections: [],
     structureStatus: "",
     isActivePreviewHtmlSource: false,
@@ -315,7 +382,6 @@ test("EditorRuntime nu raportează ok când controllerul contextual blochează m
     async setCenterView() {
       return true;
     },
-    templateHtmlEditSourceId: null,
     htmlActionsControllerHost() {
       return htmlHost;
     },
@@ -325,7 +391,7 @@ test("EditorRuntime nu raportează ok când controllerul contextual blochează m
     selectDomNode() {},
     selectTeraLayerSource() {},
     setPreviewTeraSelection() {},
-    allowTemplateHtmlEdit() {},
+    async enterEditorNavigationScope() {},
     async openSelectedTeraSource() {},
     async deleteSelectedTeraNode() {},
     setGlobalStatus(text, kind) {
@@ -357,7 +423,6 @@ function teraRuntimeHost(teraHost) {
     async setCenterView() {
       return true;
     },
-    templateHtmlEditSourceId: null,
     htmlActionsControllerHost() {
       return {};
     },
@@ -367,7 +432,7 @@ function teraRuntimeHost(teraHost) {
     selectDomNode() {},
     selectTeraLayerSource() {},
     setPreviewTeraSelection() {},
-    allowTemplateHtmlEdit() {},
+    async enterEditorNavigationScope() {},
     async openSelectedTeraSource() {},
     async deleteSelectedTeraNode(target) {
       return await deleteSelectedTeraNode(
@@ -412,7 +477,7 @@ test("EditorRuntime propagă blocked din controllerul Tera delete", async () => 
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.match(result.reason, /Selectează un nod Tera/);
+  assert.match(result.reason, /Select a Tera node/);
   assert.equal(runtime.lastTransaction?.status, "blocked");
 });
 
@@ -422,7 +487,6 @@ test("EditorRuntime propagă failed din controllerul Tera delete", async () => {
     throw new Error("Tera kernel indisponibil");
   });
   const statuses = [];
-  const runtime = createEditorRuntime(teraRuntimeHost(minimalTeraControllerHost(statuses)));
   const sourceNode = {
     id: "tera:include:1",
     kind: "include",
@@ -432,6 +496,13 @@ test("EditorRuntime propagă failed din controllerul Tera delete", async () => {
     children: [],
     capabilities: {},
   };
+  const teraHost = minimalTeraControllerHost(statuses);
+  teraHost.selectionSnapshot = resolvedSelectionSnapshot({
+    selectionRevision: 3,
+    editorNodeId: "editor_boundary:include:1",
+    sourceNodeId: sourceNode.id,
+  });
+  const runtime = createEditorRuntime(teraRuntimeHost(teraHost));
   const result = await runtime.dispatch({
     type: "delete-tera",
     surface: "layers",

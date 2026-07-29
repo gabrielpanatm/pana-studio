@@ -1,4 +1,4 @@
-import type { SelectionInfo, SourceNodeRange } from "$lib/types";
+import type { CanvasElementObservation, SourceNodeRange } from "$lib/types";
 
 function escapeCssIdentifier(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
@@ -145,7 +145,7 @@ export function findHtmlNodeAtPosition(nodes: SourceNodeRange[], position: numbe
   return bestMatch;
 }
 
-export function findHtmlNodeForSelection(nodes: SourceNodeRange[], selection: SelectionInfo | null) {
+export function findHtmlNodeForObservation(nodes: SourceNodeRange[], selection: CanvasElementObservation | null) {
   if (!selection) {
     return null;
   }

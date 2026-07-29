@@ -58,7 +58,14 @@ fn build_content_page_draft_with_resolver(
         return Err("Titlul paginii nu poate fi gol.".to_string());
     }
 
-    let template_line = default_page_template_line_with_resolver(root, resolver);
+    // Pages created inside a section must inherit that section's
+    // `page_template`. Writing `template = "page.html"` here would silently
+    // override the collection contract (for example `blog/single.html`).
+    let template_line = if normalized_section.is_empty() {
+        default_page_template_line_with_resolver(root, resolver)
+    } else {
+        String::new()
+    };
     let contents = format!(
         "+++\n\
 title = \"{}\"\n\
@@ -231,6 +238,26 @@ mod tests {
                 .unwrap();
 
         assert!(!draft.contents.contains("template = \"page.html\""));
+        cleanup(&root);
+    }
+
+    #[test]
+    fn section_page_draft_preserves_collection_page_template_inheritance() {
+        let root = unique_test_dir("section-page-template-inheritance");
+        fs::create_dir_all(root.join("themes/test-theme/templates")).unwrap();
+        fs::write(root.join("themes/test-theme/templates/page.html"), "").unwrap();
+
+        let draft = build_content_page_draft_with_active_theme(
+            &root,
+            "blog",
+            "primul-articol",
+            "Primul articol",
+            Some("test-theme".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(draft.relative_path, "content/blog/primul-articol.md");
+        assert!(!draft.contents.contains("template ="));
         cleanup(&root);
     }
 

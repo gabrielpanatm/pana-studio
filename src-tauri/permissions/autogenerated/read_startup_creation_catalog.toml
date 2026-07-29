@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-startup-creation-catalog"
+description = "Enables the read_startup_creation_catalog command without any pre-configured scope."
+commands.allow = ["read_startup_creation_catalog"]
+
+[[permission]]
+identifier = "deny-read-startup-creation-catalog"
+description = "Denies the read_startup_creation_catalog command without any pre-configured scope."
+commands.deny = ["read_startup_creation_catalog"]

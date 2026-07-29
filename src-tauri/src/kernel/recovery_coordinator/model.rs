@@ -1,13 +1,16 @@
 use serde::Serialize;
 
-use crate::kernel::{
-    project_state::KernelProjectTransitionDecisionRetentionHotJournal,
-    project_workspace::ProjectWorkspaceSaveHotJournal,
+use crate::{
+    kernel::{
+        project_state::KernelProjectTransitionDecisionRetentionHotJournal,
+        project_workspace::ProjectWorkspaceSaveHotJournal,
+    },
+    localization::LocalizedDiagnostic,
 };
 
 use super::summary::RecoveryJournalFamilySummary;
 
-pub const RECOVERY_COORDINATOR_SCHEMA_VERSION: u32 = 1;
+pub const RECOVERY_COORDINATOR_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,7 +33,7 @@ pub struct RecoveryCoordinatorDiagnostic {
     pub severity: RecoveryCoordinatorDiagnosticSeverity,
     pub code: String,
     pub transaction_id: Option<String>,
-    pub message: String,
+    pub message_diagnostic: LocalizedDiagnostic,
 }
 
 #[derive(Clone, Debug, Serialize)]

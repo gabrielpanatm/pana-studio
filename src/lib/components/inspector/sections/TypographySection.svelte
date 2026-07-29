@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { ScssVariable } from "$lib/types";
+  import type { CssPropertySuggestion, InstalledFontVariationAxis, ScssVariable } from "$lib/types";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import { variablesForProperty } from "$lib/editor/controls";
   import {
@@ -27,11 +28,15 @@
     pendingValues,
     rulesMap,
     scssVariables = [],
+    fontFamilies = [],
+    installedFontAxes = [],
     edit,
   }: {
     pendingValues: Record<string, string>;
     rulesMap: Record<string, string>;
     scssVariables?: ScssVariable[];
+    fontFamilies?: string[];
+    installedFontAxes?: InstalledFontVariationAxis[];
     edit: CssPropertyEditController;
   } = $props();
 
@@ -42,59 +47,95 @@
   const PROPS = [
     "font-family", "font-size", "font-weight", "line-height",
     "letter-spacing", "text-align", "text-transform", "text-decoration", "font-style",
+    "font-variation-settings", "font-optical-sizing",
   ];
 
   const hasValues = $derived(PROPS.some((p) => getValue(p) !== ""));
+  const fontFamilySuggestions = $derived.by(() => {
+    const suggestions: CssPropertySuggestion[] = [
+      ...variablesForProperty("font-family", scssVariables),
+      ...fontFamilies.map((family) => ({
+        name: family,
+        value: t("inspector-typography-installed-family"),
+        file: "Font Manager Rust",
+        insertValue: quoteFontFamily(family),
+        directValue: true,
+      })),
+    ];
+    return suggestions.filter((value, index, values) => values.findIndex((entry) => (
+      (entry.insertValue ?? `$${entry.name}`) === (value.insertValue ?? `$${value.name}`)
+    )) === index);
+  });
+  const fontAxisSuggestions = $derived.by(() => installedFontAxes.flatMap((axis) => {
+    const positions = [
+      { label: t("inspector-typography-axis-min"), value: axis.min },
+      { label: t("inspector-typography-axis-default"), value: axis.default },
+      { label: t("inspector-typography-axis-max"), value: axis.max },
+    ];
+    return positions
+      .filter((position, index) => positions.findIndex((candidate) => candidate.value === position.value) === index)
+      .map((position): CssPropertySuggestion => ({
+        name: `${axis.family} · ${axis.tag} · ${position.label}`,
+        value: `${axis.min}–${axis.max}`,
+        file: "Font Manager Rust · tabela fvar",
+        insertValue: `'${axis.tag.replaceAll("'", "\\'")}' ${position.value}`,
+        directValue: true,
+      }));
+  }));
 
-  const textAlignOpts = [
-    { value: "left",    icon: IconAlignLeft,      title: "Left"    },
-    { value: "center",  icon: IconAlignCenter,    title: "Center"  },
-    { value: "right",   icon: IconAlignRight,     title: "Right"   },
-    { value: "justify", icon: IconAlignJustified, title: "Justify" },
-  ];
+  function quoteFontFamily(family: string) {
+    return `'${family.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
+  }
 
-  const fontWeightOpts = [
-    { value: "300", label: "L",  title: "Subțire (300)"      },
-    { value: "400", label: "R",  title: "Regular (400)"    },
-    { value: "500", label: "M",  title: "Medium (500)"     },
-    { value: "600", label: "Sb", title: "SemiBold (600)"   },
-    { value: "700", label: "B",  title: "Bold (700)"       },
-    { value: "800", label: "Eb", title: "ExtraBold (800)"  },
-    { value: "900", label: "X",  title: "Black (900)"      },
-  ];
+  const textAlignOpts = $derived([
+    { value: "left", icon: IconAlignLeft, title: t("inspector-typography-left") },
+    { value: "center", icon: IconAlignCenter, title: t("inspector-typography-center") },
+    { value: "right", icon: IconAlignRight, title: t("inspector-typography-right") },
+    { value: "justify", icon: IconAlignJustified, title: t("inspector-typography-justify") },
+  ]);
 
-  const textDecorationOpts = [
-    { value: "none",         label: "—",              title: "Niciuna"          },
-    { value: "underline",    icon: IconUnderline,     title: "Underline"     },
-    { value: "line-through", icon: IconStrikethrough, title: "Strikethrough" },
-  ];
+  const fontWeightOpts = $derived([
+    { value: "300", label: "L", title: t("inspector-typography-weight-light") },
+    { value: "400", label: "R", title: t("inspector-typography-weight-regular") },
+    { value: "500", label: "M", title: t("inspector-typography-weight-medium") },
+    { value: "600", label: "Sb", title: t("inspector-typography-weight-semibold") },
+    { value: "700", label: "B", title: t("inspector-typography-weight-bold") },
+    { value: "800", label: "Eb", title: t("inspector-typography-weight-extrabold") },
+    { value: "900", label: "X", title: t("inspector-typography-weight-black") },
+  ]);
 
-  const fontStyleOpts = [
-    { value: "normal", label: "R",         title: "Normal" },
-    { value: "italic", icon: IconItalic,   title: "Italic" },
-  ];
+  const textDecorationOpts = $derived([
+    { value: "none", label: "—", title: t("inspector-none") },
+    { value: "underline", icon: IconUnderline, title: t("inspector-typography-underline") },
+    { value: "line-through", icon: IconStrikethrough, title: t("inspector-typography-strikethrough") },
+  ]);
 
-  const textTransformOpts = [
-    { value: "none",       label: "—",                    title: "Niciuna"      },
-    { value: "uppercase",  icon: IconLetterCaseUpper,     title: "Uppercase" },
-    { value: "capitalize", icon: IconLetterCase,          title: "Capitalize"},
-    { value: "lowercase",  icon: IconLetterCaseLower,     title: "Lowercase" },
-  ];
+  const fontStyleOpts = $derived([
+    { value: "normal", label: "R", title: t("inspector-typography-normal") },
+    { value: "italic", icon: IconItalic, title: t("inspector-typography-italic") },
+  ]);
+
+  const textTransformOpts = $derived([
+    { value: "none", label: "—", title: t("inspector-none") },
+    { value: "uppercase", icon: IconLetterCaseUpper, title: t("inspector-typography-uppercase") },
+    { value: "capitalize", icon: IconLetterCase, title: t("inspector-typography-capitalize") },
+    { value: "lowercase", icon: IconLetterCaseLower, title: t("inspector-typography-lowercase") },
+  ]);
 </script>
 
-<InspectorSection title="Typography" {hasValues}>
+<InspectorSection title={t("inspector-typography-title")} {hasValues}>
   {#snippet icon()}<IconTypography size={13} stroke={1.7} />{/snippet}
 
-  <div class="row-label">Font Family</div>
+  <div class="row-label">{t("inspector-typography-font-family")}</div>
   <PropInput
     value={getValue("font-family")}
-    suggestions={variablesForProperty("font-family", scssVariables)}
+    suggestions={fontFamilySuggestions}
     {...edit.continuous("font-family")}
   />
 
   <div class="row-2">
     <div class="col">
-      <div class="row-label">Size</div>
+      <div class="row-label">{t("inspector-typography-size")}</div>
       <PropInput
         value={getValue("font-size")}
         suggestions={variablesForProperty("font-size", scssVariables)}
@@ -104,7 +145,7 @@
       </PropInput>
     </div>
     <div class="col">
-      <div class="row-label">Line Height</div>
+      <div class="row-label">{t("inspector-typography-line-height")}</div>
       <PropInput
         value={getValue("line-height")}
         suggestions={variablesForProperty("line-height", scssVariables)}
@@ -115,14 +156,35 @@
     </div>
   </div>
 
-  <div class="row-label">Font Weight</div>
+  <div class="row-label">{t("inspector-typography-font-weight")}</div>
   <SegmentedControl
     options={fontWeightOpts}
     value={getValue("font-weight")}
     onchange={(v) => edit.commit("font-weight", v)}
   />
 
-  <div class="row-label">Align</div>
+  {#if installedFontAxes.length}
+    <div class="row-label">{t("inspector-typography-variable-axes")}</div>
+    <PropInput
+      value={getValue("font-variation-settings")}
+      suggestions={fontAxisSuggestions}
+      placeholder="'wdth' 100, 'opsz' 16"
+      {...edit.continuous("font-variation-settings")}
+    />
+    {#if installedFontAxes.some((axis) => axis.tag === "opsz")}
+      <div class="row-label">{t("inspector-typography-optical-sizing")}</div>
+      <SegmentedControl
+        options={[
+          { value: "auto", label: t("inspector-auto"), title: t("inspector-typography-use-optical-axis") },
+          { value: "none", label: t("inspector-none"), title: t("inspector-typography-disable-optical") },
+        ]}
+        value={getValue("font-optical-sizing")}
+        onchange={(v) => edit.commit("font-optical-sizing", v)}
+      />
+    {/if}
+  {/if}
+
+  <div class="row-label">{t("inspector-typography-align")}</div>
   <SegmentedControl
     options={textAlignOpts}
     value={getValue("text-align")}
@@ -131,7 +193,7 @@
 
   <div class="row-2">
     <div class="col">
-      <div class="row-label">Letter Spacing</div>
+      <div class="row-label">{t("inspector-typography-letter-spacing")}</div>
       <PropInput
         value={getValue("letter-spacing")}
         suggestions={variablesForProperty("letter-spacing", scssVariables)}
@@ -141,7 +203,7 @@
       </PropInput>
     </div>
     <div class="col">
-      <div class="row-label">Style</div>
+      <div class="row-label">{t("inspector-typography-style")}</div>
       <SegmentedControl
         options={fontStyleOpts}
         value={getValue("font-style")}
@@ -150,14 +212,14 @@
     </div>
   </div>
 
-  <div class="row-label">Transform</div>
+  <div class="row-label">{t("inspector-typography-transform")}</div>
   <SegmentedControl
     options={textTransformOpts}
     value={getValue("text-transform")}
     onchange={(v) => edit.commit("text-transform", v)}
   />
 
-  <div class="row-label">Decoration</div>
+  <div class="row-label">{t("inspector-typography-decoration")}</div>
   <SegmentedControl
     options={textDecorationOpts}
     value={getValue("text-decoration")}

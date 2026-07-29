@@ -16,6 +16,8 @@ use percent_encoding::percent_decode_str;
 use relative_path::RelativePathBuf;
 use serde::Serialize;
 
+use crate::preview::alternate_zola_directory_content_key;
+
 const MAX_CONCURRENT_CONNECTIONS: usize = 16;
 const MAX_REQUEST_HEADER_BYTES: usize = 32 * 1024;
 const CLIENT_READ_TIMEOUT: Duration = Duration::from_secs(3);
@@ -415,16 +417,39 @@ fn serve_request(
         && !decoded.starts_with("//")
         && !decoded.contains('\\')
     {
-        let candidate = format!("{content_key}/");
+        let candidate = alternate_zola_directory_content_key(&content_key);
         generation
             .content
-            .get(&candidate)
+            .get(&content_key)
             .is_some_and(|content| matches!(content, SourceBrowserContent::Html(_)))
-            .then_some(candidate)
+            .then(|| content_key.clone())
+            .or_else(|| {
+                candidate.filter(|candidate| {
+                    generation
+                        .content
+                        .get(candidate)
+                        .is_some_and(|content| matches!(content, SourceBrowserContent::Html(_)))
+                })
+            })
     } else {
         None
     };
-    let resolved_content_key = canonical_content_key.as_deref().unwrap_or(&content_key);
+    let alternate_content_key = alternate_zola_directory_content_key(&content_key);
+    let resolved_content_key = canonical_content_key.as_deref().unwrap_or_else(|| {
+        if generation.content.contains_key(&content_key) {
+            &content_key
+        } else {
+            alternate_content_key
+                .as_deref()
+                .filter(|candidate| {
+                    generation
+                        .content
+                        .get(*candidate)
+                        .is_some_and(|content| matches!(content, SourceBrowserContent::Html(_)))
+                })
+                .unwrap_or(&content_key)
+        }
+    });
     if let SourceBrowserPublicationStatus::Failed {
         disk_generation,
         diagnostic,
@@ -940,6 +965,10 @@ mod tests {
                     "servicii/".to_string(),
                     SourceBrowserContent::Html("<html><body>Servicii</body></html>".to_string()),
                 ),
+                (
+                    "blog".to_string(),
+                    SourceBrowserContent::Html("<html><body>Blog</body></html>".to_string()),
+                ),
             ]),
             assets_root: std::env::temp_dir(),
         })
@@ -1020,6 +1049,12 @@ mod tests {
         assert!(servicii.starts_with("HTTP/1.1 307 Temporary Redirect"));
         assert!(servicii.contains("Location: /servicii/\r\n"));
         assert!(request(&registry, "/servicii/").starts_with("HTTP/1.1 200 OK"));
+        let blog = request(&registry, "/blog");
+        assert!(blog.starts_with("HTTP/1.1 307 Temporary Redirect"));
+        assert!(blog.contains("Location: /blog/\r\n"));
+        let canonical_blog = request(&registry, "/blog/");
+        assert!(canonical_blog.starts_with("HTTP/1.1 200 OK"));
+        assert!(canonical_blog.contains(">Blog<"));
         assert!(request(&registry, "/contact").starts_with("HTTP/1.1 404 Not Found"));
     }
 }

@@ -1,6 +1,12 @@
 <script lang="ts">
   import { IconFileText } from "@tabler/icons-svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
   import type { ProjectFile } from "$lib/types";
   import {
     parsePageFrontmatter,
@@ -19,8 +25,8 @@
   $: activePage = scannedPages.find((page) => page.relativePath === activeScannedPath) ?? null;
   $: parsed = parsePageFrontmatter(pageSource);
   $: values = parsed.values;
-  const ogTypeOptions = [
-    { value: "", label: "none" },
+  $: ogTypeOptions = [
+    { value: "", label: t("content-settings-option-none") },
     "website",
     "article",
     "profile",
@@ -35,7 +41,7 @@
 
 <section class="panel-card page-settings-panel">
   <div class="section-heading">
-    <h3>Pagină Markdown</h3>
+    <h3>{t("content-settings-markdown-title")}</h3>
     {#if activePage}<span>MD</span>{/if}
   </div>
 
@@ -45,29 +51,29 @@
       <span>{activePage.relativePath}</span>
     </div>
 
-    <div class="metadata-groups" aria-label="Frontmatter">
+    <div class="metadata-groups" aria-label={t("content-settings-frontmatter-group")}>
       <section class="metadata-group">
-        <h4>General</h4>
+        <h4>{t("content-settings-general")}</h4>
         <label class="field">
-          <span>Title</span>
+          <span>{t("content-settings-field-title")}</span>
           <input value={values.title} oninput={(event) => setField("title", event.currentTarget.value)} />
         </label>
         <label class="field">
-          <span>Description</span>
+          <span>{t("content-settings-field-description")}</span>
           <textarea rows="3" value={values.description} oninput={(event) => setField("description", event.currentTarget.value)}></textarea>
         </label>
         <div class="field-grid">
           <label class="field">
-            <span>Date</span>
+            <span>{t("content-settings-field-date")}</span>
             <input type="date" value={values.date} oninput={(event) => setField("date", event.currentTarget.value)} />
           </label>
           <label class="field">
-            <span>Weight</span>
+            <span>{t("content-settings-field-weight")}</span>
             <input type="number" step="1" value={values.weight} oninput={(event) => setField("weight", event.currentTarget.value)} />
           </label>
         </div>
         <label class="field">
-          <span>Template</span>
+          <span>{t("content-settings-field-template")}</span>
           <input list="page-template-options" value={values.template} oninput={(event) => setField("template", event.currentTarget.value)} />
           <datalist id="page-template-options">
             {#each scannedTemplates.filter((template) => isActiveThemeTemplatePath(template.relativePath, activeTheme)) as template}
@@ -76,44 +82,31 @@
           </datalist>
         </label>
         <label class="field">
-          <span>Slug</span>
+          <span>{t("content-settings-field-slug")}</span>
           <input value={values.slug} oninput={(event) => setField("slug", event.currentTarget.value)} />
         </label>
         <label class="toggle-field">
           <input type="checkbox" checked={values.draft} onchange={(event) => setField("draft", event.currentTarget.checked)} />
-          <span>Draft</span>
+          <span>{t("content-settings-field-draft")}</span>
         </label>
-      </section>
-
-      <section class="metadata-group">
-        <h4>Taxonomii</h4>
-        <label class="field">
-          <span>Tags</span>
-          <input placeholder="design, zola, ghid" value={values.tags} oninput={(event) => setField("tags", event.currentTarget.value)} />
-        </label>
-        <label class="field">
-          <span>Categories</span>
-          <input placeholder="Articole, Noutăți" value={values.categories} oninput={(event) => setField("categories", event.currentTarget.value)} />
-        </label>
-        <p class="taxonomy-note">Separă valorile prin virgulă. Pană păstrează array-urile TOML în <code>taxonomies.*</code>.</p>
       </section>
 
       <section class="metadata-group">
         <h4>SEO</h4>
         <label class="field">
-          <span>SEO title</span>
+          <span>{t("content-settings-seo-title")}</span>
           <input value={values.seoTitle} oninput={(event) => setField("seoTitle", event.currentTarget.value)} />
         </label>
         <label class="field">
-          <span>SEO description</span>
+          <span>{t("content-settings-seo-description")}</span>
           <textarea rows="3" value={values.seoDescription} oninput={(event) => setField("seoDescription", event.currentTarget.value)}></textarea>
         </label>
         <label class="field">
-          <span>Canonical URL</span>
+          <span>{t("content-settings-canonical-url")}</span>
           <input type="url" value={values.canonicalUrl} oninput={(event) => setField("canonicalUrl", event.currentTarget.value)} />
         </label>
         <label class="field">
-          <span>Robots</span>
+          <span>{t("content-settings-robots")}</span>
           <input placeholder="index, follow" value={values.robots} oninput={(event) => setField("robots", event.currentTarget.value)} />
         </label>
       </section>
@@ -121,27 +114,27 @@
       <section class="metadata-group">
         <h4>OpenGraph</h4>
         <label class="field">
-          <span>OG title</span>
+          <span>{t("content-settings-og-title")}</span>
           <input value={values.ogTitle} oninput={(event) => setField("ogTitle", event.currentTarget.value)} />
         </label>
         <label class="field">
-          <span>OG description</span>
+          <span>{t("content-settings-og-description")}</span>
           <textarea rows="3" value={values.ogDescription} oninput={(event) => setField("ogDescription", event.currentTarget.value)}></textarea>
         </label>
         <label class="field">
-          <span>OG image</span>
+          <span>{t("content-settings-og-image")}</span>
           <input value={values.ogImage} oninput={(event) => setField("ogImage", event.currentTarget.value)} />
         </label>
         <label class="field">
-          <span>OG type</span>
-          <SelectControl value={values.ogType} options={ogTypeOptions} ariaLabel="OpenGraph type" onchange={(value) => setField("ogType", value)} />
+          <span>{t("content-settings-og-type")}</span>
+          <SelectControl value={values.ogType} options={ogTypeOptions} ariaLabel={t("content-settings-og-type")} onchange={(value) => setField("ogType", value)} />
         </label>
       </section>
     </div>
   {:else if activePage && parsed.kind === "yaml"}
-    <p class="empty-text">Pagina folosește frontmatter YAML. Editează-l momentan în cod.</p>
+    <p class="empty-text">{t("content-settings-yaml-help")}</p>
   {:else}
-    <p class="empty-text">Selectează o pagină Markdown.</p>
+    <p class="empty-text">{t("content-settings-select-page")}</p>
   {/if}
 </section>
 
@@ -170,14 +163,6 @@
   .metadata-groups h4,
   .empty-text {
     margin: 0;
-  }
-
-  .taxonomy-note {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 500;
-    line-height: 1.4;
   }
 
   .section-heading h3 {

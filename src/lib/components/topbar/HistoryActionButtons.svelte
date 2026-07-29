@@ -5,7 +5,13 @@
     IconDeviceFloppy,
   } from "@tabler/icons-svelte";
   import ToolbarButton from "$lib/components/topbar/ToolbarButton.svelte";
-  import { UI_TERMS } from "$lib/i18n/ui-terms";
+  import {
+    legacyTranslator,
+    localeRevision,
+  } from "$lib/i18n/runtime.svelte";
+
+  $: t = legacyTranslator($localeRevision);
+  import { UI_TERM_IDS } from "$lib/i18n/ui-terms";
 
   export let canUndo = false;
   export let canRedo = false;
@@ -16,15 +22,15 @@
 </script>
 
 <ToolbarButton
-  title={inspectorHasPending ? `${UI_TERMS.save} modificările (Ctrl+S)` : UI_TERMS.save}
+  title={inspectorHasPending ? `${t(UI_TERM_IDS.save)} (Ctrl+S)` : t(UI_TERM_IDS.save)}
   pending={inspectorHasPending}
   onclick={saveActiveFile}
 >
   <IconDeviceFloppy size={17} stroke={1.8} />
 </ToolbarButton>
-<ToolbarButton title={`${UI_TERMS.undo} (Ctrl+Z)`} disabled={!canUndo} onclick={undoAction}>
+<ToolbarButton title={`${t(UI_TERM_IDS.undo)} (Ctrl+Z)`} disabled={!canUndo} onclick={undoAction}>
   <IconArrowBackUp size={17} stroke={1.8} />
 </ToolbarButton>
-<ToolbarButton title={`${UI_TERMS.redo} (Ctrl+Shift+Z)`} disabled={!canRedo} onclick={redoAction}>
+<ToolbarButton title={`${t(UI_TERM_IDS.redo)} (Ctrl+Shift+Z)`} disabled={!canRedo} onclick={redoAction}>
   <IconArrowForwardUp size={17} stroke={1.8} />
 </ToolbarButton>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { IconChevronDown } from "@tabler/icons-svelte";
   import type { Snippet } from "svelte";
 
   let {
@@ -25,7 +26,12 @@
 </script>
 
 <div class="section">
-  <button type="button" class="section-header" onclick={() => (collapsed = !collapsed)}>
+  <button
+    type="button"
+    class="section-header"
+    aria-expanded={!collapsed}
+    onclick={() => (collapsed = !collapsed)}
+  >
     <span class="section-icon">
       {#if icon}
         {@render icon()}
@@ -35,7 +41,7 @@
     {#if hasValues}
       <span class="section-dot"></span>
     {/if}
-    <span class="chevron" class:rotated={collapsed}>›</span>
+    <IconChevronDown class={collapsed ? "chevron collapsed" : "chevron"} size={14} stroke={1.8} aria-hidden="true" />
   </button>
   {#if !collapsed}
     <div class="section-body">
@@ -47,7 +53,7 @@
 <style>
   .section {
     position: relative;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .section:focus-within {
@@ -60,15 +66,25 @@
     gap: 5px;
     width: 100%;
     min-height: 32px;
-    padding: 5px 9px;
+    padding: 4px 10px;
     border: none;
     background: transparent;
     cursor: pointer;
     text-align: left;
+    transition:
+      color 120ms ease,
+      background 120ms ease,
+      box-shadow 120ms ease;
   }
 
   .section-header:hover {
-    background: var(--control-hover);
+    background: color-mix(in srgb, var(--control-hover) 72%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--skeuo-edge-highlight) 72%, transparent);
+  }
+
+  .section-header:active {
+    background: color-mix(in srgb, var(--surface-inset) 36%, transparent);
+    box-shadow: inset 0 1px 2px color-mix(in srgb, var(--skeuo-shade) 42%, transparent);
   }
 
   .section-icon {
@@ -83,38 +99,34 @@
   .section-title {
     flex: 1;
     font-size: 12px;
-    font-weight: 650;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-muted);
+    font-weight: 700;
+    letter-spacing: 0;
+    color: var(--text);
   }
 
   .section-dot {
-    width: 5px;
-    height: 5px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
     background: var(--brand);
     flex-shrink: 0;
   }
 
-  .chevron {
+  :global(.chevron) {
     color: var(--text-muted);
-    font-size: 14px;
-    transform: rotate(90deg);
-    transition: transform 0.15s;
-    display: inline-block;
-    line-height: 1;
+    flex: 0 0 auto;
+    transition: transform 140ms ease;
   }
 
-  .chevron.rotated {
-    transform: rotate(0deg);
+  :global(.chevron.collapsed) {
+    transform: rotate(-90deg);
   }
 
   .section-body {
-    padding: 5px 9px 9px;
+    padding: 6px 10px 10px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 7px;
     min-width: 0;
     overflow: visible;
   }

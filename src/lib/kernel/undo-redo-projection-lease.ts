@@ -30,7 +30,8 @@ export function requireCurrentKernelUndoRedoProjectionLease(
 ) {
   if (!kernelUndoRedoProjectionLeaseMatches(host, lease)) {
     throw new Error(
-      `${operation} nu mai aparține operației Undo/Redo și instanței ProjectSession curente.`,
+      t("history-projection-lease-expired", { operation }),
     );
   }
 }
+import { t } from "$lib/i18n/runtime.svelte";

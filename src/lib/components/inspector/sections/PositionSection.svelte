@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { ScssVariable } from "$lib/types";
   import type { CssPropertyEditController } from "$lib/inspector/css-property-edit";
   import {
@@ -38,19 +39,19 @@
     position === "fixed" || position === "sticky"
   );
 
-  const positionOpts = [
-    { value: "static",   label: "Sta", title: "Static"   },
-    { value: "relative", label: "Rel", title: "Relative" },
-    { value: "absolute", label: "Abs", title: "Absolute" },
-    { value: "fixed",    label: "Fix", title: "Fixed"    },
-    { value: "sticky",   label: "Stk", title: "Sticky"   },
-  ];
+  const positionOpts = $derived([
+    { value: "static", label: t("inspector-position-static-short"), title: t("inspector-position-static") },
+    { value: "relative", label: t("inspector-position-relative-short"), title: t("inspector-position-relative") },
+    { value: "absolute", label: t("inspector-position-absolute-short"), title: t("inspector-position-absolute") },
+    { value: "fixed", label: t("inspector-position-fixed-short"), title: t("inspector-position-fixed") },
+    { value: "sticky", label: t("inspector-position-sticky-short"), title: t("inspector-position-sticky") },
+  ]);
 </script>
 
-<InspectorSection title="Poziție" {hasValues}>
+<InspectorSection title={t("inspector-position-title")} {hasValues}>
   {#snippet icon()}<IconMapPin size={13} stroke={1.7} />{/snippet}
 
-  <div class="row-label">Poziție</div>
+  <div class="row-label">{t("inspector-position-title")}</div>
   <SegmentedControl
     options={positionOpts}
     value={getValue("position")}
@@ -76,7 +77,7 @@
     </div>
   {/if}
 
-  <div class="row-label">Z-Index</div>
+  <div class="row-label">{t("inspector-position-z-index")}</div>
   <PropInput value={getValue("z-index")} placeholder="auto" {...edit.continuous("z-index")}>
     {#snippet prefix()}<IconStack2 size={11} stroke={1.8} />{/snippet}
   </PropInput>

@@ -16,6 +16,8 @@
     chooseAssetFile,
     importProjectAsset,
   } from "$lib/project/io";
+  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
   import type { AppState } from "$lib/state/app.svelte";
   import type { SourceGraphAsset } from "$lib/types";
   import { errorMessage } from "$lib/util";
@@ -27,12 +29,12 @@
   type AssetKind = Exclude<AssetView, "all">;
   type DetailMode = "info" | "create" | "edit";
 
-  const assetViews: { id: AssetView; label: string }[] = [
-    { id: "all", label: "Toate" },
-    { id: "images", label: "Imagini" },
-    { id: "fonts", label: "Fonturi" },
-    { id: "other", label: "Altele" },
-  ];
+  const assetViews = $derived([
+    { id: "all" as const, label: t("assets-view-all") },
+    { id: "images" as const, label: t("assets-view-images") },
+    { id: "fonts" as const, label: t("assets-view-fonts") },
+    { id: "other" as const, label: t("assets-view-other") },
+  ]);
 
   let activeView = $state<AssetView>("all");
   let detailMode = $state<DetailMode>("info");
@@ -61,14 +63,14 @@
       }));
     return [...graphAssets, ...staged];
   });
-  const normalizedQuery = $derived(query.trim().toLocaleLowerCase("ro"));
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredAssets = $derived(
     assets.filter((asset) => {
       const usages = usageCount(asset);
       return (usageFilter === "all" || (usageFilter === "used" ? usages > 0 : usages === 0))
         && (activeView === "all" || assetKind(asset) === activeView)
         && (!normalizedQuery || `${asset.logicalPath} ${asset.file} ${asset.themeName ?? ""}`
-          .toLocaleLowerCase("ro")
+          .toLocaleLowerCase(l10n.locale)
           .includes(normalizedQuery));
     }),
   );
@@ -76,14 +78,18 @@
     assets.find((asset) => asset.id === selectedAssetId) ?? filteredAssets[0] ?? null,
   );
   const unusedCount = $derived(assets.filter((asset) => usageCount(asset) === 0).length);
-  const selectedImageTarget = $derived(app.selectedElement?.tag === "img" ? app.selectedElement : null);
+  const selectedImageTarget = $derived(
+    app.coordinatedElementSelection?.observation.tag === "img"
+      ? app.coordinatedElementSelection
+      : null,
+  );
 
   function usageCount(asset: SourceGraphAsset) {
     return (app.sourceGraph?.relations ?? []).filter((relation) => relation.to === asset.nodeId).length;
   }
 
   function fileExtension(value: string) {
-    return value.split(".").at(-1)?.toLocaleLowerCase("ro") ?? "";
+    return value.split(".").at(-1)?.toLocaleLowerCase(l10n.locale) ?? "";
   }
 
   function extension(asset: SourceGraphAsset) {
@@ -101,9 +107,9 @@
   }
 
   function kindLabel(kind: AssetKind) {
-    if (kind === "images") return "Imagine";
-    if (kind === "fonts") return "Font";
-    return "Fișier";
+    if (kind === "images") return t("assets-kind-image");
+    if (kind === "fonts") return t("assets-kind-font");
+    return t("assets-kind-file");
   }
 
   function defaultDestination(view: AssetView) {
@@ -173,7 +179,7 @@
   async function importAsset() {
     if (importing) return;
     if (!sourcePath.trim()) {
-      formError = "Alege mai întâi un fișier pentru import.";
+      formError = t("assets-choose-first");
       return;
     }
     importing = true;
@@ -188,11 +194,16 @@
           expectedSessionId: app.kernelProjectSessionId,
         },
       );
-      app.projectWorkspaceSnapshot = receipt.workspace;
+      const settlement = await settleProjectWorkspaceMutation(app, receipt, {
+        preferredRelativePath: receipt.relativePath,
+        warningLabel: t("assets-import-operation"),
+      });
       if (receipt.relativePath) selectedAssetId = `staged:${receipt.relativePath}`;
       resetPanel();
       app.setGlobalStatus(
-        `Resursa ${receipt.relativePath ?? fileName} este pregătită în ProjectWorkspace — Ctrl+S persistă pe disc.`,
+        settlement.warnings.length > 0
+          ? t("assets-import-warning", { path: receipt.relativePath ?? fileName })
+          : t("assets-import-success", { path: receipt.relativePath ?? fileName }),
         "unsaved",
       );
     } catch (error) {
@@ -234,22 +245,22 @@
   }
 </script>
 
-<section class="assets-workspace" aria-labelledby="assets-title">
+<section class="activity-workspace assets-workspace" aria-labelledby="assets-title">
   <header class="workspace-header">
     <div>
-      <span class="eyebrow"><IconPhoto size={15} stroke={1.9} /> Bibliotecă media</span>
-      <h1 id="assets-title">Resurse</h1>
-      <p>Inventarul vine din harta surselor, iar importul și utilizarea resurselor sunt controlate de Rust.</p>
+      <span class="eyebrow"><IconPhoto size={15} stroke={1.9} /> {t("assets-eyebrow")}</span>
+      <h1 id="assets-title">{t("assets-title")}</h1>
+      <p>{t("assets-description")}</p>
     </div>
     <dl>
-      <div><dt>Total</dt><dd>{assets.length}</dd></div>
-      <div><dt>Utilizate</dt><dd>{assets.length - unusedCount}</dd></div>
-      <div class:warning={unusedCount > 0}><dt>Nefolosite</dt><dd>{unusedCount}</dd></div>
+      <div><dt>{t("assets-stat-total")}</dt><dd>{l10n.formatNumber(assets.length)}</dd></div>
+      <div><dt>{t("assets-stat-used")}</dt><dd>{l10n.formatNumber(assets.length - unusedCount)}</dd></div>
+      <div class:warning={unusedCount > 0}><dt>{t("assets-stat-unused")}</dt><dd>{l10n.formatNumber(unusedCount)}</dd></div>
     </dl>
   </header>
 
   <div class="workspace-toolbar">
-    <div class="view-tabs" role="tablist" aria-label="Tipuri de resurse">
+    <div class="ui-tabs view-tabs" role="tablist" aria-label={t("assets-types-label")}>
       {#each assetViews as view, index (view.id)}
         <button
           id={`assets-tab-${view.id}`}
@@ -258,27 +269,34 @@
           aria-selected={activeView === view.id ? "true" : "false"}
           aria-controls={`assets-panel-${view.id}`}
           tabindex={activeView === view.id ? 0 : -1}
+          class="ui-tab"
           class:active={activeView === view.id}
           onclick={() => selectView(view.id)}
           onkeydown={(event) => handleViewKeydown(event, index)}
         >{view.label}</button>
       {/each}
     </div>
-    <label>
-      <span class="sr-only">Filtru utilizare</span>
-      <select bind:value={usageFilter} aria-label="Filtru utilizare">
-        <option value="all">Toate utilizările</option>
-        <option value="used">Utilizate</option>
-        <option value="unused">Nefolosite</option>
-      </select>
-    </label>
-    <label class="search-field">
-      <span class="sr-only">Caută resurse</span>
-      <IconSearch size={14} stroke={1.9} />
-      <input bind:value={query} type="search" placeholder="Caută după nume sau cale" />
-    </label>
-    <button class="toolbar-action" type="button" disabled={importing} onclick={beginCreate}>
-      <IconPlus size={14} stroke={2} /> Adaugă
+    <div class="toolbar-query-group with-filter">
+      <label class="toolbar-filter">
+        <span class="sr-only">{t("assets-usage-filter")}</span>
+        <select
+          class="ui-field toolbar"
+          bind:value={usageFilter}
+          aria-label={t("assets-usage-filter")}
+        >
+          <option value="all">{t("assets-usage-all")}</option>
+          <option value="used">{t("assets-usage-used")}</option>
+          <option value="unused">{t("assets-usage-unused")}</option>
+        </select>
+      </label>
+      <label class="search-field">
+        <span class="sr-only">{t("assets-search-label")}</span>
+        <IconSearch size={14} stroke={1.9} />
+        <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("assets-search-placeholder")} />
+      </label>
+    </div>
+    <button class="ui-button primary toolbar toolbar-action" type="button" disabled={importing} onclick={beginCreate}>
+      <IconPlus size={14} stroke={2} /> {t("assets-add")}
     </button>
   </div>
 
@@ -288,13 +306,14 @@
       id={`assets-panel-${activeView}`}
       role="tabpanel"
       aria-labelledby={`assets-tab-${activeView}`}
-      aria-label="Bibliotecă resurse"
+      aria-label={t("assets-library-label")}
     >
       {#each filteredAssets as asset (asset.id)}
         <button
           type="button"
-          class="asset-card"
-          class:selected={selectedAsset?.id === asset.id}
+          class="asset-card ui-entity-selectable"
+          data-ui-selected={selectedAsset?.id === asset.id ? "true" : undefined}
+          aria-pressed={selectedAsset?.id === asset.id}
           onclick={() => selectAsset(asset.id)}
         >
           <span class="asset-preview">
@@ -310,129 +329,112 @@
           </span>
           <span class:unused={usageCount(asset) === 0} class="usage-badge">
             {asset.id.startsWith("staged:")
-              ? "În sesiune"
-              : usageCount(asset) === 0 ? "Nefolosit" : `${usageCount(asset)} utilizări`}
+              ? t("assets-in-session")
+              : usageCount(asset) === 0
+                ? t("assets-unused")
+                : t("assets-usage-count", { count: usageCount(asset) })}
           </span>
         </button>
       {:else}
         <div class="workspace-state">
           <IconPhoto size={28} stroke={1.5} />
-          <strong>{assets.length === 0 ? "Proiectul nu conține resurse statice" : "Niciun rezultat"}</strong>
-          <span>Importă o resursă sau schimbă tabul, utilizarea ori termenul de căutare.</span>
+          <strong>{assets.length === 0 ? t("assets-empty-project") : t("assets-no-results")}</strong>
+          <span>{t("assets-empty-description")}</span>
         </div>
       {/each}
     </div>
 
-    <aside class="asset-detail" aria-label="Panou contextual resurse">
+    <aside class="asset-detail" aria-label={t("assets-detail-label")}>
       {#if detailMode === "create"}
         <form class="import-form" onsubmit={(event) => { event.preventDefault(); void importAsset(); }}>
           <header class="detail-heading">
             <div>
-              <span class="detail-kicker">Resursă nouă</span>
-              <h2>Importă în proiect</h2>
-              <p>Fișierul este citit de Rust și etapizat create-only în ProjectWorkspace.</p>
+              <span class="detail-kicker">{t("assets-new")}</span>
+              <h2>{t("assets-import-title")}</h2>
+              <p>{t("assets-import-description")}</p>
             </div>
-            <button type="button" aria-label="Renunță la import" disabled={importing} onclick={resetPanel}><IconX size={14} /></button>
+            <button class="ui-icon-button ui-close-button" type="button" aria-label={t("assets-cancel-import")} disabled={importing} onclick={resetPanel}><IconX size={14} /></button>
           </header>
           <button class="file-picker" type="button" disabled={importing} onclick={() => { void selectImportFile(); }}>
             <IconFolderOpen size={16} />
-            <span><strong>{fileName || "Alege un fișier"}</strong><small>{sourcePath || "Fișierul original nu este modificat."}</small></span>
+            <span><strong>{fileName || t("assets-choose-file")}</strong><small>{sourcePath || t("assets-source-preserved")}</small></span>
           </button>
-          <label><span>Nume în proiect</span><input bind:value={fileName} disabled={importing} placeholder="imagine.webp" /></label>
-          <label><span>Director destinație</span><input bind:value={destinationDirectory} disabled={importing} placeholder="static/images" /></label>
+          <label><span>{t("assets-project-name")}</span><input bind:value={fileName} disabled={importing} placeholder="image.webp" /></label>
+          <label><span>{t("assets-destination-directory")}</span><input bind:value={destinationDirectory} disabled={importing} placeholder="static/images" /></label>
           {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
           <div class="form-actions">
-            <button type="button" disabled={importing} onclick={resetPanel}>Renunță</button>
-            <button class="primary" type="submit" disabled={importing || !sourcePath || !fileName.trim()}>
-              <IconUpload size={14} /> {importing ? "Se importă prin Rust…" : "Importă în sesiune"}
+            <button type="button" disabled={importing} onclick={resetPanel}>{t("assets-cancel")}</button>
+            <button class="ui-button primary" type="submit" disabled={importing || !sourcePath || !fileName.trim()}>
+              <IconUpload size={14} /> {importing ? t("assets-importing") : t("assets-import-session")}
             </button>
           </div>
         </form>
       {:else if detailMode === "edit" && selectedAsset}
         <header class="detail-heading">
           <div>
-            <span class="detail-kicker">Editare utilizare</span>
+            <span class="detail-kicker">{t("assets-edit-usage")}</span>
             <h2>{selectedAsset.logicalPath.split("/").at(-1)}</h2>
-            <p>Aplicarea schimbă sursa elementului &lt;img&gt; selectat prin mutația HTML Rust.</p>
+            <p>{t("assets-edit-description")}</p>
           </div>
-          <button type="button" aria-label="Încheie editarea" disabled={applying} onclick={resetPanel}><IconX size={14} /></button>
+          <button class="ui-icon-button ui-close-button" type="button" aria-label={t("assets-finish-editing")} disabled={applying} onclick={resetPanel}><IconX size={14} /></button>
         </header>
         <div class="target-card">
-          <strong>{selectedImageTarget ? "Imagine selectată în Editor" : "Nicio imagine selectată"}</strong>
-          <span>{selectedImageTarget?.sourceLocation?.file ?? "Selectează un <img> pentru înlocuire controlată."}</span>
+          <strong>{selectedImageTarget ? t("assets-selected-image") : t("assets-no-selected-image")}</strong>
+          <span>{selectedImageTarget?.sourceLocation?.file ?? t("assets-select-img-help")}</span>
         </div>
         {#if formError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {formError}</p>{/if}
         <div class="form-actions">
-          <button type="button" disabled={applying} onclick={resetPanel}>Renunță</button>
+          <button type="button" disabled={applying} onclick={resetPanel}>{t("assets-cancel")}</button>
           <button
-            class="primary"
+            class="ui-button primary"
             type="button"
             disabled={!selectedImageTarget || assetKind(selectedAsset) !== "images" || applying}
             onclick={() => { void applyToSelectedImage(selectedAsset); }}
           >
             <IconPhotoCheck size={14} />
-            {applying ? "Se aplică prin Rust…" : "Aplică pe imagine"}
+            {applying ? t("assets-applying") : t("assets-apply-image")}
           </button>
         </div>
       {:else if selectedAsset}
         <span class="detail-kicker">{kindLabel(assetKind(selectedAsset))} · {selectedAsset.origin}</span>
         <h2>{selectedAsset.logicalPath.split("/").at(-1)}</h2>
         {#if assetKind(selectedAsset) === "images" && assetUrl(selectedAsset)}
-          <div class="detail-preview"><img src={assetUrl(selectedAsset)} alt={`Previzualizare ${selectedAsset.logicalPath}`} /></div>
+          <div class="detail-preview"><img src={assetUrl(selectedAsset)} alt={t("assets-preview-label", { path: selectedAsset.logicalPath })} /></div>
         {/if}
         <dl class="asset-metadata">
-          <div><dt>Cale publică</dt><dd>{sourceValue(selectedAsset)}</dd></div>
-          <div><dt>Sursă</dt><dd>{selectedAsset.file}</dd></div>
-          <div><dt>Format</dt><dd>{extension(selectedAsset).toUpperCase() || "—"}</dd></div>
-          <div><dt>Utilizări</dt><dd>{usageCount(selectedAsset)}</dd></div>
+          <div><dt>{t("assets-public-path")}</dt><dd>{sourceValue(selectedAsset)}</dd></div>
+          <div><dt>{t("assets-source")}</dt><dd>{selectedAsset.file}</dd></div>
+          <div><dt>{t("assets-format")}</dt><dd>{extension(selectedAsset).toUpperCase() || "—"}</dd></div>
+          <div><dt>{t("assets-usages")}</dt><dd>{l10n.formatNumber(usageCount(selectedAsset))}</dd></div>
         </dl>
         {#if selectedAsset.id.startsWith("staged:")}
-          <p class="pending-note">Resursa există momentan numai în sesiune. Ctrl+S o persistă pe disc.</p>
+          <p class="pending-note">{t("assets-pending-note")}</p>
         {/if}
         <div class="detail-actions">
           {#if assetKind(selectedAsset) === "images"}
-            <button class="primary-action" type="button" onclick={beginEdit}>
-              <IconEdit size={14} /> Editează utilizarea
+            <button class="ui-button primary primary-action" type="button" onclick={beginEdit}>
+              <IconEdit size={14} /> {t("assets-edit-usage-action")}
             </button>
           {/if}
-          <button class="secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(sourceValue(selectedAsset)); }}>
-            Deschide resursa <IconExternalLink size={13} stroke={1.9} />
+          <button class="ui-button secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(sourceValue(selectedAsset)); }}>
+            {t("assets-open")} <IconExternalLink size={13} stroke={1.9} />
           </button>
         </div>
       {:else}
-        <div class="workspace-state">Selectează o resursă pentru informații.</div>
+        <div class="workspace-state">{t("assets-select-help")}</div>
       {/if}
     </aside>
   </div>
 </section>
 
 <style>
-  .assets-workspace { display: grid; grid-template-rows: auto 42px minmax(0, 1fr); min-width: 0; min-height: 0; height: 100%; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-panel); color: var(--wb-text-primary); background: var(--wb-surface-document); }
-  .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 17px 20px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .eyebrow { display: inline-flex; align-items: center; gap: 6px; color: var(--wb-accent-strong); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
-  h1 { margin: 6px 0 0; color: var(--text-strong); font-size: 20px; font-weight: 650; letter-spacing: -.015em; }
-  .workspace-header p { margin: 5px 0 0; color: var(--wb-text-muted); font-size: 12px; }
-  .workspace-header > dl { display: flex; gap: 7px; margin: 0; }
-  .workspace-header > dl div { min-width: 78px; padding: 7px 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
   .workspace-header > dl div.warning { border-color: color-mix(in srgb, var(--wb-warning) 45%, var(--wb-border-subtle)); }
   dt { color: var(--wb-text-muted); font-size: 12px; font-weight: 650; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
-  .workspace-toolbar, .view-tabs, .search-field, .toolbar-action, .detail-heading, .file-picker, .form-error, .form-actions, .detail-actions, .primary-action, .secondary-action { display: flex; align-items: center; }
-  .workspace-toolbar { justify-content: flex-end; gap: 8px; padding: 5px 9px; border-bottom: 1px solid var(--wb-border-subtle); background: var(--wb-surface-chrome); }
-  .view-tabs { align-self: stretch; gap: 2px; margin-right: auto; }
-  .view-tabs button { height: 100%; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; color: var(--wb-text-muted); background: transparent; font-size: 12px; font-weight: 600; }
-  .view-tabs button.active { border-bottom-color: var(--wb-accent); color: var(--wb-accent-strong); }
-  .search-field { position: relative; width: min(300px, 30vw); }
-  .search-field :global(svg) { position: absolute; left: 8px; color: var(--wb-text-muted); }
-  .search-field input, .workspace-toolbar select { height: 28px; border: 1px solid var(--wb-border-subtle); border-radius: 5px; color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; }
-  .search-field input { width: 100%; padding: 0 8px 0 28px; }
-  .workspace-toolbar select { min-width: 132px; padding: 0 7px; }
-  .toolbar-action { flex: 0 0 auto; justify-content: center; gap: 5px; min-height: 28px; padding: 0 10px; border: 1px solid var(--wb-accent); border-radius: var(--radius-control); color: #fff; background: var(--wb-accent); font-size: 12px; font-weight: 650; }
+  .detail-heading, .file-picker, .form-error, .form-actions, .detail-actions, .primary-action, .secondary-action { display: flex; align-items: center; }
   .workspace-body { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(300px, .52fr); min-width: 0; min-height: 0; }
   .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-content: start; gap: 8px; min-width: 0; min-height: 0; padding: 9px; overflow: auto; border-right: 1px solid var(--wb-border-subtle); }
-  .asset-card { display: grid; grid-template-rows: 98px auto auto; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-chrome); text-align: left; }
-  .asset-card:hover, .asset-card.selected { border-color: color-mix(in srgb, var(--wb-accent) 55%, var(--wb-border-subtle)); }
-  .asset-card.selected { box-shadow: inset 0 0 0 1px var(--wb-accent); }
+  .asset-card { --ui-entity-background: var(--wb-surface-chrome); --ui-entity-border-color: var(--wb-border-subtle); display: grid; grid-template-rows: 98px auto auto; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-chrome); text-align: left; }
   .asset-preview { display: grid; min-width: 0; overflow: hidden; place-items: center; color: var(--wb-text-muted); background: var(--surface-7); }
   .asset-preview img { width: 100%; height: 100%; object-fit: contain; }
   .asset-copy { display: grid; gap: 3px; min-width: 0; padding: 8px 8px 4px; }

@@ -16,8 +16,9 @@ use crate::{
         observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel},
         project_session::ProjectSessionSnapshot,
         project_workspace::{
-            save_project_workspace_with_recovery, ProjectWorkspace, ProjectWorkspaceIdentity,
-            ProjectWorkspaceSaveError, WorkspaceMutationMetadata,
+            emit_project_workspace_mutated, save_project_workspace_with_recovery, ProjectWorkspace,
+            ProjectWorkspaceIdentity, ProjectWorkspacePreviewProjection, ProjectWorkspaceSaveError,
+            WorkspaceMutationMetadata,
         },
         write_authority::{ActiveProjectReadLease, WriteAuthorityRuntime},
     },
@@ -459,16 +460,48 @@ fn emit_network_progress(
     operation_id: &str,
     kind: VersionNetworkOperationKind,
     status: VersionNetworkOperationStatus,
-    message: &str,
+    _message: &str,
 ) {
+    let code = match (kind, status) {
+        (VersionNetworkOperationKind::Fetch, VersionNetworkOperationStatus::Started) => {
+            "version-network-fetch-started"
+        }
+        (VersionNetworkOperationKind::Fetch, VersionNetworkOperationStatus::Progress) => {
+            "version-network-fetch-progress"
+        }
+        (VersionNetworkOperationKind::Fetch, VersionNetworkOperationStatus::Completed) => {
+            "version-network-fetch-completed"
+        }
+        (VersionNetworkOperationKind::Fetch, VersionNetworkOperationStatus::Failed) => {
+            "version-network-fetch-failed"
+        }
+        (VersionNetworkOperationKind::Fetch, VersionNetworkOperationStatus::Cancelled) => {
+            "version-network-fetch-cancelled"
+        }
+        (VersionNetworkOperationKind::Push, VersionNetworkOperationStatus::Started) => {
+            "version-network-push-started"
+        }
+        (VersionNetworkOperationKind::Push, VersionNetworkOperationStatus::Progress) => {
+            "version-network-push-progress"
+        }
+        (VersionNetworkOperationKind::Push, VersionNetworkOperationStatus::Completed) => {
+            "version-network-push-completed"
+        }
+        (VersionNetworkOperationKind::Push, VersionNetworkOperationStatus::Failed) => {
+            "version-network-push-failed"
+        }
+        (VersionNetworkOperationKind::Push, VersionNetworkOperationStatus::Cancelled) => {
+            "version-network-push-cancelled"
+        }
+    };
     let event = VersionNetworkProgressEvent {
-        schema_version: VERSIONING_SCHEMA_VERSION,
+        schema_version: 3,
         project_root: project_root.to_string(),
         session_id: session_id.to_string(),
         operation_id: operation_id.to_string(),
         kind,
         status,
-        message: redact_network_text(message),
+        message_diagnostic: crate::localization::LocalizedDiagnostic::new(code),
     };
     if let Err(error) = app.emit(VERSIONING_NETWORK_PROGRESS_EVENT, event) {
         eprintln!("[Pană Studio] Evenimentul de progres Git nu a putut fi emis: {error}");
@@ -1506,6 +1539,11 @@ pub async fn restore_version(
         // before finalizing Git so every later recovery path sees one coherent
         // ProjectWorkspace generation.
         *workspace = candidate;
+        emit_project_workspace_mutated(
+            &app,
+            workspace,
+            ProjectWorkspacePreviewProjection::Required,
+        );
 
         let verify_lease = authority.acquire_active_project_read_lease_for_session(
             &captured.root,
@@ -2227,6 +2265,11 @@ pub async fn resolve_version_restore_recovery(
                     }
                 }
                 *workspace = candidate;
+                emit_project_workspace_mutated(
+                    &app,
+                    workspace,
+                    ProjectWorkspacePreviewProjection::Required,
+                );
                 let verify_lease = authority.acquire_active_project_read_lease_for_session(
                     &captured.root,
                     &captured.runtime_session_id,
@@ -2643,6 +2686,7 @@ fn publish_integration_tree(
         }
     }
     *workspace = candidate;
+    emit_project_workspace_mutated(app, workspace, ProjectWorkspacePreviewProjection::Required);
 
     let authority = app.state::<WriteAuthorityRuntime>();
     let verify_lease = authority.acquire_active_project_read_lease_for_session(

@@ -21,6 +21,7 @@
     ensureElementSessionIds();
     refreshEmptyEditableZones();
     syncStructure();
+    announceCanvasAgentReady();
     var identity = mountedCanvasIdentity();
     var committedAt = Math.max(0, Math.round(performance.now() - startedAt));
     waitForStyledFrame().then(function () {

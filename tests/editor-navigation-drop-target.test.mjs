@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  captureEditorMoveNodeAnchor,
   editorNavigationDropTargetStatus,
+  resolveEditorMoveNodeAnchor,
 } from "$lib/state/editor-navigation-controller";
 
 function capabilities(overrides = {}) {
@@ -101,4 +103,93 @@ test("empty Tera slots resolve only through the Rust boundary identity", () => {
     targetBoundarySourceId: "missing",
   });
   assert.equal(stale.allowed, false);
+});
+
+test("a move target is rebased by structural path after a draft changes Source Graph identities", () => {
+  const before = {
+    rootNodeIds: ["root:before"],
+    nodes: [
+      {
+        id: "root:before",
+        parentId: null,
+        children: ["heading:before", "paragraph:before"],
+        kind: "htmlElement",
+        tag: "section",
+        file: "templates/index.html",
+        origin: "project",
+      },
+      {
+        id: "heading:before",
+        parentId: "root:before",
+        children: [],
+        kind: "htmlElement",
+        tag: "h1",
+        file: "templates/index.html",
+        origin: "project",
+      },
+      {
+        id: "paragraph:before",
+        parentId: "root:before",
+        children: [],
+        kind: "htmlElement",
+        tag: "p",
+        file: "templates/index.html",
+        origin: "project",
+      },
+    ],
+  };
+  const after = {
+    rootNodeIds: ["root:after"],
+    nodes: [
+      {
+        ...before.nodes[0],
+        id: "root:after",
+        children: ["heading:after", "paragraph:after"],
+      },
+      {
+        ...before.nodes[1],
+        id: "heading:after",
+        parentId: "root:after",
+      },
+      {
+        ...before.nodes[2],
+        id: "paragraph:after",
+        parentId: "root:after",
+      },
+    ],
+  };
+
+  const heading = captureEditorMoveNodeAnchor(before, "heading:before");
+  const paragraph = captureEditorMoveNodeAnchor(before, "paragraph:before");
+  assert.ok(heading);
+  assert.ok(paragraph);
+  assert.equal(resolveEditorMoveNodeAnchor(after, heading)?.id, "heading:after");
+  assert.equal(resolveEditorMoveNodeAnchor(after, paragraph)?.id, "paragraph:after");
+});
+
+test("structural move rebasing fails closed when the node shape changed", () => {
+  const before = {
+    rootNodeIds: ["root"],
+    nodes: [{
+      id: "root",
+      parentId: null,
+      children: [],
+      kind: "htmlElement",
+      tag: "h1",
+      file: "templates/index.html",
+      origin: "project",
+    }],
+  };
+  const anchor = captureEditorMoveNodeAnchor(before, "root");
+  const changed = {
+    rootNodeIds: ["replacement"],
+    nodes: [{
+      ...before.nodes[0],
+      id: "replacement",
+      tag: "p",
+    }],
+  };
+
+  assert.ok(anchor);
+  assert.equal(resolveEditorMoveNodeAnchor(changed, anchor), null);
 });

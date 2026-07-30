@@ -2,6 +2,7 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use tauri::{AppHandle, Runtime};
@@ -18,6 +19,7 @@ use super::model::{WorkbenchSnapshot, WORKBENCH_SCHEMA_VERSION};
 
 const WORKBENCH_STATE_FILE: &str = "workbench.json";
 const WORKBENCH_STATE_MAX_BYTES: u64 = 256 * 1024;
+static WORKBENCH_PERSISTENCE_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn read_persisted_workbench(
     session: &ProjectSessionSnapshot,
@@ -58,6 +60,33 @@ pub fn read_persisted_workbench(
 }
 
 pub fn persist_workbench<R: Runtime>(
+    app: &AppHandle<R>,
+    session: &ProjectSessionSnapshot,
+    snapshot: &WorkbenchSnapshot,
+) -> Result<(), String> {
+    let _guard = WORKBENCH_PERSISTENCE_LOCK
+        .lock()
+        .map_err(|_| "Workbench persistence mutex este compromis.".to_string())?;
+    persist_workbench_unlocked(app, session, snapshot)
+}
+
+pub fn persist_latest_workbench<R: Runtime>(
+    app: &AppHandle<R>,
+    session: &ProjectSessionSnapshot,
+    snapshot: &WorkbenchSnapshot,
+) -> Result<(), String> {
+    let _guard = WORKBENCH_PERSISTENCE_LOCK
+        .lock()
+        .map_err(|_| "Workbench persistence mutex este compromis.".to_string())?;
+    if read_persisted_workbench(session)?
+        .is_some_and(|persisted| persisted.revision > snapshot.revision)
+    {
+        return Ok(());
+    }
+    persist_workbench_unlocked(app, session, snapshot)
+}
+
+fn persist_workbench_unlocked<R: Runtime>(
     app: &AppHandle<R>,
     session: &ProjectSessionSnapshot,
     snapshot: &WorkbenchSnapshot,
@@ -182,6 +211,33 @@ mod tests {
         let error = require_persisted_identity(&session, &snapshot).unwrap_err();
 
         assert!(error.contains("altei sesiuni/proiect"));
+    }
+
+    #[test]
+    fn latest_persistence_never_overwrites_a_newer_revision() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = unique_test_dir("workbench-latest-persistence");
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("Tauri test app should build");
+        ensure_app_home(app.handle()).unwrap();
+        app.state::<WriteAuthorityRuntime>()
+            .boot_recovery()
+            .unwrap();
+        let session = test_session(app.handle(), "/project/workbench-latest");
+        fs::create_dir_all(&session.session_dir).unwrap();
+        let mut newer = WorkbenchRuntime::default().read(&session).unwrap();
+        newer.revision = 2;
+        let mut stale = newer.clone();
+        stale.revision = 1;
+
+        persist_latest_workbench(app.handle(), &session, &newer).unwrap();
+        persist_latest_workbench(app.handle(), &session, &stale).unwrap();
+
+        let restored = read_persisted_workbench(&session).unwrap().unwrap();
+        assert_eq!(restored.revision, newer.revision);
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn test_session<R: Runtime>(app: &AppHandle<R>, project_root: &str) -> ProjectSessionSnapshot {

@@ -5,6 +5,7 @@ mod scan;
 mod scope;
 mod site_structure;
 mod startup;
+mod watcher;
 
 pub mod model;
 
@@ -36,3 +37,4 @@ pub use startup::{
     StartupCreationApplyRequest, StartupCreationCatalog, StartupCreationPlan,
     StartupCreationPlanRequest, StartupCreationReceipt, StartupFlowRuntime, StartupFlowSnapshot,
 };
+pub(crate) use watcher::ProjectDiskWatchHandle;

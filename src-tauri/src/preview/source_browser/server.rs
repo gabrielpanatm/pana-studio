@@ -196,9 +196,6 @@ impl SourceBrowserServer {
             .local_addr()
             .map_err(|error| format!("Nu am putut citi portul Source Browser: {error}"))?
             .port();
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| format!("Nu am putut configura Source Browser server: {error}"))?;
         let stop_flag = Arc::new(AtomicBool::new(false));
         let registry = Arc::new(SourceBrowserRegistry::default());
         let thread = spawn_server(
@@ -271,6 +268,10 @@ fn spawn_server(
             while !stop_flag.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        if stop_flag.load(Ordering::Acquire) {
+                            let _ = stream.shutdown(Shutdown::Both);
+                            break;
+                        }
                         if active_connections
                             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                                 (count < MAX_CONCURRENT_CONNECTIONS).then_some(count + 1)
@@ -294,10 +295,12 @@ fn spawn_server(
                             active_connections.fetch_sub(1, Ordering::AcqRel);
                         }
                     }
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(15));
+                    Err(error) => {
+                        if !stop_flag.load(Ordering::Acquire) {
+                            eprintln!("[Pană Studio] Listenerul Source Browser s-a oprit: {error}");
+                        }
+                        break;
                     }
-                    Err(_) => std::thread::sleep(Duration::from_millis(15)),
                 }
             }
         })

@@ -16,6 +16,7 @@
 
   function boot() {
     var startedAt = performance.now();
+    var navigationToBootAt = Math.max(0, Math.round(startedAt));
     ensureInspectorStyles();
     applyTemplateSourceIdsFromMarkers();
     ensureElementSessionIds();
@@ -24,7 +25,7 @@
     announceCanvasAgentReady();
     var identity = mountedCanvasIdentity();
     var committedAt = Math.max(0, Math.round(performance.now() - startedAt));
-    waitForStyledFrame().then(function () {
+    waitForStyledFrame(startedAt).then(function (readiness) {
       var styledReadyAt = Math.max(0, Math.round(performance.now() - startedAt));
       post("ready", {
         canvasIdentity: identity,
@@ -50,6 +51,10 @@
             phaseTimingsMs: {
               resourcesReady: 0,
               committed: committedAt,
+              navigationToBoot: navigationToBootAt,
+              fontsReady: readiness && Number.isFinite(readiness.fontsReady)
+                ? readiness.fontsReady
+                : styledReadyAt,
               styledReady: styledReadyAt
             },
             diagnostic: null

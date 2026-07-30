@@ -2,10 +2,10 @@ import { clearAiContextTimer as clearAiContextTimerFromController } from "$lib/s
 import { listenForSystemPreferences } from "$lib/application/system-preferences";
 import { t } from "$lib/i18n/runtime.svelte";
 import {
-  startAiCoordinationPolling,
-  stopAiCoordinationPolling,
+  startAiCoordinationEvents,
+  stopAiCoordinationEvents,
 } from "$lib/state/ai-coordination-controller";
-import { stopExternalDiskPolling as stopExternalDiskPollingFromController } from "$lib/state/external-disk-controller";
+import { stopExternalDiskMonitoring } from "$lib/state/external-disk-controller";
 import { clearPreviewTimers as clearPreviewTimersFromController } from "$lib/state/preview-controller";
 import { clearGlobalStatusExpiryTimer } from "$lib/state/status-controller";
 import { initUiFromStorage as initUiFromStorageFromController } from "$lib/state/ui-controller";
@@ -13,7 +13,7 @@ import type { AppState } from "$lib/state/app.svelte";
 
 export async function initFromStorage(app: AppState, storage: Storage) {
   await app.refreshGlobalStatusFromKernel();
-  startAiCoordinationPolling(app);
+  startAiCoordinationEvents(app);
   initUiFromStorageFromController(app.uiControllerHost(), storage);
   try {
     await listenForSystemPreferences(app);
@@ -48,6 +48,6 @@ export function destroyApp(app: AppState) {
   if (app.pendingRestoredSelectionTimer !== null) window.clearTimeout(app.pendingRestoredSelectionTimer);
   clearPreviewTimersFromController(app.previewControllerHost());
   clearAiContextTimerFromController(app.aiContextControllerHost());
-  stopAiCoordinationPolling(app);
-  stopExternalDiskPollingFromController(app.externalDiskControllerHost());
+  stopAiCoordinationEvents(app);
+  stopExternalDiskMonitoring(app.externalDiskControllerHost());
 }

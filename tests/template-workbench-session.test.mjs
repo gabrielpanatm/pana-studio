@@ -3,6 +3,7 @@ import { afterEach, test } from "node:test";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import {
   exitTemplateWorkbench,
+  loadScannedProjectFile,
   updateTemplateWorkbenchContext,
 } from "$lib/state/project-controller";
 
@@ -262,6 +263,91 @@ test("Template Workbench opens a collection template with the exact Rust-confirm
   assert.equal(host.templateWorkbenchPreferredPagePath, article.relativePath);
   assert.match(statuses.at(-1).text, /Articol demonstrativ/);
   assert.match(statuses.at(-1).text, /\/blog\/articol\//);
+});
+
+test("switching templates does not carry the previous template page context", async () => {
+  let workbenchRequest = null;
+  const { host } = workbenchHost("templates/index.html");
+  const contactTemplate = templateFile("templates/contact.html");
+  const contactPage = pageFile("content/contact.md");
+  const contactContext = consumer(contactPage.relativePath, "Contact", "/contact/");
+  host.scannedProject.files.push(contactTemplate, contactPage);
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = "templates/index.html";
+  host.templateWorkbenchPreferredPagePath = "content/_index.md";
+  host.templateWorkbenchPreferredRoute = "/";
+  host.source = "index";
+  host.sourceCache = {
+    "scanned:templates/contact.html": "contact",
+  };
+  host.updateTemplateWorkbenchContext = async (...args) => {
+    return await updateTemplateWorkbenchContext(host, ...args);
+  };
+
+  mockIPC((command, payload) => {
+    if (command === "read_project_workspace_state") {
+      return {
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        revision: 13,
+      };
+    }
+    assert.equal(command, "project_template_workbench_preview");
+    workbenchRequest = payload.input;
+    const base = receipt(payload.input);
+    return {
+      ...base,
+      plan: {
+        ...base.plan,
+        consumers: [contactContext],
+        selectedContext: contactContext,
+        renderMode: "page",
+        renderContext: {
+          kind: "realZolaPage",
+          canonicalTruth: true,
+          label: "Contact",
+          explanation: "Pagină Zola reală",
+        },
+      },
+    };
+  });
+
+  await loadScannedProjectFile(host, contactTemplate, {
+    skipDraftFlush: true,
+    strict: true,
+  });
+
+  assert.equal(workbenchRequest.preferredPagePath, null);
+  assert.equal(workbenchRequest.preferredRoute, null);
+  assert.equal(host.templateWorkbenchTarget, contactTemplate.relativePath);
+  assert.equal(host.templateWorkbenchPreferredPagePath, contactPage.relativePath);
+  assert.equal(host.source, "contact");
+});
+
+test("reopening the active template preserves its confirmed context", async () => {
+  const { host, template } = workbenchHost("templates/contact.html");
+  const calls = [];
+  host.templateWorkbenchActive = true;
+  host.templateWorkbenchTarget = template.relativePath;
+  host.templateWorkbenchPreferredPagePath = "content/contact.md";
+  host.templateWorkbenchPreferredRoute = "/contact/";
+  host.source = "contact";
+  host.sourceCache = {
+    [`scanned:${template.relativePath}`]: "contact",
+  };
+  host.updateTemplateWorkbenchContext = async (...args) => {
+    calls.push(args);
+    return null;
+  };
+
+  await loadScannedProjectFile(host, template, {
+    skipDraftFlush: true,
+    strict: true,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][2], "content/contact.md");
+  assert.equal(calls[0][3].preferredRoute, "/contact/");
 });
 
 test("Template Workbench opens a taxonomy resource only with the exact Rust-confirmed route", async () => {

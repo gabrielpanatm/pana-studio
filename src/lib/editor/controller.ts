@@ -32,6 +32,8 @@ type CodeSelectionRanges = CodeSelectionRange | CodeSelectionRange[];
 
 export type CodeEditorController = {
   destroy: () => void;
+  ownsHost: (host: HTMLDivElement) => boolean;
+  requestMeasure: () => void;
   getDoc: () => string;
   setDoc: (source: string) => void;
   setLanguage: (language: SourceLanguage) => void;
@@ -142,6 +144,12 @@ export function createCodeEditorController(options: CodeEditorControllerOptions)
   return {
     destroy() {
       view.destroy();
+    },
+    ownsHost(host) {
+      return host === options.host;
+    },
+    requestMeasure() {
+      view.requestMeasure();
     },
     getDoc() {
       return view.state.doc.toString();

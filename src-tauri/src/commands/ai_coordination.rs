@@ -1,13 +1,14 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::atomic::Ordering, time::Duration};
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     kernel::{
         ai_coordination::{
-            AiCoordinationSnapshot, EditTransitionReceipt, ProjectCoordinationBlocker,
-            ProjectCoordinationBlockerKind, ProjectCoordinationEvidence, ReconciliationInput,
-            UiQuiescenceAcknowledgement,
+            AiCoordinationSnapshot, EditAuthority, EditTransitionReceipt,
+            ProjectCoordinationBlocker, ProjectCoordinationBlockerKind,
+            ProjectCoordinationEvidence, ReconciliationInput, UiQuiescenceAcknowledgement,
+            DEFAULT_EDIT_LEASE_TTL_MS,
         },
         disk_conflict::{scan_disk_conflicts, KernelDiskConflictKind},
         observability::now_ms,
@@ -17,39 +18,123 @@ use crate::{
     state::AppState,
 };
 
-#[tauri::command]
-pub fn read_ai_coordination_state(
-    state: State<AppState>,
+pub const AI_COORDINATION_CHANGED_EVENT: &str = "pana-ai-coordination-changed";
+
+pub(crate) fn publish_ai_coordination_state(
+    app: &AppHandle,
 ) -> Result<AiCoordinationSnapshot, String> {
+    let now = now_ms();
+    let state = app.state::<AppState>();
     state
         .ai_coordination
-        .expire(now_ms())
+        .expire(now)
         .map_err(|error| error.to_string())?;
-    state
+    let snapshot = state
         .ai_coordination
-        .snapshot(now_ms())
-        .map_err(|error| error.to_string())
+        .snapshot(now)
+        .map_err(|error| error.to_string())?;
+    schedule_ai_coordination_deadline(app, &snapshot, now);
+    if let Err(error) = app.emit(AI_COORDINATION_CHANGED_EVENT, snapshot.clone()) {
+        eprintln!("[Pană Studio] Evenimentul de coordonare AI nu a putut fi emis: {error}");
+    }
+    Ok(snapshot)
+}
+
+fn schedule_ai_coordination_deadline(
+    app: &AppHandle,
+    snapshot: &AiCoordinationSnapshot,
+    observed_at_ms: u128,
+) {
+    let deadline_ms = match &snapshot.authority {
+        EditAuthority::AiRequested {
+            requested_at_ms, ..
+        } => Some(requested_at_ms.saturating_add(DEFAULT_EDIT_LEASE_TTL_MS)),
+        EditAuthority::AiActive { lease } => Some(lease.expires_at_ms),
+        _ => None,
+    };
+    let state = app.state::<AppState>();
+    let generation = state
+        .ai_coordination_deadline_generation
+        .fetch_add(1, Ordering::AcqRel)
+        .wrapping_add(1);
+    let Some(deadline_ms) = deadline_ms else {
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut observed_ms = observed_at_ms;
+        loop {
+            if observed_ms < deadline_ms {
+                let delay_ms = deadline_ms
+                    .saturating_sub(observed_ms)
+                    .min(u64::MAX as u128) as u64;
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                observed_ms = now_ms();
+                continue;
+            }
+            let state = app.state::<AppState>();
+            if state
+                .ai_coordination_deadline_generation
+                .load(Ordering::Acquire)
+                != generation
+            {
+                return;
+            }
+            match state.ai_coordination.expire(observed_ms) {
+                Ok(Some(_)) => {
+                    let snapshot = match state.ai_coordination.snapshot(observed_ms) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            eprintln!(
+                                "[Pană Studio] Snapshot-ul expirării coordonării AI a eșuat: {error}"
+                            );
+                            return;
+                        }
+                    };
+                    if let Err(error) = app.emit(AI_COORDINATION_CHANGED_EVENT, snapshot) {
+                        eprintln!(
+                            "[Pană Studio] Evenimentul expirării coordonării AI a eșuat: {error}"
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    eprintln!("[Pană Studio] Expirarea coordonării AI a eșuat: {error}");
+                }
+            }
+            return;
+        }
+    });
+}
+
+#[tauri::command]
+pub fn read_ai_coordination_state(app: AppHandle) -> Result<AiCoordinationSnapshot, String> {
+    publish_ai_coordination_state(&app)
 }
 
 #[tauri::command]
 pub fn acknowledge_ai_edit_quiescence(
     client_session_id: String,
     acknowledgement: UiQuiescenceAcknowledgement,
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<EditTransitionReceipt, String> {
-    with_current_project_coordination_evidence(state.inner(), |evidence| {
+    let receipt = with_current_project_coordination_evidence(state.inner(), |evidence| {
         state
             .ai_coordination
             .acknowledge_ui_quiescence(&client_session_id, acknowledgement, evidence, now_ms())
             .map_err(|error| error.to_string())
-    })
+    })?;
+    let _ = publish_ai_coordination_state(&app);
+    Ok(receipt)
 }
 
 #[tauri::command]
 pub fn accept_ai_edit_conflict_for_reconciliation(
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<EditTransitionReceipt, String> {
-    with_current_project_coordination_evidence(state.inner(), |evidence| {
+    let receipt = with_current_project_coordination_evidence(state.inner(), |evidence| {
         let project_session_id = evidence.project_session_id.as_deref().ok_or_else(|| {
             "Nu există ProjectSession pentru acceptarea conflictului AI.".to_string()
         })?;
@@ -77,28 +162,34 @@ pub fn accept_ai_edit_conflict_for_reconciliation(
             .ai_coordination
             .accept_conflict_for_reconciliation(project_session_id, project_revision, now_ms())
             .map_err(|error| error.to_string())
-    })
+    })?;
+    let _ = publish_ai_coordination_state(&app);
+    Ok(receipt)
 }
 
 #[tauri::command]
 pub fn authorize_ai_reconciliation_recovery_reload(
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<EditTransitionReceipt, String> {
-    with_current_project_coordination_evidence(state.inner(), |evidence| {
+    let receipt = with_current_project_coordination_evidence(state.inner(), |evidence| {
         state
             .ai_coordination
             .authorize_reconciliation_recovery_reload(evidence, now_ms())
             .map_err(|error| error.to_string())
-    })
+    })?;
+    let _ = publish_ai_coordination_state(&app);
+    Ok(receipt)
 }
 
 #[tauri::command]
 pub fn complete_ai_reconciliation_recovery_reload(
     lease_id: String,
     expected_replacement_session_id: String,
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<EditTransitionReceipt, String> {
-    with_current_project_coordination_evidence(state.inner(), |evidence| {
+    let receipt = with_current_project_coordination_evidence(state.inner(), |evidence| {
         state
             .ai_coordination
             .complete_reconciliation_recovery_reload(
@@ -108,7 +199,9 @@ pub fn complete_ai_reconciliation_recovery_reload(
                 now_ms(),
             )
             .map_err(|error| error.to_string())
-    })
+    })?;
+    let _ = publish_ai_coordination_state(&app);
+    Ok(receipt)
 }
 
 #[tauri::command]
@@ -117,6 +210,7 @@ pub fn complete_ai_edit_reconciliation(
     expected_project_session_id: String,
     expected_project_revision: u64,
     observed_changed_files: Vec<String>,
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<EditTransitionReceipt, String> {
     let workspace_guard = state.project_workspace.lock().map_err(|_| {
@@ -140,10 +234,10 @@ pub fn complete_ai_edit_reconciliation(
                 .to_string(),
         );
     }
-    let recovery = state.recovery_coordinator_scan.lock().map_err(|_| {
+    let recovery_guard = state.recovery_coordinator_scan.lock().map_err(|_| {
         "Nu am putut bloca RecoveryCoordinatorScan pentru reconcilierea AI.".to_string()
     })?;
-    let recovery = recovery.as_ref().ok_or_else(|| {
+    let recovery = recovery_guard.as_ref().ok_or_else(|| {
         "RecoveryCoordinatorScan lipsește la finalizarea reconcilierii AI.".to_string()
     })?;
     if recovery.status != RecoveryCoordinatorStatus::Clean {
@@ -172,7 +266,7 @@ pub fn complete_ai_edit_reconciliation(
         &observed_manifest,
     )?);
 
-    state
+    let receipt = state
         .ai_coordination
         .complete_reconciliation(
             ReconciliationInput {
@@ -184,7 +278,11 @@ pub fn complete_ai_edit_reconciliation(
             },
             now_ms(),
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    drop(recovery_guard);
+    drop(workspace_guard);
+    let _ = publish_ai_coordination_state(&app);
+    Ok(receipt)
 }
 
 pub(crate) fn with_current_project_coordination_evidence<T>(

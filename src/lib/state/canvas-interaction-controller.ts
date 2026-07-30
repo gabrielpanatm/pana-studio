@@ -18,6 +18,7 @@ import {
 import {
   bindCanvasInteractionAgent,
   requestEditorEditScope,
+  resolveCanvasHoverIntent,
   resolveCanvasInteractionIntent,
 } from "$lib/project/io";
 import { t } from "$lib/i18n/runtime.svelte";
@@ -46,6 +47,8 @@ type PendingInspection = {
 
 type CanvasInteractionAuthorityPhase =
   | "dormant"
+  | "suspended"
+  | "waitingNavigation"
   | "binding"
   | "activating"
   | "active"
@@ -78,6 +81,10 @@ type CanvasInteractionFrontendRuntime = {
   pendingBinding: CanvasInteractionBindingReceipt | null;
   activationTimer: number | null;
   gestureTail: Promise<void>;
+  interactionGeneration: number;
+  pointerHoverGeneration: number;
+  pointerHoverRunningGeneration: number | null;
+  pendingPointerMove: CanvasAgentGestureMessage | null;
   latestPointerMoveSequence: number;
   latestDragOverSequence: number;
   lastObservedAgentSequence: number;
@@ -107,6 +114,10 @@ function runtimeFor(app: AppState) {
     pendingBinding: null,
     activationTimer: null,
     gestureTail: Promise.resolve(),
+    interactionGeneration: 0,
+    pointerHoverGeneration: 0,
+    pointerHoverRunningGeneration: null,
+    pendingPointerMove: null,
     latestPointerMoveSequence: 0,
     latestDragOverSequence: 0,
     lastObservedAgentSequence: 0,
@@ -123,6 +134,7 @@ function canvasBindingKey(
   canvas: CanvasInteractionIdentity["canvas"],
   route: string,
   agentInstanceId: string,
+  activeDocumentPath: string | null,
 ) {
   return JSON.stringify([
     canvas.projectRoot,
@@ -132,6 +144,7 @@ function canvasBindingKey(
     canvas.previewRevision,
     route,
     agentInstanceId,
+    normalizedProjectDocumentPath(activeDocumentPath),
   ]);
 }
 
@@ -152,6 +165,9 @@ function clearActivationTimer(runtime: CanvasInteractionFrontendRuntime) {
 }
 
 function clearRuntimeInteractionState(runtime: CanvasInteractionFrontendRuntime) {
+  runtime.interactionGeneration += 1;
+  runtime.pointerHoverGeneration += 1;
+  runtime.pendingPointerMove = null;
   runtime.binding = null;
   runtime.pendingBinding = null;
   runtime.pendingInspections.clear();
@@ -160,6 +176,15 @@ function clearRuntimeInteractionState(runtime: CanvasInteractionFrontendRuntime)
   runtime.latestPointerMoveSequence = 0;
   runtime.latestDragOverSequence = 0;
   runtime.lastObservedAgentSequence = 0;
+}
+
+function suspendRuntimeInteractionState(runtime: CanvasInteractionFrontendRuntime) {
+  runtime.interactionGeneration += 1;
+  runtime.pointerHoverGeneration += 1;
+  runtime.pendingPointerMove = null;
+  runtime.pendingInspections.clear();
+  runtime.dragSource = null;
+  runtime.dragMovePreview = null;
 }
 
 function deactivateCanvasAgent(
@@ -189,6 +214,33 @@ function sameCanvasIdentity(
   );
 }
 
+function normalizedProjectDocumentPath(path: string | null | undefined) {
+  return path
+    ?.trim()
+    .replaceAll("\\", "/")
+    .replace(/^\/+/, "")
+    .replace(/^(?:\.\/)+/, "")
+    ?? "";
+}
+
+function sameProjectDocumentPath(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
+  return normalizedProjectDocumentPath(left) === normalizedProjectDocumentPath(right);
+}
+
+function expectedCanvasDocumentPath(app: AppState) {
+  const activePath = normalizedProjectDocumentPath(app.activeScannedPath);
+  if (!activePath) return null;
+  const activeFile = app.scannedProject?.files.find(
+    (file) => normalizedProjectDocumentPath(file.relativePath) === activePath,
+  );
+  return activeFile?.role === "template"
+    ? normalizedProjectDocumentPath(activeFile.relativePath)
+    : null;
+}
+
 function previewRoute(app: AppState) {
   const source = app.activeCanvasUrl && app.activeCanvasUrl !== "about:blank"
     ? app.activeCanvasUrl
@@ -204,18 +256,48 @@ function previewRoute(app: AppState) {
   return fallback.startsWith("/") ? fallback : `/${fallback}`;
 }
 
+function confirmedCanvasNavigationBinding(
+  app: AppState,
+  canvas: CanvasInteractionIdentity["canvas"],
+  route: string,
+) {
+  const activeDocumentPath = expectedCanvasDocumentPath(app);
+  const snapshot = app.editorNavigationSnapshot;
+  const ready = Boolean(
+    snapshot
+    && sameCanvasIdentity(snapshot.identity, canvas)
+    && snapshot.route === route
+    && sameProjectDocumentPath(
+      snapshot.focusedView?.activeDocumentPath,
+      activeDocumentPath,
+    ),
+  );
+  return { activeDocumentPath, ready };
+}
+
 function currentBinding(
   app: AppState,
   runtime = runtimeFor(app),
 ) {
   const binding = runtime.binding;
-  return runtime.phase === "active"
+  return canvasInteractionSurfaceActive(app)
+    && runtime.phase === "active"
     && binding
     && runtime.agentInstanceId === binding.identity.agentInstanceId
     && runtime.documentEpoch === binding.identity.documentEpoch
     && sameCanvasIdentity(app.activeCanvasIdentity, binding.identity.canvas)
+    && sameProjectDocumentPath(
+      binding.activeDocumentPath,
+      expectedCanvasDocumentPath(app),
+    )
     ? binding
     : null;
+}
+
+function canvasInteractionSurfaceActive(app: AppState) {
+  return app.applicationSurface === "workbench"
+    && (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor"
+    && app.centerView !== "kernel";
 }
 
 export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
@@ -258,6 +340,7 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
         pendingBinding.identity.canvas,
         pendingBinding.identity.route,
         pendingBinding.identity.agentInstanceId,
+        pendingBinding.activeDocumentPath,
       )
       || !sameCanvasIdentity(app.activeCanvasIdentity, pendingBinding.identity.canvas)
     ) return true;
@@ -269,6 +352,11 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
     runtime.latestDragOverSequence = pendingBinding.lastAcceptedSequence;
     runtime.lastObservedAgentSequence = pendingBinding.lastAcceptedSequence;
     projectCurrentSelectionOverlay(app, pendingBinding);
+    return true;
+  }
+
+  if (!canvasInteractionSurfaceActive(app)) {
+    synchronizeCanvasInteractionBinding(app);
     return true;
   }
 
@@ -286,10 +374,12 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
   if (message.type === "action") {
     if (message.actionSequence <= runtime.lastObservedAgentSequence) return true;
     runtime.lastObservedAgentSequence = message.actionSequence;
+    const generation = runtime.interactionGeneration;
     runtime.gestureTail = runtime.gestureTail
       .then(async () => {
+        if (generation !== runtime.interactionGeneration) return;
         if (message.action === "enterBoundary") {
-          await enterBoundaryFromAgentAction(app, runtime, message);
+          await enterBoundaryFromAgentAction(app, runtime, message, generation);
         } else {
           await deleteSelectionFromAgentAction(app, runtime, message);
         }
@@ -304,25 +394,93 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
   runtime.lastObservedAgentSequence = message.gestureSequence;
   if (message.gesture === "pointerMove") {
     runtime.latestPointerMoveSequence = message.gestureSequence;
+    runtime.pendingPointerMove = message;
+    drainLatestPointerHover(app, runtime);
+    return true;
   } else if (message.gesture === "dragOver") {
     runtime.latestDragOverSequence = message.gestureSequence;
   }
+  const generation = runtime.interactionGeneration;
   runtime.gestureTail = runtime.gestureTail
     .then(async () => {
-      if (
-        message.gesture === "pointerMove"
-        && message.gestureSequence !== runtime.latestPointerMoveSequence
-      ) return;
+      if (generation !== runtime.interactionGeneration) return;
       if (
         message.gesture === "dragOver"
         && message.gestureSequence !== runtime.latestDragOverSequence
       ) return;
-      await resolveGesture(app, runtime, message);
+      await resolveGesture(app, runtime, message, generation);
     })
     .catch((error) => {
       failCanvasInteractionBinding(app, runtime, error);
     });
   return true;
+}
+
+function drainLatestPointerHover(
+  app: AppState,
+  runtime: CanvasInteractionFrontendRuntime,
+) {
+  const generation = runtime.pointerHoverGeneration;
+  if (runtime.pointerHoverRunningGeneration === generation) return;
+  runtime.pointerHoverRunningGeneration = generation;
+
+  void (async () => {
+    while (generation === runtime.pointerHoverGeneration) {
+      const message = runtime.pendingPointerMove;
+      runtime.pendingPointerMove = null;
+      if (!message) return;
+      if (message.gestureSequence !== runtime.latestPointerMoveSequence) continue;
+
+      const binding = currentBinding(app, runtime);
+      if (
+        !binding
+        || message.documentEpoch !== binding.identity.documentEpoch
+        || message.agentInstanceId !== binding.identity.agentInstanceId
+      ) continue;
+
+      const projectionSerial = app.beginCanvasHoverProjection();
+      const request = createCanvasInteractionRequest(binding.identity, message);
+      const receipt = await resolveCanvasHoverIntent({
+        request,
+        editScopeGrant: app.editorEditScopeGrant,
+      });
+      if (
+        generation !== runtime.pointerHoverGeneration
+        || currentBinding(app, runtime) !== binding
+        || message.gestureSequence !== runtime.latestPointerMoveSequence
+      ) continue;
+      if (receipt.interaction.status === "stale") continue;
+      if (receipt.interaction.status === "rejected" || !receipt.projection) {
+        throw new Error(
+          receipt.interaction.diagnostics[0]?.message
+            ?? "Recepția Canvas hover este invalidă.",
+        );
+      }
+      if (!receipt.projection.changed) continue;
+      if (!app.projectCanvasHoverReceipt(
+        projectionSerial,
+        receipt.interaction.identity.canvas,
+        receipt.projection.hover,
+      )) {
+        continue;
+      }
+      renderReceiptOverlay(app, binding, "hover", receipt.interaction);
+    }
+  })().catch((error) => {
+    if (generation === runtime.pointerHoverGeneration) {
+      failCanvasInteractionBinding(app, runtime, error);
+    }
+  }).finally(() => {
+    if (runtime.pointerHoverRunningGeneration === generation) {
+      runtime.pointerHoverRunningGeneration = null;
+    }
+    if (
+      runtime.pendingPointerMove
+      && runtime.pointerHoverRunningGeneration !== runtime.pointerHoverGeneration
+    ) {
+      drainLatestPointerHover(app, runtime);
+    }
+  });
 }
 
 export async function retryCanvasInteractionBinding(app: AppState) {
@@ -349,7 +507,53 @@ export function synchronizeCanvasInteractionBinding(app: AppState) {
   }
 
   const route = previewRoute(app);
-  const desiredBindingKey = canvasBindingKey(canvas, route, agentInstanceId);
+  const navigation = confirmedCanvasNavigationBinding(app, canvas, route);
+  const desiredBindingKey = canvasBindingKey(
+    canvas,
+    route,
+    agentInstanceId,
+    navigation.activeDocumentPath,
+  );
+  if (!canvasInteractionSurfaceActive(app)) {
+    const retainedBinding = runtime.binding ?? runtime.pendingBinding;
+    if (
+      runtime.desiredBindingKey === desiredBindingKey
+      && retainedBinding
+      && retainedBinding.identity.agentInstanceId === agentInstanceId
+      && retainedBinding.identity.route === route
+      && sameCanvasIdentity(retainedBinding.identity.canvas, canvas)
+    ) {
+      runtime.bindSerial += 1;
+      clearActivationTimer(runtime);
+      suspendRuntimeInteractionState(runtime);
+      runtime.binding = retainedBinding;
+      runtime.pendingBinding = null;
+      runtime.phase = "suspended";
+      deactivateCanvasAgent(app, runtime);
+      return;
+    }
+    runtime.bindSerial += 1;
+    clearActivationTimer(runtime);
+    clearRuntimeInteractionState(runtime);
+    runtime.desiredBindingKey = null;
+    runtime.documentEpoch = 0;
+    runtime.phase = "dormant";
+    deactivateCanvasAgent(app, runtime);
+    return;
+  }
+
+  if (
+    runtime.phase === "suspended"
+    && runtime.desiredBindingKey === desiredBindingKey
+    && runtime.binding
+    && runtime.binding.identity.agentInstanceId === agentInstanceId
+    && runtime.binding.identity.route === route
+    && sameCanvasIdentity(runtime.binding.identity.canvas, canvas)
+  ) {
+    reactivateRetainedCanvasAgent(app, runtime, runtime.binding);
+    return;
+  }
+
   if (runtime.desiredBindingKey !== desiredBindingKey) {
     runtime.bindSerial += 1;
     clearActivationTimer(runtime);
@@ -357,14 +561,62 @@ export function synchronizeCanvasInteractionBinding(app: AppState) {
     deactivateCanvasAgent(app, runtime);
     runtime.desiredBindingKey = desiredBindingKey;
     runtime.documentEpoch = nextDocumentEpoch(runtime);
+    if (!navigation.ready) {
+      runtime.phase = "waitingNavigation";
+      return;
+    }
     runtime.phase = "binding";
     void bindCurrentCanvasAgent(app);
     return;
   }
   if (currentBinding(app, runtime)) return;
   if (runtime.phase === "binding" || runtime.phase === "activating") return;
+  if (!navigation.ready) {
+    runtime.phase = "waitingNavigation";
+    return;
+  }
   runtime.phase = "binding";
   void bindCurrentCanvasAgent(app);
+}
+
+function reactivateRetainedCanvasAgent(
+  app: AppState,
+  runtime: CanvasInteractionFrontendRuntime,
+  retainedBinding: CanvasInteractionBindingReceipt,
+) {
+  const serial = ++runtime.bindSerial;
+  const lastAcceptedSequence = Math.max(
+    retainedBinding.lastAcceptedSequence,
+    runtime.lastObservedAgentSequence,
+  );
+  const binding = {
+    ...retainedBinding,
+    lastAcceptedSequence,
+  };
+  runtime.binding = null;
+  runtime.pendingBinding = binding;
+  runtime.phase = "activating";
+  app.postPreviewMessage({
+    type: "activate-canvas-interaction-agent",
+    schemaVersion: binding.schemaVersion,
+    agentInstanceId: binding.identity.agentInstanceId,
+    documentEpoch: binding.identity.documentEpoch,
+    lastAcceptedSequence,
+    selection: true,
+  });
+  clearActivationTimer(runtime);
+  runtime.activationTimer = window.setTimeout(() => {
+    if (
+      runtime.phase !== "activating"
+      || runtime.pendingBinding !== binding
+      || runtime.bindSerial !== serial
+    ) return;
+    failCanvasInteractionBinding(
+      app,
+      runtime,
+      new Error("CanvasAgent nu a confirmat reactivarea lease-ului păstrat."),
+    );
+  }, CANVAS_AGENT_ACTIVATION_TIMEOUT_MS);
 }
 
 async function bindCurrentCanvasAgent(app: AppState) {
@@ -375,8 +627,18 @@ async function bindCurrentCanvasAgent(app: AppState) {
   if (!canvas || !agentInstanceId || documentEpoch <= 0) return;
 
   const route = previewRoute(app);
-  const desiredBindingKey = canvasBindingKey(canvas, route, agentInstanceId);
+  const navigation = confirmedCanvasNavigationBinding(app, canvas, route);
+  const desiredBindingKey = canvasBindingKey(
+    canvas,
+    route,
+    agentInstanceId,
+    navigation.activeDocumentPath,
+  );
   if (runtime.desiredBindingKey !== desiredBindingKey) return;
+  if (!navigation.ready) {
+    runtime.phase = "waitingNavigation";
+    return;
+  }
   runtime.phase = "binding";
   const serial = ++runtime.bindSerial;
   const identity = createCanvasInteractionIdentity(
@@ -388,16 +650,23 @@ async function bindCurrentCanvasAgent(app: AppState) {
   try {
     const receipt = await bindCanvasInteractionAgent(
       identity,
-      app.editorNavigationSnapshot?.focusedView?.activeDocumentPath
-        ?? null,
+      navigation.activeDocumentPath,
       app.coordinatedElementSelection?.renderInstanceId ?? null,
     );
+    if (!sameProjectDocumentPath(receipt.activeDocumentPath, navigation.activeDocumentPath)) {
+      throw new Error("CanvasAgent a întors binding-ul altui document activ.");
+    }
     if (
       serial !== runtime.bindSerial
       || runtime.agentInstanceId !== agentInstanceId
       || runtime.documentEpoch !== documentEpoch
       || runtime.desiredBindingKey !== desiredBindingKey
       || !sameCanvasIdentity(app.activeCanvasIdentity, canvas)
+      || !confirmedCanvasNavigationBinding(app, canvas, route).ready
+      || !sameProjectDocumentPath(
+        expectedCanvasDocumentPath(app),
+        navigation.activeDocumentPath,
+      )
     ) return;
     runtime.pendingBinding = receipt;
     runtime.phase = "activating";
@@ -445,7 +714,10 @@ async function resolveGesture(
   app: AppState,
   runtime: CanvasInteractionFrontendRuntime,
   message: CanvasAgentGestureMessage,
+  generation: number,
 ) {
+  if (generation !== runtime.interactionGeneration) return;
+  if (message.gesture === "pointerMove") return;
   const binding = currentBinding(app, runtime);
   if (!binding) return;
   const request = createCanvasInteractionRequest(binding.identity, message);
@@ -453,7 +725,10 @@ async function resolveGesture(
     request,
     editScopeGrant: app.editorEditScopeGrant,
   });
-  if (currentBinding(app, runtime) !== binding) return;
+  if (
+    generation !== runtime.interactionGeneration
+    || currentBinding(app, runtime) !== binding
+  ) return;
 
   if (receipt.status === "stale" || receipt.status === "rejected") {
     failCanvasInteractionBinding(
@@ -469,23 +744,14 @@ async function resolveGesture(
     || message.gesture === "dragOver"
     || message.gesture === "drop"
   ) {
-    await resolveDragGesture(app, runtime, binding, message, receipt);
-    return;
-  }
-  if (message.gesture === "pointerMove") {
-    if (receipt.target) {
-      await app.applyHoverIntent({
-        kind: "setHover",
-        editorNodeId: receipt.target.editorNodeId,
-        documentEpoch: message.documentEpoch,
-      });
-    } else {
-      await app.applyHoverIntent({
-        kind: "clearHover",
-        documentEpoch: message.documentEpoch,
-      });
-    }
-    renderReceiptOverlay(app, binding, "hover", receipt);
+    await resolveDragGesture(
+      app,
+      runtime,
+      binding,
+      message,
+      receipt,
+      generation,
+    );
     return;
   }
   if (message.gesture === "pointerDown") {
@@ -498,6 +764,7 @@ async function resolveGesture(
     if (message.gesture === "click") {
       runtime.pendingInspections.clear();
       await app.applySelectionIntent({ kind: "clearSelection" });
+      if (generation !== runtime.interactionGeneration) return;
       app.postPreviewMessage({ type: "clear-canvas-interaction-overlays" });
     }
     return;
@@ -508,7 +775,8 @@ async function resolveGesture(
     editorNodeId: receipt.target.editorNodeId,
   });
   if (
-    !selectionSnapshot
+    generation !== runtime.interactionGeneration
+    || !selectionSnapshot
     || selectionSnapshot.projections.layers.editorNodeId !== receipt.target.editorNodeId
   ) return;
 
@@ -567,7 +835,9 @@ async function resolveDragGesture(
   binding: CanvasInteractionBindingReceipt,
   message: CanvasAgentGestureMessage,
   receipt: CanvasInteractionReceipt,
+  generation: number,
 ) {
+  if (generation !== runtime.interactionGeneration) return;
   const drag = message.drag;
   if (!drag) return;
   if (message.gesture === "dragStart") {
@@ -644,16 +914,19 @@ async function resolveDragGesture(
     }
   }
   if (!plan) {
+    if (generation !== runtime.interactionGeneration) return;
     if (planError) app.setGlobalStatus(planError, "error");
     return;
   }
   if (!plan.allowed) {
+    if (generation !== runtime.interactionGeneration) return;
     app.setGlobalStatus(
       plan.reason ?? t("editor-navigation-move-refused"),
       "error",
     );
     return;
   }
+  if (generation !== runtime.interactionGeneration) return;
   await app.moveEditorNavigationNode(
     source.target.editorNodeId,
     target.editorNodeId,
@@ -817,7 +1090,9 @@ async function enterBoundaryFromAgentAction(
   app: AppState,
   runtime: CanvasInteractionFrontendRuntime,
   message: CanvasAgentActionMessage,
+  generation: number,
 ) {
+  if (generation !== runtime.interactionGeneration) return;
   const binding = currentBinding(app, runtime);
   const coordinated = coordinatedActionTarget(app, binding, message);
   const target = coordinated?.target;
@@ -839,7 +1114,10 @@ async function enterBoundaryFromAgentAction(
     target.requiredEditScopeId,
     coordinated.selection.projections.preview.primaryRenderInstanceId,
   );
-  if (currentBinding(app, runtime) !== binding) return;
+  if (
+    generation !== runtime.interactionGeneration
+    || currentBinding(app, runtime) !== binding
+  ) return;
   app.editorEditScopeGrant = grant;
   app.editorEditScopeId = grant.scopeId;
   app.setGlobalStatus(
@@ -964,7 +1242,6 @@ async function applyDomInspection(
     },
   }, observation);
   if (!accepted || app.selectionSnapshot?.selectionRevision !== pending.selectionRevision) return;
-  app.applySelectionState(observation);
   app.syncCodeSelectionHighlight(pending.revealCode);
   if (pending.openContextMenu) {
     openHtmlContextMenu(app, pending.pointer);

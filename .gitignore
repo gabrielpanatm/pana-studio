@@ -17,3 +17,5 @@ node_modules
 coverage
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+__pycache__/
+*.py[cod]

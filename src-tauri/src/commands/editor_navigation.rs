@@ -1,5 +1,7 @@
-use serde::Deserialize;
-use tauri::{AppHandle, State};
+use std::time::Instant;
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     css::rules::{selector_source_target, selector_source_target_at_offset},
@@ -16,7 +18,7 @@ use crate::{
     kernel::preview_projection::{execute_editor_move, PreviewStructuralCommandIdentity},
     kernel::project_path::normalize_project_relative_path,
     kernel::selection_coordinator::{
-        SelectionCoordinatorSnapshot, SelectionIntent, SelectionObservationInput,
+        HoverSnapshot, SelectionCoordinatorSnapshot, SelectionIntent, SelectionObservationInput,
         SelectionObservationReceipt, SELECTION_COORDINATOR_SCHEMA_VERSION,
     },
     preview::{CanvasGraph, CanvasProjectionIdentity},
@@ -103,6 +105,21 @@ pub struct CanvasInteractionResolveRequest {
     pub edit_scope_grant: Option<EditScopeGrant>,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasHoverProjection {
+    pub changed: bool,
+    pub hover: Option<HoverSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasHoverReceipt {
+    pub schema_version: u32,
+    pub interaction: CanvasInteractionReceipt,
+    pub projection: Option<CanvasHoverProjection>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelectionCoordinatorRequest {
@@ -136,30 +153,39 @@ struct EditorNavigationContext {
 }
 
 #[tauri::command]
-pub fn bind_canvas_interaction_agent(
+pub async fn bind_canvas_interaction_agent(
     input: CanvasInteractionBindRequest,
-    state: State<AppState>,
+    app: AppHandle,
 ) -> Result<CanvasInteractionBindingReceipt, String> {
-    if input.schema_version != CANVAS_INTERACTION_SCHEMA_VERSION {
-        return Err("CanvasAgent folosește o versiune incompatibilă a protocolului.".to_string());
-    }
-    let snapshot_request = EditorNavigationSnapshotRequest {
-        identity: input.identity.canvas.clone(),
-        route: input.identity.route.clone(),
-        active_document_path: input.active_document_path,
-        preview_context_render_instance_id: input.preview_context_render_instance_id,
-    };
-    let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
-    let receipt = state.canvas_interaction.bind_agent(
-        &context.snapshot,
-        context.active_document_path.as_deref(),
-        input.identity,
-    )?;
-    state
-        .selection_coordinator
-        .bind_inspector_document(receipt.identity.clone())?;
-    publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
-    Ok(receipt)
+    tauri::async_runtime::spawn_blocking(move || {
+        if input.schema_version != CANVAS_INTERACTION_SCHEMA_VERSION {
+            return Err(
+                "CanvasAgent folosește o versiune incompatibilă a protocolului.".to_string(),
+            );
+        }
+        let state = app.state::<AppState>();
+        let snapshot_request = EditorNavigationSnapshotRequest {
+            identity: input.identity.canvas.clone(),
+            route: input.identity.route.clone(),
+            active_document_path: input.active_document_path,
+            preview_context_render_instance_id: input.preview_context_render_instance_id,
+        };
+        let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
+        let receipt = state.canvas_interaction.bind_agent(
+            &context.snapshot,
+            context.active_document_path.as_deref(),
+            input.identity,
+        )?;
+        state
+            .selection_coordinator
+            .bind_inspector_document(receipt.identity.clone())?;
+        publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+        Ok(receipt)
+    })
+    .await
+    .map_err(|error| {
+        format!("Canvas Interaction bind a căzut în task-ul Rust de fundal: {error}")
+    })?
 }
 
 #[tauri::command]
@@ -167,7 +193,17 @@ pub fn resolve_canvas_interaction_intent(
     input: CanvasInteractionResolveRequest,
     state: State<AppState>,
 ) -> Result<CanvasInteractionReceipt, String> {
-    let authorized_scope_id = if let Some(grant) = input.edit_scope_grant.as_ref() {
+    let authorized_scope_id = authorize_canvas_edit_scope(&input, state.inner())?;
+    state
+        .canvas_interaction
+        .resolve(authorized_scope_id.as_deref(), &input.request)
+}
+
+fn authorize_canvas_edit_scope(
+    input: &CanvasInteractionResolveRequest,
+    state: &AppState,
+) -> Result<Option<String>, String> {
+    if let Some(grant) = input.edit_scope_grant.as_ref() {
         let scope_context = state
             .canvas_interaction
             .scope_context(&input.request.identity)?;
@@ -187,13 +223,41 @@ pub fn resolve_canvas_interaction_intent(
             &grant.scope_id,
             EditScopeOperation::InspectSharedDefinition,
         )?;
-        Some(grant.scope_id.as_str())
+        Ok(Some(grant.scope_id.clone()))
     } else {
-        None
-    };
-    state
-        .canvas_interaction
-        .resolve(authorized_scope_id, &input.request)
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub fn resolve_canvas_hover_intent(
+    input: CanvasInteractionResolveRequest,
+    state: State<AppState>,
+) -> Result<CanvasHoverReceipt, String> {
+    let authorized_scope_id = authorize_canvas_edit_scope(&input, state.inner())?;
+    let document_epoch = input.request.identity.document_epoch;
+    let (interaction, projection) = state.canvas_interaction.resolve_pointer_hover(
+        authorized_scope_id.as_deref(),
+        &input.request,
+        |snapshot, active_document_path, receipt| {
+            let editor_node_id = receipt
+                .target
+                .as_ref()
+                .map(|target| target.editor_node_id.as_str());
+            let (hover, changed) = state.selection_coordinator.apply_hover(
+                snapshot,
+                active_document_path,
+                editor_node_id,
+                document_epoch,
+            )?;
+            Ok(CanvasHoverProjection { changed, hover })
+        },
+    )?;
+    Ok(CanvasHoverReceipt {
+        schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
+        interaction,
+        projection,
+    })
 }
 
 #[tauri::command]
@@ -577,6 +641,7 @@ fn resolve_editor_navigation_context(
     input: &EditorNavigationSnapshotRequest,
     state: &AppState,
 ) -> Result<EditorNavigationContext, String> {
+    let started = Instant::now();
     let route = require_navigation_route(&input.route)?;
     let (root, session, lease) = capture_project_model_build_lease(state)?;
     if session.project_root != input.identity.project_root
@@ -588,10 +653,28 @@ fn resolve_editor_navigation_context(
             input.identity.workspace_revision
         ));
     }
-    let model = crate::project_model::build_project_model_from_workspace_projection(
-        &root,
-        lease.projection(),
-    )?;
+    let cached_model = {
+        let workspace = state.project_workspace.lock().map_err(|_| {
+            "Nu am putut citi cache-ul ProjectModel pentru EditorNavigationSnapshot.".to_string()
+        })?;
+        let workspace = workspace.as_ref().ok_or_else(|| {
+            "ProjectWorkspace lipsește pentru EditorNavigationSnapshot.".to_string()
+        })?;
+        workspace.require_current_projection(lease.projection())?;
+        if workspace.project_model_source_revision == Some(lease.projection().revision) {
+            workspace.project_model.clone()
+        } else {
+            None
+        }
+    };
+    let model_cache_hit = cached_model.is_some();
+    let model = match cached_model {
+        Some(model) => model,
+        None => crate::project_model::build_project_model_from_workspace_projection(
+            &root,
+            lease.projection(),
+        )?,
+    };
     let active_workbench_document =
         authoritative_active_document_path(state, &session, input.active_document_path.as_deref())?;
     let active_document_path = active_workbench_document
@@ -631,14 +714,41 @@ fn resolve_editor_navigation_context(
         );
     }
     let graph = graph_for_surface(&generation, &route)?;
-    let snapshot = build_editor_navigation_snapshot(
-        input.identity.clone(),
+    let cached_snapshot = state.editor_navigation.cached_snapshot(
+        &input.identity,
         &route,
-        &model,
-        &graph,
         active_document_path.as_deref(),
         input.preview_context_render_instance_id.as_deref(),
     )?;
+    let snapshot_cache_hit = cached_snapshot.is_some();
+    let snapshot = match cached_snapshot {
+        Some(snapshot) => snapshot,
+        None => {
+            let snapshot = build_editor_navigation_snapshot(
+                input.identity.clone(),
+                &route,
+                &model,
+                &graph,
+                active_document_path.as_deref(),
+                input.preview_context_render_instance_id.as_deref(),
+            )?;
+            state.editor_navigation.cache_snapshot(
+                active_document_path.as_deref(),
+                input.preview_context_render_instance_id.as_deref(),
+                &snapshot,
+            )?;
+            snapshot
+        }
+    };
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[Pană Studio][perf] editor_navigation model_cache_hit={} snapshot_cache_hit={} total_ms={} route={} document={}",
+        model_cache_hit,
+        snapshot_cache_hit,
+        started.elapsed().as_millis(),
+        route,
+        active_document_path.as_deref().unwrap_or("-")
+    );
     Ok(EditorNavigationContext {
         lease,
         model,

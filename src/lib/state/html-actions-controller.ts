@@ -618,11 +618,14 @@ async function executeSelectedHtmlText(
   } = {},
 ): Promise<EditorActionOutcome> {
   const result = await runInPreviewStructuralLane(host, async (lease) => {
-    const location = sourceLocationForSourceReference(
-      host,
-      target.sourceId,
-      target.sourceLocation,
-    ) ?? activeHtmlSourceLocationForTarget(host, target);
+    const groupedEditSession = Boolean(options.editSessionId);
+    const location = groupedEditSession && target.sourceLocation
+      ? target.sourceLocation
+      : sourceLocationForSourceReference(
+        host,
+        target.sourceId,
+        target.sourceLocation,
+      ) ?? activeHtmlSourceLocationForTarget(host, target);
     if (!location) throw new Error(missingKernelLocationMessage(t("html-actions-text-noun")));
 
     const receipt = await executePreviewHtmlTextIntent({
@@ -634,14 +637,21 @@ async function executeSelectedHtmlText(
       },
       textIntent: {
         targetSourceId: target.sourceId ?? null,
-        targetLocation: projectSourceLocation(location),
+        // A grouped edit is a long-lived Rust-owned logical identity. Once
+        // the first text mutation changes Source Graph byte ranges, combining
+        // its aliased Source ID with a newly resolved physical location can
+        // describe two different nodes. Keep the ID as the sole semantic
+        // anchor; direct HTML targets without Source IDs still use location.
+        targetLocation: groupedEditSession && target.sourceId
+          ? null
+          : projectSourceLocation(location),
         targetTag: target.tag,
         targetSelector: target.selector,
         text,
       },
       deferCanonicalProjection: options.deferCanonicalProjection === true,
       editSessionId: options.editSessionId ?? null,
-    }, previewStructuralCommandIdentity(lease, true));
+    }, previewStructuralCommandIdentity(lease, !groupedEditSession));
 
     const blocked = blockedReceiptOutcome(
       receipt,

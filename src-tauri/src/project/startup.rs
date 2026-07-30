@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 
 use crate::{
-    deploy::run_zola_check,
+    deploy::run_zola_editor_check,
     kernel::{
         file_buffer_store::hash_bytes,
         themes::{ThemePack, ThemeRegistry},
@@ -550,7 +550,7 @@ pub fn apply_creation<R: Runtime>(
             return Err(fail_creation(runtime, failure.error, rollback));
         }
     };
-    let validation = match run_zola_check(&root, &zola_project_root(&root)) {
+    let validation = match run_zola_editor_check(&root, &zola_project_root(&root)) {
         Ok(validation) => validation,
         Err(error) => {
             let rollback = rollback_publication(app, &authority, &root, &journal);
@@ -713,7 +713,7 @@ fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, Start
             )],
         )
     } else {
-        match run_zola_check(&root, &zola_root) {
+        match run_zola_editor_check(&root, &zola_root) {
             Ok(_) => (
                 StartupCandidateKind::ValidProject,
                 vec![StartupDiagnostic::info(
@@ -1335,6 +1335,26 @@ mod tests {
             inspect_candidate_root(&valid).unwrap().kind,
             StartupCandidateKind::ValidProject
         );
+        cleanup(fixture);
+    }
+
+    #[test]
+    fn detached_inspection_accepts_unreachable_external_links() {
+        let fixture = temp_dir("offline-external-links");
+        let project = fixture.join("project");
+        create_minimal_fixture(&project);
+        fs::write(
+            project.join("content/_index.md"),
+            concat!(
+                "+++\ntitle = \"Acasă\"\nsort_by = \"weight\"\n+++\n\n",
+                "[Serviciu extern](http://127.0.0.1:9/offline)\n",
+            ),
+        )
+        .unwrap();
+
+        let candidate = inspect_candidate_root(&project).unwrap();
+
+        assert_eq!(candidate.kind, StartupCandidateKind::ValidProject);
         cleanup(fixture);
     }
 

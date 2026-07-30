@@ -14,7 +14,7 @@ test("Șabloane este distinctă de catalogul semantic al componentelor Tera", ()
   const workbench = source("../src-tauri/src/kernel/workbench/model.rs");
 
   assert.match(rail, /id:\s*"templates"/);
-  assert.match(center, /activeWorkbenchActivity === "templates"[\s\S]*<TemplatesWorkspace/);
+  assert.match(center, /retainedAuxiliarySurface === "templates"[\s\S]*<TemplatesWorkspace/);
   assert.match(types, /export type WorkbenchActivity[\s\S]*\|\s*"templates"/);
   assert.match(workbench, /#\[serde\(alias = "site"\)\]\s*Templates/);
 

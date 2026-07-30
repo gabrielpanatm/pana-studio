@@ -12,6 +12,7 @@ import { committedDraftCanSettle } from "$lib/session/committed-draft-settlement
 import { resetPageJsDraftSyncState } from "$lib/session/page-js-draft-sync";
 import { saveActiveFile } from "$lib/state/save-controller";
 import {
+  applyTextContentToCapturedHtmlTarget,
   applyAttributesToHtml,
   attributeMutationsFromRecord,
   generateDataAnimForSelectedHtml,
@@ -171,6 +172,92 @@ test("controllerul păstrează aria pending când kernelul blochează commit-ul 
   assert.match(result.reason, /not safe for this source/);
   assert.equal(host.htmlPending.attributes, true);
   assert.deepEqual(host.attributeValues, { title: "nou" });
+});
+
+test("o sesiune text persistentă folosește Source ID-ul Rust fără locația sau selecția curentă", async () => {
+  let submitted = null;
+  mockIPC(async (command, payload) => {
+    assert.equal(command, "execute_preview_html_text_intent");
+    submitted = payload;
+    return {
+      status: "blocked",
+      messageDiagnostic: {
+        schemaVersion: 1,
+        code: "preview-projection-execution-blocked",
+      },
+      diagnostics: [{
+        code: "structural_plan_blocked",
+        severity: "error",
+        diagnostic: {
+          schemaVersion: 1,
+          code: "preview-projection-structural-plan-blocked",
+        },
+        blocking: true,
+      }],
+    };
+  });
+
+  const htmlPending = emptyHtmlPending();
+  const host = {
+    sessionProjectRoot: "/project",
+    kernelProjectSessionId: "session:runtime",
+    projectSessionEpoch: 3,
+    projectTransitionFrontendLeaseActive: false,
+    async beginPreviewStructuralWriteBoundary() {},
+    endPreviewStructuralWriteBoundary() {},
+    selectionSnapshot: resolvedSelectionSnapshot({
+      selectionRevision: 8,
+      editorNodeId: "editor_render:paragraph",
+      sourceNodeId: "source-paragraph",
+      renderInstanceId: "render-paragraph",
+    }),
+    coordinatedElementSelection: coordinatedElementSelection({
+      selectionRevision: 8,
+      sourceNodeId: "source-paragraph",
+      renderInstanceId: "render-paragraph",
+    }),
+    textContentValue: "Titlu nou",
+    textEditOriginalKey: null,
+    textEditOriginalText: null,
+    textStatus: "",
+    htmlPending,
+    pageSections: [],
+    isActivePreviewHtmlSource: false,
+    currentHtmlRelativePath: "",
+    resolveSourceEditTargetForSourceId() {
+      return {
+        file: "templates/index.html",
+        range: { line: 99, column: 1 },
+      };
+    },
+    setHtmlPending(area, pending) {
+      this.htmlPending[area] = pending;
+    },
+    setGlobalStatus() {},
+  };
+  const capturedTarget = {
+    selector: "main > h1",
+    tag: "h1",
+    sourceId: "source-heading-before-edit",
+    sourceLocation: { file: "templates/index.html", line: 3, column: 3 },
+    hasChildElements: false,
+    rawText: "Titlu",
+  };
+
+  const result = await applyTextContentToCapturedHtmlTarget(
+    host,
+    capturedTarget,
+    "Titlu nou",
+    {
+      deferCanonicalProjection: true,
+      editSessionId: "text_session_1",
+    },
+  );
+
+  assert.equal(result.status, "blocked");
+  assert.equal(submitted?.input.textIntent.targetSourceId, "source-heading-before-edit");
+  assert.equal(submitted?.input.textIntent.targetLocation, null);
+  assert.equal(submitted?.identity.expectedSelection, undefined);
 });
 
 test("generarea data-anim blocată nu inventează un draft pending și expune cauza", async () => {

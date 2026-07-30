@@ -1357,6 +1357,23 @@ mod tests {
     }
 
     #[test]
+    fn staged_extensionless_text_file_is_projected_as_a_file() {
+        let runtime = FileExplorerRuntime::default();
+        let projection = projection(HashMap::from([(
+            "static/CNAME".to_string(),
+            "example.test".to_string(),
+        )]));
+        let snapshot = runtime.snapshot(&projection, &workbench(None)).unwrap();
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == "static/CNAME")
+            .expect("extensionless staged text must remain visible");
+        assert_eq!(entry.kind, FileExplorerEntryKind::Text);
+        assert_eq!(entry.open_surface, Some(WorkbenchSurface::Code));
+    }
+
+    #[test]
     fn snapshot_truncation_is_explicit_and_hierarchy_safe() {
         let runtime = FileExplorerRuntime::default();
         let source_texts = (0..(PROJECT_SCAN_MAX_ENTRIES + 20))

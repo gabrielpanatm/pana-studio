@@ -284,7 +284,7 @@ export type ProjectControllerHost = {
   escalateGlobalStatus: (notification: GlobalStatusEscalationRequest) => void;
   clearNotification: (id: string) => void;
   establishExternalDiskBaseline?: () => Promise<void>;
-  startExternalDiskPolling?: () => void;
+  startExternalDiskMonitoring?: () => void;
   resetExternalDiskState?: () => void;
   invalidateExternalReconcileForProjectTransition?: () => Promise<void>;
   resumeExternalMonitoringAfterFailedTransition?: () => void;
@@ -521,7 +521,7 @@ async function projectPublishedSessionIntoFrontend(
   );
   host.resetExternalDiskState?.();
   await host.establishExternalDiskBaseline?.();
-  host.startExternalDiskPolling?.();
+  host.startExternalDiskMonitoring?.();
   return {
     expectedProjectRoot: project.root,
     expectedSessionId: host.kernelProjectSessionId,
@@ -824,6 +824,16 @@ export function isProjectPreviewRequestIdentityCurrent(
     && host.kernelProjectSessionId === identity.expectedSessionId;
 }
 
+export function bindCanvasCandidateIdentityToPreviewUrl(
+  url: string,
+  identity: CanvasProjectionIdentity,
+) {
+  const candidateUrl = new URL(url);
+  candidateUrl.searchParams.set("__pana_preview_revision", identity.previewRevision);
+  candidateUrl.searchParams.set("__pana_canvas_transaction", identity.transactionId);
+  return candidateUrl.toString();
+}
+
 export async function startPreviewAfterOpen(
   host: ProjectControllerHost,
   identity: ProjectPreviewRequestIdentity,
@@ -874,7 +884,10 @@ export async function startPreviewAfterOpen(
       ?? currentProject.files.find((file) => file.role === "page")
       ?? null;
     if (activeFile && activeFile.role !== "template") {
-      await host.loadScannedProjectFile(activeFile, { syncWorkbench: false });
+      await host.loadScannedProjectFile(activeFile, {
+        syncWorkbench: false,
+        deferPreviewRefresh: receipt.canvasProjection.phase === "prepared",
+      });
     }
     if (
       host.previewSrc === "about:blank"
@@ -893,7 +906,13 @@ export async function startPreviewAfterOpen(
         if (!fallbackPage) {
           throw new Error(t("project-controller-canvas-route-missing"));
         }
-        host.previewSrc = host.previewUrlForScannedFile(fallbackPage);
+        const fallbackUrl = host.previewUrlForScannedFile(fallbackPage);
+        host.previewSrc = receipt.canvasProjection.phase === "prepared"
+          ? bindCanvasCandidateIdentityToPreviewUrl(
+              fallbackUrl,
+              receipt.canvasProjection.identity,
+            )
+          : fallbackUrl;
         host.activePreviewPath = fallbackPage.relativePath;
         host.previewDocumentMarkup = null;
       }
@@ -1332,7 +1351,7 @@ async function runWorkspaceDerivedStateReconciliation(
     }
   }
 
-  host.startExternalDiskPolling?.();
+  host.startExternalDiskMonitoring?.();
   return outcome;
 }
 
@@ -1406,7 +1425,7 @@ async function projectCurrentProjectRescan(
       throw new Error(t("project-controller-strict-rescan-preview-unconfirmed"));
     }
   }
-  host.startExternalDiskPolling?.();
+  host.startExternalDiskMonitoring?.();
   host.setGlobalStatus(t("project-controller-structure-rescanned"), "restored");
 }
 
@@ -1842,6 +1861,10 @@ export async function loadScannedProjectFile(
   if (!options.skipDraftFlush) await host.flushInteractiveEditorDrafts();
   if (!projectLoadLeaseMatches(host, expectedRoot, expectedSessionId, expectedSessionEpoch)) return;
   const loadPlan = planScannedProjectFileLoad(file);
+  const reusesActiveTemplateContext = loadPlan.isTemplateFile
+    && host.templateWorkbenchActive
+    && normalizedTemplateContextPath(host.templateWorkbenchTarget)
+      === normalizedTemplateContextPath(file.relativePath);
   host.activeScannedPath = file.relativePath;
   host.source = SOURCE_LOADING_SENTINEL;
   host.centerView = loadPlan.centerView;
@@ -1853,7 +1876,13 @@ export async function loadScannedProjectFile(
     host.templateWorkbenchPlan = null;
     host.templateWorkbenchPreferredPagePath = null;
     host.templateWorkbenchPreferredRoute = null;
-    host.previewSrc = host.previewUrlForScannedFile(file);
+    const previewUrl = host.previewUrlForScannedFile(file);
+    host.previewSrc = host.pendingCanvasProjection
+      ? bindCanvasCandidateIdentityToPreviewUrl(
+          previewUrl,
+          host.pendingCanvasProjection.identity,
+        )
+      : previewUrl;
     host.activePreviewPath = file.relativePath;
     host.browserPreviewRoute = file.previewPath ?? "/";
     host.previewDocumentMarkup = null;
@@ -1867,12 +1896,16 @@ export async function loadScannedProjectFile(
         file,
         options.preferredTemplatePagePath !== undefined
           ? options.preferredTemplatePagePath
-          : host.templateWorkbenchPreferredPagePath,
+          : reusesActiveTemplateContext
+            ? host.templateWorkbenchPreferredPagePath
+            : null,
         {
           deferPreviewRefresh: options.deferPreviewRefresh,
           preferredRoute: options.preferredTemplateRoute !== undefined
             ? options.preferredTemplateRoute
-            : host.templateWorkbenchPreferredRoute,
+            : reusesActiveTemplateContext
+              ? host.templateWorkbenchPreferredRoute
+              : null,
           strict: options.strict,
         },
       );

@@ -380,44 +380,102 @@ pub(crate) fn with_bound_css_file_buffer_revision<T>(
         u64,
     ) -> Result<T, String>,
 ) -> Result<FileBufferCommandReceipt<T>, String> {
-    // Project Transition publică în aceeași ordine. Păstrarea prefixului până
-    // după receipt împiedică redeschiderea aceluiași root să schimbe runtime-ul
-    // între validarea identității și proiecția citită.
-    let current_root = state
-        .current_root
-        .lock()
-        .map_err(|_| "Nu am putut bloca root-ul curent pentru CSS/SCSS.".to_string())?;
-    let project_root = current_root
-        .as_ref()
-        .ok_or_else(|| "Nu există proiect curent pentru CSS/SCSS.".to_string())?;
-    let current_root_string = project_root.to_string_lossy().into_owned();
-    let project_workspace = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru CSS/SCSS.".to_string())?;
-    let workspace = project_workspace
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru CSS/SCSS.".to_string())?;
-    let session = &workspace.session;
-    let accepted_disk = &workspace.accepted_disk;
-    accepted_disk.require_live_complete(
-        &session.runtime_instance_id(),
-        &session.project_root,
-        project_root,
-    )?;
-    let store = &workspace.documents;
-    require_file_buffer_session_binding(&current_root_string, session, store, identity)?;
+    let (project_root, session, accepted_disk, store, workspace_revision) = {
+        // Project Transition publică root-ul și ProjectWorkspace în aceeași
+        // ordine. Capturăm o proiecție exactă sub ambele lock-uri, apoi le
+        // eliberăm înaintea scanării de disk și a analizei CSS.
+        let current_root = state
+            .current_root
+            .lock()
+            .map_err(|_| "Nu am putut bloca root-ul curent pentru CSS/SCSS.".to_string())?;
+        let project_root = current_root
+            .as_ref()
+            .ok_or_else(|| "Nu există proiect curent pentru CSS/SCSS.".to_string())?;
+        let current_root_string = project_root.to_string_lossy().into_owned();
+        let project_workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru CSS/SCSS.".to_string())?;
+        let workspace = project_workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru CSS/SCSS.".to_string())?;
+        let session = &workspace.session;
+        workspace
+            .accepted_disk
+            .require_identity(&session.runtime_instance_id(), &session.project_root)?;
+        workspace.accepted_disk.require_complete()?;
+        require_file_buffer_session_binding(
+            &current_root_string,
+            session,
+            &workspace.documents,
+            identity,
+        )?;
 
-    let zola_root = zola_project_root(project_root);
-    let payload = operation(project_root, &zola_root, session, store, workspace.revision)?;
+        (
+            project_root.clone(),
+            session.clone(),
+            workspace.accepted_disk.clone(),
+            workspace.documents.clone(),
+            workspace.revision,
+        )
+    };
+
     accepted_disk.require_live_complete(
         &session.runtime_instance_id(),
         &session.project_root,
-        project_root,
+        &project_root,
     )?;
+    let zola_root = zola_project_root(&project_root);
+    let payload = operation(
+        &project_root,
+        &zola_root,
+        &session,
+        &store,
+        workspace_revision,
+    )?;
+    accepted_disk.require_live_complete(
+        &session.runtime_instance_id(),
+        &session.project_root,
+        &project_root,
+    )?;
+
+    // A read is publishable only while its complete session/revision/disk
+    // authority is still current. Reopening the same path therefore cannot
+    // turn an old calculation into a valid receipt.
+    {
+        let current_root = state
+            .current_root
+            .lock()
+            .map_err(|_| "Nu am putut revalida root-ul curent pentru CSS/SCSS.".to_string())?;
+        if current_root.as_ref() != Some(&project_root) {
+            return Err(
+                "Citirea CSS/SCSS a devenit stale: proiectul activ s-a schimbat.".to_string(),
+            );
+        }
+        let project_workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut revalida ProjectWorkspace pentru CSS/SCSS.".to_string())?;
+        let workspace = project_workspace.as_ref().ok_or_else(|| {
+            "Citirea CSS/SCSS a devenit stale: ProjectWorkspace a fost închis.".to_string()
+        })?;
+        require_file_buffer_session_binding(
+            &project_root.to_string_lossy(),
+            &workspace.session,
+            &workspace.documents,
+            identity,
+        )?;
+        if workspace.revision != workspace_revision || workspace.accepted_disk != accepted_disk {
+            return Err(
+                "Citirea CSS/SCSS a devenit stale: revizia workspace sau autoritatea disk s-a schimbat."
+                    .to_string(),
+            );
+        }
+    }
+
     Ok(FileBufferCommandReceipt::new(
-        session,
-        workspace.revision,
+        &session,
+        workspace_revision,
         payload,
     ))
 }
@@ -591,14 +649,16 @@ fn execute_selection_bound_css_workspace_mutation<R>(
     let Some(expected) = expected_selection else {
         return execute();
     };
-    state.selection_coordinator.with_mutation_target(
-        &identity.expected_session_id,
-        expected.selection_revision,
-        expected.editor_node_id.as_deref(),
-        expected.source_node_id.as_deref(),
-        expected.render_instance_id.as_deref(),
-        execute,
-    )
+    state
+        .selection_coordinator
+        .with_stable_semantic_mutation_target(
+            &identity.expected_session_id,
+            expected.selection_revision,
+            expected.editor_node_id.as_deref(),
+            expected.source_node_id.as_deref(),
+            expected.render_instance_id.as_deref(),
+            execute,
+        )
 }
 
 fn collect_media_query_migration_changes(

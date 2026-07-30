@@ -1,4 +1,5 @@
 import { tick } from "svelte";
+import { subscribeAiCoordinationChanges } from "$lib/kernel/ai-coordination-events";
 import { drainPreviewStructuralLanes } from "$lib/kernel/preview-structural-lane";
 import {
   acceptAiEditConflictForReconciliation,
@@ -14,7 +15,7 @@ import {
   EXTERNAL_CHANGE_NOTIFICATION_ID,
   EXTERNAL_CHANGE_RELOAD_ACTION_ID,
   resumeExternalDiskMonitoringAfterTransitionLease,
-  startExternalDiskPolling,
+  startExternalDiskMonitoring,
   suspendAndDrainExternalDiskMonitoring,
   type ExternalDiskControllerHost,
 } from "$lib/state/external-disk-controller";
@@ -31,14 +32,15 @@ import type {
 import type { ProjectReloadOutcome } from "$lib/state/project-controller";
 import { t } from "$lib/i18n/runtime.svelte";
 
-const AI_COORDINATION_POLL_MS = 500;
 export const AI_COORDINATION_NOTIFICATION_ID = "ai.edit-authority";
 export const AI_COORDINATION_ACCEPT_DISK_ACTION_ID = "ai.edit-authority.accept-disk";
 const aiRecoveryReloadFlights = new WeakMap<object, Promise<ProjectReloadOutcome>>();
 
 export type AiCoordinationControllerHost = {
   aiCoordinationSnapshot: AiCoordinationSnapshot | null;
-  aiCoordinationTimer: number | null;
+  aiCoordinationUnlisten: (() => void) | null;
+  aiCoordinationSubscriptionGeneration: number;
+  aiCoordinationPendingSnapshot: AiCoordinationSnapshot | null;
   aiCoordinationOperationInFlight: boolean;
   aiCoordinationHandledRequestId: string | null;
   aiCoordinationReconciliationLeaseId: string | null;
@@ -63,53 +65,86 @@ export type AiCoordinationControllerHost = {
   clearNotification: (id: string) => void;
 };
 
-export function startAiCoordinationPolling(host: AiCoordinationControllerHost) {
-  stopAiCoordinationPolling(host);
-  if (typeof window === "undefined") return;
-  void pollAiCoordination(host);
+export function startAiCoordinationEvents(host: AiCoordinationControllerHost) {
+  stopAiCoordinationEvents(host);
+  const generation = host.aiCoordinationSubscriptionGeneration;
+  void subscribeAiCoordinationChanges((snapshot) => {
+    if (host.aiCoordinationSubscriptionGeneration !== generation) return;
+    enqueueAiCoordinationSnapshot(host, snapshot);
+  }).then((unlisten) => {
+    if (host.aiCoordinationSubscriptionGeneration !== generation) {
+      unlisten();
+      return;
+    }
+    host.aiCoordinationUnlisten = unlisten;
+    void readAiCoordinationState()
+      .then((snapshot) => enqueueAiCoordinationSnapshot(host, snapshot))
+      .catch((error) => reportAiCoordinationReadFailure(host, error));
+  }).catch((error) => reportAiCoordinationReadFailure(host, error));
 }
 
-export function stopAiCoordinationPolling(host: AiCoordinationControllerHost) {
-  if (host.aiCoordinationTimer !== null && typeof window !== "undefined") {
-    window.clearTimeout(host.aiCoordinationTimer);
+export function stopAiCoordinationEvents(host: AiCoordinationControllerHost) {
+  host.aiCoordinationSubscriptionGeneration += 1;
+  host.aiCoordinationUnlisten?.();
+  host.aiCoordinationUnlisten = null;
+  host.aiCoordinationPendingSnapshot = null;
+}
+
+function enqueueAiCoordinationSnapshot(
+  host: AiCoordinationControllerHost,
+  snapshot: AiCoordinationSnapshot,
+) {
+  if (
+    host.aiCoordinationSnapshot
+    && snapshot.coordinationRevision < host.aiCoordinationSnapshot.coordinationRevision
+  ) return;
+  if (
+    !host.aiCoordinationPendingSnapshot
+    || snapshot.coordinationRevision >= host.aiCoordinationPendingSnapshot.coordinationRevision
+  ) {
+    host.aiCoordinationPendingSnapshot = snapshot;
   }
-  host.aiCoordinationTimer = null;
+  void drainAiCoordinationSnapshots(host);
 }
 
-async function pollAiCoordination(host: AiCoordinationControllerHost) {
+async function drainAiCoordinationSnapshots(host: AiCoordinationControllerHost) {
   if (host.aiCoordinationOperationInFlight) {
-    scheduleNextPoll(host);
     return;
   }
   host.aiCoordinationOperationInFlight = true;
   try {
-    const snapshot = await readAiCoordinationState();
-    host.aiCoordinationSnapshot = snapshot;
-    await applyCoordinationState(host, snapshot.authority);
-  } catch (error) {
-    host.setGlobalStatus(
-      t("ai-coordination-read-failed", { message: errorMessage(error) }),
-      "error",
-      {
-        code: "ai.coordination.read-failed",
-        source: "ai",
-        dedupeKey: "ai.coordination.poll",
-        resolutionKey: "ai.coordination.poll",
-      },
-    );
+    while (host.aiCoordinationPendingSnapshot) {
+      const snapshot = host.aiCoordinationPendingSnapshot;
+      host.aiCoordinationPendingSnapshot = null;
+      if (
+        host.aiCoordinationSnapshot
+        && snapshot.coordinationRevision < host.aiCoordinationSnapshot.coordinationRevision
+      ) continue;
+      host.aiCoordinationSnapshot = snapshot;
+      await applyCoordinationState(host, snapshot.authority);
+    }
   } finally {
     host.aiCoordinationOperationInFlight = false;
-    scheduleNextPoll(host);
+    if (host.aiCoordinationPendingSnapshot) {
+      void drainAiCoordinationSnapshots(host);
+    }
   }
 }
 
-function scheduleNextPoll(host: AiCoordinationControllerHost) {
-  if (typeof window === "undefined") return;
-  stopAiCoordinationPolling(host);
-  host.aiCoordinationTimer = window.setTimeout(() => {
-    host.aiCoordinationTimer = null;
-    void pollAiCoordination(host);
-  }, AI_COORDINATION_POLL_MS);
+function reportAiCoordinationReadFailure(
+  host: AiCoordinationControllerHost,
+  error: unknown,
+) {
+  host.setGlobalStatus(
+    t("ai-coordination-read-failed", { message: errorMessage(error) }),
+    "error",
+    {
+      code: "ai.coordination.read-failed",
+      source: "ai",
+      dedupeKey: "ai.coordination.events",
+      resolutionKey: "ai.coordination.events",
+    },
+  );
 }
 
 async function applyCoordinationState(
@@ -149,7 +184,7 @@ async function applyCoordinationState(
       if (host.aiCoordinationReconciliationLeaseId !== authority.detail.leaseId) {
         host.aiCoordinationReconciliationLeaseId = authority.detail.leaseId;
         resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
-        startExternalDiskPolling(host.externalDiskControllerHost());
+        startExternalDiskMonitoring(host.externalDiskControllerHost());
       }
       host.escalateGlobalStatus({
         id: AI_COORDINATION_NOTIFICATION_ID,
@@ -286,7 +321,7 @@ async function reconcileReleasedLease(
   if (host.aiCoordinationReconciliationLeaseId !== detail.leaseId) {
     host.aiCoordinationReconciliationLeaseId = detail.leaseId;
     resumeExternalDiskMonitoringAfterTransitionLease(host.externalDiskControllerHost());
-    startExternalDiskPolling(host.externalDiskControllerHost());
+    startExternalDiskMonitoring(host.externalDiskControllerHost());
     host.setGlobalStatus(
       t("ai-coordination-reconciling-message"),
       "saving",

@@ -24,6 +24,7 @@ import {
   isPreviewControlPlaneMessage,
 } from "$lib/state/app-preview-runtime-controller";
 import {
+  bindCanvasCandidateIdentityToPreviewUrl,
   openCurrentProjectInBrowser,
   startPreviewAfterOpen,
 } from "$lib/state/project-controller";
@@ -155,13 +156,12 @@ test("bootstrap Canvas promovează numai identitatea completă a documentului mo
     resources: { schemaVersion: 1, previewRevision: "workspace-8", totalBytes: 0, entries: [] },
   };
   mockIPC(async (command, payload) => {
-    assert.equal(command, "acknowledge_canvas_projection_phase");
-    assert.deepEqual(payload.input.identity, identity);
+    assert.equal(command, "acknowledge_canvas_projection_phases");
+    assert.equal(payload.inputs.length, 3);
+    assert.deepEqual(payload.inputs[0].identity, identity);
     return {
       ...plan,
-      phase: payload.input.phase === "styledReady"
-        ? "canonicalVerified"
-        : payload.input.phase,
+      phase: "canonicalVerified",
     };
   });
   const frame = { contentWindow: {} };
@@ -621,6 +621,97 @@ test("Project Transition invalidează preview-ul embedded înainte de schimbarea
   assert.equal(loadCount, 0);
 });
 
+test("prima montare Canvas folosește direct lease-ul exact fără preflight Preview dublu", async () => {
+  const page = {
+    name: "_index.md",
+    relativePath: "content/_index.md",
+    role: "page",
+    previewPath: "/",
+  };
+  const canvasIdentity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 4,
+    transactionId: "canvas-direct-4",
+    previewRevision: "preview-direct-4",
+  };
+  const canvasProjection = {
+    schemaVersion: 1,
+    identity: canvasIdentity,
+    workspaceTransactionId: null,
+    phase: "prepared",
+    impact: { kinds: ["fullDocument"], paths: [], requiresFullDocument: true },
+    resources: { schemaVersion: 1, previewRevision: "preview-direct-4", totalBytes: 0, entries: [] },
+  };
+  let loadOptions = null;
+  const activeHost = {
+    scannedProject: {
+      root: "/project-a",
+      files: [page],
+      previewBaseUrl: null,
+      previewWarning: null,
+    },
+    sessionProjectRoot: "/project-a",
+    kernelProjectSessionId: "session-a:runtime-1",
+    projectTransitionFrontendLeaseActive: false,
+    activeScannedPath: page.relativePath,
+    activePreviewPath: "about:blank",
+    previewSrc: "about:blank",
+    previewDocumentMarkup: null,
+    pendingCanvasProjection: null,
+    previewWorkspaceRevision: null,
+    activeCanvasIdentity: null,
+    activeCanvasUrl: "",
+    prepareCanvasProjectionNavigation(plan) {
+      this.pendingCanvasProjection = plan;
+      return Promise.resolve().then(() => {
+        this.pendingCanvasProjection = null;
+        this.activeCanvasIdentity = plan.identity;
+      });
+    },
+    previewUrlForScannedFile() {
+      return "http://127.0.0.1:43219/";
+    },
+    async loadScannedProjectFile(_file, options) {
+      loadOptions = options;
+    },
+    markCanvasProjectionSurfaceCurrent() {},
+    clearNotification() {},
+    setGlobalStatus() {},
+    scheduleZolaValidation() {},
+    escalateGlobalStatus() {},
+  };
+
+  const outcome = await startPreviewAfterOpen(activeHost, {
+    expectedProjectRoot: "/project-a",
+    expectedSessionId: "session-a:runtime-1",
+  }, {
+    async start() {
+      return {
+        url: "http://127.0.0.1:43219",
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        workspaceRevision: 4,
+        previewRevision: "preview-direct-4",
+        canvasProjection,
+      };
+    },
+  });
+
+  assert.equal(outcome.status, "canonical");
+  assert.equal(loadOptions.deferPreviewRefresh, true);
+  assert.equal(
+    activeHost.previewSrc,
+    bindCanvasCandidateIdentityToPreviewUrl(
+      "http://127.0.0.1:43219/",
+      canvasIdentity,
+    ),
+  );
+  const mountedUrl = new URL(activeHost.previewSrc);
+  assert.equal(mountedUrl.searchParams.get("__pana_preview_revision"), "preview-direct-4");
+  assert.equal(mountedUrl.searchParams.get("__pana_canvas_transaction"), "canvas-direct-4");
+});
+
 test("restaurarea unui template așteaptă publicarea Canvas principal înainte de Workbench", async () => {
   const mainCanvasGate = deferred();
   const events = [];
@@ -1027,12 +1118,12 @@ test("aceeași rută primește documentul Zola canonic fără reload de iframe",
     if (command === "read_preview_document") {
       return '<html data-pana-preview-revision="workspace-8"><body>Titlu canonic</body></html>';
     }
-    if (command === "acknowledge_canvas_projection_phase") {
+    if (command === "acknowledge_canvas_projection_phases") {
       return {
         ...plan,
-        phase: payload.input.phase === "styledReady"
-          ? "canonicalVerified"
-          : payload.input.phase,
+        phase: payload.inputs[0]?.phase === "failed"
+          ? "failed"
+          : "canonicalVerified",
       };
     }
     throw new Error(`Comandă IPC neașteptată: ${command}`);
@@ -1098,8 +1189,9 @@ test("eșecul reconcilerului pe aceeași rută păstrează ultimul document și 
     if (command === "read_preview_document") {
       return '<html data-pana-preview-revision="workspace-9"><body>Document candidat</body></html>';
     }
-    if (command === "acknowledge_canvas_projection_phase") {
-      assert.equal(payload.input.phase, "failed");
+    if (command === "acknowledge_canvas_projection_phases") {
+      assert.equal(payload.inputs.length, 1);
+      assert.equal(payload.inputs[0].phase, "failed");
       return { ...plan, phase: "failed" };
     }
     throw new Error(`Comandă IPC neașteptată: ${command}`);
@@ -1164,12 +1256,12 @@ test("un bridge fără ACK recuperează aceeași revizie prin navigarea iframe-u
     if (command === "read_preview_document") {
       return '<html data-pana-preview-revision="workspace-10"><body>Document candidat</body></html>';
     }
-    if (command === "acknowledge_canvas_projection_phase") {
+    if (command === "acknowledge_canvas_projection_phases") {
       return {
         ...plan,
-        phase: payload.input.phase === "styledReady"
-          ? "canonicalVerified"
-          : payload.input.phase,
+        phase: payload.inputs[0]?.phase === "failed"
+          ? "failed"
+          : "canonicalVerified",
       };
     }
     throw new Error(`Comandă IPC neașteptată: ${command}`);

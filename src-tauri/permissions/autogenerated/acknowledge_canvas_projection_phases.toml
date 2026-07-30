@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-acknowledge-canvas-projection-phases"
+description = "Enables the acknowledge_canvas_projection_phases command without any pre-configured scope."
+commands.allow = ["acknowledge_canvas_projection_phases"]
+
+[[permission]]
+identifier = "deny-acknowledge-canvas-projection-phases"
+description = "Denies the acknowledge_canvas_projection_phases command without any pre-configured scope."
+commands.deny = ["acknowledge_canvas_projection_phases"]

@@ -286,10 +286,10 @@ const harness = `<!doctype html>
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
       frame.contentWindow.requestAnimationFrame(resolve)
     ));
-    const hoverOverlay = frame.contentDocument.getElementById(
-      "pana-studio-canvas-agent-hover"
+    const hoverTarget = frame.contentDocument.querySelector(
+      '[data-pana-render-instance-id="render-title"]'
     );
-    if (!hoverOverlay || hoverOverlay.style.display !== "block") {
+    if (hoverTarget?.getAttribute("data-pana-canvas-agent-hover") !== "html") {
       throw new Error("CanvasAgent did not project the Rust-owned hover overlay target");
     }
     result.textContent = "canvas-agent-native-click";

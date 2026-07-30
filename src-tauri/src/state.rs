@@ -1,6 +1,6 @@
 use std::{
     path::PathBuf,
-    sync::Mutex,
+    sync::{atomic::AtomicU64, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -15,7 +15,7 @@ use crate::kernel::{
     selection_coordinator::SelectionCoordinatorRuntime, workbench::WorkbenchRuntime,
 };
 use crate::preview::{PersistentZolaPreviewEngine, SourceBrowserEngine};
-use crate::project::StartupFlowRuntime;
+use crate::project::{ProjectDiskWatchHandle, StartupFlowRuntime};
 use crate::versioning::VersionNetworkOperationControl;
 
 pub struct McpServerHandle {
@@ -62,6 +62,7 @@ impl Drop for McpServerHandle {
 
 pub struct AppState {
     pub ai_coordination: AiCoordinationRuntime,
+    pub ai_coordination_deadline_generation: AtomicU64,
     pub canvas_interaction: CanvasInteractionRuntime,
     pub context_hub: ContextHubRuntime,
     pub editor_navigation: EditorNavigationRuntime,
@@ -71,6 +72,8 @@ pub struct AppState {
     pub startup_flow: StartupFlowRuntime,
     pub mcp_access_token: Mutex<Option<String>>,
     pub current_root: Mutex<Option<PathBuf>>,
+    pub project_disk_watch: Mutex<Option<ProjectDiskWatchHandle>>,
+    pub project_disk_watch_transition: Mutex<()>,
     pub project_workspace: Mutex<Option<ProjectWorkspace>>,
     pub workbench: WorkbenchRuntime,
     pub publish_operation: Mutex<Option<PublishOperationControl>>,
@@ -90,6 +93,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             ai_coordination: AiCoordinationRuntime::default(),
+            ai_coordination_deadline_generation: AtomicU64::new(0),
             canvas_interaction: CanvasInteractionRuntime::default(),
             context_hub: ContextHubRuntime::default(),
             editor_navigation: EditorNavigationRuntime::default(),
@@ -99,6 +103,8 @@ impl Default for AppState {
             startup_flow: StartupFlowRuntime::default(),
             mcp_access_token: Mutex::new(None),
             current_root: Mutex::new(None),
+            project_disk_watch: Mutex::new(None),
+            project_disk_watch_transition: Mutex::new(()),
             project_workspace: Mutex::new(None),
             workbench: WorkbenchRuntime::default(),
             publish_operation: Mutex::new(None),

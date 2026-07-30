@@ -347,6 +347,12 @@ pub struct SelectionCoordinatorRuntime {
     state: Mutex<SelectionCoordinatorState>,
 }
 
+#[derive(Clone, Copy)]
+enum SelectionRevisionPolicy {
+    Exact,
+    StableSemanticAnchor,
+}
+
 impl SelectionCoordinatorRuntime {
     pub fn bind_inspector_document(
         &self,
@@ -398,6 +404,28 @@ impl SelectionCoordinatorRuntime {
             editor_node_id,
             source_node_id,
             render_instance_id,
+            SelectionRevisionPolicy::Exact,
+            execute,
+        )
+    }
+
+    pub fn with_stable_semantic_mutation_target<R>(
+        &self,
+        runtime_session_id: &str,
+        selection_revision: u64,
+        editor_node_id: Option<&str>,
+        source_node_id: Option<&str>,
+        render_instance_id: Option<&str>,
+        execute: impl FnOnce() -> Result<R, String>,
+    ) -> Result<R, String> {
+        self.with_resolved_target(
+            "Mutația CSS",
+            runtime_session_id,
+            selection_revision,
+            editor_node_id,
+            source_node_id,
+            render_instance_id,
+            SelectionRevisionPolicy::StableSemanticAnchor,
             execute,
         )
     }
@@ -418,6 +446,7 @@ impl SelectionCoordinatorRuntime {
             editor_node_id,
             source_node_id,
             render_instance_id,
+            SelectionRevisionPolicy::Exact,
             execute,
         )
     }
@@ -430,6 +459,7 @@ impl SelectionCoordinatorRuntime {
         editor_node_id: Option<&str>,
         source_node_id: Option<&str>,
         render_instance_id: Option<&str>,
+        revision_policy: SelectionRevisionPolicy,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
         if selection_revision == 0
@@ -453,7 +483,10 @@ impl SelectionCoordinatorRuntime {
                 "{operation} a fost anulată deoarece ProjectSession-ul selecției s-a schimbat."
             ));
         }
-        if selection.selection_revision != selection_revision {
+        let requires_exact_revision = matches!(revision_policy, SelectionRevisionPolicy::Exact);
+        if selection.selection_revision < selection_revision
+            || (requires_exact_revision && selection.selection_revision != selection_revision)
+        {
             return Err(format!(
                 "{operation} a fost anulată deoarece selecția s-a schimbat (revizia capturată {selection_revision}, revizia activă {}).",
                 selection.selection_revision
@@ -566,6 +599,48 @@ impl SelectionCoordinatorRuntime {
         }
 
         coordinator_snapshot(&state)
+    }
+
+    /// Proiectează exclusiv starea efemeră de hover.
+    ///
+    /// Lane-ul pointerului nu are nevoie de SelectionSnapshot sau de sumarul
+    /// Inspectorului, care nu se modifică la hover. Întoarcerea proiecției
+    /// minimale evită clonarea și serializarea întregului coordinator la
+    /// fiecare tranziție fizică din Canvas.
+    pub fn apply_hover(
+        &self,
+        snapshot: &EditorNavigationSnapshot,
+        active_document_path: Option<&str>,
+        editor_node_id: Option<&str>,
+        document_epoch: u64,
+    ) -> Result<(Option<HoverSnapshot>, bool), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
+        ensure_session(&mut state, snapshot, active_document_path)?;
+
+        let current = state.hover.as_ref().filter(|hover| {
+            hover.canvas_identity == snapshot.identity && hover.document_epoch == document_epoch
+        });
+        let unchanged = match (editor_node_id, current) {
+            (Some(editor_node_id), Some(hover)) => hover.editor_node_id == editor_node_id,
+            (None, None) => true,
+            _ => false,
+        };
+        if unchanged {
+            return Ok((current.cloned(), false));
+        }
+
+        if let Some(editor_node_id) = editor_node_id {
+            set_hover(&mut state, snapshot, editor_node_id, document_epoch)?;
+        } else {
+            clear_hover(&mut state, snapshot, document_epoch);
+        }
+        let hover = state.hover.as_ref().filter(|hover| {
+            hover.canvas_identity == snapshot.identity && hover.document_epoch == document_epoch
+        });
+        Ok((hover.cloned(), true))
     }
 
     pub fn accept_observation(
@@ -2620,6 +2695,111 @@ mod tests {
     }
 
     #[test]
+    fn css_mutation_can_follow_a_focus_revision_for_the_same_semantic_anchor() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-1",
+            vec![node(
+                "editor_render:a",
+                "source:a",
+                "render:a",
+                None,
+                range(10, 30),
+            )],
+        );
+        let captured = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let captured_anchor = captured.anchor.as_ref().unwrap();
+
+        let focused = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetFocus {
+                    focus: SelectionFocus::CssProperty {
+                        file: "sass/index.scss".to_string(),
+                        selector: ".hero-title".to_string(),
+                        property: "font-size".to_string(),
+                        viewport: None,
+                        range: None,
+                    },
+                    expected_selection_revision: Some(captured.selection_revision),
+                },
+            )
+            .unwrap()
+            .selection;
+        assert!(focused.selection_revision > captured.selection_revision);
+
+        runtime
+            .with_stable_semantic_mutation_target(
+                &snapshot.identity.runtime_session_id,
+                captured.selection_revision,
+                captured_anchor.editor_node_id.as_deref(),
+                captured_anchor.source_node_id.as_deref(),
+                captured_anchor.render_instance_id.as_deref(),
+                || Ok(()),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn css_mutation_cannot_follow_a_different_semantic_anchor() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-1",
+            vec![
+                node("editor_render:a", "source:a", "a", None, range(10, 30)),
+                node("editor_render:b", "source:b", "b", None, range(40, 60)),
+            ],
+        );
+        let captured = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let captured_anchor = captured.anchor.as_ref().unwrap();
+
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:b".to_string(),
+                },
+            )
+            .unwrap();
+
+        let error = runtime
+            .with_stable_semantic_mutation_target(
+                &snapshot.identity.runtime_session_id,
+                captured.selection_revision,
+                captured_anchor.editor_node_id.as_deref(),
+                captured_anchor.source_node_id.as_deref(),
+                captured_anchor.render_instance_id.as_deref(),
+                || Ok(()),
+            )
+            .unwrap_err();
+        assert!(error.contains("EditorNavigation"));
+    }
+
+    #[test]
     fn hover_is_ephemeral_and_never_replaces_selection() {
         let runtime = SelectionCoordinatorRuntime::default();
         let snapshot = snapshot(
@@ -2680,6 +2860,88 @@ mod tests {
         assert!(cleared.hover.is_none());
         assert_eq!(
             cleared.selection.anchor.unwrap().editor_node_id.as_deref(),
+            Some("editor_render:a")
+        );
+    }
+
+    #[test]
+    fn hover_fast_path_returns_a_minimal_deduplicated_projection() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-1",
+            vec![
+                node("editor_render:a", "source:a", "a", None, range(10, 30)),
+                node("editor_render:b", "source:b", "b", None, range(40, 60)),
+            ],
+        );
+        let selection_revision = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection
+            .selection_revision;
+
+        let (first, first_changed) = runtime
+            .apply_hover(
+                &snapshot,
+                Some("templates/index.html"),
+                Some("editor_render:b"),
+                11,
+            )
+            .unwrap();
+        assert!(first_changed);
+        assert_eq!(
+            first.as_ref().map(|hover| hover.editor_node_id.as_str()),
+            Some("editor_render:b")
+        );
+
+        let (duplicate, duplicate_changed) = runtime
+            .apply_hover(
+                &snapshot,
+                Some("templates/index.html"),
+                Some("editor_render:b"),
+                11,
+            )
+            .unwrap();
+        assert!(!duplicate_changed);
+        assert_eq!(
+            duplicate.as_ref().map(|hover| (
+                hover.hover_revision,
+                hover.document_epoch,
+                hover.editor_node_id.as_str(),
+            )),
+            first.as_ref().map(|hover| (
+                hover.hover_revision,
+                hover.document_epoch,
+                hover.editor_node_id.as_str(),
+            ))
+        );
+
+        let (cleared, clear_changed) = runtime
+            .apply_hover(&snapshot, Some("templates/index.html"), None, 11)
+            .unwrap();
+        assert!(clear_changed);
+        assert!(cleared.is_none());
+        let (still_clear, duplicate_clear_changed) = runtime
+            .apply_hover(&snapshot, Some("templates/index.html"), None, 11)
+            .unwrap();
+        assert!(!duplicate_clear_changed);
+        assert!(still_clear.is_none());
+
+        let state = runtime.state.lock().unwrap();
+        let after_hover = state.selection.as_ref().unwrap();
+        assert_eq!(after_hover.selection_revision, selection_revision);
+        assert_eq!(
+            after_hover
+                .anchor
+                .as_ref()
+                .and_then(|anchor| anchor.editor_node_id.as_deref()),
             Some("editor_render:a")
         );
     }

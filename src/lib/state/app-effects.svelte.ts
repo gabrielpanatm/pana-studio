@@ -23,6 +23,14 @@ export function registerAppEffects(app: AppState) {
     app.activeCanvasUrl;
     app.previewSrc;
     app.browserPreviewRoute;
+    app.applicationSurface;
+    app.workbenchSnapshot?.activeActivity;
+    app.centerView;
+    app.activeScannedPath;
+    app.editorNavigationSnapshot?.identity.transactionId;
+    app.editorNavigationSnapshot?.identity.previewRevision;
+    app.editorNavigationSnapshot?.route;
+    app.editorNavigationSnapshot?.focusedView?.activeDocumentPath;
     app.activeCanvasIdentity?.projectRoot;
     app.activeCanvasIdentity?.runtimeSessionId;
     app.activeCanvasIdentity?.workspaceRevision;
@@ -192,6 +200,7 @@ export function registerAppEffects(app: AppState) {
 
   // Create code editor when host is ready.
   $effect(() => {
+    const activeActivity = app.workbenchSnapshot?.activeActivity ?? "editor";
     const secondaryGroup = app.workbenchSnapshot?.groups.find(
       (group) => group.groupId === "secondary",
     );
@@ -201,23 +210,36 @@ export function registerAppEffects(app: AppState) {
     const splitSourceSurface = app.workbenchSnapshot?.split !== "none"
       ? secondaryDocument?.surface ?? null
       : null;
+
+    const codeEditorHost = app.codeEditorHost;
     if (
-      (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor"
-      || app.centerView === "kernel"
+      app.codeEditorController
+      && (
+        !codeEditorHost
+        || !app.codeEditorController.ownsHost(codeEditorHost)
+      )
     ) {
       app.codeEditorController?.destroy();
       app.codeEditorController = null;
-      app.codeEditorHost = undefined;
+    }
+
+    // Workspace activity changes only suspend the stable Editor owner. The
+    // CodeMirror instance remains bound to the same ProjectSession host and is
+    // destroyed above only when Svelte replaces/removes that host.
+    if (activeActivity !== "editor" || app.centerView === "kernel") {
       return;
     }
     if (app.centerView === "markdown" || splitSourceSurface === "markdown") {
       app.codeEditorController?.destroy();
       app.codeEditorController = null;
-      app.codeEditorHost = undefined;
       return;
     }
     const codeSurfaceVisible = app.centerView === "code" || splitSourceSurface === "code";
-    if (!app.codeEditorHost || !codeSurfaceVisible) return;
+    if (!codeEditorHost || !codeSurfaceVisible) return;
+    if (app.codeEditorController) {
+      app.codeEditorController.requestMeasure();
+      return;
+    }
     void app.createCodeEditor();
   });
 
@@ -262,6 +284,7 @@ export function registerAppEffects(app: AppState) {
     if (!app.codeEditorController) return;
     app.codeEditorController.setReadOnly(
       app.projectTransitionFrontendLeaseActive
+        || app.kernelUndoRedoFrontendQuiesceActive
         || app.kernelUndoRedoFrontendLeaseActive
         || app.aiEditLeaseFrontendLockActive,
     );

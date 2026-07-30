@@ -8,7 +8,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    deploy::run_zola_check,
+    deploy::run_zola_editor_check,
     kernel::{
         project_path::normalize_project_relative_path,
         project_workspace::{
@@ -684,7 +684,7 @@ fn validate_candidate_with_embedded_zola(
                     .to_string()
             })?;
         let validation_zola_root = stable_validation_root.join(zola_relative);
-        run_zola_check(&stable_validation_root, &validation_zola_root)
+        run_zola_editor_check(&stable_validation_root, &validation_zola_root)
             .map(|_| ())
             .map_err(|error| {
                 format!(

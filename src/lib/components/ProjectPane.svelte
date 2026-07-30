@@ -61,6 +61,7 @@
   let elementPaletteDialog: HTMLElement;
   let fileCollapsedDirs = new Set<string>();
   let fileKnownDirPaths = new Set<string>();
+  let fileRevealedEntryKey = "";
   let fileTreeMemorySessionKey: string | null = null;
   let editorNavigationCallers: Array<{ caller: string; target: string }> = [];
 
@@ -122,6 +123,7 @@
   $: if (fileTreeMemorySessionKey !== `${projectRoot}::${runtimeSessionId}`) {
     fileCollapsedDirs = new Set<string>();
     fileKnownDirPaths = new Set<string>();
+    fileRevealedEntryKey = "";
     fileTreeMemorySessionKey = `${projectRoot}::${runtimeSessionId}`;
   }
 
@@ -272,6 +274,7 @@
       error={fileExplorerError}
       bind:collapsedDirs={fileCollapsedDirs}
       bind:knownDirPaths={fileKnownDirPaths}
+      bind:revealedEntryKey={fileRevealedEntryKey}
       selectEntry={selectFileExplorerEntry}
       planOperation={planFileExplorerOperation}
       commitOperation={commitFileExplorerOperation}

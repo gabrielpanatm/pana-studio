@@ -2,6 +2,11 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     path::Path,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
+    thread,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -441,51 +446,24 @@ impl CanvasGraph {
     ) -> Result<Self, String> {
         require_nonempty_preview_revision(preview_revision)?;
         let semantic_index = CanvasSemanticIndex::from_model(model);
-        let mut result_documents = Vec::new();
-        let mut diagnostics = Vec::new();
-        let mut total_nodes = 0usize;
-
-        for (route, html) in documents {
-            if result_documents.len() >= MAX_CANVAS_DOCUMENTS {
-                return Err(format!(
-                    "CanvasGraph depășește limita de {MAX_CANVAS_DOCUMENTS} documente."
-                ));
-            }
-            let document = parse(html.to_string());
-            let mut nodes = Vec::new();
-            let mut occurrences = HashMap::new();
-            let mut binding_occurrences = HashMap::new();
-            let mut provenance_stack = Vec::new();
-            let mut boundary_stack = Vec::new();
-            let mut boundary_drafts = Vec::new();
-            let mut semantic_order = 0usize;
-            collect_render_nodes(
-                &document,
-                route,
-                None,
-                &semantic_index,
-                &mut provenance_stack,
-                &mut boundary_stack,
-                &mut boundary_drafts,
-                &mut occurrences,
-                &mut binding_occurrences,
-                &mut nodes,
-                &mut diagnostics,
-                &mut total_nodes,
-                &mut semantic_order,
-            )?;
-            let boundaries =
-                finalize_boundary_instances(route, &nodes, boundary_drafts, &mut diagnostics);
-            result_documents.push(CanvasDocumentGraph {
-                route: route.to_string(),
-                nodes,
-                boundaries,
-            });
+        let documents = documents.into_iter().collect::<Vec<_>>();
+        if documents.len() > MAX_CANVAS_DOCUMENTS {
+            return Err(format!(
+                "CanvasGraph depășește limita de {MAX_CANVAS_DOCUMENTS} documente."
+            ));
+        }
+        let (mut result_documents, mut diagnostics, total_nodes) =
+            build_canvas_documents_parallel(&semantic_index, &documents)?;
+        if total_nodes > MAX_CANVAS_NODES {
+            return Err(format!(
+                "CanvasGraph depășește limita de {MAX_CANVAS_NODES} instanțe randate."
+            ));
         }
         result_documents.sort_by(|left, right| left.route.cmp(&right.route));
         let component_instances = derive_component_instances(&semantic_index, &result_documents);
         let block_instances = derive_block_instances(&semantic_index, &result_documents);
         let runtime_nodes = derive_runtime_nodes(model, &result_documents);
+        diagnostics.shrink_to_fit();
 
         Ok(Self {
             schema_version: CANVAS_PROJECTION_SCHEMA_VERSION,
@@ -499,6 +477,122 @@ impl CanvasGraph {
             diagnostics,
         })
     }
+}
+
+type CanvasDocumentBuild = (CanvasDocumentGraph, Vec<CanvasGraphDiagnostic>, usize);
+
+fn build_canvas_documents_parallel(
+    semantic_index: &CanvasSemanticIndex<'_>,
+    documents: &[(&str, &str)],
+) -> Result<(Vec<CanvasDocumentGraph>, Vec<CanvasGraphDiagnostic>, usize), String> {
+    if documents.is_empty() {
+        return Ok((Vec::new(), Vec::new(), 0));
+    }
+    let worker_count = thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .div_ceil(2)
+        .clamp(1, 6)
+        .min(documents.len());
+    if worker_count == 1 {
+        let mut built = Vec::with_capacity(documents.len());
+        let mut diagnostics = Vec::new();
+        let mut total_nodes = 0usize;
+        for (route, html) in documents {
+            let (document, document_diagnostics, document_nodes) =
+                build_canvas_document(semantic_index, route, html)?;
+            total_nodes = total_nodes.saturating_add(document_nodes);
+            diagnostics.extend(document_diagnostics);
+            built.push(document);
+        }
+        return Ok((built, diagnostics, total_nodes));
+    }
+
+    let next_index = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel();
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let next_index = &next_index;
+            scope.spawn(move || loop {
+                let index = next_index.fetch_add(1, Ordering::Relaxed);
+                let Some((route, html)) = documents.get(index).copied() else {
+                    break;
+                };
+                if sender
+                    .send((index, build_canvas_document(semantic_index, route, html)))
+                    .is_err()
+                {
+                    break;
+                }
+            });
+        }
+        drop(sender);
+
+        let mut ordered = std::iter::repeat_with(|| None)
+            .take(documents.len())
+            .collect::<Vec<Option<Result<CanvasDocumentBuild, String>>>>();
+        for (index, result) in receiver {
+            if let Some(slot) = ordered.get_mut(index) {
+                *slot = Some(result);
+            }
+        }
+
+        let mut built = Vec::with_capacity(documents.len());
+        let mut diagnostics = Vec::new();
+        let mut total_nodes = 0usize;
+        for result in ordered {
+            let (document, document_diagnostics, document_nodes) = result.ok_or_else(|| {
+                "CanvasGraph worker nu a returnat documentul rezervat.".to_string()
+            })??;
+            total_nodes = total_nodes.saturating_add(document_nodes);
+            diagnostics.extend(document_diagnostics);
+            built.push(document);
+        }
+        Ok((built, diagnostics, total_nodes))
+    })
+}
+
+fn build_canvas_document(
+    semantic_index: &CanvasSemanticIndex<'_>,
+    route: &str,
+    html: &str,
+) -> Result<CanvasDocumentBuild, String> {
+    let document = parse(html.to_string());
+    let mut nodes = Vec::new();
+    let mut diagnostics = Vec::new();
+    let mut occurrences = HashMap::new();
+    let mut binding_occurrences = HashMap::new();
+    let mut provenance_stack = Vec::new();
+    let mut boundary_stack = Vec::new();
+    let mut boundary_drafts = Vec::new();
+    let mut semantic_order = 0usize;
+    let mut document_nodes = 0usize;
+    collect_render_nodes(
+        &document,
+        route,
+        None,
+        semantic_index,
+        &mut provenance_stack,
+        &mut boundary_stack,
+        &mut boundary_drafts,
+        &mut occurrences,
+        &mut binding_occurrences,
+        &mut nodes,
+        &mut diagnostics,
+        &mut document_nodes,
+        &mut semantic_order,
+    )?;
+    let boundaries = finalize_boundary_instances(route, &nodes, boundary_drafts, &mut diagnostics);
+    Ok((
+        CanvasDocumentGraph {
+            route: route.to_string(),
+            nodes,
+            boundaries,
+        },
+        diagnostics,
+        document_nodes,
+    ))
 }
 
 impl CanvasDocumentAnnotator<'_> {
@@ -1796,7 +1890,14 @@ impl CanvasProjectionTransaction {
             ));
         }
 
-        let allowed_keys = ["resourcesReady", "committed", "styledReady", "failed"];
+        let allowed_keys = [
+            "resourcesReady",
+            "committed",
+            "styledReady",
+            "failed",
+            "navigationToBoot",
+            "fontsReady",
+        ];
         if receipt
             .phase_timings_ms
             .keys()
@@ -2527,6 +2628,8 @@ mod tests {
                 phase_timings_ms: BTreeMap::from([
                     ("resourcesReady".to_string(), 2),
                     ("committed".to_string(), 3),
+                    ("navigationToBoot".to_string(), 41),
+                    ("fontsReady".to_string(), 4),
                     ("styledReady".to_string(), 5),
                 ]),
                 diagnostic: None,

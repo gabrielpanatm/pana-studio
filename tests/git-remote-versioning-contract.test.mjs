@@ -22,8 +22,8 @@ test("Git este o activitate Workbench canonică, nu un overlay local", () => {
   assert.match(rustSearch, /"Control versiuni"/);
   assert.match(rail, /id: "versioning"/);
   assert.match(rail, /IconGitBranch/);
-  assert.match(center, /activeWorkbenchActivity === "versioning"/);
-  assert.match(center, /activeWorkbenchActivity === "versioning"[\s\S]*<VersionControlWorkspace/);
+  assert.match(center, /retainedAuxiliarySurface === "versioning"/);
+  assert.match(center, /retainedAuxiliarySurface === "versioning"[\s\S]*<VersionControlWorkspace/);
   assert.match(workspace, /<VersionsPanel/);
   assert.doesNotMatch(chrome, /<VersionsPanel/);
   assert.doesNotMatch(state, /versionsPanelOpen/);

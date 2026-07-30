@@ -22,6 +22,7 @@ use crate::{
         workbench::{
             persist_workbench, read_persisted_workbench, WorkbenchCommandReceipt,
             WorkbenchIdentity, WorkbenchIntent, WorkbenchProjectEntryRemap, WorkbenchSnapshot,
+            WorkbenchSurface,
         },
     },
     project::resolve_project_write_path,
@@ -362,25 +363,17 @@ pub fn commit_file_explorer_operation(
             }
         }
     } else {
-        let destination = plan
-            .destination_path
-            .clone()
-            .ok_or_else(|| "FileExplorer Create nu a produs destinația planificată.".to_string())?;
         let provisional = state
             .file_explorer
             .snapshot(&after_projection, &workbench_before)?;
-        let entry = provisional
-            .entries
-            .iter()
-            .find(|entry| entry.relative_path == destination)
-            .ok_or_else(|| {
-                "FileExplorer nu a proiectat intrarea imediat după creare.".to_string()
-            })?;
-        WorkbenchIntent::SelectProjectEntry {
-            relative_path: entry.relative_path.clone(),
-            entry_kind: entry.kind.into(),
-            open_surface: entry.open_surface,
-        }
+        let projected_surface = plan.destination_path.as_deref().and_then(|destination| {
+            provisional
+                .entries
+                .iter()
+                .find(|entry| entry.relative_path == destination)
+                .and_then(|entry| entry.open_surface)
+        });
+        workbench_intent_after_create_commit(&plan, projected_surface)?
     };
     let (workbench, workbench_persistence_warning) = state
         .workbench
@@ -570,6 +563,33 @@ fn operation_label(request: &FileExplorerOperationRequest) -> &'static str {
     }
 }
 
+fn workbench_intent_after_create_commit(
+    plan: &FileExplorerCommitPlan,
+    projected_surface: Option<WorkbenchSurface>,
+) -> Result<WorkbenchIntent, String> {
+    let destination = plan
+        .destination_path
+        .clone()
+        .ok_or_else(|| "FileExplorer Create nu a produs destinația planificată.".to_string())?;
+    let entry_kind =
+        match &plan.request {
+            FileExplorerOperationRequest::Create { entry_kind, .. } => *entry_kind,
+            _ => return Err(
+                "FileExplorer a cerut selecția post-commit pentru o operație care nu este Create."
+                    .to_string(),
+            ),
+        };
+    let open_surface = match entry_kind {
+        FileExplorerEntryKind::Directory | FileExplorerEntryKind::Binary => None,
+        FileExplorerEntryKind::Text => Some(projected_surface.unwrap_or(WorkbenchSurface::Code)),
+    };
+    Ok(WorkbenchIntent::SelectProjectEntry {
+        relative_path: destination,
+        entry_kind: entry_kind.into(),
+        open_surface,
+    })
+}
+
 fn require_schema(schema_version: u32) -> Result<(), String> {
     if schema_version != FILE_EXPLORER_SCHEMA_VERSION {
         return Err("FileExplorer folosește o versiune de schemă incompatibilă.".to_string());
@@ -685,6 +705,47 @@ mod tests {
         assert_eq!(template.text_changes.len(), 1);
         assert!(template.text_changes[0].contents.contains("<section"));
         assert!(template.text_changes[0].create_only);
+    }
+
+    #[test]
+    fn create_selection_uses_the_committed_plan_when_projection_is_not_ready_yet() {
+        let directory_plan = plan(
+            FileExplorerOperationRequest::Create {
+                parent_entry_id: None,
+                entry_kind: FileExplorerEntryKind::Directory,
+                name: "assets".to_string(),
+            },
+            None,
+            Some("static/assets"),
+            &["static/assets/.gitkeep"],
+        );
+        assert_eq!(
+            workbench_intent_after_create_commit(&directory_plan, None).unwrap(),
+            WorkbenchIntent::SelectProjectEntry {
+                relative_path: "static/assets".to_string(),
+                entry_kind: FileExplorerEntryKind::Directory.into(),
+                open_surface: None,
+            }
+        );
+
+        let extensionless_file_plan = plan(
+            FileExplorerOperationRequest::Create {
+                parent_entry_id: None,
+                entry_kind: FileExplorerEntryKind::Text,
+                name: "CNAME".to_string(),
+            },
+            None,
+            Some("static/CNAME"),
+            &["static/CNAME"],
+        );
+        assert_eq!(
+            workbench_intent_after_create_commit(&extensionless_file_plan, None).unwrap(),
+            WorkbenchIntent::SelectProjectEntry {
+                relative_path: "static/CNAME".to_string(),
+                entry_kind: FileExplorerEntryKind::Text.into(),
+                open_surface: Some(WorkbenchSurface::Code),
+            }
+        );
     }
 
     #[test]

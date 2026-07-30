@@ -15,7 +15,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     commands::{
-        ai_coordination::with_current_project_coordination_evidence,
+        ai_coordination::{
+            publish_ai_coordination_state, with_current_project_coordination_evidence,
+        },
         mcp::current_ai_context_snapshot,
     },
     kernel::{
@@ -181,6 +183,9 @@ impl PanaMcpService {
                 )
                 .map_err(|error| error.to_string())
         });
+        if result.is_ok() {
+            let _ = publish_ai_coordination_state(&self.app);
+        }
         self.tool_result(result)
     }
 
@@ -205,6 +210,9 @@ impl PanaMcpService {
                 .renew_edit_lease(&self.client_session_id, &input.lease_id, evidence, now_ms())
                 .map_err(|error| error.to_string())
         });
+        if result.is_ok() {
+            let _ = publish_ai_coordination_state(&self.app);
+        }
         self.tool_result(result)
     }
 
@@ -238,6 +246,9 @@ impl PanaMcpService {
                 )
                 .map_err(|error| error.to_string())
         });
+        if result.is_ok() {
+            let _ = publish_ai_coordination_state(&self.app);
+        }
         self.tool_result(result)
     }
 }

@@ -70,3 +70,27 @@ test("Cod deschide definiția, iar ștergerea păstrează call-site-ul selecție
   assert.match(teraActions, /host\.selectedTemplateSourceNode/);
   assert.doesNotMatch(teraActions, /sourceProvenance\.definition/);
 });
+
+test("comutatorul Vizual-Cod păstrează documentul activ", () => {
+  const app = source("../src/lib/state/app.svelte.ts");
+  const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
+  const selection = source("../src/lib/state/app-selection-controller.ts");
+
+  assert.match(
+    center,
+    /async function setWorkbenchSurface\(surface: WorkbenchSurface\)\s*\{\s*await app\.setCenterView\(centerViewForSurface\(surface\)\);\s*\}/,
+  );
+  assert.doesNotMatch(app, /prepareHtmlCodeRevealTargetForCodeEntry/);
+  assert.match(
+    app,
+    /if \(enteringCode\) \{[\s\S]*this\.requestCodeSelectionReveal\(\);[\s\S]*\}/,
+  );
+  assert.match(
+    app,
+    /setActiveDocumentSurface\(this\.activeScannedPath, view\)/,
+  );
+  assert.match(
+    selection,
+    /openSelectedTeraSource[\s\S]*openSourceLocation\(editorSourceReferenceLocation\(source\)\)/,
+  );
+});

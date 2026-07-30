@@ -1,11 +1,16 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Instant,
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
     kernel::{
-        observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel},
+        observability::{
+            append_event, append_events, KernelEventKind, KernelLogEvent, KernelLogLevel,
+        },
         write_authority::WriteAuthorityRuntime,
     },
     preview::{
@@ -64,6 +69,19 @@ fn append_canvas_phase_event<R: tauri::Runtime>(
     diagnostic: Option<String>,
     phase_timings_ms: Option<&BTreeMap<String, u64>>,
 ) {
+    let _ = append_event(
+        app,
+        canvas_phase_event(plan, kind, level, diagnostic, phase_timings_ms),
+    );
+}
+
+fn canvas_phase_event(
+    plan: &CanvasProjectionPlan,
+    kind: KernelEventKind,
+    level: KernelLogLevel,
+    diagnostic: Option<String>,
+    phase_timings_ms: Option<&BTreeMap<String, u64>>,
+) -> KernelLogEvent {
     let mut event = KernelLogEvent::new(
         level,
         kind,
@@ -88,7 +106,7 @@ fn append_canvas_phase_event<R: tauri::Runtime>(
     if let Some(phase_timings_ms) = phase_timings_ms {
         event = event.with_attribute("phaseTimingsMs", phase_timings_ms);
     }
-    let _ = append_event(app, event);
+    event
 }
 
 fn append_canvas_observation_event<R: tauri::Runtime>(
@@ -99,7 +117,20 @@ fn append_canvas_observation_event<R: tauri::Runtime>(
     operation: &str,
     diagnostic: Option<String>,
 ) {
-    let event = KernelLogEvent::new(
+    let _ = append_event(
+        app,
+        canvas_observation_event(plan, kind, level, operation, diagnostic),
+    );
+}
+
+fn canvas_observation_event(
+    plan: &CanvasProjectionPlan,
+    kind: KernelEventKind,
+    level: KernelLogLevel,
+    operation: &str,
+    diagnostic: Option<String>,
+) -> KernelLogEvent {
+    KernelLogEvent::new(
         level,
         kind,
         "preview_canvas",
@@ -117,8 +148,7 @@ fn append_canvas_observation_event<R: tauri::Runtime>(
     .with_attribute("previewRevision", &plan.identity.preview_revision)
     .with_attribute("phase", plan.phase)
     .with_attribute("impactKinds", &plan.impact.kinds)
-    .with_attribute("requiresFullDocument", plan.impact.requires_full_document);
-    let _ = append_event(app, event);
+    .with_attribute("requiresFullDocument", plan.impact.requires_full_document)
 }
 
 fn append_canvas_stale_identity_event<R: tauri::Runtime>(
@@ -141,6 +171,64 @@ fn append_canvas_stale_identity_event<R: tauri::Runtime>(
     .with_attribute("workspaceRevision", identity.workspace_revision)
     .with_attribute("canvasTransactionId", &identity.transaction_id)
     .with_attribute("previewRevision", &identity.preview_revision);
+    let _ = append_event(app, event);
+}
+
+fn append_projection_publication_event<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    candidate: &PersistentPreviewCandidate,
+) {
+    let plan = candidate.canvas_plan();
+    let stats = candidate.projection_publication;
+    let event = KernelLogEvent::new(
+        KernelLogLevel::Info,
+        KernelEventKind::PreviewProjectionPublished,
+        "preview_projection",
+        "preview_projection",
+        "generation.publish",
+        Some(plan.identity.transaction_id.clone()),
+        "Preview source generation published atomically.",
+        None,
+    )
+    .with_attribute("projectRoot", &plan.identity.project_root)
+    .with_attribute("runtimeSessionId", &plan.identity.runtime_session_id)
+    .with_attribute("workspaceRevision", plan.identity.workspace_revision)
+    .with_attribute("previewRevision", &plan.identity.preview_revision)
+    .with_attribute("logicalPublicationCount", stats.logical_publications)
+    .with_attribute("durabilityOperationCount", stats.durability_operations)
+    .with_attribute("materializedEntryCount", stats.materialized_entries)
+    .with_attribute("materializedBytes", stats.materialized_bytes)
+    .with_attribute("totalMs", candidate.timings.total_ms)
+    .with_attribute(
+        "sourcePublicationMs",
+        candidate.timings.source_publication_ms,
+    )
+    .with_attribute("artifactSetupMs", candidate.timings.artifact_setup_ms)
+    .with_attribute(
+        "projectModelBuildMs",
+        candidate.timings.project_model_build_ms,
+    )
+    .with_attribute(
+        "projectModelJoinWaitMs",
+        candidate.timings.project_model_join_wait_ms,
+    )
+    .with_attribute(
+        "projectModelCacheHit",
+        candidate.timings.project_model_cache_hit,
+    )
+    .with_attribute("zolaRenderMs", candidate.timings.zola_render_ms)
+    .with_attribute(
+        "renderedContentCloneMs",
+        candidate.timings.rendered_content_clone_ms,
+    )
+    .with_attribute("contentPrepareMs", candidate.timings.content_prepare_ms)
+    .with_attribute("canvasGraphMs", candidate.timings.canvas_graph_ms)
+    .with_attribute("resourceManifestMs", candidate.timings.resource_manifest_ms)
+    .with_attribute(
+        "canvasTransactionMs",
+        candidate.timings.canvas_transaction_ms,
+    )
+    .with_attribute("sourceRetirementMs", candidate.timings.source_retirement_ms);
     let _ = append_event(app, event);
 }
 
@@ -295,6 +383,7 @@ pub async fn start_project_preview(
                 &projection,
                 project_model.as_ref(),
             )?;
+            append_projection_publication_event(&app, &candidate);
             let canvas_projection = stage_candidate_if_current(
                 &app,
                 state.inner(),
@@ -397,6 +486,7 @@ pub async fn project_project_workspace_preview(
                 &projection,
                 project_model.as_ref(),
             )?;
+            append_projection_publication_event(&app, &candidate);
             let projected_paths = candidate.projected_paths.clone();
             let canvas_projection = stage_candidate_if_current(
                 &app,
@@ -445,60 +535,78 @@ pub async fn project_template_workbench_preview(
     let task_input = input.clone();
     let task_identity = identity.clone();
     let task_root = root.clone();
-    let receipt =
-        tauri::async_runtime::spawn_blocking(
-            move || -> Result<TemplateWorkbenchPreviewReceipt, String> {
-                let state = app.state::<AppState>();
-                let _operation = state.preview_workspace_operation.lock().map_err(|_| {
-                    "Nu am putut serializa proiecția Context de template.".to_string()
-                })?;
-                require_project_preview_workspace_revision(
-                    state.inner(),
-                    &task_identity,
-                    task_input.expected_workspace_revision,
+    let receipt = tauri::async_runtime::spawn_blocking(
+        move || -> Result<TemplateWorkbenchPreviewReceipt, String> {
+            let started = Instant::now();
+            let state = app.state::<AppState>();
+            let _operation = state
+                .preview_workspace_operation
+                .lock()
+                .map_err(|_| "Nu am putut serializa proiecția Context de template.".to_string())?;
+            require_project_preview_workspace_revision(
+                state.inner(),
+                &task_identity,
+                task_input.expected_workspace_revision,
+            )?;
+            let authority_runtime = app.state::<WriteAuthorityRuntime>();
+            let _project_session_lease = authority_runtime
+                .acquire_active_project_read_lease_for_session(
+                    &task_root,
+                    &task_identity.expected_session_id,
                 )?;
-                let authority_runtime = app.state::<WriteAuthorityRuntime>();
-                let _project_session_lease = authority_runtime
-                    .acquire_active_project_read_lease_for_session(
-                        &task_root,
-                        &task_identity.expected_session_id,
-                    )?;
-                let projection = capture_workspace_projection(
-                    state.inner(),
-                    Some(task_input.expected_workspace_revision),
-                )?;
-                let model = crate::project_model::build_project_model_from_workspace_projection(
+            let (projection, cached_model) = capture_workspace_projection_with_model(
+                state.inner(),
+                Some(task_input.expected_workspace_revision),
+            )?;
+            let model_cache_hit = cached_model.is_some();
+            let model = match cached_model {
+                Some(model) => model,
+                None => crate::project_model::build_project_model_from_workspace_projection(
                     &task_root,
                     &projection,
-                )?;
-                let plan = resolve_template_workbench_plan(
-                    &model,
-                    &TemplateWorkbenchPlanInput {
-                        template_path: task_input.template_path,
-                        preferred_page_path: task_input.preferred_page_path,
-                        preferred_route: task_input.preferred_route,
-                    },
-                )?;
-                let mut engine_slot = state.preview_engine.lock().map_err(|_| {
-                    "Nu am putut bloca motorul Preview pentru Workbench.".to_string()
-                })?;
-                let engine = engine_slot.as_mut().ok_or_else(|| {
-                    "Context de template cere mai întâi Preview-ul canonic al aceleiași revizii."
-                        .to_string()
-                })?;
-                let publication = engine.publish_template_workbench_view(&projection, &plan)?;
-                Ok(TemplateWorkbenchPreviewReceipt {
-                    plan,
-                    route: publication.route,
-                    preview_url: publication.preview_url,
-                    workspace_revision: publication.workspace_revision,
-                    preview_revision: publication.preview_revision,
-                    canvas_projection: publication.canvas_plan,
-                })
-            },
-        )
-        .await
-        .map_err(|error| format!("Context de template task eșuat: {error}"))??;
+                )?,
+            };
+            let plan_started = Instant::now();
+            let plan = resolve_template_workbench_plan(
+                &model,
+                &TemplateWorkbenchPlanInput {
+                    template_path: task_input.template_path,
+                    preferred_page_path: task_input.preferred_page_path,
+                    preferred_route: task_input.preferred_route,
+                },
+            )?;
+            let plan_ms = plan_started.elapsed().as_millis();
+            let mut engine_slot = state
+                .preview_engine
+                .lock()
+                .map_err(|_| "Nu am putut bloca motorul Preview pentru Workbench.".to_string())?;
+            let engine = engine_slot.as_mut().ok_or_else(|| {
+                "Context de template cere mai întâi Preview-ul canonic al aceleiași revizii."
+                    .to_string()
+            })?;
+            let publish_started = Instant::now();
+            let publication = engine.publish_template_workbench_view(&projection, &model, &plan)?;
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "[Pană Studio][perf] template_workbench source={} model_cache_hit={} plan_ms={} publish_ms={} total_ms={}",
+                plan.active_template.file,
+                model_cache_hit,
+                plan_ms,
+                publish_started.elapsed().as_millis(),
+                started.elapsed().as_millis()
+            );
+            Ok(TemplateWorkbenchPreviewReceipt {
+                plan,
+                route: publication.route,
+                preview_url: publication.preview_url,
+                workspace_revision: publication.workspace_revision,
+                preview_revision: publication.preview_revision,
+                canvas_projection: publication.canvas_plan,
+            })
+        },
+    )
+    .await
+    .map_err(|error| format!("Context de template task eșuat: {error}"))??;
 
     require_project_preview_workspace_revision(
         state.inner(),
@@ -607,6 +715,150 @@ pub fn acknowledge_canvas_projection_phase(
         );
     }
     Ok(plan)
+}
+
+#[tauri::command]
+pub fn acknowledge_canvas_projection_phases(
+    inputs: Vec<PreviewPhaseReceipt>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CanvasProjectionPlan, String> {
+    require_canvas_phase_batch(&inputs)?;
+    let first = inputs
+        .first()
+        .expect("validated Canvas phase batch is non-empty");
+    let identity = ProjectPreviewRequestIdentity {
+        expected_project_root: first.identity.project_root.clone(),
+        expected_session_id: first.identity.runtime_session_id.clone(),
+    };
+    if let Err(error) = require_project_preview_workspace_revision(
+        state.inner(),
+        &identity,
+        first.identity.workspace_revision,
+    ) {
+        append_canvas_stale_identity_event(&app, &first.identity, error.clone());
+        return Err(error);
+    }
+    let canvas_identity = first.identity.clone();
+    let (final_plan, events) = {
+        let _operation = state
+            .preview_workspace_operation
+            .lock()
+            .map_err(|_| "Nu am putut serializa confirmarea Canvas Runtime.".to_string())?;
+        let mut engine_slot = state
+            .preview_engine
+            .lock()
+            .map_err(|_| "Nu am putut bloca motorul Preview la confirmarea Canvas.".to_string())?;
+        let engine = engine_slot
+            .as_mut()
+            .ok_or_else(|| "Canvas Runtime nu are motor Preview activ.".to_string())?;
+        let current_root = state
+            .current_root
+            .lock()
+            .map_err(|_| "Nu am putut valida root-ul la confirmarea Canvas.".to_string())?;
+        let workspace = state.project_workspace.lock().map_err(|_| {
+            "Nu am putut valida ProjectWorkspace la confirmarea Canvas.".to_string()
+        })?;
+        if current_root.as_deref() != Some(std::path::Path::new(&canvas_identity.project_root)) {
+            let error = "ACK-ul Canvas a devenit stale: proiectul activ s-a schimbat.".to_string();
+            append_canvas_stale_identity_event(&app, &canvas_identity, error.clone());
+            return Err(error);
+        }
+        let Some(workspace) = workspace.as_ref() else {
+            let error = "ACK-ul Canvas a devenit stale: ProjectWorkspace lipsește.".to_string();
+            append_canvas_stale_identity_event(&app, &canvas_identity, error.clone());
+            return Err(error);
+        };
+        if workspace.session.runtime_instance_id() != canvas_identity.runtime_session_id
+            || workspace.revision != canvas_identity.workspace_revision
+        {
+            let error = "ACK-ul Canvas a devenit stale față de ProjectWorkspace.".to_string();
+            append_canvas_stale_identity_event(&app, &canvas_identity, error.clone());
+            return Err(error);
+        }
+
+        let mut events = Vec::with_capacity(inputs.len().saturating_add(1));
+        let mut final_plan = None;
+        for input in inputs {
+            let generation = match engine.acknowledge_candidate_phase(&app, &input) {
+                Ok(generation) => generation,
+                Err(error) => {
+                    if error.contains("nu mai are candidatul")
+                        || error.contains("altă tranzacție")
+                        || error.contains("altei sesiuni")
+                    {
+                        append_canvas_stale_identity_event(&app, &canvas_identity, error.clone());
+                    }
+                    return Err(error);
+                }
+            };
+            let plan = generation.canvas_transaction.plan();
+            let (kind, level) = match plan.phase {
+                CanvasProjectionPhase::CanonicalVerified => (
+                    KernelEventKind::PreviewCanvasCanonicalVerified,
+                    KernelLogLevel::Info,
+                ),
+                CanvasProjectionPhase::Failed => {
+                    (KernelEventKind::PreviewCanvasFailed, KernelLogLevel::Error)
+                }
+                _ => (
+                    KernelEventKind::PreviewCanvasPhaseAcknowledged,
+                    KernelLogLevel::Info,
+                ),
+            };
+            events.push(canvas_phase_event(
+                &plan,
+                kind,
+                level,
+                input.diagnostic,
+                Some(&input.phase_timings_ms),
+            ));
+            if plan.phase == CanvasProjectionPhase::CanonicalVerified {
+                events.push(canvas_observation_event(
+                    &plan,
+                    KernelEventKind::PreviewCanvasFoucGuardSatisfied,
+                    KernelLogLevel::Info,
+                    "canvas.fouc_guard_satisfied",
+                    Some(
+                        "CSS/fonts ready și frame stilizat confirmat înainte de promovare."
+                            .to_string(),
+                    ),
+                ));
+            }
+            final_plan = Some(plan);
+        }
+        (
+            final_plan.expect("validated Canvas phase batch has at least one receipt"),
+            events,
+        )
+    };
+    let _ = append_events(&app, events);
+    Ok(final_plan)
+}
+
+fn require_canvas_phase_batch(inputs: &[PreviewPhaseReceipt]) -> Result<(), String> {
+    let valid_sequence = match inputs {
+        [failed] => failed.phase == CanvasProjectionPhase::Failed,
+        [resources, committed, styled] => {
+            resources.phase == CanvasProjectionPhase::ResourcesReady
+                && committed.phase == CanvasProjectionPhase::Committed
+                && styled.phase == CanvasProjectionPhase::StyledReady
+        }
+        _ => false,
+    };
+    if !valid_sequence {
+        return Err(
+            "Batch-ul Canvas cere exact failed sau resourcesReady → committed → styledReady."
+                .to_string(),
+        );
+    }
+    let first = &inputs[0];
+    if inputs.iter().any(|receipt| {
+        receipt.schema_version != first.schema_version || receipt.identity != first.identity
+    }) {
+        return Err("Batch-ul Canvas conține receipt-uri din identități diferite.".to_string());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -801,14 +1053,6 @@ fn stage_candidate_if_current<R: tauri::Runtime>(
     staging
 }
 
-fn capture_workspace_projection(
-    state: &AppState,
-    expected_revision: Option<u64>,
-) -> Result<crate::kernel::project_workspace::WorkspaceProjectionLease, String> {
-    capture_workspace_projection_with_model(state, expected_revision)
-        .map(|(projection, _)| projection)
-}
-
 fn capture_workspace_projection_with_model(
     state: &AppState,
     expected_revision: Option<u64>,
@@ -871,6 +1115,25 @@ fn normalize_requested_paths(paths: Vec<String>) -> Result<Vec<String>, String> 
 mod tests {
     use super::*;
 
+    fn canvas_phase_receipt(
+        phase: CanvasProjectionPhase,
+        transaction_id: &str,
+    ) -> PreviewPhaseReceipt {
+        PreviewPhaseReceipt {
+            schema_version: 1,
+            identity: crate::preview::CanvasProjectionIdentity {
+                project_root: "/tmp/pana-canvas-batch".to_string(),
+                runtime_session_id: "runtime-session".to_string(),
+                workspace_revision: 7,
+                transaction_id: transaction_id.to_string(),
+                preview_revision: "preview-revision".to_string(),
+            },
+            phase,
+            phase_timings_ms: BTreeMap::new(),
+            diagnostic: None,
+        }
+    }
+
     #[test]
     fn requested_paths_are_deduplicated_and_sorted() {
         let paths = normalize_requested_paths(vec![
@@ -891,5 +1154,43 @@ mod tests {
     #[test]
     fn requested_paths_fail_closed_on_traversal() {
         assert!(normalize_requested_paths(vec!["../outside".to_string()]).is_err());
+    }
+
+    #[test]
+    fn canvas_phase_batch_accepts_exact_canonical_sequence() {
+        let receipts = vec![
+            canvas_phase_receipt(CanvasProjectionPhase::ResourcesReady, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::Committed, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::StyledReady, "transaction"),
+        ];
+
+        assert!(require_canvas_phase_batch(&receipts).is_ok());
+    }
+
+    #[test]
+    fn canvas_phase_batch_accepts_a_single_failure() {
+        let receipts = vec![canvas_phase_receipt(
+            CanvasProjectionPhase::Failed,
+            "transaction",
+        )];
+
+        assert!(require_canvas_phase_batch(&receipts).is_ok());
+    }
+
+    #[test]
+    fn canvas_phase_batch_rejects_wrong_order_or_mixed_identity() {
+        let wrong_order = vec![
+            canvas_phase_receipt(CanvasProjectionPhase::Committed, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::ResourcesReady, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::StyledReady, "transaction"),
+        ];
+        assert!(require_canvas_phase_batch(&wrong_order).is_err());
+
+        let mixed_identity = vec![
+            canvas_phase_receipt(CanvasProjectionPhase::ResourcesReady, "transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::Committed, "other-transaction"),
+            canvas_phase_receipt(CanvasProjectionPhase::StyledReady, "transaction"),
+        ];
+        assert!(require_canvas_phase_batch(&mixed_identity).is_err());
     }
 }

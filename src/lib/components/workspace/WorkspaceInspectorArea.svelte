@@ -9,9 +9,9 @@
 
   let { app }: { app: AppState } = $props();
 
-  const activityUsesFullWorkspace = $derived(
-    app.applicationSurface !== "workbench"
-      || (app.workbenchSnapshot?.activeActivity ?? "editor") !== "editor",
+  const editorSidebarActive = $derived(
+    app.applicationSurface === "workbench"
+      && (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor",
   );
   let installedFontFamilies = $state<string[]>([]);
   let installedFontAxes = $state<InstalledFontVariationAxis[]>([]);
@@ -59,7 +59,7 @@
   });
 </script>
 
-{#if !app.rightPaneCollapsed && !activityUsesFullWorkspace}
+{#if !app.rightPaneCollapsed && editorSidebarActive}
   <WorkspaceResizeHandle
     kind="right"
     active={app.activeResizeKind === "right"}
@@ -69,13 +69,24 @@
   />
 {/if}
 
-{#if !app.rightPaneCollapsed && !activityUsesFullWorkspace}
-  <div
-    class="inspector-pane-shell"
-    inert={app.aiEditLeaseFrontendLockActive ? true : undefined}
-    aria-busy={app.aiEditLeaseFrontendLockActive}
-  >
-    <InspectorPane
+{#if app.scannedProject && app.kernelProjectSessionId}
+  {#key app.kernelProjectSessionId}
+    <div
+      class="inspector-pane-shell"
+      hidden={app.rightPaneCollapsed}
+      inert={!editorSidebarActive
+        || app.rightPaneCollapsed
+        || app.aiEditLeaseFrontendLockActive
+        || app.kernelUndoRedoFrontendQuiesceActive
+        || app.kernelUndoRedoFrontendLeaseActive
+        ? true
+        : undefined}
+      aria-hidden={!editorSidebarActive || app.rightPaneCollapsed}
+      aria-busy={app.aiEditLeaseFrontendLockActive
+        || app.kernelUndoRedoFrontendQuiesceActive
+        || app.kernelUndoRedoFrontendLeaseActive}
+    >
+      <InspectorPane
       inspectorSelectionSummary={app.inspectorSelectionSummary}
       inspectorHtmlPhysicalFacts={app.inspectorHtmlPhysicalFacts}
       inspectorBlockSelectionContext={app.inspectorBlockSelectionContext}
@@ -89,6 +100,8 @@
       activeRenderedTemplatePath={app.activeRenderedTemplatePath}
       previewDevice={app.previewDevice}
       refreshToken={app.refreshToken}
+      historyProjectionQuiesced={app.kernelUndoRedoFrontendQuiesceActive
+        || app.kernelUndoRedoFrontendLeaseActive}
       jsRefreshToken={app.jsRefreshToken}
       motionWorkspace={app.motionWorkspace}
       workspaceRevision={app.projectWorkspaceSnapshot?.revision ?? 0}
@@ -153,6 +166,7 @@
       persistBlockPropertiesLayout={(height, collapsed) => {
         void app.persistBlockPropertiesLayout(height, collapsed);
       }}
-    />
-  </div>
+      />
+    </div>
+  {/key}
 {/if}

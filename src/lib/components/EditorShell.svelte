@@ -33,6 +33,7 @@
 
   type CenterView = "preview" | "code" | "markdown" | "kernel";
 
+  export let surfaceActive = true;
   export let centerView: CenterView = "preview";
   export let previewZoom = 100;
   export let previewCanvasMode: WorkbenchCanvasMode = "fit";
@@ -123,6 +124,7 @@
   let draftPreviewWidthPx = previewWidthPx;
   let viewportResizeCleanup: (() => void) | null = null;
   $: if (!viewportResizing) draftPreviewWidthPx = previewWidthPx;
+  $: if (!surfaceActive) stopViewportResize(false);
 
   function handlePreviewLoad() {
     if (previewFrame) resetPreviewFrameDocumentAccess(previewFrame);
@@ -157,7 +159,7 @@
   }
 
   function startViewportResize(event: PointerEvent, edge: "left" | "right") {
-    if (event.button !== 0 || previewCanvasMode !== "fixed") return;
+    if (!surfaceActive || event.button !== 0 || previewCanvasMode !== "fixed") return;
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = previewWidthPx;
@@ -184,7 +186,10 @@
   }
 
   function resizeViewportFromKeyboard(event: KeyboardEvent) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    if (
+      !surfaceActive
+      || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+    ) return;
     event.preventDefault();
     const direction = event.key === "ArrowRight" ? 1 : -1;
     const step = event.shiftKey ? 50 : 10;
@@ -200,6 +205,7 @@
 
 <section class="editor-shell" aria-label={t("workbench-editor-shell-aria")}>
   <DocumentBar
+    active={surfaceActive}
     snapshot={workbenchSnapshot}
     dirtyPaths={dirtyWorkbenchPaths}
     activateDocument={activateWorkbenchDocument}

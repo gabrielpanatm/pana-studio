@@ -37,6 +37,7 @@ import type {
   ComponentMutationApplyReceipt,
   ComponentMutationInput,
   CanvasInteractionBindingReceipt,
+  CanvasHoverReceipt,
   CanvasInteractionIdentity,
   CanvasInteractionReceipt,
   CanvasInteractionResolveInput,
@@ -51,6 +52,7 @@ import type {
   DesignTokenCatalogSnapshot,
   EditorNavigationSnapshot,
   EditScopeGrant,
+  HoverSnapshot,
   EditorMoveCommitInput,
   EditorMoveExecutionReceipt,
   EditorMovePlan,
@@ -1192,6 +1194,60 @@ export async function resolveCanvasInteractionIntent(
     "resolve_canvas_interaction_intent",
     { input },
   );
+  requireCanvasInteractionReceipt(receipt, input);
+  return receipt;
+}
+
+export async function resolveCanvasHoverIntent(
+  input: CanvasInteractionResolveInput,
+): Promise<CanvasHoverReceipt> {
+  if (input.request.gesture !== "pointerMove") {
+    throw new Error("CanvasHover acceptă numai gesturi pointerMove.");
+  }
+  const receipt = await invoke<CanvasHoverReceipt>(
+    "resolve_canvas_hover_intent",
+    { input },
+  );
+  if (receipt.schemaVersion !== CANVAS_INTERACTION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "CanvasHoverReceipt",
+      receipt.schemaVersion,
+      CANVAS_INTERACTION_SCHEMA_VERSION,
+    );
+  }
+  requireCanvasInteractionReceipt(receipt.interaction, input);
+  const accepted = receipt.interaction.status === "resolved"
+    || receipt.interaction.status === "noTarget";
+  if (accepted !== Boolean(receipt.projection)) {
+    throw new Error("CanvasHoverReceipt are o proiecție semantică inconsistentă.");
+  }
+  if (receipt.projection) {
+    if (typeof receipt.projection.changed !== "boolean") {
+      throw new Error("CanvasHoverReceipt nu declară starea proiecției.");
+    }
+    const hover = receipt.projection.hover;
+    if (hover) {
+      requireHoverSnapshot(hover, input.request.identity.canvas);
+    }
+    const target = receipt.interaction.target;
+    if (
+      (target && (
+        !hover
+        || hover.editorNodeId !== target.editorNodeId
+        || hover.documentEpoch !== input.request.identity.documentEpoch
+      ))
+      || (!target && hover)
+    ) {
+      throw new Error("CanvasHoverReceipt nu proiectează ținta Rust rezolvată.");
+    }
+  }
+  return receipt;
+}
+
+function requireCanvasInteractionReceipt(
+  receipt: CanvasInteractionReceipt,
+  input: CanvasInteractionResolveInput,
+) {
   if (receipt.schemaVersion !== CANVAS_INTERACTION_SCHEMA_VERSION) {
     throw schemaMismatch(
       "CanvasInteractionReceipt",
@@ -1215,7 +1271,6 @@ export async function resolveCanvasInteractionIntent(
       "CanvasInteractionReceipt a întors o proiecție drag incompatibilă cu gestul.",
     );
   }
-  return receipt;
 }
 
 export async function applySelectionIntent(
@@ -1346,16 +1401,20 @@ function requireSelectionCoordinatorSnapshot(
   ) {
     throw new Error("SelectionCoordinator a întors o proiecție semantică inconsistentă.");
   }
+  if (receipt.hover) requireHoverSnapshot(receipt.hover, identity);
+}
+
+function requireHoverSnapshot(
+  hover: HoverSnapshot,
+  identity: CanvasProjectionIdentity,
+) {
   if (
-    receipt.hover
-    && (
-      receipt.hover.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
-      || !sameCanvasProjectionIdentity(receipt.hover.canvasIdentity, identity)
-      || !Number.isSafeInteger(receipt.hover.hoverRevision)
-      || receipt.hover.hoverRevision <= 0
-      || !Number.isSafeInteger(receipt.hover.documentEpoch)
-      || receipt.hover.documentEpoch <= 0
-    )
+    hover.schemaVersion !== SELECTION_COORDINATOR_SCHEMA_VERSION
+    || !sameCanvasProjectionIdentity(hover.canvasIdentity, identity)
+    || !Number.isSafeInteger(hover.hoverRevision)
+    || hover.hoverRevision <= 0
+    || !Number.isSafeInteger(hover.documentEpoch)
+    || hover.documentEpoch <= 0
   ) {
     throw new Error("SelectionCoordinator a întors un HoverSnapshot invalid.");
   }
@@ -1630,6 +1689,33 @@ export async function resolveTemplateWorkbenchPlan(
 
 export function readCurrentProjectDiskManifest(): Promise<ProjectDiskManifest> {
   return invoke<ProjectDiskManifest>("read_current_project_disk_manifest");
+}
+
+export type ProjectDiskWatchIdentity = {
+  expectedProjectRoot: string;
+  expectedSessionId: string;
+};
+
+export type ProjectDiskWatchReceipt = {
+  projectRoot: string;
+  runtimeSessionId: string;
+  watchGeneration: number;
+};
+
+export type ProjectDiskWatchStopIdentity = ProjectDiskWatchIdentity & {
+  expectedWatchGeneration: number;
+};
+
+export function startProjectDiskWatch(
+  input: ProjectDiskWatchIdentity,
+): Promise<ProjectDiskWatchReceipt> {
+  return invoke<ProjectDiskWatchReceipt>("start_project_disk_watch", { input });
+}
+
+export function stopProjectDiskWatch(
+  input: ProjectDiskWatchStopIdentity,
+): Promise<void> {
+  return invoke<void>("stop_project_disk_watch", { input });
 }
 
 export async function reconcileCleanExternalProjectFiles(
@@ -2120,6 +2206,12 @@ export function acknowledgeCanvasProjectionPhase(
   input: PreviewPhaseReceipt,
 ): Promise<CanvasProjectionPlan> {
   return invoke<CanvasProjectionPlan>("acknowledge_canvas_projection_phase", { input });
+}
+
+export function acknowledgeCanvasProjectionPhases(
+  inputs: PreviewPhaseReceipt[],
+): Promise<CanvasProjectionPlan> {
+  return invoke<CanvasProjectionPlan>("acknowledge_canvas_projection_phases", { inputs });
 }
 
 export function recordPreviewRuntimeEvent(

@@ -139,6 +139,31 @@ test("CSS edits use explicit draft, commit and cancel boundaries", () => {
   assert.match(typography, /edit\.commit\("text-align", v\)/);
 });
 
+test("CSS refresh keeps the previous complete projection until the atomic replacement", () => {
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+
+  assert.match(inspector, /\{ preserveProjection: true \}/);
+  assert.match(inspector, /loadingClassRules = !preserveProjection/);
+  assert.match(inspector, /cssInspectorSubjectKey\(nextSelectionIdentity\)/);
+  assert.match(inspector, /selectionSummary=\{presentedInspectorSelectionSummary\}/);
+});
+
+test("Undo quiesces CSS reads and focus errors until history projection settles", () => {
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const workspace = source("src/lib/components/workspace/WorkspaceInspectorArea.svelte");
+  const app = source("src/lib/state/app.svelte.ts");
+
+  assert.match(inspector, /if \(historyProjectionQuiesced\) return;/);
+  assert.match(
+    workspace,
+    /historyProjectionQuiesced=\{app\.kernelUndoRedoFrontendQuiesceActive[\s\S]*app\.kernelUndoRedoFrontendLeaseActive\}/,
+  );
+  assert.match(
+    app,
+    /async selectCssFocusFromInspector[\s\S]*kernelUndoRedoFrontendQuiesceActive[\s\S]*kernelUndoRedoFrontendLeaseActive[\s\S]*return false/,
+  );
+});
+
 test("structured compound editors preserve unsupported values in raw mode", () => {
   const colors = source("src/lib/components/inspector/sections/ColorsSection.svelte");
   const shadows = source("src/lib/components/inspector/sections/ShadowSection.svelte");

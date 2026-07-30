@@ -15,7 +15,7 @@ test("Date este o activitate distinctă cu modelul catalog și panou contextual"
   const commandCenter = source("../src-tauri/src/kernel/command_center/search.rs");
 
   assert.match(rail, /id:\s*"data"/);
-  assert.match(center, /activeWorkbenchActivity === "data"[\s\S]*<DataWorkspace/);
+  assert.match(center, /retainedAuxiliarySurface === "data"[\s\S]*<DataWorkspace/);
   assert.match(types, /export type WorkbenchActivity[\s\S]*\|\s*"data"/);
   assert.match(workbench, /\bData,\s*\n\s*Versioning/);
   assert.match(commandCenter, /WorkbenchActivity::Data[\s\S]*"Surse locale structurate/);

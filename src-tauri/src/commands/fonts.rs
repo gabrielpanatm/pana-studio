@@ -27,8 +27,9 @@ use crate::{
         project_workspace::{
             commit_project_workspace_session_mutation, ProjectWorkspaceIdentity,
             ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
-            WorkspaceBinaryRestoreChange, WorkspaceMutationMetadata, WorkspaceResourceDelete,
-            WorkspaceResourceMutation, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
+            WorkspaceBinaryRestoreChange, WorkspaceMutationMetadata, WorkspaceProjectionLease,
+            WorkspaceResourceDelete, WorkspaceResourceMutation,
+            PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
         },
     },
     project::{resolve_project_write_path, zola_project_root},
@@ -137,21 +138,20 @@ pub fn get_font_inventory(state: State<AppState>) -> Result<FontInventory, Strin
 }
 
 #[tauri::command]
-pub fn get_font_manager(
+pub async fn get_font_manager(
     identity: ProjectWorkspaceIdentity,
-    state: State<AppState>,
+    app: AppHandle,
 ) -> Result<FontManagerSnapshot, String> {
-    let root = zola_project_root(&require_current_project_root(&state)?);
-    let workspace_slot = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru Font Manager.".to_string())?;
-    let workspace = workspace_slot
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    workspace.require_identity(&identity)?;
-    let inventory = font_inventory_for_workspace(&root, workspace);
-    Ok(font_manager_snapshot(workspace, inventory))
+    tauri::async_runtime::spawn_blocking(move || {
+        let (project_root, projection) = capture_font_workspace_read_projection(&app, &identity)?;
+        let zola_root = zola_project_root(&project_root);
+        let inventory = font_inventory_for_projection(&zola_root, &projection);
+        let manager = font_manager_snapshot_for_projection(&projection, inventory);
+        validate_font_workspace_read_projection(&app, &identity, &project_root, &projection)?;
+        Ok(manager)
+    })
+    .await
+    .map_err(|error| format!("Font Manager a căzut în task-ul Rust de fundal: {error}"))?
 }
 
 #[tauri::command]
@@ -161,17 +161,9 @@ pub async fn get_font_preview_asset(
     app: AppHandle,
 ) -> Result<FontPreviewAsset, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let project_root = require_current_project_root(&state)?;
+        let (project_root, projection) = capture_font_workspace_read_projection(&app, &identity)?;
         let zola_root = zola_project_root(&project_root);
-        let workspace_slot = state.project_workspace.lock().map_err(|_| {
-            "Nu am putut bloca ProjectWorkspace pentru mostra fontului.".to_string()
-        })?;
-        let workspace = workspace_slot
-            .as_ref()
-            .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-        workspace.require_identity(&identity)?;
-        let inventory = font_inventory_for_workspace(&zola_root, workspace);
+        let inventory = font_inventory_for_projection(&zola_root, &projection);
         let font_file = inventory
             .families
             .iter()
@@ -180,7 +172,7 @@ pub async fn get_font_preview_asset(
             .ok_or_else(|| {
                 format!("Fișierul {file} nu există în inventarul autoritativ al fonturilor.")
             })?;
-        let bytes = if let Some(staged) = workspace.staged_binary_resource(&file) {
+        let bytes = if let Some(staged) = projection.resource_bytes.get(&file) {
             staged.to_vec()
         } else {
             let target = resolve_project_write_path(&project_root, &file)?;
@@ -206,12 +198,14 @@ pub async fn get_font_preview_asset(
             "otf" => "font/otf",
             _ => "application/octet-stream",
         };
-        Ok(FontPreviewAsset {
+        let asset = FontPreviewAsset {
             file,
             format: font_file.format.clone(),
             data_url: format!("data:{mime};base64,{}", BASE64_STANDARD.encode(&bytes)),
             content_hash: hash_bytes(&bytes),
-        })
+        };
+        validate_font_workspace_read_projection(&app, &identity, &project_root, &projection)?;
+        Ok(asset)
     })
     .await
     .map_err(|error| format!("Pregătirea mostrei fontului a căzut în task-ul de fundal: {error}"))?
@@ -597,53 +591,163 @@ pub async fn remove_font_family(
     .map_err(|error| format!("Eliminarea fontului a căzut în task-ul de fundal: {error}"))?
 }
 
+fn capture_font_workspace_read_projection<R: Runtime>(
+    app: &AppHandle<R>,
+    identity: &ProjectWorkspaceIdentity,
+) -> Result<(std::path::PathBuf, WorkspaceProjectionLease), String> {
+    let state = app.state::<AppState>();
+    let project_root = require_current_project_root(&state)?;
+    let projection = {
+        let workspace_slot = state.project_workspace.lock().map_err(|_| {
+            "Nu am putut captura ProjectWorkspace pentru citirea fonturilor.".to_string()
+        })?;
+        let workspace = workspace_slot
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+        if workspace.session.project_root != project_root.to_string_lossy() {
+            return Err(
+                "Citirea fonturilor a refuzat un ProjectWorkspace din alt proiect.".to_string(),
+            );
+        }
+        workspace.require_identity(identity)?;
+        workspace.accepted_disk.require_identity(
+            &workspace.runtime_session_id(),
+            &workspace.session.project_root,
+        )?;
+        workspace.accepted_disk.require_complete()?;
+        workspace.capture_projection_lease()?
+    };
+
+    // Traversarea fonturilor și auditul manifestului sunt filesystem work.
+    // Proiecția imutabilă păstrează autoritatea exactă fără a bloca mutațiile
+    // Workbench/ProjectWorkspace pe durata acestor operații.
+    projection.accepted_disk.require_live_complete(
+        &projection.runtime_session_id,
+        &projection.project_root,
+        &project_root,
+    )?;
+    Ok((project_root, projection))
+}
+
+fn validate_font_workspace_read_projection<R: Runtime>(
+    app: &AppHandle<R>,
+    identity: &ProjectWorkspaceIdentity,
+    project_root: &Path,
+    projection: &WorkspaceProjectionLease,
+) -> Result<(), String> {
+    projection.accepted_disk.require_live_complete(
+        &projection.runtime_session_id,
+        &projection.project_root,
+        project_root,
+    )?;
+
+    let state = app.state::<AppState>();
+    if require_current_project_root(&state)? != project_root {
+        return Err(
+            "Citirea fonturilor a devenit stale: proiectul activ s-a schimbat.".to_string(),
+        );
+    }
+    let workspace_slot = state.project_workspace.lock().map_err(|_| {
+        "Nu am putut revalida ProjectWorkspace pentru citirea fonturilor.".to_string()
+    })?;
+    let workspace = workspace_slot.as_ref().ok_or_else(|| {
+        "Citirea fonturilor a devenit stale: ProjectWorkspace a fost închis.".to_string()
+    })?;
+    workspace.require_identity(identity)?;
+    if workspace.accepted_disk != projection.accepted_disk {
+        return Err(
+            "Citirea fonturilor a devenit stale: autoritatea disk s-a schimbat.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn font_inventory_for_sources<'a>(
+    root: &Path,
+    staged_resources: impl Iterator<Item = (&'a str, &'a [u8])>,
+    deleted_resources: impl Iterator<Item = &'a str>,
+    documents: impl Iterator<Item = (&'a str, &'a str)>,
+) -> FontInventory {
+    let deleted = deleted_resources.collect::<HashSet<_>>();
+    let documents = documents.collect::<Vec<_>>();
+    let mut inventory = overlay_staged_font_resources(scan_font_inventory(root), staged_resources);
+    for family in &mut inventory.families {
+        family
+            .files
+            .retain(|file| !deleted.contains(file.file.as_str()));
+    }
+    inventory.families.retain(|family| !family.files.is_empty());
+    let mut inventory = annotate_font_registrations(inventory, documents.iter().copied());
+    inventory.families = annotate_font_preloads(inventory.families, documents.iter().copied());
+    inventory
+}
+
 fn font_inventory_for_workspace(
     root: &Path,
     workspace: &crate::kernel::project_workspace::ProjectWorkspace,
 ) -> FontInventory {
-    let deleted = workspace
-        .deleted_binary_resources()
-        .map(str::to_string)
-        .collect::<HashSet<_>>();
-    let mut inventory = overlay_staged_font_resources(
-        scan_font_inventory(&root),
+    font_inventory_for_sources(
+        root,
         workspace.staged_binary_resources(),
-    );
-    for family in &mut inventory.families {
-        family.files.retain(|file| !deleted.contains(&file.file));
-    }
-    inventory.families.retain(|family| !family.files.is_empty());
-    let mut inventory = annotate_font_registrations(
-        inventory,
+        workspace.deleted_binary_resources(),
         workspace
             .documents
             .files
             .iter()
             .map(|(path, entry)| (path.as_str(), entry.current_text())),
-    );
-    inventory.families = annotate_font_preloads(
-        inventory.families,
-        workspace
-            .documents
-            .files
+    )
+}
+
+fn font_inventory_for_projection(
+    root: &Path,
+    projection: &WorkspaceProjectionLease,
+) -> FontInventory {
+    font_inventory_for_sources(
+        root,
+        projection
+            .resource_bytes
             .iter()
-            .map(|(path, entry)| (path.as_str(), entry.current_text())),
-    );
-    inventory
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+        projection.deleted_sources.iter().map(String::as_str),
+        projection
+            .source_texts
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str())),
+    )
 }
 
 fn font_manager_snapshot(
     workspace: &crate::kernel::project_workspace::ProjectWorkspace,
     inventory: FontInventory,
 ) -> FontManagerSnapshot {
-    let roles = read_font_roles(
+    font_manager_snapshot_for_sources(
+        inventory,
         workspace
             .documents
             .files
             .iter()
             .map(|(path, entry)| (path.as_str(), entry.current_text())),
-        &inventory.families,
-    );
+    )
+}
+
+fn font_manager_snapshot_for_projection(
+    projection: &WorkspaceProjectionLease,
+    inventory: FontInventory,
+) -> FontManagerSnapshot {
+    font_manager_snapshot_for_sources(
+        inventory,
+        projection
+            .source_texts
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str())),
+    )
+}
+
+fn font_manager_snapshot_for_sources<'a>(
+    inventory: FontInventory,
+    documents: impl Iterator<Item = (&'a str, &'a str)>,
+) -> FontManagerSnapshot {
+    let roles = read_font_roles(documents, &inventory.families);
     let diagnostics = font_delivery_diagnostics(&inventory.families, &roles);
     FontManagerSnapshot {
         schema_version: 3,

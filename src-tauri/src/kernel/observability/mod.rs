@@ -90,6 +90,7 @@ pub enum KernelEventKind {
     ObservabilityLogRotated,
     PreviewProjectionIntentAccepted,
     PreviewProjectionIntentBlocked,
+    PreviewProjectionPublished,
     PreviewProjectionHtmlInsertDropCommitted,
     PreviewProjectionHtmlInsertDropBlocked,
     PreviewProjectionHtmlAttributesCommitted,
@@ -182,24 +183,47 @@ pub fn record_boot<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
 }
 
 pub fn append_event<R: Runtime>(app: &AppHandle<R>, event: KernelLogEvent) -> Result<(), String> {
+    append_events(app, vec![event])
+}
+
+pub fn append_events<R: Runtime>(
+    app: &AppHandle<R>,
+    events: Vec<KernelLogEvent>,
+) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
     let path = kernel_log_path(app)?;
     let runtime = app
         .try_state::<WriteAuthorityRuntime>()
         .ok_or_else(|| "Observability nu are WriteAuthorityRuntime instalat.".to_string())?;
-    append_event_to_log_path(
+    append_events_to_log_path(
         Some(runtime.inner()),
         &path,
-        event,
+        events,
         &default_kernel_log_retention_policy(),
     )
 }
 
+#[cfg(test)]
 fn append_event_to_log_path(
     runtime: Option<&WriteAuthorityRuntime>,
     path: &Path,
     event: KernelLogEvent,
     policy: &KernelLogRetentionPolicy,
 ) -> Result<(), String> {
+    append_events_to_log_path(runtime, path, vec![event], policy)
+}
+
+fn append_events_to_log_path(
+    runtime: Option<&WriteAuthorityRuntime>,
+    path: &Path,
+    events: Vec<KernelLogEvent>,
+    policy: &KernelLogRetentionPolicy,
+) -> Result<(), String> {
+    if events.is_empty() {
+        return Ok(());
+    }
     // Rotation and append form one local transaction. Recovering a poisoned
     // lock is preferable to permanently disabling the diagnostic sink after
     // an unrelated panic; all filesystem effects below remain fail-closed.
@@ -218,15 +242,20 @@ fn append_event_to_log_path(
         CapabilityMaintenanceLockMode::Exclusive,
     )
     .map_err(|error| error.into_terminal_diagnostic())?;
-    let body = serde_json::to_string(&event)
-        .map_err(|error| format!("Nu am putut serializa evenimentul kernel: {}", error))?;
-    let incoming_bytes = body.len() as u64 + 1;
+    let mut records = Vec::new();
+    for event in events {
+        let body = serde_json::to_string(&event)
+            .map_err(|error| format!("Nu am putut serializa evenimentul kernel: {}", error))?;
+        records.extend_from_slice(body.as_bytes());
+        records.push(b'\n');
+    }
+    let incoming_bytes = records.len() as u64;
     if let Some(receipt) = rotate_kernel_log_if_needed(runtime, path, incoming_bytes, policy)? {
         let rotation_event = rotation_event(&receipt);
         append_serialized_event(runtime, path, rotation_event)?;
     }
 
-    append_serialized_body(runtime, path, &body)
+    append_serialized_records(runtime, path, &records)
 }
 
 fn append_serialized_event(
@@ -244,13 +273,21 @@ fn append_serialized_body(
     path: &Path,
     body: &str,
 ) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Nu am putut determina boundary-ul logului de kernel.".to_string())?;
     let mut record = Vec::with_capacity(body.len().saturating_add(1));
     record.extend_from_slice(body.as_bytes());
     record.push(b'\n');
-    capability_append_observability_file(runtime, path, parent, "observability/kernel-log", &record)
+    append_serialized_records(runtime, path, &record)
+}
+
+fn append_serialized_records(
+    runtime: Option<&WriteAuthorityRuntime>,
+    path: &Path,
+    records: &[u8],
+) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Nu am putut determina boundary-ul logului de kernel.".to_string())?;
+    capability_append_observability_file(runtime, path, parent, "observability/kernel-log", records)
         .map_err(|error| error.into_terminal_diagnostic())
         .map(|_| ())
 }
@@ -406,6 +443,9 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         }
         KernelEventKind::PreviewProjectionIntentBlocked => {
             "kernel.preview_projection.intent.blocked"
+        }
+        KernelEventKind::PreviewProjectionPublished => {
+            "kernel.preview_projection.generation.published"
         }
         KernelEventKind::PreviewProjectionHtmlInsertDropCommitted => {
             "kernel.preview_projection.html_insert_drop.committed"

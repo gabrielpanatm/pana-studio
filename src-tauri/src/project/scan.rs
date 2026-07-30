@@ -425,7 +425,10 @@ fn project_file_kind(path: &Path) -> Option<ProjectFileKind> {
         return Some(ProjectFileKind::Other);
     }
 
-    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
 
     match extension.as_str() {
         "html" | "htm" => Some(ProjectFileKind::Html),
@@ -538,6 +541,23 @@ mod tests {
         assert!(scan.files.iter().any(
             |file| file.relative_path == ".env" && matches!(file.kind, ProjectFileKind::Other)
         ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn scan_includes_extensionless_project_files() {
+        let root = temp_project_root("extensionless-file");
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("static")).unwrap();
+        fs::write(root.join("zola.toml"), "").unwrap();
+        fs::write(root.join("static/CNAME"), "example.test").unwrap();
+
+        let scan = scan_project_root(&root).unwrap();
+
+        assert!(scan.files.iter().any(|file| {
+            file.relative_path == "static/CNAME" && matches!(file.kind, ProjectFileKind::Other)
+        }));
 
         fs::remove_dir_all(root).unwrap();
     }

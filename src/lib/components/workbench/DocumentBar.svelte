@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { tick } from "svelte";
   import {
     IconCode,
     IconEye,
@@ -28,6 +28,7 @@
     setSurface = () => {},
     setSplit = () => {},
     splitDisabled = false,
+    active = true,
   }: {
     snapshot?: WorkbenchSnapshot | null;
     dirtyPaths?: string[];
@@ -42,6 +43,7 @@
     setSurface?: (surface: WorkbenchSurface) => void | Promise<void>;
     setSplit?: (split: WorkbenchSplit) => void | Promise<void>;
     splitDisabled?: boolean;
+    active?: boolean;
   } = $props();
 
   const activeGroup = $derived(
@@ -108,7 +110,7 @@
   $effect(() => {
     const documentId = activeGroup?.activeDocumentId ?? "";
     const documentKey = `${activeGroup?.groupId ?? ""}\u0000${documentId}`;
-    if (!documentId || documentKey === lastRevealedDocumentKey) return;
+    if (!active || !documentId || documentKey === lastRevealedDocumentKey) return;
     lastRevealedDocumentKey = documentKey;
     void tick().then(() => revealActiveDocumentTab(documentId));
   });
@@ -119,12 +121,13 @@
       ...(activeGroup?.documents.map((document) => `${document.documentId}:${document.title}`) ?? []),
       ...dirtyPaths,
     ].join("\u0000");
-    if (layoutKey === lastMeasuredDocumentLayoutKey) return;
+    if (!active || layoutKey === lastMeasuredDocumentLayoutKey) return;
     lastMeasuredDocumentLayoutKey = layoutKey;
     void tick().then(updateDocumentScrollCues);
   });
 
-  onMount(() => {
+  $effect(() => {
+    if (!active || !documentTabsElement || typeof ResizeObserver === "undefined") return;
     const resizeObserver = new ResizeObserver(updateDocumentScrollCues);
     resizeObserver.observe(documentTabsElement);
     updateDocumentScrollCues();

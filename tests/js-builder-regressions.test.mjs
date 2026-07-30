@@ -619,7 +619,10 @@ test("Canvas document commit waits for styledReady and never replaces head/body 
   assert.match(combined, /applyCanvasPatch/);
   assert.match(messages, /return replaceDocument\(/);
   assert.match(sync, /Promise\.all\(waits\)[\s\S]*entry\.fresh[\s\S]*entry\.link\.remove\(\)/);
-  assert.match(sync, /requestAnimationFrame\(function \(\) \{[\s\S]*requestAnimationFrame\(resolve\)/);
+  assert.match(
+    sync,
+    /requestAnimationFrame\(function \(\) \{[\s\S]*requestAnimationFrame\(function \(\) \{[\s\S]*resolve\(\{[\s\S]*styledReady:/,
+  );
   assert.match(sync, /canvasPhaseReceipts:\s*phaseReceipts/);
   assert.match(sync, /"resourcesReady"[\s\S]*"committed"[\s\S]*"styledReady"/);
   assert.match(messages, /phase:\s*["']failed["']/);

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::{
     commands::css::{
@@ -34,44 +34,54 @@ use crate::{
 pub const DESIGN_CLASS_RENAME_SCHEMA_VERSION: u32 = 1;
 
 #[tauri::command]
-pub fn read_design_token_catalog(
+pub async fn read_design_token_catalog(
     identity: FileBufferRequestIdentity,
-    state: State<AppState>,
+    app: AppHandle,
 ) -> Result<FileBufferCommandReceipt<DesignTokenCatalogSnapshot>, String> {
-    with_bound_css_file_buffer_revision(
-        state.inner(),
-        &identity,
-        |_project_root, _zola_root, session, store, workspace_revision| {
-            build_design_token_catalog(
-                &session.project_root,
-                &session.runtime_instance_id(),
-                workspace_revision,
-                store,
-            )
-        },
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        with_bound_css_file_buffer_revision(
+            state.inner(),
+            &identity,
+            |_project_root, _zola_root, session, store, workspace_revision| {
+                build_design_token_catalog(
+                    &session.project_root,
+                    &session.runtime_instance_id(),
+                    workspace_revision,
+                    store,
+                )
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Catalogul tokenilor a căzut în task-ul Rust de fundal: {error}"))?
 }
 
 #[tauri::command]
-pub fn read_theme_style_catalog(
+pub async fn read_theme_style_catalog(
     identity: FileBufferRequestIdentity,
-    state: State<AppState>,
+    app: AppHandle,
 ) -> Result<FileBufferCommandReceipt<ThemeStyleCatalogSnapshot>, String> {
-    with_bound_css_file_buffer_revision(
-        state.inner(),
-        &identity,
-        |_project_root, _zola_root, session, store, workspace_revision| {
-            let (source_path, source, source_origin) = resolve_theme_style_source(store)?;
-            Ok(build_theme_style_catalog(
-                &session.project_root,
-                &session.runtime_instance_id(),
-                workspace_revision,
-                &source_path,
-                &source_origin,
-                &source,
-            ))
-        },
-    )
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        with_bound_css_file_buffer_revision(
+            state.inner(),
+            &identity,
+            |_project_root, _zola_root, session, store, workspace_revision| {
+                let (source_path, source, source_origin) = resolve_theme_style_source(store)?;
+                Ok(build_theme_style_catalog(
+                    &session.project_root,
+                    &session.runtime_instance_id(),
+                    workspace_revision,
+                    &source_path,
+                    &source_origin,
+                    &source,
+                ))
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Catalogul stilurilor a căzut în task-ul Rust de fundal: {error}"))?
 }
 
 #[tauri::command]
@@ -200,21 +210,26 @@ pub fn create_design_class(
 }
 
 #[tauri::command]
-pub fn read_design_class_inventory(
-    state: State<AppState>,
+pub async fn read_design_class_inventory(
+    app: AppHandle,
 ) -> Result<DesignClassInventorySnapshot, String> {
-    let (root, session, lease) = capture_project_model_build_lease(&state)?;
-    let model = crate::project_model::build_project_model_from_workspace_projection(
-        &root,
-        lease.projection(),
-    )?;
-    let snapshot = build_design_class_inventory(
-        &model,
-        session.runtime_instance_id(),
-        lease.projection().revision,
-    );
-    publish_project_model_if_current(&state, &lease, model)?;
-    Ok(snapshot)
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let (root, session, lease) = capture_project_model_build_lease(&state)?;
+        let model = crate::project_model::build_project_model_from_workspace_projection(
+            &root,
+            lease.projection(),
+        )?;
+        let snapshot = build_design_class_inventory(
+            &model,
+            session.runtime_instance_id(),
+            lease.projection().revision,
+        );
+        publish_project_model_if_current(&state, &lease, model)?;
+        Ok(snapshot)
+    })
+    .await
+    .map_err(|error| format!("Inventarul claselor a căzut în task-ul Rust de fundal: {error}"))?
 }
 
 #[tauri::command(async)]

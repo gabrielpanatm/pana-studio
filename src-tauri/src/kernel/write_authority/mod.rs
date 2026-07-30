@@ -13,6 +13,7 @@ mod capability;
 mod compliance;
 mod model;
 mod operation;
+mod preview_generation;
 mod recovery;
 mod registry;
 mod root_authority;
@@ -25,6 +26,9 @@ pub use model::{
     ConflictPolicy, ExpectedLeaf, ExpectedLeafVersion, RecoveryPolicy, WriteAtomicity,
     WriteAuthorityError, WriteCategory, WriteIntent, WriteOperationKind, WriteOwner, WritePolicy,
     WriteReceipt, WriteRecoveryReceipt, WriteRejection, WriteTarget,
+};
+pub(crate) use preview_generation::{
+    PreviewProjectionGeneration, PreviewProjectionPublication, PreviewProjectionPublicationStats,
 };
 pub use recovery::{
     WalPhase, WriteAuthorityRecoveryClassification, WriteAuthorityRecoveryItem,
@@ -39,6 +43,7 @@ pub use root_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
 
 static ZOLA_ARTIFACT_PUBLICATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static COMPONENT_VALIDATION_SANDBOX_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static PREVIEW_PROJECTION_GENERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Sealed, descriptor-backed authority for one configured Zola output name
 /// and its private sibling generations. It is intentionally separate from

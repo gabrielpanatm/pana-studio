@@ -183,6 +183,7 @@ import type {
   InspectorSelectionSummarySnapshot,
   BlockSelectionContext,
   CanvasElementObservation,
+  SelectionCoordinatorSnapshot,
   SelectionIntent,
   SelectionObservationInput,
   SelectionSnapshot,
@@ -384,7 +385,7 @@ import {
   resetExternalDiskState as resetExternalDiskStateFromController,
   resumeExternalDiskMonitoringAfterSave as resumeExternalDiskMonitoringAfterSaveFromController,
   resumeExternalDiskMonitoringAfterTransitionLease as resumeExternalDiskMonitoringAfterTransitionLeaseFromController,
-  startExternalDiskPolling as startExternalDiskPollingFromController,
+  startExternalDiskMonitoring as startExternalDiskMonitoringFromController,
   suspendAndDrainExternalDiskMonitoring as suspendAndDrainExternalDiskMonitoringFromController,
   type ExternalDiskControllerHost,
 } from "$lib/state/external-disk-controller";
@@ -393,6 +394,7 @@ import {
   rebaseFileBufferDraftSyncProjection,
 } from "$lib/session/file-buffer-draft-sync";
 import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
+import type { ProjectDiskChangeNotice } from "$lib/kernel/project-disk-events";
 import {
   createDesignClass as createDesignClassCommand,
   createScssVariable,
@@ -523,6 +525,7 @@ type ActiveHtmlTextEditSession = {
   target: HtmlActionTarget;
   text: string;
   projectedText: string | null;
+  finishPromise: Promise<boolean> | null;
 };
 
 type ActiveHtmlAttributeEditSession = {
@@ -565,6 +568,24 @@ function editorNavigationRoute(previewUrl: string, fallbackRoute: string) {
   }
   const fallback = fallbackRoute.trim() || "/";
   return fallback.startsWith("/") ? fallback : `/${fallback}`;
+}
+
+function editorNavigationRefreshKey(
+  identity: CanvasProjectionIdentity,
+  route: string,
+  activeDocumentPath: string | null,
+  previewContextRenderInstanceId: string | null,
+) {
+  return JSON.stringify([
+    identity.projectRoot,
+    identity.runtimeSessionId,
+    identity.workspaceRevision,
+    identity.transactionId,
+    identity.previewRevision,
+    route,
+    activeDocumentPath,
+    previewContextRenderInstanceId,
+  ]);
 }
 
 export class AppState {
@@ -677,6 +698,7 @@ export class AppState {
   private saveOperationPromise: Promise<boolean> | null = null;
   private projectSessionReattachPromise: Promise<boolean> | null = null;
   projectTransitionFrontendLeaseActive = $state(false);
+  kernelUndoRedoFrontendQuiesceActive = $state(false);
   kernelUndoRedoFrontendLeaseActive = $state(false);
   htmlMutationRevision = 0;
 
@@ -747,6 +769,8 @@ export class AppState {
   inspectorSelectionSummary = $state<InspectorSelectionSummarySnapshot | null>(null);
   hoverSnapshot = $state<HoverSnapshot | null>(null);
   private editorNavigationRequestSerial = 0;
+  private editorNavigationRefreshKey = "";
+  private editorNavigationRefreshPromise: Promise<void> | null = null;
   private selectionCoordinatorRequestSerial = 0;
   private hoverCoordinatorRequestSerial = 0;
   activeCanvasUrl = $state("about:blank");
@@ -815,7 +839,9 @@ export class AppState {
   aiContextSaveTimer: number | null = null;
   aiContextUiRevision = Date.now();
   aiCoordinationSnapshot = $state<AiCoordinationSnapshot | null>(null);
-  aiCoordinationTimer: number | null = null;
+  aiCoordinationUnlisten: (() => void) | null = null;
+  aiCoordinationSubscriptionGeneration = 0;
+  aiCoordinationPendingSnapshot: AiCoordinationSnapshot | null = null;
   aiCoordinationOperationInFlight = false;
   aiCoordinationHandledRequestId: string | null = null;
   aiCoordinationReconciliationLeaseId: string | null = null;
@@ -825,7 +851,15 @@ export class AppState {
 
   // ── External disk change awareness ──
   externalDiskState = $state<ExternalDiskState>(createExternalDiskState());
-  externalDiskTimer: number | null = null;
+  externalDiskAuditTimer: number | null = null;
+  externalDiskWatchUnlisten: (() => void) | null = null;
+  externalDiskWatchGeneration: number | null = null;
+  externalDiskWatchStopIdentity: ExternalDiskControllerHost["externalDiskWatchStopIdentity"] = null;
+  externalDiskWatchRevision = 0;
+  externalDiskWatchSubscriptionGeneration = 0;
+  externalDiskPendingWatchNotice: ProjectDiskChangeNotice | null = null;
+  externalDiskWatchEventPending = false;
+  externalDiskWatchEventDrainInFlight = false;
   externalDiskSuspended = $state(false);
   externalDiskCheckInFlight: ExternalDiskControllerHost["externalDiskCheckInFlight"] = null;
   externalDiskCheckGeneration = 0;
@@ -1600,8 +1634,8 @@ export class AppState {
     }
   }
 
-  startExternalDiskPolling() {
-    startExternalDiskPollingFromController(this.externalDiskControllerHost());
+  startExternalDiskMonitoring() {
+    startExternalDiskMonitoringFromController(this.externalDiskControllerHost());
   }
 
   resetExternalDiskState() {
@@ -2345,6 +2379,8 @@ export class AppState {
     this.inspectorSelectionSummary = null;
     this.hoverSnapshot = null;
     this.editorNavigationRequestSerial += 1;
+    this.editorNavigationRefreshKey = "";
+    this.editorNavigationRefreshPromise = null;
     this.editorNavigationSnapshot = null;
     this.editorNavigationLoading = false;
     this.editorNavigationError = "";
@@ -2491,6 +2527,8 @@ export class AppState {
   ) {
     if (!identity) {
       this.editorNavigationRequestSerial += 1;
+      this.editorNavigationRefreshKey = "";
+      this.editorNavigationRefreshPromise = null;
       this.editorNavigationSnapshot = null;
       this.editorNavigationLoading = false;
       this.editorNavigationError = "";
@@ -2499,14 +2537,34 @@ export class AppState {
       this.hoverSnapshot = null;
       return;
     }
-    const serial = ++this.editorNavigationRequestSerial;
     const route = editorNavigationRoute(previewUrl, this.browserPreviewRoute);
+    const activeDocumentPath = this.activeScannedPath;
+    const previewContextRenderInstanceId =
+      this.coordinatedElementSelection?.renderInstanceId ?? null;
+    const refreshKey = editorNavigationRefreshKey(
+      identity,
+      route,
+      activeDocumentPath,
+      previewContextRenderInstanceId,
+    );
+    if (this.editorNavigationRefreshKey === refreshKey) {
+      if (this.editorNavigationRefreshPromise) {
+        await this.editorNavigationRefreshPromise;
+        return;
+      }
+      if (this.editorNavigationSnapshot && !this.editorNavigationError) return;
+    }
+
+    let finishRefresh = () => {};
+    const refreshPromise = new Promise<void>((resolve) => {
+      finishRefresh = resolve;
+    });
+    this.editorNavigationRefreshKey = refreshKey;
+    this.editorNavigationRefreshPromise = refreshPromise;
+    const serial = ++this.editorNavigationRequestSerial;
     this.editorNavigationLoading = true;
     this.editorNavigationError = "";
     try {
-      const activeDocumentPath = this.activeScannedPath;
-      const previewContextRenderInstanceId =
-        this.coordinatedElementSelection?.renderInstanceId ?? null;
       const snapshot = await readEditorNavigationSnapshot(
         identity,
         route,
@@ -2546,6 +2604,10 @@ export class AppState {
     } finally {
       if (serial === this.editorNavigationRequestSerial) {
         this.editorNavigationLoading = false;
+      }
+      finishRefresh();
+      if (this.editorNavigationRefreshPromise === refreshPromise) {
+        this.editorNavigationRefreshPromise = null;
       }
     }
   }
@@ -2610,6 +2672,23 @@ export class AppState {
     return receipt.hover;
   }
 
+  beginCanvasHoverProjection(): number {
+    return ++this.hoverCoordinatorRequestSerial;
+  }
+
+  projectCanvasHoverReceipt(
+    serial: number,
+    identity: CanvasProjectionIdentity,
+    hover: HoverSnapshot | null,
+  ): boolean {
+    if (
+      serial !== this.hoverCoordinatorRequestSerial
+      || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
+    ) return false;
+    this.hoverSnapshot = hover;
+    return true;
+  }
+
   async rebaseSelectionSnapshot(
     identity = this.activeCanvasIdentity ?? undefined,
     route = editorNavigationRoute(
@@ -2661,6 +2740,10 @@ export class AppState {
     };
     this.acceptedSelectionObservation = accepted;
     this.inspectorSelectionSummary = receipt.inspectorSummary;
+    // Publish the physical editor values in the same synchronous settlement
+    // as the Rust-resolved summary. No renderer can observe a resolved
+    // selection paired with the previous element's HTML fields.
+    this.applySelectionState(accepted.observation);
     return accepted;
   }
 
@@ -3124,7 +3207,10 @@ export class AppState {
     const enteringCode = view === "code" && this.centerView !== "code";
     const enteringPreview = view === "preview" && this.centerView !== "preview";
     if (enteringCode) {
-      await this.prepareHtmlCodeRevealTargetForCodeEntry();
+      // Surface switching is scoped to the active Workbench document.
+      // Provenance from a retained Preview selection may belong to another
+      // template (for example index.html) and must not replace the active tab.
+      // Explicit source actions perform cross-document navigation separately.
       this.requestCodeSelectionReveal();
     }
     const targetActivity: WorkbenchActivity = view === "kernel"
@@ -3253,12 +3339,13 @@ export class AppState {
   }): Promise<boolean> {
     if (!target.selector || !target.file) return false;
     if (
+      this.kernelUndoRedoFrontendQuiesceActive
+      || this.kernelUndoRedoFrontendLeaseActive
+    ) return false;
+    if (
       target.expectedSelectionRevision
       && this.selectionSnapshot?.selectionRevision !== target.expectedSelectionRevision
-    ) {
-      this.setGlobalStatus(t("inspector-css-focus-blocked"), "error");
-      return false;
-    }
+    ) return false;
     const property = target.property?.trim() || null;
     const focus = this.selectionSnapshot?.focus;
     if (
@@ -3309,6 +3396,15 @@ export class AppState {
         ? selection.focus.kind === "cssProperty" && selection.focus.property === property
         : selection.focus.kind === "cssRule";
     } catch (error) {
+      if (
+        this.kernelUndoRedoFrontendQuiesceActive
+        || this.kernelUndoRedoFrontendLeaseActive
+        || (
+          target.expectedSelectionRevision
+          && this.selectionSnapshot?.selectionRevision
+            !== target.expectedSelectionRevision
+        )
+      ) return false;
       this.setGlobalStatus(
         `${t("inspector-css-focus-blocked")} ${errorMessage(error)}`,
         "error",
@@ -3383,18 +3479,6 @@ export class AppState {
     }
     await this.setCenterView("code");
     this.requestCodeSelectionReveal();
-  }
-
-  async prepareHtmlCodeRevealTargetForCodeEntry() {
-    const sourceFile = this.selectionSnapshot?.projections.code.file;
-    if (!this.scannedProject || !sourceFile) return;
-    const targetPath = zolaRelativePath(sourceFile);
-    const file = this.scannedProject.files.find(
-      (item) => item.relativePath === sourceFile || zolaRelativePath(item.relativePath) === targetPath,
-    );
-    if (!file || this.activeScannedPath === file.relativePath) return;
-
-    await this.loadScannedProjectFile(file);
   }
 
   async createCodeEditor() {
@@ -3852,6 +3936,7 @@ export class AppState {
       target,
       text: value,
       projectedText: null,
+      finishPromise: null,
     };
     this.activeHtmlTextEditSession = session;
     this.activeHtmlTextEditKey = key;
@@ -3974,6 +4059,19 @@ export class AppState {
       await this.htmlTextDraftCommitQueue.flush({ throwOnFailure: true });
       return false;
     }
+    if (session.finishPromise) return await session.finishPromise;
+    const operation = this.finishCapturedHtmlTextEditSession(session);
+    session.finishPromise = operation;
+    try {
+      return await operation;
+    } finally {
+      if (session.finishPromise === operation) session.finishPromise = null;
+    }
+  }
+
+  private async finishCapturedHtmlTextEditSession(
+    session: ActiveHtmlTextEditSession,
+  ): Promise<boolean> {
     this.clearHtmlTextEditTimers();
     await this.htmlTextDraftCommitQueue.flush({ throwOnFailure: true });
     if (this.activeHtmlTextEditSession?.id !== session.id) return false;
@@ -4389,17 +4487,25 @@ export class AppState {
         t("workbench-history-transition-blocked"),
       );
     }
-    if (this.kernelUndoRedoFrontendLeaseActive) {
+    if (
+      this.kernelUndoRedoFrontendQuiesceActive
+      || this.kernelUndoRedoFrontendLeaseActive
+    ) {
       throw new Error(t("workbench-history-busy"));
     }
 
-    this.kernelUndoRedoFrontendLeaseActive = true;
+    // Freeze new UI ingress first, while still allowing the already captured
+    // interactive HTML draft to use the structural lane for its final commit.
+    // The exclusive history lease is raised only after that draft is closed.
+    this.kernelUndoRedoFrontendQuiesceActive = true;
     contextMenu.close();
     this.quiesceExternalReconcileInteractions();
     try {
       await tick();
       if (this.saveOperationPromise) await this.saveOperationPromise;
       await this.flushInteractiveEditorDrafts("history");
+      this.kernelUndoRedoFrontendLeaseActive = true;
+      await tick();
       await drainPreviewStructuralLanes();
       await suspendAndDrainExternalDiskMonitoringFromController(
         this.externalDiskControllerHost(),
@@ -4422,11 +4528,18 @@ export class AppState {
   }
 
   endKernelUndoRedoFrontendLease() {
-    if (!this.kernelUndoRedoFrontendLeaseActive) return;
+    if (
+      !this.kernelUndoRedoFrontendQuiesceActive
+      && !this.kernelUndoRedoFrontendLeaseActive
+    ) return;
+    const resumeMonitoring = this.kernelUndoRedoFrontendLeaseActive;
+    this.kernelUndoRedoFrontendQuiesceActive = false;
     this.kernelUndoRedoFrontendLeaseActive = false;
-    resumeExternalDiskMonitoringAfterSaveFromController(
-      this.externalDiskControllerHost(),
-    );
+    if (resumeMonitoring) {
+      resumeExternalDiskMonitoringAfterSaveFromController(
+        this.externalDiskControllerHost(),
+      );
+    }
   }
 
   async beginProjectTransitionFrontendLease() {
@@ -4495,7 +4608,10 @@ export class AppState {
   }
 
   private blockSaveForKernelUndoRedoLease() {
-    if (!this.kernelUndoRedoFrontendLeaseActive) return false;
+    if (
+      !this.kernelUndoRedoFrontendQuiesceActive
+      && !this.kernelUndoRedoFrontendLeaseActive
+    ) return false;
     this.setGlobalStatus(
       t("workbench-save-history-blocked"),
       "error",

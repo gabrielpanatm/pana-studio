@@ -298,6 +298,7 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
   );
   assert.match(io, /bind_canvas_interaction_agent/);
   assert.match(io, /resolve_canvas_interaction_intent/);
+  assert.match(io, /resolve_canvas_hover_intent/);
   assert.match(agent, /canvasAgentSelectionEnabled = false/);
   assert.match(agent, /postCanvasAgent\("agentActivated"/);
   assert.match(agent, /data-pana-render-instance-id/);
@@ -305,6 +306,19 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
   assert.match(agent, /canEnterBoundary/);
   assert.match(agent, /CANVAS_AGENT_DRAG_ID/);
   assert.match(agent, /hitKey === canvasAgentLastPointerHitKey/);
+  assert.match(agent, /document\.addEventListener\("pointerover", handleCanvasAgentPointerOver, true\)/);
+  assert.match(
+    agent,
+    /document\.addEventListener\("pointermove", handleCanvasAgentHoverPointerMove,[\s\S]*passive: true/,
+  );
+  assert.match(
+    agent,
+    /canvasAgentDragCandidate = \{[\s\S]*document\.addEventListener\("pointermove", handleCanvasAgentPointerMove, true\)/,
+  );
+  assert.match(
+    agent,
+    /CANVAS_AGENT_HOVER_DWELL_MS = 120[\s\S]*clearTimeout\(canvasAgentHoverTimer\)[\s\S]*emitCanvasAgentGesture\(pending, "pointerMove"/,
+  );
   assert.match(agent, /data-pana-drag-position/);
   assert.match(agent, /data-pana-drag-permission/);
   assert.match(agent, /permissionState === "allowed"/);
@@ -317,6 +331,7 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
   assert.match(controller, /runtime\.phase = "active"/);
   assert.match(controller, /nextDocumentEpoch/);
   assert.match(controller, /resolveCanvasInteractionIntent/);
+  assert.match(controller, /resolveCanvasHoverIntent/);
   assert.match(controller, /requestEditorEditScope/);
   assert.match(controller, /app\.moveEditorNavigationNode/);
   assert.match(controller, /app\.previewEditorNavigationMove/);
@@ -331,4 +346,50 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
     handler,
     /data\.type !== "selection"|preview-hover-clear|preview-context-menu|preview-pointerdown|preview-layer-drop|preview-tera-move-drop/,
   );
+});
+
+test("Canvas pointer hover has a dedicated latest-wins Rust lane", () => {
+  const controller = readFileSync(
+    new URL("../src/lib/state/canvas-interaction-controller.ts", import.meta.url),
+    "utf8",
+  );
+  const command = readFileSync(
+    new URL("../src-tauri/src/commands/editor_navigation.rs", import.meta.url),
+    "utf8",
+  );
+  const runtime = readFileSync(
+    new URL("../src-tauri/src/kernel/canvas_interaction.rs", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    controller,
+    /message\.gesture === "pointerMove"[\s\S]*pendingPointerMove = message[\s\S]*drainLatestPointerHover\(app, runtime\)[\s\S]*return true/,
+  );
+  assert.match(
+    controller,
+    /async \(\) => \{[\s\S]*runtime\.pendingPointerMove[\s\S]*message\.gestureSequence !== runtime\.latestPointerMoveSequence[\s\S]*resolveCanvasHoverIntent[\s\S]*currentBinding\(app, runtime\) !== binding[\s\S]*message\.gestureSequence !== runtime\.latestPointerMoveSequence[\s\S]*projectCanvasHoverReceipt/,
+  );
+  assert.match(
+    command,
+    /fn resolve_canvas_hover_intent[\s\S]*resolve_pointer_hover[\s\S]*selection_coordinator\.apply_hover/,
+  );
+  const hoverCommandBlock = command.slice(
+    command.indexOf("pub fn resolve_canvas_hover_intent"),
+    command.indexOf("pub fn apply_selection_intent"),
+  );
+  assert.match(hoverCommandBlock, /CanvasHoverProjection/);
+  assert.match(hoverCommandBlock, /changed/);
+  assert.doesNotMatch(hoverCommandBlock, /inspector_summary|SelectionCoordinatorSnapshot/);
+  assert.match(
+    runtime,
+    /fn resolve_pointer_hover[\s\S]*PointerMove[\s\S]*last_accepted_hover_sequence = request\.gesture_sequence[\s\S]*let projection = project/,
+  );
+  assert.match(runtime, /last_accepted_ordered_sequence:\s*u64/);
+  assert.match(runtime, /last_accepted_hover_sequence:\s*u64/);
+  const orderedGestureBlock = controller.slice(
+    controller.indexOf("runtime.gestureTail = runtime.gestureTail", controller.indexOf("message.gestureSequence")),
+    controller.indexOf("function drainLatestPointerHover"),
+  );
+  assert.doesNotMatch(orderedGestureBlock, /resolveCanvasHoverIntent/);
 });

@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use crate::{
@@ -29,32 +30,60 @@ impl ProjectModelBuildLease {
 pub(crate) fn capture_project_model_build_lease(
     state: &AppState,
 ) -> Result<(PathBuf, ProjectSessionSnapshot, ProjectModelBuildLease), String> {
-    let current_root = state
-        .current_root
-        .lock()
-        .map_err(|_| "Nu am putut captura root-ul pentru ProjectModel lease.".to_string())?;
-    let workspace = state.project_workspace.lock().map_err(|_| {
-        "Nu am putut captura ProjectWorkspace pentru ProjectModel lease.".to_string()
-    })?;
+    let started = Instant::now();
+    let (root, session, accepted_disk, projection) = {
+        let current_root = state
+            .current_root
+            .lock()
+            .map_err(|_| "Nu am putut captura root-ul pentru ProjectModel lease.".to_string())?;
+        let workspace = state.project_workspace.lock().map_err(|_| {
+            "Nu am putut captura ProjectWorkspace pentru ProjectModel lease.".to_string()
+        })?;
 
-    let root = current_root
-        .as_ref()
-        .ok_or_else(|| "Nu există proiect deschis.".to_string())?;
-    let workspace = workspace
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    require_matching_root(root, &workspace.session)?;
-    require_accepted_disk_matches_live(root, &workspace.session, &workspace.accepted_disk)?;
+        let root = current_root
+            .as_ref()
+            .ok_or_else(|| "Nu există proiect deschis.".to_string())?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+        require_matching_root(root, &workspace.session)?;
+        workspace.accepted_disk.require_identity(
+            &workspace.session.runtime_instance_id(),
+            &workspace.session.project_root,
+        )?;
+        workspace.accepted_disk.require_complete()?;
 
-    Ok((
-        root.clone(),
-        workspace.session.clone(),
+        (
+            root.clone(),
+            workspace.session.clone(),
+            workspace.accepted_disk.clone(),
+            workspace.capture_projection_lease()?,
+        )
+    };
+
+    // Manifest traversal is filesystem work and may be slow on a large
+    // project. It must not monopolize ProjectWorkspace: the immutable
+    // authority snapshot is checked off-lock, while publish revalidates the
+    // exact session, revision and accepted-disk generation before committing.
+    require_accepted_disk_matches_live(&root, &session, &accepted_disk)?;
+    let accepted_disk_generation = accepted_disk.generation;
+    let accepted_disk_fingerprint = accepted_disk_fingerprint(&accepted_disk)?;
+
+    let result = (
+        root,
+        session,
         ProjectModelBuildLease {
-            projection: workspace.capture_projection_lease()?,
-            accepted_disk_generation: workspace.accepted_disk.generation,
-            accepted_disk_fingerprint: accepted_disk_fingerprint(&workspace.accepted_disk)?,
+            projection,
+            accepted_disk_generation,
+            accepted_disk_fingerprint,
         },
-    ))
+    );
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[Pană Studio][perf] project_model_lease total_ms={}",
+        started.elapsed().as_millis()
+    );
+    Ok(result)
 }
 
 pub(crate) fn publish_project_model_if_current(
@@ -62,7 +91,15 @@ pub(crate) fn publish_project_model_if_current(
     lease: &ProjectModelBuildLease,
     model: ProjectModel,
 ) -> Result<(), String> {
-    publish_project_model_with_aliases_if_current(state, lease, model, None)
+    let started = Instant::now();
+    let result = publish_project_model_with_aliases_if_current(state, lease, model, None);
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "[Pană Studio][perf] project_model_publish total_ms={} success={}",
+        started.elapsed().as_millis(),
+        result.is_ok()
+    );
+    result
 }
 
 pub(crate) fn publish_project_model_with_aliases_if_current(

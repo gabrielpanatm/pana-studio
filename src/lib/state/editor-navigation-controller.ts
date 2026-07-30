@@ -24,6 +24,7 @@ import type { GlobalStatusKind } from "$lib/status/global-status";
 import type { PreviewTeraSelectionTarget } from "$lib/state/app-helpers";
 import type { AppState } from "$lib/state/app.svelte";
 import { errorMessage } from "$lib/util";
+import type { EditFlushReason } from "$lib/session/edit-flush-registry";
 import {
   hoverCanvasNavigationNode,
   selectCanvasNavigationNode,
@@ -43,6 +44,7 @@ export type EditorNavigationControllerHost = {
     identity?: CanvasProjectionIdentity,
     previewUrl?: string,
   ) => Promise<void>;
+  flushInteractiveEditorDrafts: (reason: EditFlushReason) => Promise<void>;
 } & Parameters<typeof runInPreviewStructuralLane>[0]
   & Parameters<typeof projectCommittedEditorMoveMutation>[0];
 
@@ -58,6 +60,78 @@ export type EditorNavigationDropTarget = {
   targetRenderInstanceId?: string | null;
   targetBoundarySourceId?: string | null;
 };
+
+export type EditorMoveNodeAnchor = Readonly<{
+  originalId: string;
+  structuralPath: readonly number[];
+  kind: EditorNavigationNode["kind"];
+  tag: string | null;
+  file: string | null;
+  origin: EditorNavigationNode["origin"];
+}>;
+
+export function captureEditorMoveNodeAnchor(
+  snapshot: EditorNavigationSnapshot,
+  nodeId: string,
+): EditorMoveNodeAnchor | null {
+  const node = snapshot.nodes.find((candidate) => candidate.id === nodeId);
+  if (!node) return null;
+  const nodes = new Map(snapshot.nodes.map((candidate) => [candidate.id, candidate]));
+  const path: number[] = [];
+  const visited = new Set<string>();
+  let current: EditorNavigationNode | undefined = node;
+  while (current) {
+    if (!visited.add(current.id)) return null;
+    const siblings = current.parentId
+      ? nodes.get(current.parentId)?.children
+      : snapshot.rootNodeIds;
+    if (!siblings) return null;
+    const index = siblings.indexOf(current.id);
+    if (index < 0) return null;
+    path.unshift(index);
+    current = current.parentId ? nodes.get(current.parentId) : undefined;
+  }
+  return Object.freeze({
+    originalId: node.id,
+    structuralPath: Object.freeze(path),
+    kind: node.kind,
+    tag: node.tag,
+    file: node.file,
+    origin: node.origin,
+  });
+}
+
+export function resolveEditorMoveNodeAnchor(
+  snapshot: EditorNavigationSnapshot,
+  anchor: EditorMoveNodeAnchor,
+): EditorNavigationNode | null {
+  const exact = snapshot.nodes.find((node) => node.id === anchor.originalId);
+  if (exact && editorMoveNodeMatchesAnchor(exact, anchor)) return exact;
+
+  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
+  let siblings = snapshot.rootNodeIds;
+  let candidate: EditorNavigationNode | undefined;
+  for (const index of anchor.structuralPath) {
+    const id = siblings[index];
+    if (!id) return null;
+    candidate = nodes.get(id);
+    if (!candidate) return null;
+    siblings = candidate.children;
+  }
+  return candidate && editorMoveNodeMatchesAnchor(candidate, anchor)
+    ? candidate
+    : null;
+}
+
+function editorMoveNodeMatchesAnchor(
+  node: EditorNavigationNode,
+  anchor: EditorMoveNodeAnchor,
+) {
+  return node.kind === anchor.kind
+    && node.tag === anchor.tag
+    && node.file === anchor.file
+    && node.origin === anchor.origin;
+}
 
 export function editorNavigationDropTargetStatus(
   host: Pick<
@@ -243,11 +317,34 @@ export async function moveEditorNavigationNode(
   position: ProjectMovePosition,
 ): Promise<EditorActionOutcome> {
   try {
+    const capturedSnapshot = host.editorNavigationSnapshot;
+    if (!capturedSnapshot) {
+      throw new Error(t("editor-navigation-snapshot-unavailable"));
+    }
+    const sourceAnchor = captureEditorMoveNodeAnchor(capturedSnapshot, sourceNodeId);
+    const targetAnchor = captureEditorMoveNodeAnchor(capturedSnapshot, targetNodeId);
+    if (!sourceAnchor || !targetAnchor) {
+      throw new Error(t("editor-navigation-snapshot-stale"));
+    }
+    // Text/attribute editing and structural moves must become distinct,
+    // ordered ProjectWorkspace history entries. Closing the captured draft
+    // before planning the move also prevents Undo from inheriting a stale
+    // interactive edit session.
+    await host.flushInteractiveEditorDrafts("snapshot");
+    const settledSnapshot = host.editorNavigationSnapshot;
+    if (!settledSnapshot) {
+      throw new Error(t("editor-navigation-snapshot-unavailable"));
+    }
+    const settledSource = resolveEditorMoveNodeAnchor(settledSnapshot, sourceAnchor);
+    const settledTarget = resolveEditorMoveNodeAnchor(settledSnapshot, targetAnchor);
+    if (!settledSource || !settledTarget || settledSource.id === settledTarget.id) {
+      throw new Error(t("editor-navigation-snapshot-stale"));
+    }
     const outcome = await runInPreviewStructuralLane(host, async () => {
       const plan = await previewEditorNavigationMove(
         host,
-        sourceNodeId,
-        targetNodeId,
+        settledSource.id,
+        settledTarget.id,
         position,
       );
       if (!plan.allowed || !plan.token) {

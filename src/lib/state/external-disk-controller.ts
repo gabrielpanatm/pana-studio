@@ -5,8 +5,15 @@ import {
   readProjectWorkspaceState,
   reconcileCleanExternalProjectFiles,
   scanProject,
+  startProjectDiskWatch,
+  stopProjectDiskWatch,
   type CanvasProjectionPlan,
+  type ProjectDiskWatchStopIdentity,
 } from "$lib/project/io";
+import {
+  subscribeProjectDiskChanges,
+  type ProjectDiskChangeNotice,
+} from "$lib/kernel/project-disk-events";
 import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-workspace-preview-coordinator";
 import { diffDiskManifests } from "$lib/project/disk-manifest";
 import { preservePreviewBaseUrl } from "$lib/project/session";
@@ -36,8 +43,7 @@ import type {
 import { t } from "$lib/i18n/runtime.svelte";
 import { errorMessage } from "$lib/util";
 
-const ACTIVE_CHECK_INTERVAL = 5000;
-const BACKGROUND_CHECK_INTERVAL = 15000;
+const FULL_MANIFEST_AUDIT_INTERVAL = 5 * 60_000;
 const EXTERNAL_PROJECTION_DEADLINE_MS = 30_000;
 export const EXTERNAL_CHANGE_NOTIFICATION_ID = "project.external-disk-change";
 export const EXTERNAL_CHANGE_RELOAD_ACTION_ID = "external-disk.reload";
@@ -69,7 +75,15 @@ export function createExternalDiskState(): ExternalDiskState {
 export type ExternalDiskControllerHost = {
   sessionProjectRoot: string;
   externalDiskState: ExternalDiskState;
-  externalDiskTimer: number | null;
+  externalDiskAuditTimer: number | null;
+  externalDiskWatchUnlisten: (() => void) | null;
+  externalDiskWatchGeneration: number | null;
+  externalDiskWatchStopIdentity: ProjectDiskWatchStopIdentity | null;
+  externalDiskWatchRevision: number;
+  externalDiskWatchSubscriptionGeneration: number;
+  externalDiskPendingWatchNotice: ProjectDiskChangeNotice | null;
+  externalDiskWatchEventPending: boolean;
+  externalDiskWatchEventDrainInFlight: boolean;
   externalDiskSuspended: boolean;
   externalDiskCheckInFlight: ExternalDiskCheckInFlight | null;
   externalDiskCheckGeneration: number;
@@ -115,8 +129,11 @@ type ExternalDiskCheckInFlight = ExternalDiskCheckLease & {
   promise: Promise<void>;
 };
 
-export function startExternalDiskPolling(host: ExternalDiskControllerHost) {
-  stopExternalDiskPolling(host);
+export function startExternalDiskMonitoring(host: ExternalDiskControllerHost) {
+  if (host.externalDiskAuditTimer !== null && typeof window !== "undefined") {
+    window.clearTimeout(host.externalDiskAuditTimer);
+  }
+  host.externalDiskAuditTimer = null;
   if (
     host.externalDiskSuspended ||
     host.projectTransitionFrontendLeaseActive ||
@@ -125,14 +142,17 @@ export function startExternalDiskPolling(host: ExternalDiskControllerHost) {
     !host.externalDiskState.baseline ||
     host.externalDiskState.baseline.truncated
   ) return;
-  scheduleNextExternalDiskCheck(host, 300);
+  void startNativeExternalDiskMonitoring(host);
 }
 
-export function stopExternalDiskPolling(host: ExternalDiskControllerHost) {
-  if (host.externalDiskTimer !== null && typeof window !== "undefined") {
-    window.clearTimeout(host.externalDiskTimer);
+export function stopExternalDiskMonitoring(host: ExternalDiskControllerHost) {
+  if (host.externalDiskAuditTimer !== null && typeof window !== "undefined") {
+    window.clearTimeout(host.externalDiskAuditTimer);
   }
-  host.externalDiskTimer = null;
+  host.externalDiskAuditTimer = null;
+  void stopNativeExternalDiskMonitoring(host).catch((error) => {
+    console.error("[Pană Studio] Project disk watcher stop failed", error);
+  });
 }
 
 /**
@@ -146,7 +166,11 @@ export async function suspendAndDrainExternalDiskMonitoring(
   host: ExternalDiskControllerHost,
 ) {
   host.externalDiskSuspended = true;
-  stopExternalDiskPolling(host);
+  if (host.externalDiskAuditTimer !== null && typeof window !== "undefined") {
+    window.clearTimeout(host.externalDiskAuditTimer);
+  }
+  host.externalDiskAuditTimer = null;
+  await stopNativeExternalDiskMonitoring(host);
 
   // Invalidate a check still in its read-only manifest phase. A check which
   // has already entered Rust reconcile remains owned by its tracked Promise
@@ -192,7 +216,7 @@ export function resumeExternalDiskMonitoringAfterSave(
     || host.kernelUndoRedoFrontendLeaseActive
     || !host.scannedProject
   ) return;
-  startExternalDiskPolling(host);
+  startExternalDiskMonitoring(host);
 }
 
 export function resumeExternalDiskMonitoringAfterTransitionLease(
@@ -204,14 +228,14 @@ export function resumeExternalDiskMonitoringAfterTransitionLease(
   ) return;
   host.externalDiskSuspended = false;
   if (!host.scannedProject) return;
-  startExternalDiskPolling(host);
+  startExternalDiskMonitoring(host);
 }
 
 export function resetExternalDiskState(host: ExternalDiskControllerHost) {
   externalReconcileGeneration += 1;
   host.projectSessionEpoch += 1;
   detachExternalDiskCheck(host);
-  stopExternalDiskPolling(host);
+  stopExternalDiskMonitoring(host);
   host.externalDiskState = createExternalDiskState();
   host.clearNotification(EXTERNAL_CHANGE_NOTIFICATION_ID);
 }
@@ -222,7 +246,7 @@ export function invalidateExternalReconcileForProjectTransition(
   externalReconcileGeneration += 1;
   host.projectSessionEpoch += 1;
   detachExternalDiskCheck(host);
-  stopExternalDiskPolling(host);
+  stopExternalDiskMonitoring(host);
   const reconcileMayHaveCommitted = host.externalDiskState.reconciling;
   host.externalDiskState = {
     ...host.externalDiskState,
@@ -252,7 +276,7 @@ export function resumeExternalMonitoringAfterFailedTransition(
     host.scannedProject &&
     !host.externalDiskState.workspaceProjectionRecoveryRequired
   ) {
-    startExternalDiskPolling(host);
+    startExternalDiskMonitoring(host);
   }
 }
 
@@ -263,7 +287,7 @@ export function markWorkspaceProjectionRecoveryRequired(
   externalReconcileGeneration += 1;
   host.projectSessionEpoch += 1;
   detachExternalDiskCheck(host);
-  stopExternalDiskPolling(host);
+  stopExternalDiskMonitoring(host);
   host.externalDiskState = {
     ...host.externalDiskState,
     reconciling: false,
@@ -342,7 +366,7 @@ export function acceptProjectWorkspaceSaveBaseline(
   // before replacing its baseline, then publish the Rust receipt atomically
   // to both frontend projections.
   host.externalDiskCheckGeneration += 1;
-  stopExternalDiskPolling(host);
+  stopExternalDiskMonitoring(host);
   host.scannedProject = {
     ...project,
     acceptedDiskGeneration,
@@ -502,40 +526,151 @@ function finishSuspendedCheck(host: ExternalDiskControllerHost) {
   host.externalDiskState.lastCheckedAt = Date.now();
 }
 
-function scheduleNextExternalDiskCheck(host: ExternalDiskControllerHost, delay?: number) {
-  if (typeof window === "undefined") return;
-  stopExternalDiskPolling(host);
-  const scheduledLease = currentExternalDiskCheckLease(host);
-  if (!scheduledLease) return;
-  const focused = typeof document === "undefined" ? true : document.hasFocus();
-  const nextDelay = delay ?? (focused ? ACTIVE_CHECK_INTERVAL : BACKGROUND_CHECK_INTERVAL);
-  let timerId: number | null = null;
-  timerId = window.setTimeout(async () => {
-    if (
-      host.externalDiskTimer !== timerId
-      || host.externalDiskSuspended
-      || host.projectTransitionFrontendLeaseActive
-      || host.kernelUndoRedoFrontendLeaseActive
-      || !externalDiskCheckLeaseMatches(host, scheduledLease)
-    ) return;
-    const completedLease = await runTrackedExternalDiskCheck(host, scheduledLease);
-    if (
-      !completedLease
-      || !externalDiskCheckLeaseMatches(host, completedLease)
-    ) return;
-    if (
-      host.scannedProject &&
-      !host.externalDiskSuspended &&
-      !host.projectTransitionFrontendLeaseActive &&
-      !host.kernelUndoRedoFrontendLeaseActive &&
-      !host.externalDiskState.workspaceProjectionRecoveryRequired
-    ) {
-      scheduleNextExternalDiskCheck(host);
-    } else {
-      host.externalDiskTimer = null;
+async function startNativeExternalDiskMonitoring(host: ExternalDiskControllerHost) {
+  await stopNativeExternalDiskMonitoring(host);
+  if (
+    host.externalDiskSuspended
+    || host.projectTransitionFrontendLeaseActive
+    || host.kernelUndoRedoFrontendLeaseActive
+    || host.externalDiskState.workspaceProjectionRecoveryRequired
+    || !host.externalDiskState.baseline
+    || host.externalDiskState.baseline.truncated
+  ) return;
+  const identity = currentProjectDiskWatchIdentity(host);
+  if (!identity) return;
+  const subscriptionGeneration = ++host.externalDiskWatchSubscriptionGeneration;
+  try {
+    const unlisten = await subscribeProjectDiskChanges((notice) => {
+      if (
+        host.externalDiskWatchSubscriptionGeneration !== subscriptionGeneration
+        || notice.projectRoot !== identity.expectedProjectRoot
+        || notice.runtimeSessionId !== identity.expectedSessionId
+      ) return;
+      if (host.externalDiskWatchGeneration === null) {
+        host.externalDiskPendingWatchNotice = notice;
+        return;
+      }
+      acceptProjectDiskWatchNotice(host, notice);
+    });
+    if (host.externalDiskWatchSubscriptionGeneration !== subscriptionGeneration) {
+      unlisten();
+      return;
     }
-  }, nextDelay);
-  host.externalDiskTimer = timerId;
+    host.externalDiskWatchUnlisten = unlisten;
+    const receipt = await startProjectDiskWatch(identity);
+    if (
+      host.externalDiskWatchSubscriptionGeneration !== subscriptionGeneration
+      || host.externalDiskSuspended
+      || receipt.projectRoot !== identity.expectedProjectRoot
+      || receipt.runtimeSessionId !== identity.expectedSessionId
+    ) {
+      await stopProjectDiskWatch({
+        expectedProjectRoot: receipt.projectRoot,
+        expectedSessionId: receipt.runtimeSessionId,
+        expectedWatchGeneration: receipt.watchGeneration,
+      }).catch(() => undefined);
+      return;
+    }
+    host.externalDiskWatchGeneration = receipt.watchGeneration;
+    host.externalDiskWatchStopIdentity = {
+      expectedProjectRoot: receipt.projectRoot,
+      expectedSessionId: receipt.runtimeSessionId,
+      expectedWatchGeneration: receipt.watchGeneration,
+    };
+    host.externalDiskWatchRevision = 0;
+    const pending = host.externalDiskPendingWatchNotice;
+    host.externalDiskPendingWatchNotice = null;
+    if (pending) acceptProjectDiskWatchNotice(host, pending);
+    scheduleFullManifestAudit(host);
+  } catch (error) {
+    if (host.externalDiskWatchSubscriptionGeneration !== subscriptionGeneration) return;
+    host.projectStatus = t("external-disk-monitor-failed", {
+      message: errorMessage(error),
+    });
+  }
+}
+
+async function stopNativeExternalDiskMonitoring(host: ExternalDiskControllerHost) {
+  host.externalDiskWatchSubscriptionGeneration += 1;
+  host.externalDiskWatchUnlisten?.();
+  host.externalDiskWatchUnlisten = null;
+  host.externalDiskPendingWatchNotice = null;
+  host.externalDiskWatchEventPending = false;
+  const stopIdentity = host.externalDiskWatchStopIdentity;
+  host.externalDiskWatchStopIdentity = null;
+  host.externalDiskWatchGeneration = null;
+  host.externalDiskWatchRevision = 0;
+  if (!stopIdentity) return;
+  await stopProjectDiskWatch(stopIdentity);
+}
+
+function currentProjectDiskWatchIdentity(host: ExternalDiskControllerHost) {
+  const project = host.scannedProject;
+  if (!project?.root || !host.kernelProjectSessionId) return null;
+  return {
+    expectedProjectRoot: project.root,
+    expectedSessionId: host.kernelProjectSessionId,
+  };
+}
+
+function acceptProjectDiskWatchNotice(
+  host: ExternalDiskControllerHost,
+  notice: ProjectDiskChangeNotice,
+) {
+  if (
+    notice.watchGeneration !== host.externalDiskWatchGeneration
+    || notice.watchRevision <= host.externalDiskWatchRevision
+  ) return;
+  host.externalDiskWatchRevision = notice.watchRevision;
+  host.externalDiskWatchEventPending = true;
+  void drainProjectDiskWatchEvents(host);
+}
+
+async function drainProjectDiskWatchEvents(host: ExternalDiskControllerHost) {
+  if (host.externalDiskWatchEventDrainInFlight) return;
+  host.externalDiskWatchEventDrainInFlight = true;
+  try {
+    while (host.externalDiskWatchEventPending) {
+      host.externalDiskWatchEventPending = false;
+      if (
+        host.externalDiskSuspended
+        || host.projectTransitionFrontendLeaseActive
+        || host.kernelUndoRedoFrontendLeaseActive
+        || host.externalDiskState.workspaceProjectionRecoveryRequired
+      ) continue;
+      const lease = currentExternalDiskCheckLease(host);
+      if (!lease) continue;
+      await runTrackedExternalDiskCheck(host, lease);
+    }
+  } finally {
+    host.externalDiskWatchEventDrainInFlight = false;
+    if (host.externalDiskWatchEventPending) {
+      void drainProjectDiskWatchEvents(host);
+    }
+  }
+}
+
+function scheduleFullManifestAudit(host: ExternalDiskControllerHost) {
+  if (typeof window === "undefined") return;
+  if (host.externalDiskAuditTimer !== null) {
+    window.clearTimeout(host.externalDiskAuditTimer);
+  }
+  let timerId: number | null = null;
+  timerId = window.setTimeout(() => {
+    if (
+      host.externalDiskAuditTimer !== timerId
+      || host.externalDiskWatchGeneration === null
+      || host.externalDiskSuspended
+    ) return;
+    host.externalDiskAuditTimer = null;
+    host.externalDiskWatchEventPending = true;
+    void drainProjectDiskWatchEvents(host).finally(() => {
+      if (host.externalDiskWatchGeneration !== null && !host.externalDiskSuspended) {
+        scheduleFullManifestAudit(host);
+      }
+    });
+  }, FULL_MANIFEST_AUDIT_INTERVAL);
+  host.externalDiskAuditTimer = timerId;
 }
 
 async function runTrackedExternalDiskCheck(

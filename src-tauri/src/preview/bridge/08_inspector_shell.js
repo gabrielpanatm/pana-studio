@@ -4,8 +4,11 @@
       styleElement = document.createElement("style");
       styleElement.id = INSPECTOR_STYLE_ID;
       styleElement.setAttribute("data-pana-internal-style", "");
+      // Design is a static authoring surface. Authored motion stays available
+      // in Motion/Interactive, but must not keep the editor compositor hot.
       styleElement.textContent =
         "* { cursor: crosshair !important; }\n" +
+        "*, *::before, *::after { animation-play-state: paused !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }\n" +
         "html, body, body * { user-select: none !important; -webkit-user-select: none !important; }\n" +
         "input, textarea, select, [contenteditable='true'], input *, textarea *, select *, [contenteditable='true'] * { user-select: text !important; -webkit-user-select: text !important; }\n" +
         "body.pana-studio-preview-drag-candidate, body.pana-studio-preview-drag-candidate *, body.pana-studio-preview-dragging, body.pana-studio-preview-dragging * { cursor: grabbing !important; user-select: none !important; -webkit-user-select: none !important; }\n" +

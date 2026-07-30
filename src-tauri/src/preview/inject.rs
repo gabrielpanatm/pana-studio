@@ -96,6 +96,44 @@ fn bind_canvas_identity_to_editor_document(
     editor: &mut String,
     identity: &CanvasProjectionIdentity,
 ) -> Result<(), String> {
+    const CANVAS_IDENTITY_ATTRIBUTES: [&str; 4] = [
+        "data-pana-canvas-project-root",
+        "data-pana-canvas-runtime-session-id",
+        "data-pana-canvas-workspace-revision",
+        "data-pana-canvas-transaction-id",
+    ];
+    if CANVAS_IDENTITY_ATTRIBUTES
+        .iter()
+        .any(|attribute| editor.contains(attribute))
+    {
+        return bind_canvas_identity_to_editor_document_parsed(editor, identity);
+    }
+    let html_start = editor
+        .find("<html")
+        .ok_or_else(|| "Documentul Editare sigură nu are root HTML normalizat.".to_string())?;
+    let insertion = html_start + "<html".len();
+    if !editor[insertion..]
+        .chars()
+        .next()
+        .is_some_and(|character| character == '>' || character.is_ascii_whitespace())
+    {
+        return Err("Root-ul HTML normalizat are o delimitare invalidă.".to_string());
+    }
+    let attributes = format!(
+        " data-pana-canvas-project-root=\"{}\" data-pana-canvas-runtime-session-id=\"{}\" data-pana-canvas-workspace-revision=\"{}\" data-pana-canvas-transaction-id=\"{}\"",
+        escape_double_quoted_attribute(&identity.project_root),
+        escape_double_quoted_attribute(&identity.runtime_session_id),
+        identity.workspace_revision,
+        escape_double_quoted_attribute(&identity.transaction_id),
+    );
+    editor.insert_str(insertion, &attributes);
+    Ok(())
+}
+
+fn bind_canvas_identity_to_editor_document_parsed(
+    editor: &mut String,
+    identity: &CanvasProjectionIdentity,
+) -> Result<(), String> {
     let document = parse(editor.clone());
     let html = document.select_first("html").map_err(|_| {
         "Documentul Editare sigură nu are root pentru identitatea Canvas.".to_string()
@@ -122,6 +160,10 @@ fn bind_canvas_identity_to_editor_document(
         format!("Documentul Editare sigură nu a putut lega identitatea Canvas: {error}")
     })?;
     Ok(())
+}
+
+fn escape_double_quoted_attribute(value: &str) -> String {
+    value.replace('&', "&amp;").replace('"', "&quot;")
 }
 
 impl PreviewHtmlSurface {
@@ -921,10 +963,10 @@ mod tests {
             prepare_design_safe_html("<html><body><main>Canvas</main></body></html>", "preview-7")
                 .unwrap();
         let identity = CanvasProjectionIdentity {
-            project_root: "/project".to_string(),
-            runtime_session_id: "runtime-7".to_string(),
+            project_root: "/project&\"quoted".to_string(),
+            runtime_session_id: "runtime&\"7".to_string(),
             workspace_revision: 7,
-            transaction_id: "canvas-transaction-7".to_string(),
+            transaction_id: "canvas&\"transaction-7".to_string(),
             preview_revision: "preview-7".to_string(),
         };
         bind_canvas_identity_to_editor_html(&mut prepared, &identity).unwrap();
@@ -934,11 +976,11 @@ mod tests {
         let attributes = html.attributes.borrow();
         assert_eq!(
             attributes.get("data-pana-canvas-project-root"),
-            Some("/project")
+            Some("/project&\"quoted")
         );
         assert_eq!(
             attributes.get("data-pana-canvas-runtime-session-id"),
-            Some("runtime-7")
+            Some("runtime&\"7")
         );
         assert_eq!(
             attributes.get("data-pana-canvas-workspace-revision"),
@@ -946,7 +988,7 @@ mod tests {
         );
         assert_eq!(
             attributes.get("data-pana-canvas-transaction-id"),
-            Some("canvas-transaction-7")
+            Some("canvas&\"transaction-7")
         );
         drop(attributes);
 
@@ -959,6 +1001,36 @@ mod tests {
     }
 
     #[test]
+    fn rebinding_canvas_identity_replaces_existing_attributes_without_duplicates() {
+        let mut prepared =
+            prepare_design_safe_html("<html><body><main>Canvas</main></body></html>", "preview-7")
+                .unwrap();
+        let mut identity = CanvasProjectionIdentity {
+            project_root: "/project".to_string(),
+            runtime_session_id: "runtime-7".to_string(),
+            workspace_revision: 7,
+            transaction_id: "canvas-transaction-7".to_string(),
+            preview_revision: "preview-7".to_string(),
+        };
+        bind_canvas_identity_to_editor_html(&mut prepared, &identity).unwrap();
+        identity.workspace_revision = 8;
+        identity.transaction_id = "canvas-transaction-8".to_string();
+        bind_canvas_identity_to_editor_html(&mut prepared, &identity).unwrap();
+
+        let editor = parse(prepared.editor);
+        let html = editor.select_first("html").unwrap();
+        let attributes = html.attributes.borrow();
+        assert_eq!(
+            attributes.get("data-pana-canvas-workspace-revision"),
+            Some("8")
+        );
+        assert_eq!(
+            attributes.get("data-pana-canvas-transaction-id"),
+            Some("canvas-transaction-8")
+        );
+    }
+
+    #[test]
     fn internal_bridge_has_no_arbitrary_javascript_or_anime_execution_path() {
         assert!(!BRIDGE_SCRIPT.contains("set-live-js"));
         assert!(!BRIDGE_SCRIPT.contains("motion-timeline-preview-command"));
@@ -966,6 +1038,13 @@ mod tests {
         assert!(!BRIDGE_SCRIPT.contains("createElement(\"script\")"));
         assert!(!BRIDGE_SCRIPT.contains("eval("));
         assert!(!BRIDGE_SCRIPT.contains("new Function"));
+    }
+
+    #[test]
+    fn editor_bridge_freezes_authored_css_motion() {
+        assert!(BRIDGE_SCRIPT.contains(
+            "*, *::before, *::after { animation-play-state: paused !important; transition-duration: 0s !important; transition-delay: 0s !important; scroll-behavior: auto !important; }"
+        ));
     }
 
     #[test]
@@ -1034,6 +1113,7 @@ mod tests {
             "function emitCanvasAgentGesture(event, gesture, emptyHitPath, overrideHitPath, drag) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
             "function scheduleCanvasAgentPointerGesture(event, gesture, drag) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
             "function handleCanvasAgentPointerMove(event) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
+            "function handleCanvasAgentPointerOver(event) {\n    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;",
             "function handlePreviewShortcut(event) {\n    if (!isTrustedPreviewGesture(event)) return;",
         ] {
             assert!(

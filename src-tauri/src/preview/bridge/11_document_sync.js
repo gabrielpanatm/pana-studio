@@ -216,7 +216,8 @@
     });
   }
 
-  function waitForStyledFrame() {
+  function waitForStyledFrame(timingOrigin) {
+    var origin = typeof timingOrigin === "number" ? timingOrigin : performance.now();
     var fontsReady = document.fonts && document.fonts.ready
       ? Promise.race([
           document.fonts.ready,
@@ -224,9 +225,15 @@
         ])
       : Promise.resolve();
     return fontsReady.then(function () {
+      var fontsReadyAt = Math.max(0, Math.round(performance.now() - origin));
       return new Promise(function (resolve) {
         window.requestAnimationFrame(function () {
-          window.requestAnimationFrame(resolve);
+          window.requestAnimationFrame(function () {
+            resolve({
+              fontsReady: fontsReadyAt,
+              styledReady: Math.max(0, Math.round(performance.now() - origin))
+            });
+          });
         });
       });
     });

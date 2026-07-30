@@ -123,6 +123,9 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
   assert.match(commands, /workspace\.require_current_projection\(lease\)/);
   assert.match(commands, /engine\.stage_candidate/);
   assert.match(commands, /pub fn acknowledge_canvas_projection_phase/);
+  assert.match(commands, /pub fn acknowledge_canvas_projection_phases/);
+  assert.match(commands, /require_canvas_phase_batch/);
+  assert.match(commands, /append_events\(&app, events\)/);
   assert.match(commands, /engine\.acknowledge_candidate_phase/);
   assert.doesNotMatch(commands, /engine\.publish_candidate/);
   assert.doesNotMatch(materializer, /materialize_project_workspace_generation/);

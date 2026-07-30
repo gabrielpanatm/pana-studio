@@ -30,6 +30,11 @@
   } from "$lib/types";
   import { onDestroy, onMount } from "svelte";
   import { listenForExternalReconcileInteractionBarrier } from "$lib/session/external-reconcile-barrier";
+  import {
+    planFileExplorerEntryReveal,
+    projectFileExplorerRows,
+    type FileExplorerViewRow,
+  } from "$lib/project/file-explorer-view";
 
   export let scannedProject = false;
   export let projectRoot = "";
@@ -47,14 +52,8 @@
 
   export let collapsedDirs = new Set<string>();
   export let knownDirPaths = new Set<string>();
-  type ExplorerRowNode = {
-    type: "dir" | "file";
-    name: string;
-    path: string;
-    depth: number;
-    entry?: FileExplorerEntry;
-    hasChildren: boolean;
-  };
+  export let revealedEntryKey = "";
+  type ExplorerRowNode = FileExplorerViewRow;
   type PendingCreate = {
     parentPath: string;
     parentEntryId: string | null;
@@ -93,22 +92,26 @@
   let renameError = "";
   let renaming = false;
   let renameInputEl: HTMLInputElement | undefined;
-  let revealedSelectionKey = "";
-
   $: syncCollapsedDirectories(snapshot?.entries ?? []);
-  $: flatTree = visibleExplorerEntries(snapshot?.entries ?? [], collapsedDirs);
+  $: flatTree = projectFileExplorerRows(snapshot?.entries ?? [], collapsedDirs);
   $: projectRootDropNode = {
     type: "dir",
     name: t("project-files-root"),
     path: "",
     depth: 0,
     hasChildren: flatTree.length > 0,
+    expanded: flatTree.length > 0,
   } satisfies ExplorerRowNode;
-  $: if (
-    snapshot?.selectedEntry?.entryId
-    && `${snapshot.runtimeSessionId}:${snapshot.selectedEntry.entryId}` !== revealedSelectionKey
-  ) {
-    void revealSelectedEntry(snapshot.selectedEntry.entryId);
+  $: {
+    const revealPath = snapshot?.activeDocumentPath
+      ?? snapshot?.selectedEntry?.relativePath
+      ?? null;
+    const nextRevealKey = revealPath && snapshot
+      ? `${snapshot.runtimeSessionId}:${revealPath}`
+      : "";
+    if (revealPath && nextRevealKey !== revealedEntryKey) {
+      void revealExplorerEntry(revealPath, nextRevealKey);
+    }
   }
   $: dragSourceNode = flatTree.find((item) => item.path === dragSourcePath) ?? null;
   $: dragTargetNode = targetNodeForPath(dragTargetPath);
@@ -151,15 +154,16 @@
     createInputEl?.focus();
   }
 
-  function toggleDirCollapse(path: string, event: MouseEvent) {
+  function toggleDirCollapse(node: ExplorerRowNode, event: MouseEvent) {
     event.stopPropagation();
     if (suppressNextClick) {
       suppressNextClick = false;
       return;
     }
+    if (!node.hasChildren) return;
     const next = new Set(collapsedDirs);
-    if (next.has(path)) next.delete(path);
-    else next.add(path);
+    if (node.expanded) next.add(node.path);
+    else next.delete(node.path);
     collapsedDirs = next;
   }
 
@@ -317,51 +321,15 @@
     if (!sameStringSet(nextCollapsed, collapsedDirs)) collapsedDirs = nextCollapsed;
   }
 
-  function visibleExplorerEntries(
-    entries: FileExplorerEntry[],
-    collapsed: Set<string>,
-  ): ExplorerRowNode[] {
-    const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    const parentIds = new Set(entries.map((entry) => entry.parentId).filter(Boolean));
-    return entries
-      .filter((entry) => {
-        let parentId = entry.parentId;
-        while (parentId) {
-          const parent = byId.get(parentId);
-          if (!parent) return false;
-          if (collapsed.has(parent.relativePath)) return false;
-          parentId = parent.parentId;
-        }
-        return true;
-      })
-      .map((entry) => ({
-        type: entry.kind === "directory" ? "dir" : "file",
-        name: entry.name,
-        path: entry.relativePath,
-        depth: entry.depth,
-        entry,
-        hasChildren: parentIds.has(entry.id),
-      }));
-  }
-
-  async function revealSelectedEntry(entryId: string) {
+  async function revealExplorerEntry(relativePath: string, revealKey: string) {
     const entries = snapshot?.entries ?? [];
-    const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    const selected = byId.get(entryId);
-    if (!selected) return;
-    const nextCollapsed = new Set(collapsedDirs);
-    let parentId = selected.parentId;
-    while (parentId) {
-      const parent = byId.get(parentId);
-      if (!parent) break;
-      nextCollapsed.delete(parent.relativePath);
-      parentId = parent.parentId;
-    }
-    collapsedDirs = nextCollapsed;
-    revealedSelectionKey = `${snapshot?.runtimeSessionId ?? ""}:${entryId}`;
+    const plan = planFileExplorerEntryReveal(entries, collapsedDirs, relativePath);
+    if (!plan) return;
+    collapsedDirs = plan.collapsedDirs;
+    revealedEntryKey = revealKey;
     await tick();
     document
-      .querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(entryId)}"]`)
+      .querySelector<HTMLElement>(`[data-file-entry-id="${CSS.escape(plan.entryId)}"]`)
       ?.scrollIntoView({ block: "nearest" });
   }
 
@@ -386,9 +354,9 @@
       focusExplorerEntry(flatTree[index - 1]?.entry?.id);
       return;
     }
-    if (event.key === "ArrowRight" && node.type === "dir") {
+    if (event.key === "ArrowRight" && node.type === "dir" && node.hasChildren) {
       event.preventDefault();
-      if (collapsedDirs.has(node.path)) {
+      if (!node.expanded) {
         const next = new Set(collapsedDirs);
         next.delete(node.path);
         collapsedDirs = next;
@@ -399,7 +367,7 @@
     }
     if (event.key === "ArrowLeft") {
       event.preventDefault();
-      if (node.type === "dir" && !collapsedDirs.has(node.path)) {
+      if (node.type === "dir" && node.hasChildren && node.expanded) {
         const next = new Set(collapsedDirs);
         next.add(node.path);
         collapsedDirs = next;
@@ -411,10 +379,10 @@
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       handleEntryClick(node.entry);
-      if (node.type === "dir") {
+      if (node.type === "dir" && node.hasChildren) {
         const next = new Set(collapsedDirs);
-        if (next.has(node.path)) next.delete(node.path);
-        else next.add(node.path);
+        if (node.expanded) next.add(node.path);
+        else next.delete(node.path);
         collapsedDirs = next;
       }
     }
@@ -598,7 +566,7 @@
     return (event: MouseEvent) => {
       if (!isRenaming(node)) {
         handleEntryClick(node.entry);
-        toggleDirCollapse(node.path, event);
+        toggleDirCollapse(node, event);
       }
     };
   }
@@ -776,6 +744,7 @@
       <div
         class="file-row ui-entity-selectable"
         data-ui-selected={node.entry?.id === snapshot?.selectedEntry?.entryId ? "true" : undefined}
+        data-active-document={node.path === snapshot?.activeDocumentPath ? "true" : undefined}
         class:file-draggable={node.entry?.capabilities.moveEntry.allowed}
         class:dragging={dragSourcePath === node.path}
         class:drop-inside={isDropTarget(node.path)}
@@ -788,7 +757,8 @@
           || (!snapshot?.selectedEntry && node === flatTree[0]) ? 0 : -1}
         aria-level={node.depth + 1}
         aria-selected={node.entry?.id === snapshot?.selectedEntry?.entryId}
-        aria-expanded={node.type === "dir" ? !collapsedDirs.has(node.path) : undefined}
+        aria-current={node.path === snapshot?.activeDocumentPath ? "page" : undefined}
+        aria-expanded={node.type === "dir" && node.hasChildren ? node.expanded : undefined}
         style="--depth: {node.depth};"
         onmouseenter={() => { hoveredPath = node.path; }}
         onmouseleave={() => { if (hoveredPath === node.path) hoveredPath = ""; }}
@@ -808,17 +778,19 @@
             onclick={handleDirRowClick(node)}
           >
             <span class="file-chevron">
-              {#if collapsedDirs.has(node.path)}
-                <IconChevronRight size={11} stroke={2} />
-              {:else}
-                <IconChevronDown size={11} stroke={2} />
+              {#if node.hasChildren}
+                {#if node.expanded}
+                  <IconChevronDown size={11} stroke={2} />
+                {:else}
+                  <IconChevronRight size={11} stroke={2} />
+                {/if}
               {/if}
             </span>
             <span class="file-icon dir">
-              {#if collapsedDirs.has(node.path)}
-                <IconFolder size={14} stroke={1.6} />
-              {:else}
+              {#if node.expanded}
                 <IconFolderOpen size={14} stroke={1.6} />
+              {:else}
+                <IconFolder size={14} stroke={1.6} />
               {/if}
             </span>
             {#if isRenaming(node)}
@@ -955,7 +927,7 @@
         {/if}
       </div>
 
-      {#if pendingCreate && pendingCreate.parentPath === node.path && node.type === "dir" && !collapsedDirs.has(node.path)}
+      {#if pendingCreate && pendingCreate.parentPath === node.path && node.type === "dir" && (!node.hasChildren || node.expanded)}
         <div class="create-row" style="--depth: {node.depth + 1};">
           <span class="create-indent" style="width: {(node.depth + 1) * 16}px;"></span>
           <span class="create-icon">
@@ -1112,6 +1084,15 @@
     transition:
       border-color 60ms ease,
       background 60ms ease;
+  }
+
+  .file-row[data-active-document="true"] .file-name {
+    color: var(--text-strong);
+    font-weight: 750;
+  }
+
+  .file-row[data-active-document="true"] .file-icon {
+    color: var(--brand-strong);
   }
 
   .file-row.dragging {

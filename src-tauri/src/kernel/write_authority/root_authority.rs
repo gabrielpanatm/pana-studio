@@ -274,6 +274,32 @@ impl WriteAuthorityRuntime {
         self.application.get().map(|value| value.paths.clone())
     }
 
+    pub(super) fn capture_preview_cache_descendant_authority(
+        &self,
+        path: &Path,
+        public_label: &str,
+    ) -> Result<DirectoryAuthority, String> {
+        let application = self.application.get().ok_or_else(|| {
+            "WriteAuthorityRuntime nu are Application Home instalat pentru generația Preview."
+                .to_string()
+        })?;
+        if path == application.preview_cache.root_path()
+            || !path.starts_with(application.preview_cache.root_path())
+        {
+            return Err(format!(
+                "Generația Preview a refuzat authority din afara cache-ului instalat: {}.",
+                path.display()
+            ));
+        }
+        capability::verify_directory_authority_path(&application.preview_cache)?;
+        capability::capture_descendant_authority(
+            &application.preview_cache,
+            path,
+            public_label,
+            DirectoryAuthorityScope::ApplicationPreviewCache,
+        )
+    }
+
     pub(crate) fn boot_recovery(&self) -> Result<WriteAuthorityRecoveryScan, String> {
         let _bootstrap = self
             .recovery_bootstrap_gate

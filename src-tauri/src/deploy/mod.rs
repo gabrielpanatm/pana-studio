@@ -6,4 +6,5 @@ mod zola;
 pub use artifact::resolve_artifact_root;
 pub(crate) use artifact::resolve_artifact_root_from_config_source;
 pub use bunny::deploy_project_to_bunny_cancellable;
+pub(crate) use zola::run_zola_editor_check;
 pub use zola::{run_zola_build_cancellable, run_zola_check};

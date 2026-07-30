@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -34,6 +34,7 @@ pub const EDITOR_MOVE_PLAN_SCHEMA_VERSION: u32 = 2;
 pub const EDITOR_MOVE_EXECUTION_SCHEMA_VERSION: u32 = 1;
 const MAX_LIVE_EDIT_SCOPE_GRANTS: usize = 64;
 const MAX_LIVE_EDITOR_MOVE_PLANS: usize = 128;
+const MAX_CACHED_EDITOR_NAVIGATION_SNAPSHOTS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -370,13 +371,78 @@ pub(crate) struct EditorMoveDecision {
     pub execution: Option<EditorMoveExecution>,
 }
 
+#[derive(Clone)]
+struct EditorNavigationSnapshotCacheEntry {
+    identity: CanvasProjectionIdentity,
+    route: String,
+    active_document_path: Option<String>,
+    preview_context_render_instance_id: Option<String>,
+    snapshot: EditorNavigationSnapshot,
+}
+
 #[derive(Default)]
 pub struct EditorNavigationRuntime {
     grants: Mutex<HashMap<String, EditScopeGrant>>,
     move_plans: Mutex<HashMap<String, EditorMovePlan>>,
+    snapshots: Mutex<VecDeque<EditorNavigationSnapshotCacheEntry>>,
 }
 
 impl EditorNavigationRuntime {
+    pub(crate) fn cached_snapshot(
+        &self,
+        identity: &CanvasProjectionIdentity,
+        route: &str,
+        active_document_path: Option<&str>,
+        preview_context_render_instance_id: Option<&str>,
+    ) -> Result<Option<EditorNavigationSnapshot>, String> {
+        let snapshots = self
+            .snapshots
+            .lock()
+            .map_err(|_| "Cache-ul EditorNavigationSnapshot este indisponibil.".to_string())?;
+        Ok(snapshots
+            .iter()
+            .rev()
+            .find(|entry| {
+                entry.identity == *identity
+                    && same_preview_route(&entry.route, route)
+                    && entry.active_document_path.as_deref() == active_document_path
+                    && entry.preview_context_render_instance_id.as_deref()
+                        == preview_context_render_instance_id
+            })
+            .map(|entry| entry.snapshot.clone()))
+    }
+
+    pub(crate) fn cache_snapshot(
+        &self,
+        active_document_path: Option<&str>,
+        preview_context_render_instance_id: Option<&str>,
+        snapshot: &EditorNavigationSnapshot,
+    ) -> Result<(), String> {
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .map_err(|_| "Cache-ul EditorNavigationSnapshot este indisponibil.".to_string())?;
+        snapshots.retain(|entry| {
+            entry.identity != snapshot.identity
+                || !same_preview_route(&entry.route, &snapshot.route)
+                || entry.active_document_path.as_deref() != active_document_path
+                || entry.preview_context_render_instance_id.as_deref()
+                    != preview_context_render_instance_id
+        });
+        snapshots.push_back(EditorNavigationSnapshotCacheEntry {
+            identity: snapshot.identity.clone(),
+            route: snapshot.route.clone(),
+            active_document_path: active_document_path.map(str::to_string),
+            preview_context_render_instance_id: preview_context_render_instance_id
+                .map(str::to_string),
+            snapshot: snapshot.clone(),
+        });
+        while snapshots.len() > MAX_CACHED_EDITOR_NAVIGATION_SNAPSHOTS {
+            snapshots.pop_front();
+        }
+        Ok(())
+    }
+
     pub fn issue_edit_scope_grant(
         &self,
         identity: &CanvasProjectionIdentity,
@@ -556,6 +622,9 @@ impl EditorNavigationRuntime {
         }
         if let Ok(mut plans) = self.move_plans.lock() {
             plans.clear();
+        }
+        if let Ok(mut snapshots) = self.snapshots.lock() {
+            snapshots.clear();
         }
     }
 }
@@ -1135,47 +1204,52 @@ pub(crate) fn build_editor_navigation_snapshot(
                 counts
             });
 
+    let mut boundaries_by_render_root = HashMap::<&str, Vec<&CanvasBoundaryInstance>>::new();
+    for boundary in &document.boundaries {
+        for root in &boundary.root_render_instance_ids {
+            boundaries_by_render_root
+                .entry(root.as_str())
+                .or_default()
+                .push(boundary);
+        }
+    }
+    for boundaries in boundaries_by_render_root.values_mut() {
+        boundaries.sort_by(|left, right| {
+            let left_depth = boundary_depths
+                .get(left.boundary_instance_id.as_str())
+                .copied()
+                .unwrap_or_default();
+            let right_depth = boundary_depths
+                .get(right.boundary_instance_id.as_str())
+                .copied()
+                .unwrap_or_default();
+            right_depth
+                .cmp(&left_depth)
+                .then_with(|| left.boundary_instance_id.cmp(&right.boundary_instance_id))
+        });
+    }
+
+    // A render node belongs to the boundary whose root is its nearest
+    // ancestor. Walking the render ancestry once avoids the previous
+    // nodes × boundaries × ancestry scan on large pages.
     let mut boundary_for_render = HashMap::<&str, &CanvasBoundaryInstance>::new();
     for render_node in &document.nodes {
-        let mut candidates = document
-            .boundaries
-            .iter()
-            .filter_map(|boundary| {
-                boundary
-                    .root_render_instance_ids
-                    .iter()
-                    .filter_map(|root| {
-                        render_distance_from_root(
-                            &render_node.render_instance_id,
-                            root,
-                            &render_nodes,
-                        )
-                    })
-                    .min()
-                    .map(|distance| {
-                        (
-                            boundary,
-                            distance,
-                            boundary_depths
-                                .get(boundary.boundary_instance_id.as_str())
-                                .copied()
-                                .unwrap_or_default(),
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            left.1
-                .cmp(&right.1)
-                .then_with(|| right.2.cmp(&left.2))
-                .then_with(|| {
-                    left.0
-                        .boundary_instance_id
-                        .cmp(&right.0.boundary_instance_id)
-                })
-        });
-        if let Some((boundary, _, _)) = candidates.first() {
-            boundary_for_render.insert(render_node.render_instance_id.as_str(), *boundary);
+        let mut cursor = Some(render_node.render_instance_id.as_str());
+        let mut visited = HashSet::new();
+        while let Some(current) = cursor {
+            if !visited.insert(current) {
+                break;
+            }
+            if let Some(boundary) = boundaries_by_render_root
+                .get(current)
+                .and_then(|boundaries| boundaries.first())
+            {
+                boundary_for_render.insert(render_node.render_instance_id.as_str(), *boundary);
+                break;
+            }
+            cursor = render_nodes
+                .get(current)
+                .and_then(|node| node.parent_render_instance_id.as_deref());
         }
     }
 
@@ -2202,29 +2276,6 @@ fn boundary_depth(
         cursor = boundary.parent_boundary_instance_id.as_deref();
     }
     depth
-}
-
-fn render_distance_from_root(
-    render_id: &str,
-    root_id: &str,
-    render_nodes: &HashMap<&str, &CanvasRenderNode>,
-) -> Option<usize> {
-    let mut distance = 0usize;
-    let mut cursor = Some(render_id);
-    let mut visited = HashSet::new();
-    while let Some(current) = cursor {
-        if current == root_id {
-            return Some(distance);
-        }
-        if !visited.insert(current) {
-            return None;
-        }
-        cursor = render_nodes
-            .get(current)
-            .and_then(|node| node.parent_render_instance_id.as_deref());
-        distance = distance.saturating_add(1);
-    }
-    None
 }
 
 fn implicitly_open_document_boundaries(

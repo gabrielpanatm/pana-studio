@@ -315,7 +315,8 @@ struct LiveCanvasAgent {
     snapshot: EditorNavigationSnapshot,
     projection: CanvasInteractionProjection,
     active_document_path: Option<String>,
-    last_accepted_sequence: u64,
+    last_accepted_ordered_sequence: u64,
+    last_accepted_hover_sequence: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -366,7 +367,9 @@ impl CanvasInteractionRuntime {
             return Ok(CanvasInteractionBindingReceipt {
                 schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
                 identity,
-                last_accepted_sequence: existing.last_accepted_sequence,
+                last_accepted_sequence: existing
+                    .last_accepted_ordered_sequence
+                    .max(existing.last_accepted_hover_sequence),
                 active_document_path: existing.active_document_path.clone(),
             });
         }
@@ -395,7 +398,8 @@ impl CanvasInteractionRuntime {
             snapshot: snapshot.clone(),
             projection: CanvasInteractionProjection::from_snapshot(snapshot),
             active_document_path: active_document_path.map(str::to_string),
-            last_accepted_sequence: 0,
+            last_accepted_ordered_sequence: 0,
+            last_accepted_hover_sequence: 0,
         });
         Ok(CanvasInteractionBindingReceipt {
             schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
@@ -412,6 +416,11 @@ impl CanvasInteractionRuntime {
         authorized_edit_scope_id: Option<&str>,
         request: &CanvasInteractionRequest,
     ) -> Result<CanvasInteractionReceipt, String> {
+        if request.gesture == CanvasInteractionGesture::PointerMove {
+            return Err(
+                "PointerMove trebuie rezolvat exclusiv prin lane-ul Canvas hover.".to_string(),
+            );
+        }
         let mut agents = self
             .agents
             .lock()
@@ -433,7 +442,7 @@ impl CanvasInteractionRuntime {
                 binding: &agent.identity,
                 projection: &agent.projection,
                 authorized_edit_scope_id,
-                last_accepted_sequence: agent.last_accepted_sequence,
+                last_accepted_sequence: agent.last_accepted_ordered_sequence,
             },
             request,
         );
@@ -441,9 +450,72 @@ impl CanvasInteractionRuntime {
             receipt.status,
             CanvasInteractionStatus::Resolved | CanvasInteractionStatus::NoTarget
         ) {
-            agent.last_accepted_sequence = request.gesture_sequence;
+            agent.last_accepted_ordered_sequence = request.gesture_sequence;
         }
         Ok(receipt)
+    }
+
+    /// Rezolvă un hover fizic și păstrează mutex-ul agentului până când
+    /// proiecția semantică Rust a fost aplicată.
+    ///
+    /// Astfel, o secvență mai veche nu poate reveni după una mai nouă și
+    /// suprascrie HoverSnapshot. `project` este apelat numai pentru un
+    /// PointerMove acceptat (`Resolved` sau `NoTarget`).
+    pub fn resolve_pointer_hover<T>(
+        &self,
+        authorized_edit_scope_id: Option<&str>,
+        request: &CanvasInteractionRequest,
+        project: impl FnOnce(
+            &EditorNavigationSnapshot,
+            Option<&str>,
+            &CanvasInteractionReceipt,
+        ) -> Result<T, String>,
+    ) -> Result<(CanvasInteractionReceipt, Option<T>), String> {
+        if request.gesture != CanvasInteractionGesture::PointerMove {
+            return Err("Lane-ul Canvas hover acceptă numai gesturi PointerMove.".to_string());
+        }
+        let mut agents = self
+            .agents
+            .lock()
+            .map_err(|_| "Registrul CanvasAgent este indisponibil.".to_string())?;
+        let Some(agent) = agents
+            .iter_mut()
+            .find(|agent| agent.identity == request.identity)
+        else {
+            return Ok((
+                receipt_with_diagnostic(
+                    request,
+                    CanvasInteractionStatus::Stale,
+                    CanvasInteractionDiagnosticCode::AgentBindingMissing,
+                    "Gestul nu aparține niciunui CanvasAgent activ.",
+                    None,
+                ),
+                None,
+            ));
+        };
+        let receipt = resolve_canvas_interaction(
+            CanvasInteractionContext {
+                binding: &agent.identity,
+                projection: &agent.projection,
+                authorized_edit_scope_id,
+                last_accepted_sequence: agent.last_accepted_hover_sequence,
+            },
+            request,
+        );
+        if !matches!(
+            receipt.status,
+            CanvasInteractionStatus::Resolved | CanvasInteractionStatus::NoTarget
+        ) {
+            return Ok((receipt, None));
+        }
+
+        agent.last_accepted_hover_sequence = request.gesture_sequence;
+        let projection = project(
+            &agent.snapshot,
+            agent.active_document_path.as_deref(),
+            &receipt,
+        )?;
+        Ok((receipt, Some(projection)))
     }
 
     pub fn scope_context(
@@ -870,6 +942,7 @@ mod tests {
             editor_navigation_snapshot_for_test, EditorNavigationBoundary,
             EditorNavigationCapabilities, EditorNavigationSurface,
         },
+        kernel::selection_coordinator::{SelectionCoordinatorRuntime, SelectionIntent},
         source_graph::model::SourceNodeKind,
     };
 
@@ -1073,6 +1146,14 @@ mod tests {
             }],
             drag: None,
         }
+    }
+
+    fn pointer_request(id: &str, gesture_sequence: u64) -> CanvasInteractionRequest {
+        let mut request = request(id);
+        request.gesture = CanvasInteractionGesture::PointerMove;
+        request.gesture_sequence = gesture_sequence;
+        request.pointer.button = CanvasPointerButton::None;
+        request
     }
 
     fn resolve(
@@ -1337,5 +1418,93 @@ mod tests {
                 same_epoch_new_canvas,
             )
             .is_err());
+    }
+
+    #[test]
+    fn pointer_hover_projects_only_an_accepted_latest_sequence() {
+        let snapshot = snapshot();
+        let runtime = CanvasInteractionRuntime::default();
+        let coordinator = SelectionCoordinatorRuntime::default();
+        runtime
+            .bind_agent(
+                &snapshot,
+                Some("templates/index.html"),
+                interaction_identity(),
+            )
+            .expect("bind");
+
+        let first = pointer_request("render-root", 9);
+        let (first_interaction, first_projection) = runtime
+            .resolve_pointer_hover(None, &first, |snapshot, active_document_path, receipt| {
+                coordinator.apply(
+                    snapshot,
+                    active_document_path,
+                    None,
+                    SelectionIntent::SetHover {
+                        editor_node_id: receipt
+                            .target
+                            .as_ref()
+                            .expect("target")
+                            .editor_node_id
+                            .clone(),
+                        document_epoch: first.identity.document_epoch,
+                    },
+                )
+            })
+            .expect("first hover");
+        assert_eq!(first_interaction.status, CanvasInteractionStatus::Resolved);
+        assert_eq!(
+            first_projection
+                .and_then(|projection| projection.hover)
+                .map(|hover| hover.editor_node_id),
+            Some("editor_render:render-root".to_string())
+        );
+
+        let latest = pointer_request("render-1", 11);
+        let (latest_interaction, latest_projection) = runtime
+            .resolve_pointer_hover(None, &latest, |snapshot, active_document_path, receipt| {
+                coordinator.apply(
+                    snapshot,
+                    active_document_path,
+                    None,
+                    SelectionIntent::SetHover {
+                        editor_node_id: receipt
+                            .target
+                            .as_ref()
+                            .expect("target")
+                            .editor_node_id
+                            .clone(),
+                        document_epoch: latest.identity.document_epoch,
+                    },
+                )
+            })
+            .expect("latest hover");
+        assert_eq!(latest_interaction.status, CanvasInteractionStatus::Resolved);
+        assert_eq!(
+            latest_projection
+                .and_then(|projection| projection.hover)
+                .map(|hover| hover.editor_node_id),
+            Some("editor_boundary:boundary-1".to_string())
+        );
+
+        let mut ordered_click = request("render-root");
+        ordered_click.gesture_sequence = 10;
+        assert_eq!(
+            runtime
+                .resolve(None, &ordered_click)
+                .expect("ordered gesture after newer hover")
+                .status,
+            CanvasInteractionStatus::Resolved,
+            "lane-ul hover nu trebuie să invalideze click-ul semantic deja ordonat"
+        );
+
+        let stale = pointer_request("render-root", 10);
+        let (stale_interaction, stale_projection) = runtime
+            .resolve_pointer_hover::<()>(None, &stale, |_, _, _| {
+                panic!("o secvență stale nu trebuie proiectată")
+            })
+            .expect("stale receipt");
+        assert_eq!(stale_interaction.status, CanvasInteractionStatus::Stale);
+        assert!(stale_projection.is_none());
     }
 }

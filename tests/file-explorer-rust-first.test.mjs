@@ -54,12 +54,21 @@ test("Explorer selection, reveal, drag plan and accessibility stay frontend proj
   assert.match(frontend, /role="treeitem"/);
   assert.match(frontend, /aria-level=\{node\.depth \+ 1\}/);
   assert.match(frontend, /aria-expanded=/);
+  assert.match(frontend, /projectFileExplorerRows/);
+  assert.match(frontend, /node\.hasChildren/);
+  assert.match(frontend, /node\.expanded/);
   assert.match(frontend, /aria-selected=/);
   assert.match(frontend, /event\.key === "ArrowDown"/);
   assert.match(frontend, /event\.key === "ArrowUp"/);
   assert.match(frontend, /event\.key === "ArrowRight"/);
   assert.match(frontend, /event\.key === "ArrowLeft"/);
   assert.match(frontend, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  assert.match(
+    frontend,
+    /snapshot\?\.activeDocumentPath[\s\S]*snapshot\?\.selectedEntry\?\.relativePath/,
+  );
+  assert.match(frontend, /data-active-document=/);
+  assert.match(frontend, /aria-current=/);
   assert.match(frontend, /distance < 6/);
   assert.match(frontend, /dragPlanSerial/);
   assert.match(frontend, /resolvedPlan\?\.allowed \|\| !resolvedPlan\.commitToken/);

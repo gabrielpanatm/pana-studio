@@ -80,7 +80,9 @@ test("the selection card is a pure accessible renderer of the Rust snapshot", ()
   assert.match(card, /summary\.subjectKind === "runtimeElement"/);
 
   assert.match(inspector, /import SelectionSummaryCard/);
-  assert.match(inspector, /summary=\{inspectorSelectionSummary\}/);
+  assert.match(inspector, /summary=\{presentedInspectorSelectionSummary\}/);
+  assert.match(inspector, /advanceStableHtmlInspectorProjection/);
+  assert.match(inspector, /aria-busy=\{htmlProjectionPending\}/);
   assert.match(inspector, /selectClass=\{selectClassForCss\}/);
   assert.doesNotMatch(inspector, /<section class="selection-card">/);
   assert.doesNotMatch(inspector, /^\s*\.selection-card\s*\{/m);

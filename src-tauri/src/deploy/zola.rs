@@ -209,11 +209,36 @@ fn embedded_phase_error(phase: &str, error: impl std::fmt::Display) -> String {
     format!("Zola embedded {EMBEDDED_ZOLA_VERSION} a eșuat în faza «{phase}»: {error:#}")
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ZolaCheckPolicy {
+    Canonical,
+    EditorOffline,
+}
+
 pub fn run_zola_check(project_root: &Path, zola_root: &Path) -> Result<String, String> {
+    run_zola_check_with_policy(project_root, zola_root, ZolaCheckPolicy::Canonical)
+}
+
+pub(crate) fn run_zola_editor_check(
+    project_root: &Path,
+    zola_root: &Path,
+) -> Result<String, String> {
+    run_zola_check_with_policy(project_root, zola_root, ZolaCheckPolicy::EditorOffline)
+}
+
+fn run_zola_check_with_policy(
+    project_root: &Path,
+    zola_root: &Path,
+    policy: ZolaCheckPolicy,
+) -> Result<String, String> {
     // Validation and build deliberately share the exact output policy even
     // though check does not publish files.
     let artifact_root = resolve_artifact_root(project_root, zola_root)?;
-    with_zola_engine("validare canonică", || {
+    let operation = match policy {
+        ZolaCheckPolicy::Canonical => "validare canonică",
+        ZolaCheckPolicy::EditorOffline => "validare locală pentru editor",
+    };
+    with_zola_engine(operation, || {
         let config_file = zola_config_file(zola_root)?;
         let mut site = Site::new(zola_root, &config_file).map_err(|error| {
             format!(
@@ -221,14 +246,26 @@ pub fn run_zola_check(project_root: &Path, zola_root: &Path) -> Result<String, S
             )
         })?;
         site.config.enable_check_mode();
+        if policy == ZolaCheckPolicy::EditorOffline {
+            // Opening and editing are local operations. They must still reject
+            // invalid templates, content and internal links, but must never
+            // depend on DNS, remote servers or the user's network connection.
+            site.skip_external_links_check();
+        }
         site.load().map_err(|error| {
             format!("Zola embedded {EMBEDDED_ZOLA_VERSION} a respins sursele salvate: {error:#}")
         })?;
         Ok(())
     })?;
 
+    let scope = match policy {
+        ZolaCheckPolicy::Canonical => "fișierele salvate ale proiectului",
+        ZolaCheckPolicy::EditorOffline => {
+            "fișierele locale ale proiectului (fără accesarea linkurilor externe)"
+        }
+    };
     Ok(format!(
-        "OK Validare Zola embedded {EMBEDDED_ZOLA_VERSION} reușită\nSursă validată: fișierele salvate ale proiectului\nOutput configurat: {}",
+        "OK Validare Zola embedded {EMBEDDED_ZOLA_VERSION} reușită\nSursă validată: {scope}\nOutput configurat: {}",
         artifact_root.display()
     ))
 }
@@ -388,6 +425,24 @@ mod tests {
             .contains("fișierele salvate"));
         fs::write(root.join("templates/index.html"), "{{ broken(").unwrap();
         assert!(run_zola_check(&root, &root).is_err());
+        cleanup(root);
+    }
+
+    #[test]
+    fn editor_check_skips_external_links_but_keeps_local_validation() {
+        let root = fixture_root("editor-offline-check");
+        create_minimal_site(&root, None);
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\n+++\n\n[Serviciu extern](http://127.0.0.1:9/offline)",
+        )
+        .unwrap();
+
+        let log = run_zola_editor_check(&root, &root).unwrap();
+
+        assert!(log.contains("fără accesarea linkurilor externe"));
+        fs::write(root.join("templates/index.html"), "{{ broken(").unwrap();
+        assert!(run_zola_editor_check(&root, &root).is_err());
         cleanup(root);
     }
 

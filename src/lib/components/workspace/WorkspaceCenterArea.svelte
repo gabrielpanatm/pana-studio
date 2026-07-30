@@ -2,26 +2,13 @@
   import { onDestroy, type Component } from "svelte";
   import type { TerminalPaneProps } from "$lib/components/TerminalPane.svelte";
   import EditorShell from "$lib/components/EditorShell.svelte";
-  import AuditWorkspace from "$lib/components/audit/AuditWorkspace.svelte";
-  import ContentWorkspace from "$lib/components/content/ContentWorkspace.svelte";
-  import DataWorkspace from "$lib/components/data/DataWorkspace.svelte";
-  import AssetsWorkspace from "$lib/components/creation/AssetsWorkspace.svelte";
-  import BlocksWorkspace from "$lib/components/creation/BlocksWorkspace.svelte";
-  import ComponentsWorkspace from "$lib/components/creation/ComponentsWorkspace.svelte";
-  import DesignSystemWorkspace from "$lib/components/creation/DesignSystemWorkspace.svelte";
-  import KernelWorkspace from "$lib/components/kernel/KernelWorkspace.svelte";
-  import PublishWorkspace from "$lib/components/publish/PublishWorkspace.svelte";
-  import SettingsWorkspace from "$lib/components/settings/SettingsWorkspace.svelte";
-  import TaxonomiesWorkspace from "$lib/components/taxonomies/TaxonomiesWorkspace.svelte";
-  import TemplatesWorkspace from "$lib/components/templates/TemplatesWorkspace.svelte";
-  import ThemesWorkspace from "$lib/components/themes/ThemesWorkspace.svelte";
-  import VersionControlWorkspace from "$lib/components/versioning/VersionControlWorkspace.svelte";
   import WorkbenchBottomPanel from "$lib/components/workbench/WorkbenchBottomPanel.svelte";
   import MotionTimelinePanel from "$lib/components/workspace/MotionTimelinePanel.svelte";
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type {
     CenterView,
+    WorkbenchActivity,
     WorkbenchDocumentSnapshot,
     WorkbenchGroupId,
     WorkbenchSurface,
@@ -53,6 +40,147 @@
   const activeWorkbenchActivity = $derived(
     app.workbenchSnapshot?.activeActivity ?? "editor",
   );
+  const editorSurfaceActive = $derived(
+    app.applicationSurface === "workbench"
+      && activeWorkbenchActivity === "editor"
+      && app.centerView !== "kernel",
+  );
+  type RetainedAuxiliarySurface =
+    | Exclude<WorkbenchActivity, "editor">
+    | "settings"
+    | "kernel";
+  type AuxiliaryWorkspaceComponent = Component<any>;
+  let AuditWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let ContentWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let DataWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let AssetsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let BlocksWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let ComponentsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let DesignSystemWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let KernelWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let PublishWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let SettingsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let TaxonomiesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let TemplatesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let ThemesWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let VersionControlWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  const auxiliaryWorkspaceLoads = new Map<
+    RetainedAuxiliarySurface,
+    Promise<void>
+  >();
+  const auxiliaryWorkspaceLoaders: Record<
+    RetainedAuxiliarySurface,
+    () => Promise<void>
+  > = {
+    settings: async () => {
+      SettingsWorkspace = (await import(
+        "$lib/components/settings/SettingsWorkspace.svelte"
+      )).default;
+    },
+    themes: async () => {
+      ThemesWorkspace = (await import(
+        "$lib/components/themes/ThemesWorkspace.svelte"
+      )).default;
+    },
+    templates: async () => {
+      TemplatesWorkspace = (await import(
+        "$lib/components/templates/TemplatesWorkspace.svelte"
+      )).default;
+    },
+    components: async () => {
+      ComponentsWorkspace = (await import(
+        "$lib/components/creation/ComponentsWorkspace.svelte"
+      )).default;
+    },
+    blocks: async () => {
+      BlocksWorkspace = (await import(
+        "$lib/components/creation/BlocksWorkspace.svelte"
+      )).default;
+    },
+    design_system: async () => {
+      DesignSystemWorkspace = (await import(
+        "$lib/components/creation/DesignSystemWorkspace.svelte"
+      )).default;
+    },
+    assets: async () => {
+      AssetsWorkspace = (await import(
+        "$lib/components/creation/AssetsWorkspace.svelte"
+      )).default;
+    },
+    content: async () => {
+      ContentWorkspace = (await import(
+        "$lib/components/content/ContentWorkspace.svelte"
+      )).default;
+    },
+    taxonomies: async () => {
+      TaxonomiesWorkspace = (await import(
+        "$lib/components/taxonomies/TaxonomiesWorkspace.svelte"
+      )).default;
+    },
+    data: async () => {
+      DataWorkspace = (await import(
+        "$lib/components/data/DataWorkspace.svelte"
+      )).default;
+    },
+    versioning: async () => {
+      VersionControlWorkspace = (await import(
+        "$lib/components/versioning/VersionControlWorkspace.svelte"
+      )).default;
+    },
+    publish: async () => {
+      PublishWorkspace = (await import(
+        "$lib/components/publish/PublishWorkspace.svelte"
+      )).default;
+    },
+    audit: async () => {
+      AuditWorkspace = (await import(
+        "$lib/components/audit/AuditWorkspace.svelte"
+      )).default;
+    },
+    kernel: async () => {
+      KernelWorkspace = (await import(
+        "$lib/components/kernel/KernelWorkspace.svelte"
+      )).default;
+    },
+  };
+  let retainedAuxiliarySurface = $state<RetainedAuxiliarySurface | null>(null);
+  let retainedAuxiliarySessionId = $state("");
+
+  function ensureAuxiliaryWorkspaceLoaded(surface: RetainedAuxiliarySurface) {
+    if (auxiliaryWorkspaceLoads.has(surface)) return;
+    const load = auxiliaryWorkspaceLoaders[surface]()
+      .then(() => {
+        app.clearNotification("workbench.activity.lazy-load");
+      })
+      .catch((error) => {
+        auxiliaryWorkspaceLoads.delete(surface);
+        app.escalateGlobalStatus({
+          id: "workbench.activity.lazy-load",
+          level: "error",
+          title: t("workbench-activity-open-failed"),
+          message: errorMessage(error),
+        });
+      });
+    auxiliaryWorkspaceLoads.set(surface, load);
+  }
+
+  $effect(() => {
+    const sessionId = app.kernelProjectSessionId;
+    if (retainedAuxiliarySessionId !== sessionId) {
+      retainedAuxiliarySessionId = sessionId;
+      retainedAuxiliarySurface = null;
+    }
+    if (app.applicationSurface === "settings") {
+      retainedAuxiliarySurface = "settings";
+    } else if (activeWorkbenchActivity !== "editor") {
+      retainedAuxiliarySurface = activeWorkbenchActivity;
+    } else if (app.centerView === "kernel") {
+      retainedAuxiliarySurface = "kernel";
+    }
+    if (retainedAuxiliarySurface) {
+      ensureAuxiliaryWorkspaceLoaded(retainedAuxiliarySurface);
+    }
+  });
   const motionTimelineAvailable = $derived(
     app.applicationSurface === "workbench"
       && activeWorkbenchActivity === "editor"
@@ -274,115 +402,95 @@
 >
   <div
     class="editor-shell-shell"
-    inert={app.aiEditLeaseFrontendLockActive ? true : undefined}
-    aria-busy={app.aiEditLeaseFrontendLockActive}
+    inert={app.aiEditLeaseFrontendLockActive
+      || app.kernelUndoRedoFrontendQuiesceActive
+      || app.kernelUndoRedoFrontendLeaseActive
+      ? true
+      : undefined}
+    aria-busy={app.aiEditLeaseFrontendLockActive
+      || app.kernelUndoRedoFrontendQuiesceActive
+      || app.kernelUndoRedoFrontendLeaseActive}
   >
-    {#if app.applicationSurface === "settings"}
-      <SettingsWorkspace {app} />
-    {:else if activeWorkbenchActivity === "themes"}
-      <ThemesWorkspace {app} />
-    {:else if activeWorkbenchActivity === "templates"}
-      <TemplatesWorkspace {app} {openWorkspaceSource} />
-    {:else if activeWorkbenchActivity === "components"}
-      <ComponentsWorkspace {app} {openWorkspaceSource} />
-    {:else if activeWorkbenchActivity === "blocks"}
-      <BlocksWorkspace {app} />
-    {:else if activeWorkbenchActivity === "design_system"}
-      <DesignSystemWorkspace {app} {openWorkspaceSource} />
-    {:else if activeWorkbenchActivity === "assets"}
-      <AssetsWorkspace {app} />
-    {:else if activeWorkbenchActivity === "content"}
-      <ContentWorkspace {app} {openWorkspaceSource} />
-    {:else if activeWorkbenchActivity === "taxonomies"}
-      <TaxonomiesWorkspace {app} {openWorkspaceSource} />
-    {:else if activeWorkbenchActivity === "data"}
-      <DataWorkspace {app} {openWorkspaceSource} />
-    {:else if activeWorkbenchActivity === "versioning"}
-      <VersionControlWorkspace {app} />
-    {:else if activeWorkbenchActivity === "publish"}
-      <PublishWorkspace {app} />
-    {:else if activeWorkbenchActivity === "audit"}
-      <AuditWorkspace
-        {app}
-        {openWorkspaceSource}
-        requestedView={app.auditWorkspaceView}
-        observabilityFocusSerial={app.auditObservabilityFocusSerial}
-        onViewChange={(view) => { app.auditWorkspaceView = view; }}
-      />
-    {:else if app.centerView === "kernel"}
-      <KernelWorkspace
-        currentProjectPath={app.currentProjectPath}
-        projectFileCount={app.scannedProject?.files.length ?? 0}
-        sourceNodeCount={app.sourceGraph?.nodes.length ?? 0}
-        dirtyAreas={app.globalDirtyState.areas}
-        canSave={app.globalDirtyState.canSave}
-        diskBlockedReason={app.immediateDiskOperationBlockedReason}
-        projectStatus={app.projectStatus}
-        onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
-      />
-    {:else}
-      <EditorShell
-        bind:previewFrame={app.previewFrame}
-        bind:codeEditorHost={app.codeEditorHost}
-        centerView={app.centerView}
-        previewZoom={app.previewZoom}
-        previewCanvasMode={app.previewCanvasMode}
-        previewCanvasPreset={app.previewCanvasPreset}
-        previewWidthPx={app.previewWidthPx}
-        previewRulers={app.previewRulers}
-        {responsiveBreakpoints}
-        previewDocumentMarkup={app.previewDocumentMarkup}
-        previewSrc={app.previewSrc}
-        interactivePreviewEnabled={app.interactivePreviewEnabled && !app.aiEditLeaseFrontendLockActive}
-        interactivePreviewUrl={app.interactivePreviewUrl}
-        motionPreviewMode={app.motionWorkspace.previewMode}
-        motionPreviewRequest={app.motionWorkspace.previewRequest}
-        refreshToken={app.refreshToken}
-        editorReadOnly={app.projectTransitionFrontendLeaseActive || app.kernelUndoRedoFrontendLeaseActive || app.aiEditLeaseFrontendLockActive}
-        workbenchSnapshot={app.workbenchSnapshot}
-        {dirtyWorkbenchPaths}
-        {activateWorkbenchDocument}
-        {closeWorkbenchDocument}
-        {setWorkbenchSurface}
-        setWorkbenchSplit={async (split) => { await app.setSynchronizedWorkbenchSplit(split); }}
-        setWorkbenchSplitRatio={async (ratioBasisPoints) => { await app.setWorkbenchSplitRatio(ratioBasisPoints); }}
-        setCanvasViewport={async (viewport) => { await app.setWorkbenchCanvasViewport(viewport); }}
-        setPreviewZoom={(value) => app.setPreviewZoom(value)}
-        commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
-        resetPreviewZoom={() => app.resetPreviewZoom()}
-        attachPreviewInspector={() => app.attachPreviewInspector()}
-        mountPreviewSurface={(frame) => app.mountCanvasProjectionSurface(frame)}
-        unmountPreviewSurface={(frame) => app.unmountCanvasProjectionSurface(frame)}
-        previewSurfaceLoaded={(frame) => app.onCanvasProjectionSurfaceLoaded(frame)}
-        setPreviewExecutionMode={(mode) => app.setPreviewExecutionMode(mode)}
-        onInteractiveLifecycleError={(message) => app.setGlobalStatus(
-          t("workbench-interactive-error", { detail: message }),
-          "error",
-        )}
-        onInteractiveDomSnapshot={(nodes) => app.acceptInteractivePreviewDomSnapshot(nodes)}
-        onInteractiveRealmRestarted={(previewRevision, durationMs) => {
-          void app.recordInteractivePreviewRealmEvent(
-            "interactive_js_restarted",
-            previewRevision,
-            durationMs,
-          );
-        }}
-        onInteractiveRealmFailed={(previewRevision, durationMs, diagnostic) => {
-          void app.recordInteractivePreviewRealmEvent(
-            "interactive_js_failed",
-            previewRevision,
-            durationMs,
-            diagnostic,
-          );
-        }}
-        onMotionPreviewStatus={(status) => app.motionWorkspace.acceptPreviewStatus(status)}
-        currentSourcePath={app.currentSourcePath}
-        source={app.source}
-        sourceLanguage={app.sourceLanguage}
-        sourceLength={app.source.length}
-        onMarkdownChange={(nextSource, path) => app.updateMarkdownSource(nextSource, path)}
-      />
+    {#if app.scannedProject && app.kernelProjectSessionId}
+      {#key app.kernelProjectSessionId}
+        <div
+          class="stable-editor-surface"
+          class:surface-inactive={!editorSurfaceActive}
+          inert={!editorSurfaceActive ? true : undefined}
+          aria-hidden={!editorSurfaceActive}
+        >
+          <EditorShell
+            bind:previewFrame={app.previewFrame}
+            bind:codeEditorHost={app.codeEditorHost}
+            surfaceActive={editorSurfaceActive}
+            centerView={app.centerView}
+            previewZoom={app.previewZoom}
+            previewCanvasMode={app.previewCanvasMode}
+            previewCanvasPreset={app.previewCanvasPreset}
+            previewWidthPx={app.previewWidthPx}
+            previewRulers={app.previewRulers}
+            {responsiveBreakpoints}
+            previewDocumentMarkup={app.previewDocumentMarkup}
+            previewSrc={app.previewSrc}
+            interactivePreviewEnabled={app.interactivePreviewEnabled
+              && !app.aiEditLeaseFrontendLockActive
+              && !app.kernelUndoRedoFrontendQuiesceActive
+              && !app.kernelUndoRedoFrontendLeaseActive}
+            interactivePreviewUrl={app.interactivePreviewUrl}
+            motionPreviewMode={app.motionWorkspace.previewMode}
+            motionPreviewRequest={app.motionWorkspace.previewRequest}
+            refreshToken={app.refreshToken}
+            editorReadOnly={app.projectTransitionFrontendLeaseActive
+              || app.kernelUndoRedoFrontendQuiesceActive
+              || app.kernelUndoRedoFrontendLeaseActive
+              || app.aiEditLeaseFrontendLockActive}
+            workbenchSnapshot={app.workbenchSnapshot}
+            {dirtyWorkbenchPaths}
+            {activateWorkbenchDocument}
+            {closeWorkbenchDocument}
+            {setWorkbenchSurface}
+            setWorkbenchSplit={async (split) => { await app.setSynchronizedWorkbenchSplit(split); }}
+            setWorkbenchSplitRatio={async (ratioBasisPoints) => { await app.setWorkbenchSplitRatio(ratioBasisPoints); }}
+            setCanvasViewport={async (viewport) => { await app.setWorkbenchCanvasViewport(viewport); }}
+            setPreviewZoom={(value) => app.setPreviewZoom(value)}
+            commitPreviewZoom={async (value) => { await app.commitPreviewZoom(value); }}
+            resetPreviewZoom={() => app.resetPreviewZoom()}
+            attachPreviewInspector={() => app.attachPreviewInspector()}
+            mountPreviewSurface={(frame) => app.mountCanvasProjectionSurface(frame)}
+            unmountPreviewSurface={(frame) => app.unmountCanvasProjectionSurface(frame)}
+            previewSurfaceLoaded={(frame) => app.onCanvasProjectionSurfaceLoaded(frame)}
+            setPreviewExecutionMode={(mode) => app.setPreviewExecutionMode(mode)}
+            onInteractiveLifecycleError={(message) => app.setGlobalStatus(
+              t("workbench-interactive-error", { detail: message }),
+              "error",
+            )}
+            onInteractiveDomSnapshot={(nodes) => app.acceptInteractivePreviewDomSnapshot(nodes)}
+            onInteractiveRealmRestarted={(previewRevision, durationMs) => {
+              void app.recordInteractivePreviewRealmEvent(
+                "interactive_js_restarted",
+                previewRevision,
+                durationMs,
+              );
+            }}
+            onInteractiveRealmFailed={(previewRevision, durationMs, diagnostic) => {
+              void app.recordInteractivePreviewRealmEvent(
+                "interactive_js_failed",
+                previewRevision,
+                durationMs,
+                diagnostic,
+              );
+            }}
+            onMotionPreviewStatus={(status) => app.motionWorkspace.acceptPreviewStatus(status)}
+            currentSourcePath={app.currentSourcePath}
+            source={app.source}
+            sourceLanguage={app.sourceLanguage}
+            sourceLength={app.source.length}
+            onMarkdownChange={(nextSource, path) => app.updateMarkdownSource(nextSource, path)}
+          />
+        </div>
+      {/key}
     {/if}
+
   </div>
 
   {#if motionTimelineOpen}
@@ -418,3 +526,64 @@
     />
   {/if}
 </section>
+
+{#if retainedAuxiliarySurface}
+  <div
+    class="workspace-auxiliary-overlay"
+    class:surface-inactive={editorSurfaceActive}
+    inert={editorSurfaceActive ? true : undefined}
+    aria-hidden={editorSurfaceActive}
+  >
+    {#if retainedAuxiliarySurface === "settings" && SettingsWorkspace}
+      <SettingsWorkspace {app} />
+    {:else if retainedAuxiliarySurface === "themes" && ThemesWorkspace}
+      <ThemesWorkspace {app} />
+    {:else if retainedAuxiliarySurface === "templates" && TemplatesWorkspace}
+      <TemplatesWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "components" && ComponentsWorkspace}
+      <ComponentsWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "blocks" && BlocksWorkspace}
+      <BlocksWorkspace {app} />
+    {:else if retainedAuxiliarySurface === "design_system" && DesignSystemWorkspace}
+      <DesignSystemWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "assets" && AssetsWorkspace}
+      <AssetsWorkspace {app} />
+    {:else if retainedAuxiliarySurface === "content" && ContentWorkspace}
+      <ContentWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "taxonomies" && TaxonomiesWorkspace}
+      <TaxonomiesWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "data" && DataWorkspace}
+      <DataWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "versioning" && VersionControlWorkspace}
+      <VersionControlWorkspace {app} />
+    {:else if retainedAuxiliarySurface === "publish" && PublishWorkspace}
+      <PublishWorkspace {app} />
+    {:else if retainedAuxiliarySurface === "audit" && AuditWorkspace}
+      <AuditWorkspace
+        {app}
+        {openWorkspaceSource}
+        requestedView={app.auditWorkspaceView}
+        observabilityFocusSerial={app.auditObservabilityFocusSerial}
+        onViewChange={(view: "overview" | "runtime") => { app.auditWorkspaceView = view; }}
+      />
+    {:else if retainedAuxiliarySurface === "kernel" && KernelWorkspace}
+      <KernelWorkspace
+        currentProjectPath={app.currentProjectPath}
+        projectFileCount={app.scannedProject?.files.length ?? 0}
+        sourceNodeCount={app.sourceGraph?.nodes.length ?? 0}
+        dirtyAreas={app.globalDirtyState.areas}
+        canSave={app.globalDirtyState.canSave}
+        diskBlockedReason={app.immediateDiskOperationBlockedReason}
+        projectStatus={app.projectStatus}
+        onStatusUpdate={(
+          text: string,
+          kind: "restored" | "saving" | "error",
+        ) => app.setGlobalStatus(text, kind)}
+      />
+    {:else}
+      <div class="workspace-lazy-loading" role="status" aria-live="polite">
+        {t("common-loading")}
+      </div>
+    {/if}
+  </div>
+{/if}

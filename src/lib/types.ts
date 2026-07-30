@@ -3522,6 +3522,15 @@ export type CanvasInteractionResolveInput = {
   editScopeGrant: EditScopeGrant | null;
 };
 
+export type CanvasHoverReceipt = {
+  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  interaction: CanvasInteractionReceipt;
+  projection: {
+    changed: boolean;
+    hover: HoverSnapshot | null;
+  } | null;
+};
+
 export const SELECTION_COORDINATOR_SCHEMA_VERSION = 1 as const;
 
 export type SelectionSubjectKind =

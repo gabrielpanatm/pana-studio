@@ -25,7 +25,7 @@ test("Taxonomii este o activitate Workbench sincronizată între Rust și fronte
   assert.match(terms, /taxonomies:\s*"workbench-taxonomies"/);
   assert.match(rail, /id:\s*"taxonomies"[\s\S]*UI_TERM_IDS\.taxonomies/);
   assert.match(rail, /activity\.id === "taxonomies"[\s\S]*<IconTags/);
-  assert.match(center, /activeWorkbenchActivity === "taxonomies"[\s\S]*<TaxonomiesWorkspace/);
+  assert.match(center, /retainedAuxiliarySurface === "taxonomies"[\s\S]*<TaxonomiesWorkspace/);
   assert.match(rustCommands, /WorkbenchActivity::Taxonomies[\s\S]*"Taxonomii"/);
 });
 

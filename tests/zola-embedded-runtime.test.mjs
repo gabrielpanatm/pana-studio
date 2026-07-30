@@ -59,7 +59,7 @@ test("init, validation, build and quick tasks use only embedded engine contracts
 
   assert.match(initializer, /apply_creation/);
   assert.match(initializer, /ProjectCreationAuthority/);
-  assert.match(initializer, /run_zola_check/);
+  assert.match(initializer, /run_zola_editor_check/);
   assert.match(initializer, /rollback_publication/);
   assert.doesNotMatch(initializer, /ProjectBootstrapLease|zola_init/);
   assert.doesNotMatch(initializer, /std::process|Command::new|Stdio/);

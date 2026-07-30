@@ -6,7 +6,7 @@ import {
   rememberPreviewFrameDocumentAccessFailure,
 } from "$lib/preview/frame-origin";
 import {
-  acknowledgeCanvasProjectionPhase,
+  acknowledgeCanvasProjectionPhases,
   readPreviewDocument,
   type CanvasProjectionIdentity,
   type CanvasProjectionPlan,
@@ -364,7 +364,6 @@ async function confirmPendingCanvasProjection(
     throw new Error(t("preview-controller-ack-sequence-invalid"));
   }
 
-  let confirmed: CanvasProjectionPlan | null = null;
   for (const receipt of receipts) {
     if (
       receipt.schemaVersion !== plan.schemaVersion
@@ -374,18 +373,16 @@ async function confirmPendingCanvasProjection(
     ) {
       throw new Error(t("preview-controller-ack-transaction-mismatch"));
     }
-    confirmed = await acknowledgeCanvasProjectionPhase(receipt);
-    const expectedPhase = receipt.phase === "styledReady"
-      ? "canonicalVerified"
-      : receipt.phase;
-    if (
-      confirmed.phase !== expectedPhase
-      || !canvasIdentityMatches(confirmed.identity, plan.identity)
-    ) {
-      throw new Error(t("preview-controller-phase-unconfirmed", {
-        phase: receipt.phase,
-      }));
-    }
+  }
+  const confirmed = await acknowledgeCanvasProjectionPhases(receipts);
+  const expectedPhase = failed ? "failed" : "canonicalVerified";
+  if (
+    confirmed.phase !== expectedPhase
+    || !canvasIdentityMatches(confirmed.identity, plan.identity)
+  ) {
+    throw new Error(t("preview-controller-phase-unconfirmed", {
+      phase: failed ? "failed" : "styledReady",
+    }));
   }
 
   if (failed) {

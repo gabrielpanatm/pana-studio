@@ -68,7 +68,8 @@ use commands::{
     editor_navigation::{
         accept_selection_observation, apply_selection_intent, bind_canvas_interaction_agent,
         commit_editor_move, plan_editor_move, read_editor_navigation_snapshot,
-        read_selection_snapshot, request_editor_edit_scope, resolve_canvas_interaction_intent,
+        read_selection_snapshot, request_editor_edit_scope, resolve_canvas_hover_intent,
+        resolve_canvas_interaction_intent,
     },
     external_disk::reconcile_clean_external_project_files,
     file_explorer::{
@@ -105,9 +106,10 @@ use commands::{
     },
     page_assets::{apply_page_asset_contract, import_project_asset, plan_page_asset_contract},
     preview::{
-        acknowledge_canvas_projection_phase, project_project_workspace_preview,
-        project_template_workbench_preview, read_preview_document, record_preview_runtime_event,
-        start_project_browser_preview, start_project_preview,
+        acknowledge_canvas_projection_phase, acknowledge_canvas_projection_phases,
+        project_project_workspace_preview, project_template_workbench_preview,
+        read_preview_document, record_preview_runtime_event, start_project_browser_preview,
+        start_project_preview,
     },
     project::{
         acknowledge_project_transition_decision_recovery_plan, apply_file_buffer_changeset,
@@ -119,7 +121,7 @@ use commands::{
         record_project_transition_operator_decision,
         recover_project_transition_decision_retention_hot_journal, recover_project_workspace_save,
         redo_project_workspace, save_project_workspace, scan_project, set_file_buffer_draft,
-        undo_project_workspace,
+        start_project_disk_watch, stop_project_disk_watch, undo_project_workspace,
     },
     project_model::{
         read_project_model, read_project_model_with_drafts, resolve_template_workbench_plan,

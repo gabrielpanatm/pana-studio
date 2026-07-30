@@ -10,4 +10,4 @@ pub use model::{
     WORKBENCH_COMMAND_SCHEMA_VERSION, WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_SCHEMA_VERSION,
 };
 pub use runtime::WorkbenchRuntime;
-pub use storage::{persist_workbench, read_persisted_workbench};
+pub use storage::{persist_latest_workbench, persist_workbench, read_persisted_workbench};

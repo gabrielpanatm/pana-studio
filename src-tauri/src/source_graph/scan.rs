@@ -880,6 +880,37 @@ mod tests {
     }
 
     #[test]
+    fn invalid_toml_frontmatter_returns_a_controlled_diagnostic() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"șir neînchis\n+++\n\nConținut păstrat.\n",
+        )
+        .unwrap();
+
+        let error = match build_source_graph(&root) {
+            Ok(_) => panic!("invalid TOML frontmatter should return a diagnostic"),
+            Err(error) => error,
+        };
+        fs::remove_dir_all(&root).unwrap();
+
+        let diagnostic =
+            serde_json::from_str::<crate::localization::LocalizedDiagnostic>(&error).unwrap();
+        assert_eq!(diagnostic.code, "source-graph-frontmatter-invalid");
+        assert_eq!(
+            diagnostic.arguments.get("format"),
+            Some(&serde_json::Value::String("Toml".to_string()))
+        );
+        assert!(diagnostic
+            .arguments
+            .get("details")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|details| details.contains("invalid basic string")));
+    }
+
+    #[test]
     fn builds_minimal_zola_source_graph() {
         let root = unique_test_dir();
         fs::create_dir_all(root.join("content")).unwrap();

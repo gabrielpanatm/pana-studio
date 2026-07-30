@@ -23,7 +23,7 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
     rustWorkbench.slice(rustWorkbench.indexOf("pub enum WorkbenchActivity"), rustWorkbench.indexOf("pub enum WorkbenchSurface")),
     /Settings/,
   );
-  assert.match(center, /\{#if app\.applicationSurface === "settings"\}[\s\S]*<SettingsWorkspace/);
+  assert.match(center, /retainedAuxiliarySurface === "settings"[\s\S]*<SettingsWorkspace/);
   assert.match(route, /\{#if app\.scannedProject \|\| app\.applicationSurface === "settings"\}/);
   assert.match(startup, /app\.openApplicationSettings\(\)/);
   assert.match(rail, /settingsActive/);

@@ -5,6 +5,43 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-30
+
+### Added
+
+- monitorizare event-driven a modificărilor proiectului pe Linux, legată de
+  sesiunea Rust și fără scanări periodice costisitoare în starea stabilă;
+- cache-uri bounded pentru ProjectModel, Workbench Preview și navigarea
+  editorului, cu invalidare pe identitatea exactă a reviziei;
+- teste de regresie pentru schimbarea documentelor, stabilitatea Inspectorului,
+  exploratorul de fișiere și durata de viață a suprafeței Editor.
+
+### Changed
+
+- EditorShell, Canvas-ul, panourile laterale și Inspectorul rămân montate pe
+  durata sesiunii proiectului, iar activitățile auxiliare sunt încărcate lazy;
+- validarea folosită la deschiderea și editarea proiectelor este locală și
+  offline; verificarea linkurilor externe rămâne disponibilă în validarea
+  canonică explicită;
+- proiecțiile Preview, navigarea Canvas și actualizările selecției refolosesc
+  snapshot-uri Rust autoritative în locul reconstruirilor redundante.
+
+### Fixed
+
+- proiectele Zola mari nu mai declanșează verificări de rețea la deschidere sau
+  după mutațiile interactive și nu mai sunt declarate invalide când un serviciu
+  extern este indisponibil;
+- schimbarea taburilor și a modurilor Vizual/Cod păstrează documentul activ și
+  nu mai revine implicit la `index.html`;
+- starea sesiunii, dosarele expandate și selecția exploratorului de fișiere nu
+  mai intră în conflict la restaurarea proiectului;
+- Canvas-ul refuză controlat snapshot-urile unui alt document fără a pierde
+  documentul activ;
+- editările HTML/CSS, mutările și Undo/Redo păstrează revizia selecției și nu
+  mai reconstruiesc inutil conținutul Inspectorului;
+- inițializarea proiectelor complexe și recuperarea WAL nu mai montează
+  editorul înaintea deciziei de recuperare.
+
 ## [0.1.2] - 2026-07-29
 
 ### Added
@@ -157,7 +194,8 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - documentația publică, politica de securitate și atribuirea componentelor terțe
   completate.
 
-[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/gabrielpanatm/pana-studio/releases/tag/v0.1.0

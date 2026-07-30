@@ -641,7 +641,7 @@ fn toml_comment_ranges(source: &str) -> Vec<Range<usize>> {
                 } else if bytes[cursor] == b'\\' {
                     escaped = true;
                     cursor += 1;
-                } else if source[cursor..].starts_with("\"\"\"") {
+                } else if bytes[cursor..].starts_with(b"\"\"\"") {
                     mode = None;
                     cursor += 3;
                 } else {
@@ -649,7 +649,7 @@ fn toml_comment_ranges(source: &str) -> Vec<Range<usize>> {
                 }
             }
             Some(StringMode::MultilineLiteral) => {
-                if source[cursor..].starts_with("'''") {
+                if bytes[cursor..].starts_with(b"'''") {
                     mode = None;
                     cursor += 3;
                 } else {
@@ -657,10 +657,10 @@ fn toml_comment_ranges(source: &str) -> Vec<Range<usize>> {
                 }
             }
             None => {
-                if source[cursor..].starts_with("\"\"\"") {
+                if bytes[cursor..].starts_with(b"\"\"\"") {
                     mode = Some(StringMode::MultilineBasic);
                     cursor += 3;
-                } else if source[cursor..].starts_with("'''") {
+                } else if bytes[cursor..].starts_with(b"'''") {
                     mode = Some(StringMode::MultilineLiteral);
                     cursor += 3;
                 } else if bytes[cursor] == b'"' {
@@ -777,6 +777,50 @@ url = "/contact/"
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn unicode_in_multiline_toml_strings_is_lossless_and_comment_safe() {
+        let source = r##"basic = """
+Experiență în 日本語 cu emoji 💚 și ghilimea \" # încă în șir.
+# text inside multiline basic string
+"""
+literal = '''
+Experiență în 日本語 cu emoji 💚.
+# text inside multiline literal string
+'''
+# real comment
+"##;
+        let document = parse_lossless_toml(source, "date/unicode.toml").unwrap();
+
+        assert!(document.is_lossless());
+        assert_eq!(document.reconstruct(), source);
+        let comments = document
+            .nodes
+            .iter()
+            .filter(|node| node.kind == SourceDataNodeKind::Comment)
+            .collect::<Vec<_>>();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].value_preview.as_deref(), Some("real comment"));
+    }
+
+    #[test]
+    fn zola_review_frontmatter_with_romanian_multiline_quote_is_lossless() {
+        let source = r##"[extra.review]
+quote = """
+Am avut o experiență foarte bună colaborând cu această echipă.
+Comunicarea a fost clară, iar soluția propusă ne-a oferit încredere.
+"""
+"##;
+        let document =
+            parse_lossless_toml(source, "content/portofoliu/ag-dental-group.md").unwrap();
+
+        assert!(document.is_lossless());
+        assert_eq!(document.reconstruct(), source);
+        assert!(!document
+            .nodes
+            .iter()
+            .any(|node| node.kind == SourceDataNodeKind::Comment));
     }
 
     #[test]

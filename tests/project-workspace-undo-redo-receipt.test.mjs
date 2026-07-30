@@ -190,6 +190,55 @@ test("proiecția canonică UI a Undo/Redo nu depinde de succesul Preview", () =>
   assert.ok(previewCatch > preview);
 });
 
+test("bariera Undo închide drafturile interactive înainte să blocheze structural lane", () => {
+  const app = readFileSync(
+    resolve(process.cwd(), "src/lib/state/app.svelte.ts"),
+    "utf8",
+  );
+  const start = app.indexOf("async beginKernelUndoRedoFrontendLease()");
+  const end = app.indexOf("endKernelUndoRedoFrontendLease()", start);
+  const boundary = app.slice(start, end);
+  const quiesce = boundary.indexOf(
+    "this.kernelUndoRedoFrontendQuiesceActive = true",
+  );
+  const flush = boundary.indexOf(
+    'await this.flushInteractiveEditorDrafts("history")',
+  );
+  const exclusiveLease = boundary.indexOf(
+    "this.kernelUndoRedoFrontendLeaseActive = true",
+  );
+  const drain = boundary.indexOf("await drainPreviewStructuralLanes()");
+
+  assert.ok(start >= 0 && end > start);
+  assert.ok(quiesce >= 0);
+  assert.ok(flush > quiesce);
+  assert.ok(exclusiveLease > flush);
+  assert.ok(drain > exclusiveLease);
+});
+
+test("mutarea semantică finalizează editarea HTML înainte să intre în structural lane", () => {
+  const controller = readFileSync(
+    resolve(process.cwd(), "src/lib/state/editor-navigation-controller.ts"),
+    "utf8",
+  );
+  const start = controller.indexOf("export async function moveEditorNavigationNode");
+  const end = controller.indexOf("function requireFocusedActiveDocument", start);
+  const operation = controller.slice(start, end);
+  const flush = operation.indexOf(
+    'await host.flushInteractiveEditorDrafts("snapshot")',
+  );
+  const capture = operation.indexOf("captureEditorMoveNodeAnchor");
+  const rebase = operation.indexOf("resolveEditorMoveNodeAnchor");
+  const lane = operation.indexOf("runInPreviewStructuralLane");
+
+  assert.ok(start >= 0 && end > start);
+  assert.ok(capture >= 0 && capture < flush);
+  assert.ok(flush >= 0);
+  assert.ok(rebase > flush);
+  assert.ok(lane > flush);
+  assert.ok(lane > rebase);
+});
+
 test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () => {
   const withWorkbench = receipt({
     workbench: {

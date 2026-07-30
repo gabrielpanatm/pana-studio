@@ -1,14 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     path::Path,
 };
 
 use crate::{
-    preview::preprocess::annotate::{
-        paths::{is_template_relative_path, read_active_theme, zola_relative_path},
-        range::LineIndex,
-    },
+    preview::preprocess::annotate::{paths::is_template_relative_path, range::LineIndex},
     project_model::zola_image_engine::{inspect_zola_image_at, ZolaImagePresentation},
     source_graph::{
         html::{html_label, should_project_html_tag},
@@ -44,19 +40,23 @@ struct SetPreludeAnchor {
 }
 
 impl SourceIdIndex {
-    pub fn for_zola_root(zola_root: &Path) -> Result<Self, String> {
+    pub(crate) fn for_template_sources<'a>(
+        sources: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Self {
         let mut index = Self::default();
-        let templates_root = zola_root.join("templates");
-        if templates_root.is_dir() {
-            index.collect_templates(zola_root, &templates_root)?;
-        }
-        if let Some(theme) = read_active_theme(zola_root) {
-            let theme_templates_root = zola_root.join("themes").join(&theme).join("templates");
-            if theme_templates_root.is_dir() {
-                index.collect_templates(zola_root, &theme_templates_root)?;
+        for (relative_path, source) in sources {
+            if is_template_relative_path(relative_path)
+                && matches!(
+                    Path::new(relative_path)
+                        .extension()
+                        .and_then(|extension| extension.to_str()),
+                    Some("html" | "md")
+                )
+            {
+                index.index_template_source(source, relative_path);
             }
         }
-        Ok(index)
+        index
     }
 
     #[cfg(test)]
@@ -97,40 +97,6 @@ impl SourceIdIndex {
 
     pub(super) fn zola_image_for(&self, source_location: &str) -> Option<&ZolaImagePresentation> {
         self.zola_image_by_source_location.get(source_location)
-    }
-
-    fn collect_templates(&mut self, zola_root: &Path, current: &Path) -> Result<(), String> {
-        for entry in fs::read_dir(current).map_err(|error| {
-            format!(
-                "Nu am putut citi template-urile pentru Source Graph {}: {}",
-                current.to_string_lossy(),
-                error
-            )
-        })? {
-            let entry = entry.map_err(|error| format!("Nu am putut citi o intrare: {}", error))?;
-            let path = entry.path();
-            if path.is_dir() {
-                self.collect_templates(zola_root, &path)?;
-            } else if matches!(
-                path.extension().and_then(|extension| extension.to_str()),
-                Some("html" | "md")
-            ) {
-                self.index_template_file(zola_root, &path)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn index_template_file(&mut self, zola_root: &Path, path: &Path) -> Result<(), String> {
-        let relative_path = zola_relative_path(zola_root, path);
-        if !is_template_relative_path(&relative_path) {
-            return Ok(());
-        }
-
-        let source = fs::read_to_string(path)
-            .map_err(|error| format!("Nu am putut citi {}: {}", relative_path, error))?;
-        self.index_template_source(&source, &relative_path);
-        Ok(())
     }
 
     pub(super) fn index_template_source(&mut self, source: &str, relative_path: &str) {

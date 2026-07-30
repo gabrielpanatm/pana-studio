@@ -42,8 +42,9 @@ test("inspector editors do not consume the legacy selection presentation", () =>
     );
   }
 
-  assert.match(inspectorFiles.shell, /selectionSummary=\{inspectorSelectionSummary\}/);
-  assert.match(inspectorFiles.shell, /physicalFacts=\{inspectorHtmlPhysicalFacts\}/);
+  assert.match(inspectorFiles.shell, /selectionSummary=\{presentedInspectorSelectionSummary\}/);
+  assert.match(inspectorFiles.shell, /physicalFacts=\{presentedHtmlPhysicalFacts\}/);
+  assert.match(inspectorFiles.shell, /advanceStableHtmlInspectorProjection/);
   assert.match(inspectorFiles.shell, /selectionContext=\{inspectorBlockSelectionContext\}/);
   assert.match(inspectorFiles.workspace, /inspectorSelectionSummary=\{app\.inspectorSelectionSummary\}/);
   assert.match(inspectorFiles.workspace, /inspectorHtmlPhysicalFacts=\{app\.inspectorHtmlPhysicalFacts\}/);
@@ -110,6 +111,21 @@ test("AppState exposes only exact Rust-accepted inspector projections", () => {
     Object.values(inspectorFiles).join("\n"),
     /\bselectionPresentation\b|\bSelectionInfo\b/,
   );
+
+  const acceptanceStart = app.indexOf("async acceptSelectionObservation(");
+  const acceptanceEnd = app.indexOf(
+    "private projectSelectionCoordinatorSnapshot(",
+    acceptanceStart,
+  );
+  const acceptance = app.slice(acceptanceStart, acceptanceEnd);
+  const summary = acceptance.indexOf(
+    "this.inspectorSelectionSummary = receipt.inspectorSummary",
+  );
+  const editorFields = acceptance.indexOf(
+    "this.applySelectionState(accepted.observation)",
+  );
+  const returned = acceptance.indexOf("return accepted");
+  assert.ok(summary >= 0 && editorFields > summary && returned > editorFields);
 });
 
 test("the legacy opaque presentation protocol is absent repo-wide", () => {

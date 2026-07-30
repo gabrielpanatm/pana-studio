@@ -87,9 +87,10 @@ test("selection-driven mutations carry a Rust-validated revision", () => {
   assert.match(coordinator, /selection_revision: u64/);
   assert.match(pipeline, /selection_coordinator\.with_mutation_target/);
   assert.match(css, /execute_selection_bound_css_workspace_mutation/);
-  assert.match(css, /selection_coordinator\.with_mutation_target/);
+  assert.match(css, /with_stable_semantic_mutation_target/);
   assert.match(lane, /expectedSelection: lease\.selection/);
   assert.match(lane, /requireCapturedSelection/);
   assert.match(inspector, /expectedSelection/);
-  assert.match(inspector, /String\(expectedSelection\.selectionRevision\)/);
+  assert.match(inspector, /sameCssSemanticSelection/);
+  assert.match(inspector, /cssSemanticSelectionKey\(expectedSelection\)/);
 });

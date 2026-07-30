@@ -92,6 +92,7 @@
   let fontPreviewSequence = 0;
   let fontPreviewStyle: HTMLStyleElement | null = null;
   let fontManagerLoadSequence = 0;
+  let fontManagerLoadedIdentityKey = "";
   let formName = $state("");
   let formValue = $state("");
   let formPath = $state("");
@@ -116,10 +117,12 @@
   let designTokenLoading = $state(false);
   let designTokenError = $state("");
   let designTokenLoadSequence = 0;
+  let designTokenLoadedIdentityKey = "";
   let themeStyleCatalog = $state<ThemeStyleCatalogSnapshot | null>(null);
   let themeStyleLoading = $state(false);
   let themeStyleError = $state("");
   let themeStyleLoadSequence = 0;
+  let themeStyleLoadedIdentityKey = "";
 
   const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredTokens = $derived(
@@ -207,35 +210,30 @@
     return Boolean(formName.trim() && formGoogleStyles.length > 0);
   });
   $effect(() => {
+    const view = activeView;
     const projectRoot = app.sessionProjectRoot;
     const runtimeSessionId = app.kernelProjectSessionId;
     const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
-    void app.refreshDesignClassInventory();
-  });
-
-  $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
-    if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
-    void reloadDesignTokenCatalog();
-  });
-
-  $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
-    if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
-    void reloadThemeStyleCatalog();
-  });
-
-  $effect(() => {
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
-    if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
-    void reloadFontManager();
+    const identityKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    if (
+      view === "global-styles"
+      && themeStyleLoadedIdentityKey !== identityKey
+    ) {
+      void reloadThemeStyleCatalog();
+    } else if (
+      view === "tokens"
+      && designTokenLoadedIdentityKey !== identityKey
+    ) {
+      void reloadDesignTokenCatalog();
+    } else if (view === "classes") {
+      void app.refreshDesignClassInventory();
+    } else if (
+      view === "fonts"
+      && fontManagerLoadedIdentityKey !== identityKey
+    ) {
+      void reloadFontManager();
+    }
   });
 
   $effect(() => {
@@ -289,6 +287,8 @@
     const runtimeSessionId = app.kernelProjectSessionId;
     const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
+    const identityKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    designTokenLoadedIdentityKey = identityKey;
     designTokenLoading = true;
     designTokenError = "";
     try {
@@ -310,6 +310,9 @@
       ) selectedTokenKey = "";
     } catch (cause) {
       if (requestId !== designTokenLoadSequence) return;
+      if (designTokenLoadedIdentityKey === identityKey) {
+        designTokenLoadedIdentityKey = "";
+      }
       designTokenError = errorMessage(cause);
     } finally {
       if (requestId === designTokenLoadSequence) designTokenLoading = false;
@@ -322,6 +325,8 @@
     const runtimeSessionId = app.kernelProjectSessionId;
     const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
+    const identityKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    themeStyleLoadedIdentityKey = identityKey;
     themeStyleLoading = true;
     themeStyleError = "";
     try {
@@ -339,6 +344,9 @@
       ) styleCategory = "all";
     } catch (cause) {
       if (requestId !== themeStyleLoadSequence) return;
+      if (themeStyleLoadedIdentityKey === identityKey) {
+        themeStyleLoadedIdentityKey = "";
+      }
       themeStyleError = errorMessage(cause);
     } finally {
       if (requestId === themeStyleLoadSequence) themeStyleLoading = false;
@@ -351,6 +359,8 @@
     const runtimeSessionId = app.kernelProjectSessionId;
     const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
+    const identityKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    fontManagerLoadedIdentityKey = identityKey;
     fontError = "";
     try {
       const manager = await getFontManager(workspaceIdentity());
@@ -365,6 +375,9 @@
       fontDiagnostics = manager.diagnostics;
     } catch (cause) {
       if (requestId !== fontManagerLoadSequence) return;
+      if (fontManagerLoadedIdentityKey === identityKey) {
+        fontManagerLoadedIdentityKey = "";
+      }
       fontError = errorMessage(cause);
     }
   }

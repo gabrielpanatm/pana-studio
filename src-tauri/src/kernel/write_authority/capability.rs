@@ -479,6 +479,223 @@ mod platform {
         Ok(())
     }
 
+    fn require_rebuildable_generation_authority(
+        authority: &DirectoryAuthority,
+        public_label: &str,
+    ) -> Result<(), String> {
+        if !matches!(
+            authority.scope(),
+            DirectoryAuthorityScope::ApplicationPreviewCache
+        ) {
+            return Err(capability_error(
+                public_label,
+                "calea rapidă rebuildable este permisă numai sub authority ApplicationPreviewCache",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Creates one private, create-only generation leaf under a sealed Preview
+    /// cache authority. The caller must publish or discard it explicitly.
+    pub(super) fn create_private_rebuildable_directory(
+        authority: &DirectoryAuthority,
+        path: &Path,
+        public_label: &str,
+    ) -> Result<(), String> {
+        require_rebuildable_generation_authority(authority, public_label)?;
+        verify_directory_authority_path(authority)?;
+        let target = WriteTarget::new(path, authority.root_path(), public_label)
+            .bind_authority(authority.clone())?;
+        let lexical = lexical_target(&target, false)?;
+        if lexical.relative_components.len() != 1 {
+            return Err(capability_error(
+                public_label,
+                "generația privată trebuie să fie un singur leaf sub authority",
+            ));
+        }
+        fs::mkdirat(
+            authority.directory(),
+            &lexical.relative_components[0],
+            Mode::from_raw_mode(0o700),
+        )
+        .map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("generația privată create-only nu a putut fi creată: {error}"),
+            )
+        })
+    }
+
+    fn open_or_create_rebuildable_generation_directory(
+        parent: &OwnedFd,
+        component: &OsStr,
+        public_label: &str,
+    ) -> Result<OwnedFd, String> {
+        match open_directory_strict(parent, component) {
+            Ok(directory) => return Ok(directory),
+            Err(Errno::NOENT) => {}
+            Err(error) => {
+                return Err(capability_error(
+                    public_label,
+                    &format!(
+                        "ancestor-ul generației rebuildable nu poate fi deschis sigur: {error}"
+                    ),
+                ));
+            }
+        }
+        match fs::mkdirat(parent, component, Mode::from_raw_mode(0o700)) {
+            Ok(()) | Err(Errno::EXIST) => {}
+            Err(error) => {
+                return Err(capability_error(
+                    public_label,
+                    &format!("directorul generației rebuildable nu a putut fi creat: {error}"),
+                ));
+            }
+        }
+        open_directory_strict(parent, component).map_err(|error| {
+            capability_error(
+                public_label,
+                &format!(
+                    "directorul generației rebuildable nu a putut fi recapturat sigur: {error}"
+                ),
+            )
+        })
+    }
+
+    fn rebuildable_generation_components(
+        authority: &DirectoryAuthority,
+        relative_path: &Path,
+        public_label: &str,
+    ) -> Result<Vec<OsString>, String> {
+        require_rebuildable_generation_authority(authority, public_label)?;
+        let components = relative_normal_components(relative_path, public_label)?;
+        if components.is_empty() {
+            return Err(capability_error(
+                public_label,
+                "descendentul generației rebuildable nu poate fi rădăcina authority",
+            ));
+        }
+        if components.len() > MAX_REMOVE_TREE_DEPTH {
+            return Err(capability_error(
+                public_label,
+                &format!(
+                    "descendentul generației rebuildable depășește adâncimea {}",
+                    MAX_REMOVE_TREE_DEPTH
+                ),
+            ));
+        }
+        Ok(components)
+    }
+
+    /// Materializes a directory inside an unpublished rebuildable generation.
+    /// Intermediate namespace changes deliberately skip WAL/fsync because no
+    /// public name can observe the incomplete tree.
+    pub(super) fn create_rebuildable_generation_directory(
+        authority: &DirectoryAuthority,
+        relative_path: &Path,
+        public_label: &str,
+    ) -> Result<(), String> {
+        let components = rebuildable_generation_components(authority, relative_path, public_label)?;
+        let mut directory = rustix::io::dup(authority.directory()).map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("authority-ul generației nu a putut fi duplicat: {error}"),
+            )
+        })?;
+        for component in components {
+            directory = open_or_create_rebuildable_generation_directory(
+                &directory,
+                &component,
+                public_label,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Writes one create-only regular file inside an unpublished rebuildable
+    /// generation. Publication seals the complete namespace once.
+    pub(super) fn write_rebuildable_generation_file(
+        authority: &DirectoryAuthority,
+        relative_path: &Path,
+        bytes: &[u8],
+        public_label: &str,
+    ) -> Result<(), String> {
+        let components = rebuildable_generation_components(authority, relative_path, public_label)?;
+        let (leaf, parents) = components
+            .split_last()
+            .expect("validated generation path must contain a leaf");
+        let mut directory = rustix::io::dup(authority.directory()).map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("authority-ul generației nu a putut fi duplicat: {error}"),
+            )
+        })?;
+        for component in parents {
+            directory = open_or_create_rebuildable_generation_directory(
+                &directory,
+                component,
+                public_label,
+            )?;
+        }
+        let descriptor = fs::openat(
+            &directory,
+            leaf,
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("fișierul generației create-only a fost refuzat: {error}"),
+            )
+        })?;
+        validate_regular_single_link(&descriptor, public_label, "rebuildable generation file")?;
+        File::from(descriptor).write_all(bytes).map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("fișierul generației nu a putut fi materializat complet: {error}"),
+            )
+        })
+    }
+
+    pub(super) fn seal_rebuildable_generation(
+        authority: &DirectoryAuthority,
+        public_label: &str,
+    ) -> Result<(), String> {
+        require_rebuildable_generation_authority(authority, public_label)?;
+        verify_directory_authority_path(authority)?;
+        sync_directory(authority.directory(), public_label)
+    }
+
+    pub(super) fn is_real_directory_leaf(
+        authority: &DirectoryAuthority,
+        path: &Path,
+        public_label: &str,
+    ) -> Result<bool, String> {
+        require_rebuildable_generation_authority(authority, public_label)?;
+        let target = WriteTarget::new(path, authority.root_path(), public_label)
+            .bind_authority(authority.clone())?;
+        let lexical = lexical_target(&target, false)?;
+        if lexical.relative_components.len() != 1 {
+            return Err(capability_error(
+                public_label,
+                "inspecția generației retrase cere un singur leaf",
+            ));
+        }
+        match fs::statat(
+            authority.directory(),
+            &lexical.relative_components[0],
+            AtFlags::SYMLINK_NOFOLLOW,
+        ) {
+            Ok(stat) => Ok(FileType::from_raw_mode(stat.st_mode) == FileType::Directory),
+            Err(Errno::NOENT) => Ok(false),
+            Err(error) => Err(capability_error(
+                public_label,
+                &format!("leaf-ul generației nu a putut fi inspectat: {error}"),
+            )),
+        }
+    }
+
     fn authority_from_captured(
         path: &Path,
         public_label: &str,
@@ -6886,6 +7103,51 @@ pub(super) fn verify_directory_authority_path(
 }
 
 #[cfg(target_os = "linux")]
+pub(super) fn create_private_rebuildable_directory(
+    authority: &DirectoryAuthority,
+    path: &Path,
+    public_label: &str,
+) -> Result<(), String> {
+    platform::create_private_rebuildable_directory(authority, path, public_label)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn create_rebuildable_generation_directory(
+    authority: &DirectoryAuthority,
+    relative_path: &Path,
+    public_label: &str,
+) -> Result<(), String> {
+    platform::create_rebuildable_generation_directory(authority, relative_path, public_label)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn write_rebuildable_generation_file(
+    authority: &DirectoryAuthority,
+    relative_path: &Path,
+    bytes: &[u8],
+    public_label: &str,
+) -> Result<(), String> {
+    platform::write_rebuildable_generation_file(authority, relative_path, bytes, public_label)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn seal_rebuildable_generation(
+    authority: &DirectoryAuthority,
+    public_label: &str,
+) -> Result<(), String> {
+    platform::seal_rebuildable_generation(authority, public_label)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn is_real_directory_leaf(
+    authority: &DirectoryAuthority,
+    path: &Path,
+    public_label: &str,
+) -> Result<bool, String> {
+    platform::is_real_directory_leaf(authority, path, public_label)
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn lock_file(
     target: &WriteTarget,
     mode: CapabilityLockMode,
@@ -7910,6 +8172,51 @@ pub(super) fn verify_directory_authority_path(
     _authority: &DirectoryAuthority,
 ) -> Result<(), String> {
     unsupported().map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn create_private_rebuildable_directory(
+    _authority: &DirectoryAuthority,
+    _path: &Path,
+    _public_label: &str,
+) -> Result<(), String> {
+    unsupported().map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn create_rebuildable_generation_directory(
+    _authority: &DirectoryAuthority,
+    _relative_path: &Path,
+    _public_label: &str,
+) -> Result<(), String> {
+    unsupported().map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn write_rebuildable_generation_file(
+    _authority: &DirectoryAuthority,
+    _relative_path: &Path,
+    _bytes: &[u8],
+    _public_label: &str,
+) -> Result<(), String> {
+    unsupported().map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn seal_rebuildable_generation(
+    _authority: &DirectoryAuthority,
+    _public_label: &str,
+) -> Result<(), String> {
+    unsupported().map(|_| ())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn is_real_directory_leaf(
+    _authority: &DirectoryAuthority,
+    _path: &Path,
+    _public_label: &str,
+) -> Result<bool, String> {
+    unsupported().map(|_| false)
 }
 
 #[cfg(not(target_os = "linux"))]

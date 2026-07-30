@@ -5,6 +5,9 @@
   var CANVAS_AGENT_SELECTION_ID = "pana-studio-canvas-agent-selection";
   var CANVAS_AGENT_DRAG_ID = "pana-studio-canvas-agent-drag";
   var CANVAS_AGENT_ACTION_ATTR = "data-pana-canvas-agent-action";
+  var CANVAS_AGENT_HOVER_ATTR = "data-pana-canvas-agent-hover";
+  var CANVAS_AGENT_HOVER_STYLE_ID = "pana-studio-canvas-agent-hover-style";
+  var CANVAS_AGENT_HOVER_DWELL_MS = 120;
   var canvasAgentInstanceId = createCanvasAgentInstanceId();
   var canvasAgentDocumentEpoch = 0;
   var canvasAgentGestureSequence = 0;
@@ -12,6 +15,11 @@
   var canvasAgentPendingPointerMove = null;
   var canvasAgentPointerFrame = null;
   var canvasAgentLastPointerHitKey = null;
+  var canvasAgentHitElements = new Map();
+  var canvasAgentHoverElements = [];
+  var canvasAgentHoverPendingEvent = null;
+  var canvasAgentHoverFrame = null;
+  var canvasAgentHoverTimer = null;
   var canvasAgentDragCandidate = null;
   var canvasAgentDragActive = false;
   var canvasAgentDragSerial = 0;
@@ -80,6 +88,7 @@
       return;
     }
     canvasAgentSelectionEnabled = false;
+    clearCanvasAgentHoverDwell();
     canvasAgentPendingPointerMove = null;
     canvasAgentLastPointerHitKey = null;
     if (canvasAgentPointerFrame !== null) {
@@ -113,22 +122,26 @@
     }
     var result = [];
     var seen = {};
+    var hitElements = new Map();
     for (var index = 0; index < rawPath.length && result.length < 64; index += 1) {
       var node = rawPath[index];
       if (!(node instanceof Element) || isStudioOverlayElement(node)) continue;
       var renderInstanceId = node.getAttribute(CANVAS_AGENT_RENDER_ATTR);
       if (!renderInstanceId || renderInstanceId.length > 512 || seen[renderInstanceId]) continue;
       seen[renderInstanceId] = true;
+      hitElements.set(renderInstanceId, node);
       result.push({
         kind: "renderInstance",
         id: renderInstanceId
       });
     }
+    canvasAgentHitElements = hitElements;
     return result;
   }
 
   function emitCanvasAgentGesture(event, gesture, emptyHitPath, overrideHitPath, drag) {
     if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;
+    if (emptyHitPath) canvasAgentHitElements.clear();
     var hitPath = emptyHitPath ? [] : (overrideHitPath || canvasAgentHitPath(event));
     if (gesture === "pointerMove") {
       var hitKey = hitPath.map(function (candidate) {
@@ -215,18 +228,12 @@
   function handleCanvasAgentPointerMove(event) {
     if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;
     var candidate = canvasAgentDragCandidate;
-    if (!candidate || event.pointerId !== candidate.pointerId) {
-      scheduleCanvasAgentPointerGesture(event, "pointerMove", null);
-      return;
-    }
+    if (!candidate || event.pointerId !== candidate.pointerId) return;
     var distance = Math.hypot(
       event.clientX - candidate.startX,
       event.clientY - candidate.startY
     );
-    if (!canvasAgentDragActive && distance < 6) {
-      scheduleCanvasAgentPointerGesture(event, "pointerMove", null);
-      return;
-    }
+    if (!canvasAgentDragActive && distance < 6) return;
     event.preventDefault();
     event.stopPropagation();
     if (!canvasAgentDragActive) {
@@ -242,7 +249,53 @@
     });
   }
 
+  function handleCanvasAgentPointerOver(event) {
+    if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;
+    if (canvasAgentDragActive) return;
+    scheduleCanvasAgentHoverDwell(event);
+  }
+
+  function handleCanvasAgentHoverPointerMove(event) {
+    if (
+      !canvasAgentSelectionActive()
+      || !isTrustedPreviewGesture(event)
+      || canvasAgentDragCandidate
+      || canvasAgentDragActive
+    ) return;
+    scheduleCanvasAgentHoverDwell(event);
+  }
+
+  function scheduleCanvasAgentHoverDwell(event) {
+    canvasAgentHoverPendingEvent = event;
+    if (canvasAgentHoverFrame !== null) return;
+    canvasAgentHoverFrame = window.requestAnimationFrame(function () {
+      canvasAgentHoverFrame = null;
+      if (canvasAgentHoverTimer !== null) {
+        window.clearTimeout(canvasAgentHoverTimer);
+      }
+      canvasAgentHoverTimer = window.setTimeout(function () {
+        var pending = canvasAgentHoverPendingEvent;
+        canvasAgentHoverPendingEvent = null;
+        canvasAgentHoverTimer = null;
+        if (pending) emitCanvasAgentGesture(pending, "pointerMove", false, null, null);
+      }, CANVAS_AGENT_HOVER_DWELL_MS);
+    });
+  }
+
+  function clearCanvasAgentHoverDwell() {
+    canvasAgentHoverPendingEvent = null;
+    if (canvasAgentHoverFrame !== null) {
+      window.cancelAnimationFrame(canvasAgentHoverFrame);
+      canvasAgentHoverFrame = null;
+    }
+    if (canvasAgentHoverTimer !== null) {
+      window.clearTimeout(canvasAgentHoverTimer);
+      canvasAgentHoverTimer = null;
+    }
+  }
+
   function clearCanvasAgentDrag() {
+    document.removeEventListener("pointermove", handleCanvasAgentPointerMove, true);
     canvasAgentDragCandidate = null;
     canvasAgentDragActive = false;
     hideCanvasAgentDragIndicator();
@@ -419,9 +472,16 @@
       if (typeof renderInstanceId !== "string" || !renderInstanceId || renderInstanceId.length > 512) {
         return;
       }
-      var selector = "[" + CANVAS_AGENT_RENDER_ATTR + "=\"" +
-        escapeCssIdentifier(renderInstanceId) + "\"]";
-      var element = document.querySelector(selector);
+      var element = canvasAgentHitElements.get(renderInstanceId);
+      if (
+        !(element instanceof Element)
+        || !element.isConnected
+        || element.getAttribute(CANVAS_AGENT_RENDER_ATTR) !== renderInstanceId
+      ) {
+        var selector = "[" + CANVAS_AGENT_RENDER_ATTR + "=\"" +
+          escapeCssIdentifier(renderInstanceId) + "\"]";
+        element = document.querySelector(selector);
+      }
       if (!(element instanceof Element) || seen.indexOf(element) >= 0) return;
       seen.push(element);
       elements.push(element);
@@ -452,6 +512,45 @@
       document.body.appendChild(overlay);
     }
     return overlay;
+  }
+
+  function ensureCanvasAgentHoverStyle() {
+    var style = document.getElementById(CANVAS_AGENT_HOVER_STYLE_ID);
+    if (style) return;
+    style = document.createElement("style");
+    style.id = CANVAS_AGENT_HOVER_STYLE_ID;
+    style.textContent = [
+      "[" + CANVAS_AGENT_HOVER_ATTR + "] {",
+      "outline: 1px dashed var(--pana-studio-accent, #1d7f6a) !important;",
+      "outline-offset: -1px !important;",
+      "}",
+      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"tera\"] {",
+      "outline-color: #3b82f6 !important;",
+      "}"
+    ].join("");
+    document.head.appendChild(style);
+  }
+
+  function clearCanvasAgentHoverTargets() {
+    canvasAgentHoverElements.forEach(function (element) {
+      if (element instanceof Element) {
+        element.removeAttribute(CANVAS_AGENT_HOVER_ATTR);
+      }
+    });
+    canvasAgentHoverElements = [];
+  }
+
+  function renderCanvasAgentHover(data) {
+    canvasAgentOverlayRequests.hover = data;
+    var elements = canvasAgentProjectionElements(data.projection);
+    var hoverKind = data.targetKind === "teraBoundary" ? "tera" : "html";
+    clearCanvasAgentHoverTargets();
+    if (elements.length === 0) return;
+    ensureCanvasAgentHoverStyle();
+    elements.forEach(function (element) {
+      element.setAttribute(CANVAS_AGENT_HOVER_ATTR, hoverKind);
+    });
+    canvasAgentHoverElements = elements;
   }
 
   function ensureCanvasAgentDragIndicator() {
@@ -670,6 +769,10 @@
       return;
     }
     var channel = data.channel === "selection" ? "selection" : "hover";
+    if (channel === "hover") {
+      renderCanvasAgentHover(data);
+      return;
+    }
     canvasAgentOverlayRequests[channel] = data;
     var overlay = ensureCanvasAgentOverlay(channel);
     var elements = canvasAgentProjectionElements(data.projection);
@@ -695,6 +798,7 @@
     canvasAgentOverlayRequests.hover = null;
     canvasAgentOverlayRequests.selection = null;
     canvasAgentOverlayRequests.drag = null;
+    clearCanvasAgentHoverTargets();
     [CANVAS_AGENT_HOVER_ID, CANVAS_AGENT_SELECTION_ID, CANVAS_AGENT_DRAG_ID].forEach(function (overlayId) {
       var overlay = document.getElementById(overlayId);
       if (overlay) overlay.style.display = "none";
@@ -714,12 +818,17 @@
     }
   }
 
-  document.addEventListener("pointermove", handleCanvasAgentPointerMove, true);
+  document.addEventListener("pointerover", handleCanvasAgentPointerOver, true);
+  document.addEventListener("pointermove", handleCanvasAgentHoverPointerMove, {
+    capture: true,
+    passive: true
+  });
   document.addEventListener("pointerdown", function (event) {
     if (event.target instanceof Element &&
         event.target.closest("[" + CANVAS_AGENT_ACTION_ATTR + "]")) return;
     emitCanvasAgentGesture(event, "pointerDown");
     if (event.button !== 0) return;
+    clearCanvasAgentHoverDwell();
     var hitPath = canvasAgentHitPath(event);
     if (hitPath.length === 0) return;
     canvasAgentDragSerial += 1;
@@ -731,6 +840,8 @@
       sessionId: canvasAgentInstanceId + "-drag-" + String(canvasAgentDragSerial)
     };
     canvasAgentDragActive = false;
+    document.removeEventListener("pointermove", handleCanvasAgentPointerMove, true);
+    document.addEventListener("pointermove", handleCanvasAgentPointerMove, true);
   }, true);
   document.addEventListener("pointerup", handleCanvasAgentPointerUp, true);
   document.addEventListener("pointercancel", function (event) {
@@ -763,6 +874,7 @@
   }, true);
   document.addEventListener("pointerleave", function (event) {
     if (!canvasAgentSelectionActive() || !isTrustedPreviewGesture(event)) return;
+    clearCanvasAgentHoverDwell();
     emitCanvasAgentGesture(event, "pointerMove", true);
   }, true);
   document.addEventListener("keydown", function (event) {

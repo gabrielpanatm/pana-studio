@@ -56,6 +56,15 @@
   } from "$lib/inspector/css-property-edit";
   import type { ApplyNativeBlockOptionRequest } from "$lib/state/html-actions-controller";
   import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
+  import {
+    advanceStableHtmlInspectorProjection,
+    type StableHtmlInspectorProjection,
+  } from "$lib/inspector/html-projection-stability";
+  import {
+    cssInspectorSubjectKey,
+    cssSemanticSelectionKey,
+    sameCssSemanticSelection,
+  } from "$lib/inspector/css-selection-stability";
 
   function captureCssIdentity(): CssRequestIdentity {
     return createCssRequestIdentity(projectRoot, runtimeSessionId);
@@ -190,6 +199,7 @@
     activeRenderedTemplatePath = null,
     previewDevice = "desktop" as CssViewport,
     refreshToken = 0,
+    historyProjectionQuiesced = false,
     jsRefreshToken = 0,
     motionWorkspace,
     workspaceRevision = 0,
@@ -257,6 +267,7 @@
     activeRenderedTemplatePath?: string | null;
     previewDevice?: CssViewport;
     refreshToken?: number;
+    historyProjectionQuiesced?: boolean;
     jsRefreshToken?: number;
     motionWorkspace: MotionWorkspaceState;
     workspaceRevision?: number;
@@ -324,9 +335,114 @@
     persistBlockPropertiesLayout?: (height: number, collapsed: boolean) => void;
   } = $props();
 
+  let stableHtmlProjection = $state<StableHtmlInspectorProjection | null>(null);
+  let htmlProjectionPending = $state(false);
+
+  $effect.pre(() => {
+    const transition = advanceStableHtmlInspectorProjection(
+      untrack(() => stableHtmlProjection),
+      {
+        summary: inspectorSelectionSummary,
+        selection: selectionSnapshot,
+        physicalFacts: inspectorHtmlPhysicalFacts,
+        attributeValues,
+        textContentValue,
+        classEditorValue,
+        imageSourceValue,
+        pendingTag,
+        attributeStatus,
+        textStatus,
+        classStatus,
+        imageStatus,
+        tagStatus,
+        canEditHtml,
+        isActivePreviewHtmlSource,
+      },
+    );
+    stableHtmlProjection = transition.projection;
+    htmlProjectionPending = transition.pending;
+  });
+
+  const presentedInspectorSelectionSummary = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.summary
+      : inspectorSelectionSummary,
+  );
+  const presentedSelectionSnapshot = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.selection
+      : selectionSnapshot,
+  );
+  const presentedHtmlPhysicalFacts = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.physicalFacts
+      : inspectorHtmlPhysicalFacts,
+  );
+  const presentedAttributeValues = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.attributeValues
+      : attributeValues,
+  );
+  const presentedTextContentValue = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.textContentValue
+      : textContentValue,
+  );
+  const presentedClassEditorValue = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.classEditorValue
+      : classEditorValue,
+  );
+  const presentedImageSourceValue = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.imageSourceValue
+      : imageSourceValue,
+  );
+  const presentedPendingTag = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.pendingTag
+      : pendingTag,
+  );
+  const presentedAttributeStatus = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.attributeStatus
+      : attributeStatus,
+  );
+  const presentedTextStatus = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.textStatus
+      : textStatus,
+  );
+  const presentedClassStatus = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.classStatus
+      : classStatus,
+  );
+  const presentedImageStatus = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.imageStatus
+      : imageStatus,
+  );
+  const presentedTagStatus = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.tagStatus
+      : tagStatus,
+  );
+  const presentedCanEditHtml = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.canEditHtml
+      : canEditHtml,
+  );
+  const presentedIsActivePreviewHtmlSource = $derived(
+    htmlProjectionPending && stableHtmlProjection
+      ? stableHtmlProjection.isActivePreviewHtmlSource
+      : isActivePreviewHtmlSource,
+  );
+
   // AppState resolves the canonical ProjectWorkspace target and remains the
-  // authority. Do not loosen that decision from preview-only metadata here.
-  const canEditHtmlEffective = $derived(canEditHtml);
+  // authority. During a resolving frame the last complete projection stays
+  // visually identical; the panel itself is inert until the atomic swap.
+  const canEditHtmlEffective = $derived(presentedCanEditHtml);
   const hasTeraSelection = $derived(
     selectionSnapshot?.resolution === "resolved"
       && selectionSnapshot.subject?.kind === "teraBoundary",
@@ -373,9 +489,9 @@
   }
 
   const coordinatedCssState = $derived(
-    selectionSnapshot?.focus.kind === "cssRule"
-      || selectionSnapshot?.focus.kind === "cssProperty"
-      ? inspectorStateForCssSelector(selectionSnapshot.focus.selector)
+    presentedSelectionSnapshot?.focus.kind === "cssRule"
+      || presentedSelectionSnapshot?.focus.kind === "cssProperty"
+      ? inspectorStateForCssSelector(presentedSelectionSnapshot.focus.selector)
       : null,
   );
   const selectedClass = $derived(coordinatedCssState?.selectedClass ?? null);
@@ -393,6 +509,7 @@
   let classRules = $state<CssProperty[]>([]);
   let cssRuleContext = $state<CssRuleContext | null>(null);
   let cssInspectorResolution = $state<CssInspectorContextResolution | null>(null);
+  let cssInspectorSelectionIdentity = $state<SelectionMutationIdentity | null>(null);
   let loadingClassRules = $state(false);
   let pendingValues = $state<Record<string, string>>({});
   let cssWorkspaceMutationTail: Promise<void> = Promise.resolve();
@@ -422,6 +539,7 @@
     classRules = [];
     cssRuleContext = null;
     cssInspectorResolution = null;
+    cssInspectorSelectionIdentity = null;
     cssTargetInfo = null;
     cssWorkspaceMutationFailure = "";
     queuedCssRuleMutationCount = 0;
@@ -435,8 +553,12 @@
     loadingClassRules = false;
   }
 
-  function applyCssInspectorResolution(resolution: CssInspectorContextResolution) {
+  function applyCssInspectorResolution(
+    resolution: CssInspectorContextResolution,
+    expectedSelection: SelectionMutationIdentity,
+  ) {
     cssInspectorResolution = resolution;
+    cssInspectorSelectionIdentity = expectedSelection;
     cssTargetInfo = resolution.target;
     const resolvedContext = resolution.ruleContext;
     if (!resolvedContext) {
@@ -482,6 +604,14 @@
       return null;
     }
     return identity;
+  }
+
+  function isCurrentCssInspectorSubject(expected: SelectionMutationIdentity): boolean {
+    const expectedKey = cssInspectorSubjectKey(expected);
+    return Boolean(
+      expectedKey
+      && expectedKey === cssInspectorSubjectKey(captureCssSelectionIdentity()),
+    );
   }
 
   function inspectorStateForCssSelector(selector: string) {
@@ -568,6 +698,7 @@
 
   $effect(() => {
     const nextRefreshToken = refreshToken;
+    if (historyProjectionQuiesced) return;
     if (lastHandledRefreshToken === null) {
       lastHandledRefreshToken = nextRefreshToken;
       return;
@@ -582,18 +713,12 @@
     const viewportToRefresh = untrack(() => previewDevice);
     const keepClassSelected = Boolean(
       classToRefresh &&
-      inspectorSelectionSummary?.classes.includes(classToRefresh) &&
+      presentedInspectorSelectionSummary?.classes.includes(classToRefresh) &&
       selectorToRefresh &&
       fileToRefresh,
     );
 
-    loadingClassRules = false;
-    classRules = [];
-    cssRuleContext = null;
-    cssInspectorResolution = null;
-    cssTargetInfo = null;
     pendingValues = untrack(() => pendingValuesForCurrentSelector());
-    loadCallId++;
     untrack(() => {
       onPendingChange?.("css", false);
       onPendingChange?.("js", false);
@@ -601,28 +726,66 @@
 
     if (keepClassSelected && selectorToRefresh && fileToRefresh) {
       untrack(() => {
-        void loadRulesForClass(selectorToRefresh, fileToRefresh, viewportToRefresh);
+        void loadRulesForClass(
+          selectorToRefresh,
+          fileToRefresh,
+          viewportToRefresh,
+          { preserveProjection: true },
+        );
       });
+      return;
     }
+
+    loadingClassRules = false;
+    classRules = [];
+    cssRuleContext = null;
+    cssInspectorResolution = null;
+    cssInspectorSelectionIdentity = null;
+    cssTargetInfo = null;
+    loadCallId++;
   });
 
   $effect(() => {
+    const projectionPending = htmlProjectionPending;
+    const nextSelectionIdentity = captureCssSelectionIdentity();
+    if (projectionPending && !nextSelectionIdentity) return;
     const nextSelectionKey = selectionSnapshot
-      ? `${selectionSnapshot.runtimeSessionId}:${selectionSnapshot.selectionRevision}`
+      ? [
+        selectionSnapshot.runtimeSessionId,
+        cssInspectorSubjectKey(nextSelectionIdentity),
+      ].join(":")
       : "";
-    if (nextSelectionKey === lastCssSelectionKey) return;
+    if (nextSelectionKey === lastCssSelectionKey) {
+      if (
+        nextSelectionIdentity
+        && cssInspectorSelectionIdentity
+        && (
+          nextSelectionIdentity.selectionRevision
+            !== cssInspectorSelectionIdentity.selectionRevision
+          || !sameCssSemanticSelection(
+            nextSelectionIdentity,
+            cssInspectorSelectionIdentity,
+          )
+        )
+      ) {
+        cssInspectorSelectionIdentity = nextSelectionIdentity;
+      }
+      return;
+    }
 
     lastCssSelectionKey = nextSelectionKey;
     loadingClassRules = false;
     classRules = [];
     cssRuleContext = null;
     cssInspectorResolution = null;
+    cssInspectorSelectionIdentity = null;
     cssTargetInfo = null;
     pendingValues = untrack(() => pendingValuesForCurrentSelector());
     loadCallId++;
   });
 
   $effect(() => {
+    const projectionQuiesced = historyProjectionQuiesced;
     const sel = effectiveSelector;
     const file = targetCssFile;
     const viewport = previewDevice;
@@ -630,11 +793,13 @@
     // path trebuie să invalideze explicit citirea Inspectorului din runtime A.
     const sessionRoot = projectRoot;
     const sessionId = runtimeSessionId;
+    if (projectionQuiesced) return;
     if (!sel || !file || !sessionRoot || !sessionId) {
       loadingClassRules = false;
       classRules = [];
       cssRuleContext = null;
       cssInspectorResolution = null;
+      cssInspectorSelectionIdentity = null;
       cssTargetInfo = null;
       pendingValues = {};
       return;
@@ -646,16 +811,34 @@
     });
   });
 
-  async function loadRulesForClass(selector: string, file: string, viewport: CssViewport) {
+  async function loadRulesForClass(
+    selector: string,
+    file: string,
+    viewport: CssViewport,
+    options: { preserveProjection?: boolean } = {},
+  ) {
+    if (historyProjectionQuiesced) return;
     const expectedSelection = captureCssSelectionIdentity();
     if (!expectedSelection) return;
     const identity = captureCssIdentity();
+    const expectedRefreshToken = refreshToken;
     const myCallId = ++loadCallId;
-    loadingClassRules = true;
-    classRules = [];
-    cssRuleContext = null;
-    cssInspectorResolution = null;
-    cssTargetInfo = null;
+    const preserveProjection = Boolean(
+      options.preserveProjection
+      && cssInspectorResolution
+      && cssInspectorResolution.state !== "ambiguous"
+      && cssInspectorResolution.selector === selector
+      && cssInspectorResolution.viewport === viewport
+      && cssInspectorResolution.target?.file === file,
+    );
+    loadingClassRules = !preserveProjection;
+    if (!preserveProjection) {
+      classRules = [];
+      cssRuleContext = null;
+      cssInspectorResolution = null;
+      cssInspectorSelectionIdentity = null;
+      cssTargetInfo = null;
+    }
     pendingValues = untrack(() => pendingValuesForCurrentSelector());
     try {
       const resolution = await resolveCssInspectorContext({
@@ -669,7 +852,9 @@
       if (
         myCallId !== loadCallId
         || !isCurrentCssIdentity(identity)
-        || selectionSnapshot?.selectionRevision !== expectedSelection.selectionRevision
+        || historyProjectionQuiesced
+        || refreshToken !== expectedRefreshToken
+        || !isCurrentCssInspectorSubject(expectedSelection)
       ) return;
       if (
         resolution.state !== "ambiguous"
@@ -685,18 +870,26 @@
           classRules = [];
           cssRuleContext = null;
           cssInspectorResolution = null;
+          cssInspectorSelectionIdentity = null;
           cssTargetInfo = null;
         }
         return;
       }
-      applyCssInspectorResolution(resolution);
+      applyCssInspectorResolution(resolution, expectedSelection);
     } catch (error) {
-      if (!isCurrentCssIdentity(identity)) return;
+      if (
+        !isCurrentCssIdentity(identity)
+        || historyProjectionQuiesced
+        || refreshToken !== expectedRefreshToken
+      ) return;
       if (myCallId === loadCallId) {
-        classRules = [];
-        cssRuleContext = null;
-        cssInspectorResolution = null;
-        cssTargetInfo = null;
+        if (!preserveProjection) {
+          classRules = [];
+          cssRuleContext = null;
+          cssInspectorResolution = null;
+          cssInspectorSelectionIdentity = null;
+          cssTargetInfo = null;
+        }
         const message = error instanceof Error ? error.message : String(error);
         onStatusUpdate?.(t("inspector-css-read-failed", { file, error: message }), "error");
       }
@@ -715,6 +908,7 @@
     classRules = [];
     cssRuleContext = null;
     cssInspectorResolution = null;
+    cssInspectorSelectionIdentity = null;
     cssTargetInfo = null;
     pendingValues = pendingValuesForCurrentSelector();
 
@@ -734,9 +928,9 @@
       if (
         myCallId !== loadCallId
         || !isCurrentCssIdentity(identity)
-        || selectionSnapshot?.selectionRevision !== expectedSelection.selectionRevision
+        || !isCurrentCssInspectorSubject(expectedSelection)
       ) return "blocked";
-      applyCssInspectorResolution(resolution);
+      applyCssInspectorResolution(resolution, expectedSelection);
       if (resolution.state === "ambiguous" || !resolution.target) return "blocked";
       const allowed = await onCssCodeTargetChange?.({
         selector,
@@ -771,7 +965,7 @@
       !expectedSelection
       || !resolution
       || resolution.state === "ambiguous"
-      || resolution.selectionRevision !== expectedSelection.selectionRevision
+      || !sameCssSemanticSelection(cssInspectorSelectionIdentity, expectedSelection)
       || resolution.selector !== effectiveSelector
       || resolution.viewport !== previewDevice
       || resolution.target?.file !== targetCssFile
@@ -784,10 +978,7 @@
     const targetKey = [
       identity.expectedProjectRoot,
       identity.expectedSessionId,
-      String(expectedSelection.selectionRevision),
-      expectedSelection.editorNodeId ?? "",
-      expectedSelection.sourceNodeId ?? "",
-      expectedSelection.renderInstanceId ?? "",
+      cssSemanticSelectionKey(expectedSelection),
       file,
       selector,
       viewport,
@@ -811,6 +1002,7 @@
       selector: target.selector,
       file: target.file,
       property,
+      expectedSelectionRevision: target.expectedSelection.selectionRevision,
     });
     const baseline = captureCssPendingValueBaseline(pendingValues, property);
     const nextPendingValues = { ...pendingValues, [property]: value };
@@ -944,11 +1136,13 @@
 
 <aside
   class="inspector-pane"
+  class:html-projection-pending={htmlProjectionPending}
   aria-label={t("inspector-pane-label")}
+  aria-busy={htmlProjectionPending}
 >
   <div class="inspector-context">
     <SelectionSummaryCard
-      summary={inspectorSelectionSummary}
+      summary={presentedInspectorSelectionSummary}
       selectClass={selectClassForCss}
     />
   </div>
@@ -1019,11 +1213,12 @@
         class="inspector-scroll inspector-editor-scroll"
         role="tabpanel"
         aria-labelledby={`inspector-tab-${inspectorTab}`}
+        inert={htmlProjectionPending}
       >
 
         {#if inspectorTab === "css"}
         <CssPane
-          selectionSummary={inspectorSelectionSummary}
+          selectionSummary={presentedInspectorSelectionSummary}
           {selectedClass}
           {effectiveSelector}
           {viewportLabel}
@@ -1055,21 +1250,21 @@
 
         {:else if inspectorTab === "html"}
         <HtmlPane
-          selectionSummary={inspectorSelectionSummary}
-          {selectionSnapshot}
-          physicalFacts={inspectorHtmlPhysicalFacts}
+          selectionSummary={presentedInspectorSelectionSummary}
+          selectionSnapshot={presentedSelectionSnapshot}
+          physicalFacts={presentedHtmlPhysicalFacts}
           canEditHtml={canEditHtmlEffective}
-          {attributeValues}
-          {textContentValue}
-          {imageSourceValue}
-          classEditorValue={classEditorValue}
-          {pendingTag}
+          attributeValues={presentedAttributeValues}
+          textContentValue={presentedTextContentValue}
+          imageSourceValue={presentedImageSourceValue}
+          classEditorValue={presentedClassEditorValue}
+          pendingTag={presentedPendingTag}
           {scannedAssets}
-          {isActivePreviewHtmlSource}
-          {attributeStatus}
-          {textStatus}
-          {classStatus}
-          {imageStatus}
+          isActivePreviewHtmlSource={presentedIsActivePreviewHtmlSource}
+          attributeStatus={presentedAttributeStatus}
+          textStatus={presentedTextStatus}
+          classStatus={presentedClassStatus}
+          imageStatus={presentedImageStatus}
           updateAttributeValue={updateAttributeValue}
           removeAttribute={removeAttribute}
           applyAttributesToHtml={applyAttributesToHtml}
@@ -1083,7 +1278,7 @@
           applyZolaImageProcessingToHtml={applyZolaImageProcessingToHtml}
           cancelHtmlAttributeDraft={cancelHtmlAttributeDraft}
           changeElementTag={changeElementTag}
-          {tagStatus}
+          tagStatus={presentedTagStatus}
         />
 
         {/if}
@@ -1116,6 +1311,11 @@
     overscroll-behavior: contain;
     background: var(--material-panel);
     box-shadow: var(--shadow-panel);
+  }
+
+  .inspector-pane.html-projection-pending .inspector-context,
+  .inspector-pane.html-projection-pending .inspector-editor-scroll {
+    pointer-events: none;
   }
 
   .inspector-context {

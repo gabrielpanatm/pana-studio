@@ -22,6 +22,7 @@ export type SourceEditorControllerHost = {
   sourceLanguage: SourceLanguage;
   uiTheme: "dark" | "light";
   projectTransitionFrontendLeaseActive: boolean;
+  kernelUndoRedoFrontendQuiesceActive: boolean;
   kernelUndoRedoFrontendLeaseActive: boolean;
   aiEditLeaseFrontendLockActive: boolean;
   syncingSourceFromEditor: boolean;
@@ -53,6 +54,7 @@ export async function createSourceEditor(host: SourceEditorControllerHost) {
     language: host.sourceLanguage,
     theme: host.uiTheme,
     readOnly: host.projectTransitionFrontendLeaseActive
+      || host.kernelUndoRedoFrontendQuiesceActive
       || host.kernelUndoRedoFrontendLeaseActive
       || host.aiEditLeaseFrontendLockActive,
     onDocumentChange: (nextSource, cursorPosition, changeSet) => {

@@ -676,7 +676,6 @@
         <section
           class:left-pane-collapsed={app.leftPaneCollapsed}
           class:right-pane-collapsed={app.rightPaneCollapsed}
-          class:center-workspace-active={!editorSidebarsAvailable}
           class="workspace"
           style={`--left-pane-width: ${app.leftPaneWidth}px; --right-pane-width: ${app.rightPaneWidth}px;`}
           aria-label={t("workbench-aria-label")}

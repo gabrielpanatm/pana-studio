@@ -1,9 +1,12 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::{
-    commands::kernel::current_kernel_project_state_snapshot,
+    commands::{
+        ai_coordination::publish_ai_coordination_state,
+        kernel::current_kernel_project_state_snapshot,
+    },
     js::PageJsDraftStore,
     kernel::{
         ai_coordination::EditAuthority,
@@ -66,7 +69,7 @@ use crate::{
     },
     project::{
         read_project_disk_manifest, require_valid_zola_candidate, scan_project_root,
-        scan_project_workspace_projection, AcceptedProjectDiskManifest,
+        scan_project_workspace_projection, AcceptedProjectDiskManifest, ProjectDiskWatchHandle,
     },
     state::AppState,
 };
@@ -894,6 +897,10 @@ fn clear_project_runtime_state(
         .ai_coordination
         .require_project_transition()
         .map_err(|error| error.to_string())?;
+    let _disk_watch_transition = state
+        .project_disk_watch_transition
+        .lock()
+        .map_err(|_| "Serializarea watcher-ului este compromisă la închidere.".to_string())?;
     let mut current_root = state
         .current_root
         .lock()
@@ -920,6 +927,14 @@ fn clear_project_runtime_state(
         }
     }
 
+    let disk_watcher = state
+        .project_disk_watch
+        .lock()
+        .map_err(|_| "Slot-ul watcher-ului este compromis la închidere.".to_string())?
+        .take();
+    if let Some(disk_watcher) = disk_watcher {
+        disk_watcher.stop();
+    }
     let authority_runtime = app
         .try_state::<WriteAuthorityRuntime>()
         .ok_or_else(|| "WriteAuthorityRuntime lipsește la închiderea proiectului.".to_string())?;
@@ -932,6 +947,10 @@ fn clear_project_runtime_state(
         .ai_coordination
         .bind_project(None, crate::kernel::observability::now_ms())
         .map_err(|error| error.to_string())?;
+    drop(recovery_coordinator_scan);
+    drop(project_workspace);
+    drop(current_root);
+    let _ = publish_ai_coordination_state(app);
     Ok(())
 }
 
@@ -1344,6 +1363,130 @@ pub async fn read_current_project_disk_manifest(
         })?
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectDiskWatchRequest {
+    pub expected_project_root: String,
+    pub expected_session_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectDiskWatchStopRequest {
+    pub expected_project_root: String,
+    pub expected_session_id: String,
+    pub expected_watch_generation: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDiskWatchReceipt {
+    pub project_root: String,
+    pub runtime_session_id: String,
+    pub watch_generation: u64,
+}
+
+#[tauri::command]
+pub fn start_project_disk_watch(
+    input: ProjectDiskWatchRequest,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<ProjectDiskWatchReceipt, String> {
+    let _transition = state
+        .project_disk_watch_transition
+        .lock()
+        .map_err(|_| "Serializarea watcher-ului este compromisă.".to_string())?;
+    let (project_root, runtime_session_id) = {
+        let workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "ProjectWorkspace este indisponibil pentru watcher.".to_string())?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "Watcher-ul cere un ProjectSession activ.".to_string())?;
+        let snapshot = workspace.snapshot();
+        if snapshot.project_root != input.expected_project_root
+            || snapshot.runtime_session_id != input.expected_session_id
+        {
+            return Err("Watcher-ul a refuzat o identitate ProjectSession stale.".to_string());
+        }
+        (
+            PathBuf::from(&snapshot.project_root),
+            snapshot.runtime_session_id,
+        )
+    };
+
+    let previous = {
+        let mut slot = state
+            .project_disk_watch
+            .lock()
+            .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?;
+        slot.take()
+    };
+    if let Some(previous) = previous {
+        previous.stop();
+    }
+
+    let watcher =
+        ProjectDiskWatchHandle::start(app, project_root.clone(), runtime_session_id.clone())?;
+    let receipt = ProjectDiskWatchReceipt {
+        project_root: project_root.to_string_lossy().to_string(),
+        runtime_session_id: runtime_session_id.clone(),
+        watch_generation: watcher.watch_generation(),
+    };
+    let still_current = state
+        .project_workspace
+        .lock()
+        .ok()
+        .and_then(|workspace| workspace.as_ref().map(ProjectWorkspace::snapshot))
+        .is_some_and(|snapshot| {
+            snapshot.project_root == receipt.project_root
+                && snapshot.runtime_session_id == receipt.runtime_session_id
+        });
+    if !still_current {
+        watcher.stop();
+        return Err("ProjectSession s-a schimbat înainte de publicarea watcher-ului.".to_string());
+    }
+    let mut slot = state
+        .project_disk_watch
+        .lock()
+        .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?;
+    *slot = Some(watcher);
+    Ok(receipt)
+}
+
+#[tauri::command]
+pub fn stop_project_disk_watch(
+    input: ProjectDiskWatchStopRequest,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let _transition = state
+        .project_disk_watch_transition
+        .lock()
+        .map_err(|_| "Serializarea watcher-ului este compromisă.".to_string())?;
+    let watcher = {
+        let mut slot = state
+            .project_disk_watch
+            .lock()
+            .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?;
+        let Some(active) = slot.as_ref() else {
+            return Ok(());
+        };
+        if !active.matches(
+            Path::new(&input.expected_project_root),
+            &input.expected_session_id,
+        ) || active.watch_generation() != input.expected_watch_generation
+        {
+            return Err("Oprirea watcher-ului a refuzat o identitate stale.".to_string());
+        }
+        slot.take()
+    };
+    if let Some(watcher) = watcher {
+        watcher.stop();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn close_project(
     operator_decision_id: Option<String>,
@@ -1592,6 +1735,7 @@ pub fn open_project(
             )
             .map_err(|error| error.to_string())?;
     }
+    let _ = publish_ai_coordination_state(&app);
     if retire_abandoned_recovery {
         match clear_project_workspace_recovery(&app, &session.project_root) {
             Ok(()) => {

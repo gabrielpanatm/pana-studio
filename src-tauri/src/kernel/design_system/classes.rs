@@ -389,6 +389,7 @@ mod tests {
                 structured_documents: Vec::new(),
                 component_graph: Default::default(),
                 block_graph: Default::default(),
+                markdown_projections: Vec::new(),
                 nodes: Vec::new(),
                 relations: Vec::new(),
                 diagnostics: Vec::new(),

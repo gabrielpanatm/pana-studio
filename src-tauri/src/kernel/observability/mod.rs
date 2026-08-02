@@ -70,6 +70,7 @@ pub enum KernelEventKind {
     ExternalDiskReconcileBlocked,
     ExternalDiskReconcileFailed,
     ProjectTransitionBlocked,
+    ProjectLifecycleTransition,
     ProjectTransitionDecisionRecorded,
     ProjectTransitionDecisionRecoveryAcknowledged,
     ProjectTransitionDecisionRetentionPlanned,
@@ -107,13 +108,19 @@ pub enum KernelEventKind {
     PreviewProjectionTeraInsertDropBlocked,
     PreviewProjectionTeraDeleteCommitted,
     PreviewProjectionTeraDeleteBlocked,
+    PreviewEditorMoveCommitted,
     PreviewCanvasPrepared,
     PreviewCanvasPhaseAcknowledged,
     PreviewCanvasCanonicalVerified,
     PreviewCanvasFailed,
     PreviewCanvasStaleDiscarded,
+    PreviewCanvasPatchApplied,
+    PreviewCanvasPatchRefused,
     PreviewCanvasPatchRolledBack,
+    PreviewCanvasDragPreviewApplied,
+    PreviewCanvasDragPreviewSkipped,
     PreviewCanvasFallback,
+    PreviewCanvasStylesheetsPromoted,
     PreviewCanvasAckTimeout,
     PreviewCanvasCacheHit,
     PreviewCanvasCacheMiss,
@@ -404,6 +411,7 @@ fn event_name(kind: KernelEventKind) -> &'static str {
             "kernel.file_buffer_store.external_reconcile.failed"
         }
         KernelEventKind::ProjectTransitionBlocked => "kernel.project_transition.blocked",
+        KernelEventKind::ProjectLifecycleTransition => "kernel.project_lifecycle.transition",
         KernelEventKind::ProjectTransitionDecisionRecorded => {
             "kernel.project_transition.decision_recorded"
         }
@@ -495,6 +503,9 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         KernelEventKind::PreviewProjectionTeraDeleteBlocked => {
             "kernel.preview_projection.tera_delete.blocked"
         }
+        KernelEventKind::PreviewEditorMoveCommitted => {
+            "kernel.preview_projection.editor_move.committed"
+        }
         KernelEventKind::PreviewCanvasPrepared => "kernel.preview.canvas.prepared",
         KernelEventKind::PreviewCanvasPhaseAcknowledged => {
             "kernel.preview.canvas.phase_acknowledged"
@@ -504,8 +515,19 @@ fn event_name(kind: KernelEventKind) -> &'static str {
         }
         KernelEventKind::PreviewCanvasFailed => "kernel.preview.canvas.failed",
         KernelEventKind::PreviewCanvasStaleDiscarded => "kernel.preview.canvas.stale_discarded",
+        KernelEventKind::PreviewCanvasPatchApplied => "kernel.preview.canvas.patch_applied",
+        KernelEventKind::PreviewCanvasPatchRefused => "kernel.preview.canvas.patch_refused",
         KernelEventKind::PreviewCanvasPatchRolledBack => "kernel.preview.canvas.patch_rolled_back",
+        KernelEventKind::PreviewCanvasDragPreviewApplied => {
+            "kernel.preview.canvas.drag_preview_applied"
+        }
+        KernelEventKind::PreviewCanvasDragPreviewSkipped => {
+            "kernel.preview.canvas.drag_preview_skipped"
+        }
         KernelEventKind::PreviewCanvasFallback => "kernel.preview.canvas.fallback",
+        KernelEventKind::PreviewCanvasStylesheetsPromoted => {
+            "kernel.preview.canvas.stylesheets_promoted"
+        }
         KernelEventKind::PreviewCanvasAckTimeout => "kernel.preview.canvas.ack_timeout",
         KernelEventKind::PreviewCanvasCacheHit => "kernel.preview.canvas.cache_hit",
         KernelEventKind::PreviewCanvasCacheMiss => "kernel.preview.canvas.cache_miss",

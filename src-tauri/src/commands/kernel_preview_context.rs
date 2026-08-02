@@ -77,7 +77,7 @@ pub(super) fn with_preview_write_workspace<R>(
     let workspace = workspace
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    require_preview_accepted_lease(
+    require_preview_accepted_snapshot(
         Some(&workspace.accepted_disk),
         &context.root,
         &context.session,
@@ -124,7 +124,6 @@ fn capture_preview_workspace_authority(
     }
     accepted_disk.require_identity(&session.runtime_instance_id(), &session.project_root)?;
     accepted_disk.require_complete()?;
-    require_accepted_disk_unchanged(root, accepted_disk)?;
     Ok((
         root.clone(),
         session.clone(),
@@ -133,7 +132,7 @@ fn capture_preview_workspace_authority(
     ))
 }
 
-fn require_preview_accepted_lease<'a>(
+fn require_preview_accepted_snapshot<'a>(
     live: Option<&'a AcceptedProjectDiskManifest>,
     root: &std::path::Path,
     session: &ProjectSessionSnapshot,

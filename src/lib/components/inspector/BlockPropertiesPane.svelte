@@ -6,6 +6,7 @@
     IconGripHorizontal,
   } from "@tabler/icons-svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import { resolveUiBlockSourceInstanceForSelection } from "$lib/blocks/registry";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readUiBlockGraph } from "$lib/project/io";
   import type {
@@ -66,16 +67,9 @@
   let requestKey = "";
 
   const blockContext = $derived(selectionContext);
-  const sourceInstance = $derived.by(() => {
-    if (!graph || !blockContext) return null;
-    if (blockContext.rootSourceId) {
-      const exact = graph.sourceInstances.find(
-        (instance) => instance.rootSourceNodeId === blockContext.rootSourceId,
-      );
-      if (exact) return exact;
-    }
-    return null;
-  });
+  const sourceInstance = $derived(
+    resolveUiBlockSourceInstanceForSelection(graph, blockContext),
+  );
   const definition = $derived(
     sourceInstance?.definitionId
       ? graph?.definitions.find((candidate) => candidate.id === sourceInstance.definitionId) ?? null
@@ -89,7 +83,7 @@
 
   $effect(() => {
     const context = blockContext;
-    const key = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}\u0000${previewRevision}\u0000${context?.rootSourceId ?? ""}\u0000${context?.providerId ?? ""}`;
+    const key = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}\u0000${previewRevision}\u0000${context?.rootSourceId ?? ""}\u0000${context?.sourceInstanceIds?.join("\u001f") ?? ""}\u0000${context?.providerId ?? ""}`;
     if (!context || !projectRoot || !runtimeSessionId) {
       graph = null;
       loadError = "";

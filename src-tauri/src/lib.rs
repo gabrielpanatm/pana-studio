@@ -68,8 +68,8 @@ use commands::{
     editor_navigation::{
         accept_selection_observation, apply_selection_intent, bind_canvas_interaction_agent,
         commit_editor_move, plan_editor_move, read_editor_navigation_snapshot,
-        read_selection_snapshot, request_editor_edit_scope, resolve_canvas_hover_intent,
-        resolve_canvas_interaction_intent,
+        read_selection_snapshot, request_editor_edit_scope, resolve_canvas_drag_over_intent,
+        resolve_canvas_hover_intent, resolve_canvas_interaction_intent,
     },
     external_disk::reconcile_clean_external_project_files,
     file_explorer::{
@@ -114,8 +114,8 @@ use commands::{
     project::{
         acknowledge_project_transition_decision_recovery_plan, apply_file_buffer_changeset,
         clear_file_buffer_draft, close_project, execute_project_transition_decision_retention,
-        inspect_project_open_recovery, open_project, read_current_project_disk_manifest,
-        read_file_buffer_store, read_file_buffer_text, read_project_file, read_project_session,
+        open_project, read_current_project_disk_manifest, read_file_buffer_store,
+        read_file_buffer_text, read_project_file, read_project_session,
         read_project_workspace_history, read_project_workspace_state,
         read_recovery_coordinator_scan, reattach_project_session,
         record_project_transition_operator_decision,
@@ -132,8 +132,10 @@ use commands::{
         read_taxonomy_catalog, read_template_catalog,
     },
     startup::{
-        apply_startup_creation, inspect_startup_folder, plan_startup_creation,
-        read_startup_creation_catalog, read_startup_flow,
+        acknowledge_project_frontend_hydrated, apply_startup_creation, cancel_project_open,
+        inspect_project_open, inspect_startup_folder, plan_startup_creation,
+        read_project_lifecycle, read_startup_creation_catalog, read_startup_flow,
+        report_project_capability_degraded,
     },
     taxonomies::{apply_taxonomy_mutation, plan_taxonomy_mutation},
     templates::{

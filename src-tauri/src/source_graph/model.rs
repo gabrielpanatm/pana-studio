@@ -21,9 +21,58 @@ pub struct SourceGraph {
     pub structured_documents: Vec<SourceStructuredDocument>,
     pub component_graph: ComponentGraph,
     pub block_graph: BlockGraph,
+    pub markdown_projections: Vec<MarkdownProjection>,
     pub nodes: Vec<SourceNode>,
     pub relations: Vec<SourceRelation>,
     pub diagnostics: Vec<SourceGraphDiagnostic>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MarkdownProjectionKind {
+    Body,
+    Summary,
+    Filter,
+    Toc,
+    Shortcode,
+}
+
+impl MarkdownProjectionKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Body => "Conținut Markdown",
+            Self::Summary => "Rezumat Markdown",
+            Self::Filter => "Filtru Markdown",
+            Self::Toc => "Cuprins Markdown",
+            Self::Shortcode => "Shortcode Markdown",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MarkdownSourceBindingKind {
+    CurrentPage,
+    CurrentSection,
+    StaticPage,
+    StaticSection,
+    RuntimePage,
+    RuntimeSection,
+    ShortcodeInvocation,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkdownProjection {
+    pub id: String,
+    pub kind: MarkdownProjectionKind,
+    pub template_source_node_id: String,
+    pub template_file: String,
+    pub template_range: Option<SourceRange>,
+    pub binding_kind: MarkdownSourceBindingKind,
+    pub static_content_path: Option<String>,
+    pub runtime_source_expression: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -80,6 +129,7 @@ pub struct SourceGraphTemplate {
     pub blocks: Vec<String>,
     pub macros: Vec<String>,
     pub semantics: Option<TeraSemanticDocument>,
+    pub markdown_projections: Vec<MarkdownProjection>,
     pub node_id: String,
 }
 
@@ -704,6 +754,8 @@ pub enum SourceCapabilityReason {
     HtmlInTeraRaw,
     MarkdownPage,
     MarkdownShortcode,
+    MarkdownRenderedBoundary,
+    MarkdownSourceUnresolved,
     StaticJavaScript,
     StaticAsset,
     DataOutputReadOnly,
@@ -762,6 +814,12 @@ impl SourceCapabilityReason {
             }
             Self::MarkdownPage => "Zola Markdown page.",
             Self::MarkdownShortcode => "Zola shortcode invocation in Markdown content.",
+            Self::MarkdownRenderedBoundary => {
+                "Rendered Markdown is edited only through its Markdown source."
+            }
+            Self::MarkdownSourceUnresolved => {
+                "Rendered Markdown provenance is unresolved and remains read-only."
+            }
             Self::StaticJavaScript => "Static Zola JavaScript file.",
             Self::StaticAsset => "Static Zola asset.",
             Self::DataOutputReadOnly => {

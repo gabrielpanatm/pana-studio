@@ -883,6 +883,9 @@ mod tests {
 
     use crate::project_model::{
         build_project_model,
+        move_engine::{
+            html_identity_aliases, plan_html_move, ProjectHtmlMoveIntent, ProjectMovePosition,
+        },
         zola_image_engine::{ProjectZolaImageIntent, ZolaImageFormat, ZolaImageOperation},
     };
     use crate::source_graph::model::BlockOptionValue;
@@ -937,6 +940,133 @@ mod tests {
         assert!(!patch.contents.contains("title="));
         assert_eq!(patch.tag, "section");
         assert_eq!(patch.source_start_line, 2);
+    }
+
+    #[test]
+    fn plan_html_attributes_accepts_preview_identity_for_html_wrapping_tera_text() {
+        let root = unique_test_dir();
+        let source = concat!(
+            "<section>\n",
+            "<h1 id=\"title\">\n",
+            "<span>{% if lang == \"en\" %}Build visually.{% else %}Construiește vizual.{% endif %}</span>\n",
+            "<span>{% if lang == \"en\" %}Keep control.{% else %}Păstrează controlul.{% endif %}</span>\n",
+            "</h1>\n",
+            "</section>\n",
+        );
+        write_project(&root, source);
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let preview_index = crate::preview::preprocess::SourceIdIndex::for_template_source(
+            "templates/index.html",
+            source,
+        );
+        let preview_source_id = preview_index
+            .source_id_for("templates/index.html:3:1")
+            .expect("preview span source identity")
+            .to_string();
+
+        let plan = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(preview_source_id),
+                target_location: Some(ProjectSourceEditLocation {
+                    file: "templates/index.html".to_string(),
+                    line: 3,
+                    column: 1,
+                }),
+                target_tag: Some("span".to_string()),
+                target_selector: Some("h1#title > span:nth-of-type(1)".to_string()),
+                attributes: vec![ProjectHtmlAttributeMutation::set(
+                    "class",
+                    "ps-build-visually-a1b2c3",
+                )],
+                zola_image: None,
+                native_block_option: None,
+            },
+            &HashMap::new(),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        assert!(plan
+            .patch
+            .expect("attribute patch")
+            .contents
+            .contains("<span class=\"ps-build-visually-a1b2c3\">{% if lang"));
+    }
+
+    #[test]
+    fn plan_html_attributes_prefers_committed_alias_over_pre_move_location() {
+        let root = unique_test_dir();
+        write_project(
+            &root,
+            concat!(
+                "<main>\n",
+                "<span>A</span>\n",
+                "<span>B</span>\n",
+                "<span>C</span>\n",
+                "</main>\n",
+            ),
+        );
+        let before = build_project_model(&root, &HashMap::new()).unwrap();
+        let mut spans = before
+            .source_graph
+            .nodes
+            .iter()
+            .filter(|node| node.label == "<span>")
+            .collect::<Vec<_>>();
+        spans.sort_by_key(|node| node.range.as_ref().expect("span range").start);
+        let moved_id = spans[0].id.clone();
+        let moved_range = spans[0].range.as_ref().expect("moved span range");
+        let old_location = ProjectSourceEditLocation {
+            file: spans[0].file.clone(),
+            line: moved_range.line,
+            column: moved_range.column,
+        };
+        let move_plan = plan_html_move(
+            &before,
+            &ProjectHtmlMoveIntent {
+                source_source_id: Some(moved_id.clone()),
+                target_source_id: Some(spans[2].id.clone()),
+                source_location: Some(old_location.clone()),
+                target_location: None,
+                source_tag: Some("span".to_string()),
+                target_tag: Some("span".to_string()),
+                source_selector: Some("main > span:nth-of-type(1)".to_string()),
+                target_selector: Some("main > span:nth-of-type(3)".to_string()),
+                position: ProjectMovePosition::After,
+            },
+            &HashMap::new(),
+        );
+        assert!(move_plan.allowed, "{:?}", move_plan.diagnostic);
+        let move_patch = move_plan.patch.expect("move patch");
+        let mut drafts = HashMap::new();
+        drafts.insert(move_patch.file, move_patch.contents);
+        let after_move = build_project_model(&root, &drafts).unwrap();
+        let aliases = html_identity_aliases(&before, &after_move);
+        assert!(aliases.contains_key(&moved_id), "missing moved span alias");
+
+        let attribute_plan = plan_html_attributes(
+            &after_move,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(moved_id),
+                target_location: Some(old_location),
+                target_tag: Some("span".to_string()),
+                target_selector: Some("main > span:nth-of-type(3)".to_string()),
+                attributes: vec![ProjectHtmlAttributeMutation::set(
+                    "class",
+                    "ps-title-a1b2c3",
+                )],
+                zola_image: None,
+                native_block_option: None,
+            },
+            &aliases,
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(attribute_plan.allowed, "{:?}", attribute_plan.diagnostic);
+        let contents = attribute_plan.patch.expect("attribute patch").contents;
+        assert!(contents.contains("<span class=\"ps-title-a1b2c3\">A</span>"));
+        assert!(contents.contains("<span>B</span>"));
     }
 
     #[test]

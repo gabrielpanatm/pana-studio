@@ -39,6 +39,7 @@ function gestureData(overrides = {}) {
     type: "gesture",
     agentInstanceId: "agent-4",
     documentEpoch: 4,
+    emittedAtMs: 1_785_460_000_000,
     gestureSequence: 9,
     gesture: "click",
     pointer: pointer(),
@@ -298,6 +299,7 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
   );
   assert.match(io, /bind_canvas_interaction_agent/);
   assert.match(io, /resolve_canvas_interaction_intent/);
+  assert.match(io, /resolve_canvas_drag_over_intent/);
   assert.match(io, /resolve_canvas_hover_intent/);
   assert.match(agent, /canvasAgentSelectionEnabled = false/);
   assert.match(agent, /postCanvasAgent\("agentActivated"/);
@@ -324,6 +326,8 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
   assert.match(agent, /permissionState === "allowed"/);
   assert.match(agent, /permissionState === "blocked"/);
   assert.match(agent, /canvasAgentDropAxis/);
+  assert.match(agent, /projectCanvasAgentDragPreview/);
+  assert.match(agent, /restoreCanvasAgentDragPreview/);
   assert.doesNotMatch(agent, /SOURCE_ID_ATTR|TEMPLATE_SOURCE_ID_ATTR|sourceId:/);
   assert.match(controller, /bindCanvasInteractionAgent/);
   assert.match(controller, /runtime\.phase = "activating"/);
@@ -331,6 +335,7 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
   assert.match(controller, /runtime\.phase = "active"/);
   assert.match(controller, /nextDocumentEpoch/);
   assert.match(controller, /resolveCanvasInteractionIntent/);
+  assert.match(controller, /resolveCanvasDragOverIntent/);
   assert.match(controller, /resolveCanvasHoverIntent/);
   assert.match(controller, /requestEditorEditScope/);
   assert.match(controller, /app\.moveEditorNavigationNode/);
@@ -346,6 +351,75 @@ test("Rust-first authority is mandatory and the legacy ingress is absent", () =>
     handler,
     /data\.type !== "selection"|preview-hover-clear|preview-context-menu|preview-pointerdown|preview-layer-drop|preview-tera-move-drop/,
   );
+});
+
+test("Canvas DragOver plans latest-wins and mutates DOM only after Drop", () => {
+  const controller = readFileSync(
+    new URL("../src/lib/state/canvas-interaction-controller.ts", import.meta.url),
+    "utf8",
+  );
+  const command = readFileSync(
+    new URL("../src-tauri/src/commands/editor_navigation.rs", import.meta.url),
+    "utf8",
+  );
+  const runtime = readFileSync(
+    new URL("../src-tauri/src/kernel/canvas_interaction.rs", import.meta.url),
+    "utf8",
+  );
+  const agent = readFileSync(
+    new URL("../src-tauri/src/preview/bridge/03_canvas_agent.js", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    controller,
+    /message\.gesture === "dragOver"[\s\S]*pendingDragOver = message[\s\S]*drainLatestCanvasDragOver\(app, runtime\)[\s\S]*return true/,
+  );
+  assert.match(
+    controller,
+    /runtime\.pendingDragOver[\s\S]*message\.gestureSequence !== runtime\.latestDragOverSequence[\s\S]*resolveCanvasDragOverIntent[\s\S]*currentBinding\(app, runtime\) !== binding[\s\S]*message\.gestureSequence !== runtime\.latestDragOverSequence[\s\S]*projectResolvedCanvasDragOver/,
+  );
+  assert.match(
+    command,
+    /fn resolve_canvas_drag_over_intent[\s\S]*resolve_drag_over[\s\S]*build_editor_move_plan[\s\S]*issue_editor_move_decision/,
+  );
+  assert.match(
+    runtime,
+    /fn resolve_drag_over[\s\S]*CanvasInteractionGesture::DragOver[\s\S]*last_accepted_ordered_sequence = request\.gesture_sequence[\s\S]*let projection = project/,
+  );
+  assert.match(controller, /type: "project-canvas-drag-preview"/);
+  assert.match(controller, /const liveProjection = plan\.liveProjection/);
+  assert.match(controller, /projection: liveProjection/);
+  const dragOverProjectionBlock = controller.slice(
+    controller.indexOf("function projectResolvedCanvasDragOver"),
+    controller.indexOf("function projectCanvasDropDomPreview"),
+  );
+  assert.doesNotMatch(dragOverProjectionBlock, /project-canvas-drag-preview/);
+  assert.match(
+    controller,
+    /projectCanvasDropDomPreview\([\s\S]*message\.gestureSequence,[\s\S]*message\.emittedAtMs,[\s\S]*plan,[\s\S]*app\.moveEditorNavigationNode/,
+  );
+  assert.match(
+    agent,
+    /dropGestureSequence = emitCanvasAgentGesture[\s\S]*canvasAgentPendingDrop = \{[\s\S]*gestureSequence: dropGestureSequence/,
+  );
+  assert.match(
+    agent,
+    /function projectCanvasAgentDragPreview[\s\S]*pendingDropMatches[\s\S]*!pendingDropMatches/,
+  );
+  assert.doesNotMatch(controller, /plan\.operation === "htmlSourceMove"/);
+  assert.match(
+    controller,
+    /dragOverTail = runtime\.dragOverTail[\s\S]*await dragOverTail[\s\S]*runtime\.dragOverTail !== dragOverTail/,
+  );
+  assert.match(
+    controller,
+    /const settledPreview = movePreview[\s\S]*targetNodeId = settledPreview\?\.targetNodeId[\s\S]*position = settledPreview\?\.position \?\? drag\.position/,
+  );
+  assert.match(
+    controller,
+    /app\.moveEditorNavigationNode\([\s\S]*targetNodeId,[\s\S]*position,[\s\S]*plan/,
+  );
+  assert.match(controller, /type: "cancel-canvas-drag-preview"/);
 });
 
 test("Canvas pointer hover has a dedicated latest-wins Rust lane", () => {

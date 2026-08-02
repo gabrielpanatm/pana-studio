@@ -40,14 +40,20 @@ const tabbedActivityWorkspaces = {
 test("workspaces-urile folosesc același model catalog plus panou contextual", () => {
   for (const [name, path] of Object.entries(workspaces)) {
     const workspace = source(path);
-    assert.match(workspace, /type DetailMode = "info" \| "create" \| "edit"/, name);
+    if (name === "content") {
+      assert.match(workspace, /type DetailMode = "info" \| "create"/, name);
+      assert.match(workspace, /app\.workbenchSnapshot\?\.contentWorkspace\.mode === "edit"/, name);
+      assert.match(workspace, /app\.openContentPageEditor\(page\.file\)/, name);
+    } else {
+      assert.match(workspace, /type DetailMode = "info" \| "create" \| "edit"/, name);
+      assert.match(workspace, /detailMode === "edit"/, name);
+    }
     assert.match(workspace, /class="workspace-header"/, name);
     assert.match(workspace, /class="workspace-toolbar"/, name);
     assert.match(workspace, /role="tablist"/, name);
     assert.match(workspace, /type="search"/, name);
     assert.match(workspace, /class="[^"]*\btoolbar-action\b[^"]*"/, name);
     assert.match(workspace, /detailMode === "create"/, name);
-    assert.match(workspace, /detailMode === "edit"/, name);
     assert.match(workspace, /t\("(?:design|components|content|assets|data)-add/, name);
     assert.doesNotMatch(workspace, /window\.(?:prompt|confirm)/, name);
   }

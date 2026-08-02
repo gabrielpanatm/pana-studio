@@ -60,12 +60,25 @@ export type CanvasAgentActivatedMessage = {
   documentEpoch: number;
 };
 
+export type CanvasAgentDragPreviewAppliedMessage = {
+  source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
+  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  type: "dragPreviewApplied";
+  agentInstanceId: string;
+  documentEpoch: number;
+  dragSessionId: string;
+  gestureSequence: number;
+  planToken: string;
+  dragPreviewAppliedMs: number;
+};
+
 export type CanvasAgentGestureMessage = {
   source: typeof CANVAS_AGENT_MESSAGE_SOURCE;
   schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
   type: "gesture";
   agentInstanceId: string;
   documentEpoch: number;
+  emittedAtMs: number;
   gestureSequence: number;
   gesture: CanvasInteractionGesture;
   pointer: CanvasPointerSample;
@@ -99,6 +112,7 @@ export type CanvasAgentActionMessage = {
 export type CanvasAgentMessage =
   | CanvasAgentReadyMessage
   | CanvasAgentActivatedMessage
+  | CanvasAgentDragPreviewAppliedMessage
   | CanvasAgentGestureMessage
   | CanvasAgentDomInspectionMessage
   | CanvasAgentActionMessage;
@@ -148,6 +162,38 @@ export function parseCanvasAgentMessage(
       type: "agentActivated",
       agentInstanceId,
       documentEpoch,
+    };
+  }
+  if (data.type === "dragPreviewApplied") {
+    const documentEpoch = positiveSafeInteger(data.documentEpoch);
+    const dragSessionId = boundedNonEmptyString(
+      data.dragSessionId,
+      MAX_DRAG_SESSION_ID_BYTES,
+    );
+    const gestureSequence = positiveSafeInteger(data.gestureSequence);
+    const planToken = boundedNonEmptyString(data.planToken, 256);
+    const dragPreviewAppliedMs = boundedSafeInteger(
+      data.dragPreviewAppliedMs,
+      0,
+      600_000,
+    );
+    if (
+      documentEpoch === null
+      || !dragSessionId
+      || gestureSequence === null
+      || !planToken
+      || dragPreviewAppliedMs === null
+    ) return null;
+    return {
+      source: CANVAS_AGENT_MESSAGE_SOURCE,
+      schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
+      type: "dragPreviewApplied",
+      agentInstanceId,
+      documentEpoch,
+      dragSessionId,
+      gestureSequence,
+      planToken,
+      dragPreviewAppliedMs,
     };
   }
   if (data.type === "domInspection") {
@@ -210,6 +256,7 @@ export function parseCanvasAgentMessage(
   if (data.type !== "gesture") return null;
 
   const documentEpoch = positiveSafeInteger(data.documentEpoch);
+  const emittedAtMs = positiveSafeInteger(data.emittedAtMs);
   const gestureSequence = positiveSafeInteger(data.gestureSequence);
   const gesture = enumValue(data.gesture, GESTURES);
   const pointer = parsePointer(data.pointer);
@@ -217,6 +264,7 @@ export function parseCanvasAgentMessage(
   const drag = parseDragSample(data.drag, gesture);
   if (
     documentEpoch === null
+    || emittedAtMs === null
     || gestureSequence === null
     || !gesture
     || !pointer
@@ -230,6 +278,7 @@ export function parseCanvasAgentMessage(
     type: "gesture",
     agentInstanceId,
     documentEpoch,
+    emittedAtMs,
     gestureSequence,
     gesture,
     pointer,
@@ -277,6 +326,7 @@ export function createCanvasInteractionRequest(
   return {
     schemaVersion: CANVAS_INTERACTION_SCHEMA_VERSION,
     identity,
+    emittedAtMs: message.emittedAtMs,
     gestureSequence: message.gestureSequence,
     gesture: message.gesture,
     pointer: message.pointer,

@@ -15,16 +15,18 @@ use tera::Context;
 use zola_site::{sass, BuildMode, Site, SITE_CONTENT};
 
 use crate::{
-    kernel::project_workspace::WorkspaceProjectionLease,
+    kernel::{
+        project_workspace::WorkspaceProjectionSnapshot, write_authority::PendingProjectAuthority,
+    },
     preview::{
         inject::{
             bind_canvas_identity_to_editor_html, bind_canvas_identity_to_initial_preview_html,
-            prepare_design_safe_html, prepare_initial_preview_html,
+            prepare_design_safe_html_with_resources, prepare_initial_preview_html_with_resources,
+            PreviewResourceVersions,
         },
         preprocess::{
             create_persistent_preview_artifact_root, persistent_project_workspace_session_root,
             remove_persistent_preview_artifact_root, remove_persistent_preview_session,
-            reset_persistent_preview_editor_cache, seed_persistent_preview_artifacts,
             sync_persistent_project_workspace, PersistentProjectionManifest,
             PersistentProjectionUpdate,
         },
@@ -125,10 +127,10 @@ impl PersistentZolaPreviewEngine {
             .unwrap_or_else(|_| zola_root.to_path_buf());
         let session_root =
             persistent_project_workspace_session_root(app, &zola_root, &owner.runtime_session_id)?;
-        // A runtime session is authoritative only inside this process. Remove
-        // any editor-preview residue left by an interrupted prior process;
-        // sandbox/browser caches live in separate namespaces.
-        reset_persistent_preview_editor_cache(app, &zola_root)?;
+        // Clear only this runtime session's private residue. A provisional
+        // opening of the same project must not invalidate the still-active
+        // session before the lifecycle commit point.
+        remove_persistent_preview_session(app, &zola_root, &session_root)?;
         let server = PersistentPreviewServer::start()?;
         Ok(Self {
             owner,
@@ -167,6 +169,20 @@ impl PersistentZolaPreviewEngine {
         }))
     }
 
+    pub fn generation_for_workspace_revision(
+        &self,
+        workspace_revision: u64,
+    ) -> Result<Option<Arc<ActivePreviewGeneration>>, String> {
+        self.server
+            .as_ref()
+            .ok_or_else(|| "Serverul Preview persistent a fost oprit.".to_string())?
+            .generation_for_workspace_revision(
+                &self.owner.project_root,
+                &self.owner.runtime_session_id,
+                workspace_revision,
+            )
+    }
+
     pub fn canvas_plan_for_identity(
         &self,
         identity: &crate::preview::CanvasProjectionIdentity,
@@ -188,18 +204,18 @@ impl PersistentZolaPreviewEngine {
     }
 
     /// Randă template-ul ales în motorul Zola deja încărcat și îl publică în
-    /// generația exactă a lease-ului. Generația poate fi încă staged: astfel
+    /// generația exactă a projection-ului. Generația poate fi încă staged: astfel
     /// Workbench-ul montat poate confirma chiar candidatul canonic, fără să
     /// revină temporar la pagina site-ului sau la generația precedentă.
     pub fn publish_template_workbench_view(
         &mut self,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         model: &ProjectModel,
         plan: &TemplateWorkbenchPlan,
     ) -> Result<TemplateWorkbenchPublication, String> {
         let started = Instant::now();
-        self.require_lease_owner(lease)?;
-        if model.project_root != Path::new(&lease.project_root) {
+        self.require_projection_owner(projection)?;
+        if model.project_root != Path::new(&projection.project_root) {
             return Err(
                 "Context de template a refuzat un ProjectModel din alt proiect.".to_string(),
             );
@@ -211,12 +227,12 @@ impl PersistentZolaPreviewEngine {
             .generation_for_workspace_revision(
                 &self.owner.project_root,
                 &self.owner.runtime_session_id,
-                lease.revision,
+                projection.revision,
             )?
             .ok_or_else(|| {
                 format!(
                     "Context de template nu găsește generația Preview exactă pentru revizia {}.",
-                    lease.revision
+                    projection.revision
                 )
             })?;
         let route = template_workbench_route(&plan.active_template.source_id);
@@ -244,7 +260,7 @@ impl PersistentZolaPreviewEngine {
             return Ok(TemplateWorkbenchPublication {
                 route,
                 preview_url,
-                workspace_revision: lease.revision,
+                workspace_revision: projection.revision,
                 preview_revision: generation.preview_revision.clone(),
                 canvas_plan: generation.canvas_transaction.plan(),
             });
@@ -261,13 +277,26 @@ impl PersistentZolaPreviewEngine {
         let annotated = CanvasGraph::annotate_rendered_document(model, &route, &rendered)?;
         let graph = CanvasGraph::from_rendered_documents(
             model,
-            lease.revision,
+            projection.revision,
             &generation.preview_revision,
             [(route.as_str(), annotated.as_str())],
         )?;
         let graph_ms = elapsed_ms(graph_started);
         let prepare_started = Instant::now();
-        let mut prepared = prepare_design_safe_html(&annotated, &generation.preview_revision)?;
+        let resource_versions = PreviewResourceVersions::from_entries(
+            generation
+                .canvas_transaction
+                .resources
+                .entries
+                .iter()
+                .map(|entry| (entry.url.clone(), entry.content_hash.clone())),
+        );
+        let mut prepared = prepare_design_safe_html_with_resources(
+            &annotated,
+            &generation.preview_revision,
+            &route,
+            &resource_versions,
+        )?;
         bind_canvas_identity_to_editor_html(
             &mut prepared,
             &generation.canvas_transaction.identity,
@@ -298,56 +327,93 @@ impl PersistentZolaPreviewEngine {
         Ok(TemplateWorkbenchPublication {
             route,
             preview_url,
-            workspace_revision: lease.revision,
+            workspace_revision: projection.revision,
             preview_revision: generation.preview_revision.clone(),
             canvas_plan: generation.canvas_transaction.plan(),
         })
     }
 
+    #[allow(dead_code)]
     pub fn render_candidate<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
     ) -> Result<PersistentPreviewCandidate, String> {
-        self.render_candidate_with_project_model(app, lease, None)
+        self.render_candidate_with_project_model_and_pending_authority(app, projection, None, None)
     }
 
     pub fn render_candidate_with_project_model<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         project_model: Option<&ProjectModel>,
     ) -> Result<PersistentPreviewCandidate, String> {
-        let model_root = PathBuf::from(&lease.project_root);
+        self.render_candidate_with_project_model_and_pending_authority(
+            app,
+            projection,
+            project_model,
+            None,
+        )
+    }
+
+    pub(crate) fn render_candidate_with_pending_project_authority<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        projection: &WorkspaceProjectionSnapshot,
+        pending_project_authority: &PendingProjectAuthority,
+    ) -> Result<PersistentPreviewCandidate, String> {
+        self.render_candidate_with_project_model_and_pending_authority(
+            app,
+            projection,
+            None,
+            Some(pending_project_authority),
+        )
+    }
+
+    fn render_candidate_with_project_model_and_pending_authority<R: Runtime>(
+        &mut self,
+        app: &AppHandle<R>,
+        projection: &WorkspaceProjectionSnapshot,
+        project_model: Option<&ProjectModel>,
+        pending_project_authority: Option<&PendingProjectAuthority>,
+    ) -> Result<PersistentPreviewCandidate, String> {
+        let model_root = PathBuf::from(&projection.project_root);
         thread::scope(|scope| {
             let model_task = if project_model.is_none() {
                 Some(scope.spawn(move || {
                     let started = Instant::now();
                     (
-                        build_project_model_from_workspace_projection(&model_root, lease),
+                        build_project_model_from_workspace_projection(&model_root, projection),
                         elapsed_ms(started),
                     )
                 }))
             } else {
                 None
             };
-            self.render_candidate_with_model_task(app, lease, project_model, model_task)
+            self.render_candidate_with_model_task(
+                app,
+                projection,
+                project_model,
+                model_task,
+                pending_project_authority,
+            )
         })
     }
 
     fn render_candidate_with_model_task<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         project_model: Option<&ProjectModel>,
         model_task: Option<thread::ScopedJoinHandle<'_, (Result<ProjectModel, String>, u64)>>,
+        pending_project_authority: Option<&PendingProjectAuthority>,
     ) -> Result<PersistentPreviewCandidate, String> {
         let candidate_started = Instant::now();
         let mut timings = PersistentPreviewCandidateTimings {
             project_model_cache_hit: project_model.is_some(),
             ..PersistentPreviewCandidateTimings::default()
         };
-        self.require_lease_owner(lease)?;
+        self.require_projection_owner(projection)?;
         self.collect_retired(app);
 
         let source_publication_started = Instant::now();
@@ -356,7 +422,8 @@ impl PersistentZolaPreviewEngine {
             &self.zola_root,
             &self.session_root,
             self.projection_manifest.as_ref(),
-            lease,
+            projection,
+            pending_project_authority,
         ) {
             Ok(update) => update,
             Err(error) => {
@@ -373,7 +440,7 @@ impl PersistentZolaPreviewEngine {
         self.projection_manifest = Some(update.manifest.clone());
 
         let result = (|| {
-            let preview_revision = next_preview_revision(lease.revision);
+            let preview_revision = next_preview_revision(projection.revision);
             let artifact_setup_started = Instant::now();
             let artifact_root = create_persistent_preview_artifact_root(
                 app,
@@ -385,7 +452,7 @@ impl PersistentZolaPreviewEngine {
                 app,
                 &update,
                 &artifact_root,
-                lease,
+                projection,
                 &preview_revision,
                 project_model,
                 model_task,
@@ -488,6 +555,10 @@ impl PersistentZolaPreviewEngine {
         app: &AppHandle<R>,
         candidate: PersistentPreviewCandidate,
     ) -> Result<(), String> {
+        if candidate.generation.inherited_assets.is_some() {
+            drop(candidate);
+            return Ok(());
+        }
         let artifact_root = candidate.generation.assets_root.clone();
         drop(candidate);
         remove_persistent_preview_artifact_root(app, &self.session_root, &artifact_root)
@@ -506,25 +577,29 @@ impl PersistentZolaPreviewEngine {
         app: &AppHandle<R>,
         update: &PersistentProjectionUpdate,
         artifact_root: &Path,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         preview_revision: &str,
         cached_project_model: Option<&ProjectModel>,
         model_task: Option<thread::ScopedJoinHandle<'_, (Result<ProjectModel, String>, u64)>>,
         timings: &mut PersistentPreviewCandidateTimings,
     ) -> Result<(ActivePreviewGeneration, ProjectModel), String> {
         let base_url = self.url()?;
-        let impact =
-            projection_render_impact(update, self.site.is_some(), !self.raw_content.is_empty());
-        let previous_assets_root = self
-            .active_generation()?
-            .map(|generation| generation.assets_root.clone());
+        let previous_generation = self.active_generation()?;
+        let impact = projection_render_impact(
+            update,
+            self.site.is_some() && previous_generation.is_some(),
+            !self.raw_content.is_empty(),
+        );
+        let mut generation_assets_root = artifact_root.to_path_buf();
+        let mut inherited_assets = None;
         let zola_render_started = Instant::now();
-        let rendered = with_zola_engine("randare Preview persistentă", || match impact {
+        let rendered = with_zola_engine("randare Preview persistentă", || {
+            match impact {
             ProjectionRenderImpact::Full => build_new_official_zola_site(
                 &update.projection_root,
                 artifact_root,
                 &base_url,
-                lease.revision,
+                projection.revision,
                 DraftRenderPolicy::Include,
             )
             .map(|(site, rendered)| {
@@ -536,21 +611,24 @@ impl PersistentZolaPreviewEngine {
                 .as_mut()
                 .ok_or_else(|| "Motorul Zola persistent nu are site activ.".to_string())
                 .and_then(|site| {
-                    if let Some(previous_assets_root) = previous_assets_root.as_deref() {
-                        seed_persistent_preview_artifacts(
-                            app,
-                            &self.session_root,
-                            previous_assets_root,
-                            artifact_root,
-                        )?;
-                    }
+                    let previous = previous_generation.clone().ok_or_else(|| {
+                        "Motorul Preview nu are generația de artifacte pentru reload-ul template-urilor."
+                            .to_string()
+                    })?;
+                    remove_persistent_preview_artifact_root(
+                        app,
+                        &self.session_root,
+                        artifact_root,
+                    )?;
+                    generation_assets_root = previous.assets_root.clone();
+                    inherited_assets = Some(previous);
                     site.set_base_url(base_url.clone());
-                    site.set_output_path(artifact_root);
+                    site.set_output_path(&generation_assets_root);
                     clear_site_content()?;
                     site.reload_templates().map_err(|error| {
                         format!(
                             "Zola 0.22.1 nu a putut reîncărca template-urile reviziei {}: {error}",
-                            lease.revision
+                            projection.revision
                         )
                     })?;
                     capture_site_content()
@@ -562,9 +640,10 @@ impl PersistentZolaPreviewEngine {
                 .and_then(|site| {
                     site.set_base_url(base_url.clone());
                     site.set_output_path(artifact_root);
-                    materialize_official_zola_assets(site, lease.revision)?;
+                    materialize_official_zola_assets(site, projection.revision)?;
                     Ok(self.raw_content.clone())
                 }),
+        }
         });
         timings.zola_render_ms = elapsed_ms(zola_render_started);
         let rendered = match rendered {
@@ -601,63 +680,49 @@ impl PersistentZolaPreviewEngine {
         self.raw_content = rendered.clone();
         timings.rendered_content_clone_ms = elapsed_ms(rendered_content_clone_started);
         let model = &project_model;
-        let (content, graph, resources, content_prepare_ms, canvas_graph_ms, resource_manifest_ms) =
-            thread::scope(|scope| {
-                let resource_manifest_task = scope.spawn(|| {
-                    let started = Instant::now();
-                    (
-                        CanvasResourceManifest::from_artifact_root(preview_revision, artifact_root),
-                        elapsed_ms(started),
-                    )
-                });
-                let content_and_graph = (|| {
-                    let content_prepare_started = Instant::now();
-                    let content = prepare_generation_content(model, rendered, preview_revision)?;
-                    let content_prepare_ms = elapsed_ms(content_prepare_started);
-                    let rendered_documents = content
-                        .iter()
-                        .filter_map(|(content_key, rendered)| match rendered {
-                            RenderedPreviewContent::Html(html) => Some((
-                                canvas_route_for_content_key(content_key),
-                                html.editor.as_str(),
-                            )),
-                            RenderedPreviewContent::InitialHtml(html) => Some((
-                                canvas_route_for_content_key(content_key),
-                                html.visitor.as_str(),
-                            )),
-                            RenderedPreviewContent::Text { .. } => None,
-                        })
-                        .collect::<Vec<_>>();
-                    let canvas_graph_started = Instant::now();
-                    let graph = CanvasGraph::from_rendered_documents(
-                        model,
-                        lease.revision,
-                        preview_revision,
-                        rendered_documents
-                            .iter()
-                            .map(|(route, html)| (route.as_str(), *html)),
-                    )?;
-                    Ok::<_, String>((
-                        content,
-                        graph,
-                        content_prepare_ms,
-                        elapsed_ms(canvas_graph_started),
-                    ))
-                })();
-                let resource_manifest = resource_manifest_task.join().map_err(|_| {
-                    "Task-ul manifestului de resurse Canvas a eșuat irecuperabil.".to_string()
-                })?;
-                let (content, graph, content_prepare_ms, canvas_graph_ms) = content_and_graph?;
-                let resources = resource_manifest.0?;
-                Ok::<_, String>((
-                    content,
-                    graph,
-                    resources,
-                    content_prepare_ms,
-                    canvas_graph_ms,
-                    resource_manifest.1,
-                ))
-            })?;
+        let resource_manifest_started = Instant::now();
+        let resources = if let Some(previous) = inherited_assets.as_ref() {
+            let mut reused = previous.canvas_transaction.resources.clone();
+            reused.preview_revision = preview_revision.to_string();
+            reused
+        } else {
+            CanvasResourceManifest::from_artifact_root(preview_revision, &generation_assets_root)?
+        };
+        let resource_manifest_ms = elapsed_ms(resource_manifest_started);
+        let resource_versions = PreviewResourceVersions::from_entries(
+            resources
+                .entries
+                .iter()
+                .map(|entry| (entry.url.clone(), entry.content_hash.clone())),
+        );
+        let content_prepare_started = Instant::now();
+        let content =
+            prepare_generation_content(model, rendered, preview_revision, &resource_versions)?;
+        let content_prepare_ms = elapsed_ms(content_prepare_started);
+        let rendered_documents = content
+            .iter()
+            .filter_map(|(content_key, rendered)| match rendered {
+                RenderedPreviewContent::Html(html) => Some((
+                    canvas_route_for_content_key(content_key),
+                    html.editor.as_str(),
+                )),
+                RenderedPreviewContent::InitialHtml(html) => Some((
+                    canvas_route_for_content_key(content_key),
+                    html.visitor.as_str(),
+                )),
+                RenderedPreviewContent::Text { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        let canvas_graph_started = Instant::now();
+        let graph = CanvasGraph::from_rendered_documents(
+            model,
+            projection.revision,
+            preview_revision,
+            rendered_documents
+                .iter()
+                .map(|(route, html)| (route.as_str(), *html)),
+        )?;
+        let canvas_graph_ms = elapsed_ms(canvas_graph_started);
         timings.content_prepare_ms = content_prepare_ms;
         timings.canvas_graph_ms = canvas_graph_ms;
         timings.resource_manifest_ms = resource_manifest_ms;
@@ -665,9 +730,9 @@ impl PersistentZolaPreviewEngine {
         let canvas_transaction = CanvasProjectionTransaction::prepared(
             &self.owner.project_root,
             &self.owner.runtime_session_id,
-            lease.revision,
+            projection.revision,
             preview_revision,
-            lease.workspace_transaction_id.clone(),
+            projection.workspace_transaction_id.clone(),
             PreviewImpact::from_projected_paths(&update.projected_paths, update.baseline_rebuilt),
             graph,
             resources,
@@ -680,12 +745,13 @@ impl PersistentZolaPreviewEngine {
             ActivePreviewGeneration {
                 project_root: self.owner.project_root.clone(),
                 runtime_session_id: self.owner.runtime_session_id.clone(),
-                workspace_revision: lease.revision,
+                workspace_revision: projection.revision,
                 preview_revision: preview_revision.to_string(),
                 canvas_transaction,
                 content,
                 workbench_content: Arc::new(RwLock::new(HashMap::new())),
-                assets_root: artifact_root.to_path_buf(),
+                assets_root: generation_assets_root,
+                inherited_assets,
             },
             project_model,
         ))
@@ -696,8 +762,11 @@ impl PersistentZolaPreviewEngine {
         for generation in self.retired.drain(..) {
             if Arc::strong_count(&generation) == 1 {
                 let root = generation.assets_root.clone();
+                let owns_assets = generation.inherited_assets.is_none();
                 drop(generation);
-                if remove_persistent_preview_artifact_root(app, &self.session_root, &root).is_err()
+                if owns_assets
+                    && remove_persistent_preview_artifact_root(app, &self.session_root, &root)
+                        .is_err()
                 {
                     // Cleanup is derived and retryable. Keep no stale authority;
                     // session teardown removes the whole bounded cache tree.
@@ -709,14 +778,17 @@ impl PersistentZolaPreviewEngine {
         self.retired = retained;
     }
 
-    fn require_lease_owner(&self, lease: &WorkspaceProjectionLease) -> Result<(), String> {
-        if lease.project_root != self.owner.project_root
-            || lease.runtime_session_id != self.owner.runtime_session_id
+    fn require_projection_owner(
+        &self,
+        projection: &WorkspaceProjectionSnapshot,
+    ) -> Result<(), String> {
+        if projection.project_root != self.owner.project_root
+            || projection.runtime_session_id != self.owner.runtime_session_id
         {
             return Err(format!(
-                "Motorul Preview refuză lease-ul altei sesiuni: primit {}/{}, activ {}/{}.",
-                lease.project_root,
-                lease.runtime_session_id,
+                "Motorul Preview refuză projection-ul altei sesiuni: primit {}/{}, activ {}/{}.",
+                projection.project_root,
+                projection.runtime_session_id,
                 self.owner.project_root,
                 self.owner.runtime_session_id
             ));
@@ -1411,6 +1483,8 @@ fn prepare_rendered_content(
     extension: Option<&str>,
     body: &str,
     preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
 ) -> Result<RenderedPreviewContent, String> {
     let content_type = match extension {
         Some("xml") => Some("text/xml; charset=utf-8"),
@@ -1424,7 +1498,12 @@ fn prepare_rendered_content(
             content_type: content_type.to_string(),
         }),
         None => Ok(RenderedPreviewContent::InitialHtml(
-            prepare_initial_preview_html(body, preview_revision)?,
+            prepare_initial_preview_html_with_resources(
+                body,
+                preview_revision,
+                document_route,
+                resource_versions,
+            )?,
         )),
     }
 }
@@ -1433,18 +1512,26 @@ fn prepare_generation_content(
     model: &ProjectModel,
     rendered: HashMap<String, String>,
     preview_revision: &str,
+    resource_versions: &PreviewResourceVersions,
 ) -> Result<HashMap<String, RenderedPreviewContent>, String> {
     let mut entries = rendered.into_iter().collect::<Vec<_>>();
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     let canvas_annotator = CanvasGraph::document_annotator(model);
     parallel_preview_map(&entries, |path, body| {
+        let document_route = canvas_route_for_content_key(path);
         let extension = Path::new(path).extension().and_then(|value| value.to_str());
         let prepared_body = if matches!(extension, Some("xml" | "json" | "txt")) {
             body.to_string()
         } else {
-            canvas_annotator.annotate(&canvas_route_for_content_key(path), body)?
+            canvas_annotator.annotate(&document_route, body)?
         };
-        prepare_rendered_content(extension, &prepared_body, preview_revision)
+        prepare_rendered_content(
+            extension,
+            &prepared_body,
+            preview_revision,
+            &document_route,
+            resource_versions,
+        )
     })
 }
 
@@ -1651,7 +1738,8 @@ mod tests {
         assert!(partial_html.contains("<article class=\"card\">Acasă</article>"));
         assert!(!partial_html.contains("<main class=\"layout\">"));
         let prepared_partial =
-            prepare_design_safe_html(&partial_html, "workbench-partial").unwrap();
+            crate::preview::inject::prepare_design_safe_html(&partial_html, "workbench-partial")
+                .unwrap();
         assert!(prepared_partial.editor.contains("/site.css"));
         assert!(!prepared_partial.editor.contains("/site.js"));
         assert!(prepared_partial.interactive.contains("/site.js"));
@@ -1842,13 +1930,21 @@ mod tests {
 
     #[test]
     fn zola_memory_content_types_match_official_serve_defaults() {
+        let resources = PreviewResourceVersions::default();
         assert!(matches!(
-            prepare_rendered_content(Some("xml"), "<xml/>", "r1").unwrap(),
+            prepare_rendered_content(Some("xml"), "<xml/>", "r1", "/feed.xml", &resources)
+                .unwrap(),
             RenderedPreviewContent::Text { content_type, .. } if content_type.starts_with("text/xml")
         ));
         assert!(matches!(
-            prepare_rendered_content(None, "<!doctype html><html><body></body></html>", "r1")
-                .unwrap(),
+            prepare_rendered_content(
+                None,
+                "<!doctype html><html><body></body></html>",
+                "r1",
+                "/",
+                &resources,
+            )
+            .unwrap(),
             RenderedPreviewContent::InitialHtml(_)
         ));
     }
@@ -2097,34 +2193,45 @@ Conținut draft vizibil în editor.
                 fs::read_to_string(zola_root.join("static/asset.txt")).unwrap(),
             ),
         ]);
-        let lease = |revision: u64,
-                     source_texts: HashMap<String, String>,
-                     changed_paths: HashSet<String>| WorkspaceProjectionLease {
-            project_root: project_root.clone(),
-            runtime_session_id: session_id.to_string(),
-            revision,
-            workspace_transaction_id: Some(format!("runtime-preview-{revision}")),
-            source_texts,
-            resource_bytes: HashMap::new(),
-            deleted_sources: HashSet::new(),
-            changed_paths,
-            accepted_disk: accepted_disk.clone(),
-        };
+        let projection =
+            |revision: u64,
+             source_texts: HashMap<String, String>,
+             changed_paths: HashSet<String>| WorkspaceProjectionSnapshot {
+                project_root: project_root.clone(),
+                runtime_session_id: session_id.to_string(),
+                revision,
+                workspace_transaction_id: Some(format!("runtime-preview-{revision}")),
+                source_texts,
+                resource_bytes: HashMap::new(),
+                deleted_sources: HashSet::new(),
+                changed_paths,
+                accepted_disk: accepted_disk.clone(),
+            };
         let owner = PersistentPreviewOwner::new(&project_root, session_id);
         let mut engine =
             PersistentZolaPreviewEngine::start(&app_handle, &zola_root, owner).unwrap();
 
         let first = engine
-            .render_candidate(&app_handle, &lease(1, source_texts.clone(), HashSet::new()))
+            .render_candidate(
+                &app_handle,
+                &projection(1, source_texts.clone(), HashSet::new()),
+            )
             .unwrap();
         assert_eq!(first.projection_publication.logical_publications, 1);
         assert_eq!(first.projection_publication.durability_operations, 2);
+        let first_materialized_entries = first.projection_publication.materialized_entries;
         let projected_template =
             fs::read_to_string(engine.session_root.join("source/templates/index.html")).unwrap();
         assert!(!source_texts["templates/index.html"].contains("data-pana-source-id"));
         assert!(projected_template.contains("data-pana-source-id"));
         let first_revision = first.generation.preview_revision.clone();
         stage_and_confirm(&mut engine, &app_handle, first);
+        let first_assets_root = engine
+            .active_generation()
+            .unwrap()
+            .unwrap()
+            .assets_root
+            .clone();
         let url = engine.url().unwrap();
         let first_document = read_http_document(&format!("{url}/")).unwrap();
         assert!(first_document.contains(&first_revision));
@@ -2135,12 +2242,33 @@ Conținut draft vizibil în editor.
             template_path.clone(),
             source_texts[&template_path].replace("<main>", "<main data-draft=\"two\">"),
         );
-        let second_lease = lease(
+        let second_projection = projection(
             2,
             source_texts.clone(),
             HashSet::from([template_path.clone()]),
         );
-        let second = engine.render_candidate(&app_handle, &second_lease).unwrap();
+        let second = engine
+            .render_candidate(&app_handle, &second_projection)
+            .unwrap();
+        assert_eq!(second.generation.assets_root, first_assets_root);
+        assert!(second.generation.inherited_assets.is_some());
+        assert!(second.projection_publication.reused_entries > 0);
+        assert!(
+            second.projection_publication.reflinked_files
+                + second.projection_publication.copied_fallback_files
+                > 0
+        );
+        assert!(second.projection_publication.materialized_entries < first_materialized_entries);
+        eprintln!(
+            "[Pană Studio][perf] preview_generation first_materialized_entries={} second_materialized_entries={} second_reused_entries={} second_reused_bytes={} second_reflinked_files={} second_copy_fallback_files={} inherited_artifacts={}",
+            first_materialized_entries,
+            second.projection_publication.materialized_entries,
+            second.projection_publication.reused_entries,
+            second.projection_publication.reused_bytes,
+            second.projection_publication.reflinked_files,
+            second.projection_publication.copied_fallback_files,
+            second.generation.inherited_assets.is_some(),
+        );
         let second_identity = second.generation.canvas_transaction.identity.clone();
         // Candidate construction is not publication.
         assert!(!read_http_document(&format!("{url}/"))
@@ -2149,8 +2277,8 @@ Conținut draft vizibil în editor.
         engine.stage_candidate(&app_handle, second).unwrap();
 
         let second_model = build_project_model_from_workspace_projection(
-            Path::new(&second_lease.project_root),
-            &second_lease,
+            Path::new(&second_projection.project_root),
+            &second_projection,
         )
         .unwrap();
         let workbench_plan =
@@ -2164,7 +2292,7 @@ Conținut draft vizibil în editor.
             )
             .unwrap();
         let workbench = engine
-            .publish_template_workbench_view(&second_lease, &second_model, &workbench_plan)
+            .publish_template_workbench_view(&second_projection, &second_model, &workbench_plan)
             .unwrap();
         assert_eq!(workbench.workspace_revision, 2);
         assert_eq!(workbench.preview_revision, second_identity.preview_revision);
@@ -2194,16 +2322,18 @@ Conținut draft vizibil în editor.
         let third = engine
             .render_candidate(
                 &app_handle,
-                &lease(
+                &projection(
                     3,
                     source_texts.clone(),
-                    // A real lease still reports every path dirty against
+                    // A real projection still reports every path dirty against
                     // Save; the projection result must expose only this
                     // revision-to-revision Sass delta.
                     HashSet::from([template_path.clone(), sass_path.clone()]),
                 ),
             )
             .unwrap();
+        assert!(third.generation.inherited_assets.is_none());
+        assert_ne!(third.generation.assets_root, first_assets_root);
         assert_eq!(third.projected_paths, vec![sass_path]);
         assert!(read_http_document(&format!("{url}/site.css"))
             .unwrap()
@@ -2217,7 +2347,7 @@ Conținut draft vizibil în editor.
         assert!(engine
             .render_candidate(
                 &app_handle,
-                &lease(4, source_texts, HashSet::from([template_path])),
+                &projection(4, source_texts, HashSet::from([template_path])),
             )
             .is_err());
         assert!(read_http_document(&format!("{url}/"))

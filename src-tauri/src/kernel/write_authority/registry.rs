@@ -136,6 +136,7 @@ fn validate_internal_path(owner: WriteOwner, segments: &[&str]) -> bool {
         WriteOwner::Workbench => session_tail(segments) == Some(&["workbench.json"][..]),
         WriteOwner::ProjectWorkspace => {
             session_tail(segments) == Some(&["project-workspace.json"][..])
+                || session_tail(segments) == Some(&["project-workspace.journal.jsonl"][..])
                 || session_tail(segments) == Some(&["project-open-recovery-decision.json"][..])
                 || matches!(session_tail(segments), Some(["project-workspace-save", file]) if file.ends_with(".json"))
         }
@@ -327,9 +328,21 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
         WriteDeclaration {
             category: WriteCategory::InternalAppWrite,
             owner: WriteOwner::ProjectWorkspace,
+            operations: vec![WriteOperationKind::AppendText],
+            path_authority:
+                "ApplicationHome.data/sessions/[project-id]/project-workspace.journal.jsonl",
+            atomicity: WriteAtomicity::AppendOnly,
+            conflict: ConflictPolicy::SingleOwnerInternal,
+            recovery: RecoveryPolicy::AppendOnlyJournal,
+            validation:
+                "ProjectWorkspace appends bounded, checksummed recovery deltas between periodic atomic checkpoints.",
+        },
+        WriteDeclaration {
+            category: WriteCategory::InternalAppWrite,
+            owner: WriteOwner::ProjectWorkspace,
             operations: vec![WriteOperationKind::RemoveFile],
             path_authority:
-                "ApplicationHome.data/sessions/[project-id]/{project-workspace.json|project-open-recovery-decision.json}",
+                "ApplicationHome.data/sessions/[project-id]/{project-workspace.json|project-workspace.journal.jsonl|project-open-recovery-decision.json}",
             atomicity: WriteAtomicity::FileLifecycle,
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::LoggedAtomicFile,

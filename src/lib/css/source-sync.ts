@@ -1,4 +1,6 @@
 import type { CssProperty, CssRuleContext } from "$lib/types";
+import { backgroundFromProperties } from "$lib/inspector/background-model";
+import { gridFromProperties } from "$lib/inspector/grid-model";
 
 export type CssViewport = CssRuleContext["viewport"];
 
@@ -30,6 +32,9 @@ export function cssRuleContextFromSource(
     : viewport === "desktop"
       ? baseRules
       : [];
+  const effectiveRules = viewport !== "desktop" && viewportBlock
+    ? [...baseRules, ...viewportRules]
+    : baseRules;
 
   return {
     file,
@@ -40,6 +45,10 @@ export function cssRuleContextFromSource(
     viewportRules,
     hasBaseRule: Boolean(baseBlock),
     hasViewportRule: viewport === "desktop" ? Boolean(baseBlock) : Boolean(viewportBlock),
+    background: backgroundFromProperties(effectiveRules),
+    grid: gridFromProperties(Object.fromEntries(
+      effectiveRules.map((rule) => [rule.property, rule.value]),
+    )),
   };
 }
 

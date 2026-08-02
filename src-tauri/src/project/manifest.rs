@@ -1,10 +1,12 @@
 use std::{collections::BTreeMap, fs, path::Path, time::UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::scope::is_derived_or_internal_dir;
 
 const MAX_MANIFEST_FILES: usize = 1000;
+const MAX_INSPECTION_ENTRIES: usize = 2_000;
 pub const ACCEPTED_PROJECT_DISK_MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -24,6 +26,14 @@ pub struct ProjectDiskManifestEntry {
     pub size: u64,
     #[serde(default)]
     pub version_token: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ProjectDiskInspection {
+    pub manifest: ProjectDiskManifest,
+    pub entry_count: usize,
+    pub inventory_truncated: bool,
+    pub inventory_fingerprint: String,
 }
 
 /// Runtime authority describing the exact disk snapshot accepted by the
@@ -214,6 +224,132 @@ pub fn read_project_disk_manifest(root: &Path) -> Result<ProjectDiskManifest, St
     })
 }
 
+/// Captures the startup inventory and accepted-disk manifest in one sorted
+/// traversal. The candidate token and the later ProjectLifecycle inspection
+/// therefore describe the same filesystem observation.
+pub(crate) fn inspect_project_disk(root: &Path) -> Result<ProjectDiskInspection, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("Nu am putut rezolva rădăcina proiectului: {error}"))?;
+    let output_root = crate::deploy::resolve_artifact_root(&root, &root).ok();
+    let mut files = Vec::new();
+    let mut manifest_truncated = false;
+    let mut inventory_records = Vec::new();
+    let mut inventory_truncated = false;
+    collect_inspection_entries(
+        &root,
+        &root,
+        &mut files,
+        &mut manifest_truncated,
+        &mut inventory_records,
+        &mut inventory_truncated,
+        output_root.as_deref(),
+    )?;
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    inventory_records.sort();
+    let mut hasher = Sha256::new();
+    for record in &inventory_records {
+        hasher.update(record.as_bytes());
+        hasher.update([0]);
+    }
+    Ok(ProjectDiskInspection {
+        manifest: ProjectDiskManifest {
+            root: root.to_string_lossy().to_string(),
+            files,
+            truncated: manifest_truncated,
+            max_files: MAX_MANIFEST_FILES,
+        },
+        entry_count: inventory_records.len(),
+        inventory_truncated,
+        inventory_fingerprint: format!("{:x}", hasher.finalize()),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_inspection_entries(
+    root: &Path,
+    current: &Path,
+    files: &mut Vec<ProjectDiskManifestEntry>,
+    manifest_truncated: &mut bool,
+    inventory_records: &mut Vec<String>,
+    inventory_truncated: &mut bool,
+    output_root: Option<&Path>,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(current)
+        .map_err(|error| format!("Nu am putut citi folderul {}: {error}", current.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "Nu am putut citi o intrare din {}: {error}",
+                current.display()
+            )
+        })?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        if inventory_records.len() >= MAX_INSPECTION_ENTRIES {
+            *inventory_truncated = true;
+            *manifest_truncated = true;
+            break;
+        }
+        let path = entry.path();
+        let relative_path = relative_project_path(root, &path)?;
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Nu am putut inspecta {}: {error}", path.display()))?;
+        let kind = if metadata.file_type().is_symlink() {
+            "symlink"
+        } else if metadata.is_dir() {
+            "directory"
+        } else if metadata.is_file() {
+            "file"
+        } else {
+            "other"
+        };
+        inventory_records.push(format!(
+            "{relative_path}\0{kind}\0{}",
+            project_disk_metadata_version_token(&metadata)
+        ));
+
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            if !should_skip_dir(&path, output_root) {
+                collect_inspection_entries(
+                    root,
+                    &path,
+                    files,
+                    manifest_truncated,
+                    inventory_records,
+                    inventory_truncated,
+                    output_root,
+                )?;
+            }
+            continue;
+        }
+        if !metadata.is_file() || !project_disk_manifest_tracks_relative_file(&relative_path) {
+            continue;
+        }
+        if files.len() >= MAX_MANIFEST_FILES {
+            *manifest_truncated = true;
+            continue;
+        }
+        let modified_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        files.push(ProjectDiskManifestEntry {
+            relative_path,
+            modified_ms,
+            size: metadata.len(),
+            version_token: project_disk_metadata_version_token(&metadata),
+        });
+    }
+    Ok(())
+}
+
 pub(crate) fn project_disk_manifest_changed_paths(
     before: &ProjectDiskManifest,
     after: &ProjectDiskManifest,
@@ -388,11 +524,31 @@ mod tests {
     };
 
     use super::{
-        project_disk_manifest_changed_paths, project_disk_metadata_version_token,
-        read_project_disk_manifest, AcceptedProjectDiskManifest,
+        inspect_project_disk, project_disk_manifest_changed_paths,
+        project_disk_metadata_version_token, read_project_disk_manifest,
+        AcceptedProjectDiskManifest,
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn startup_inspection_and_accepted_manifest_share_one_snapshot_contract() {
+        let root = test_root("unified-inspection");
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
+        fs::write(root.join("templates/index.html"), "ok").unwrap();
+
+        let inspection = inspect_project_disk(&root).unwrap();
+        let independently_read = read_project_disk_manifest(&root).unwrap();
+
+        assert_eq!(inspection.manifest, independently_read);
+        assert!(inspection.entry_count > inspection.manifest.files.len());
+        assert!(!inspection.inventory_truncated);
+        assert!(!inspection.inventory_fingerprint.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn metadata_version_token_changes_for_same_size_rewrite() {

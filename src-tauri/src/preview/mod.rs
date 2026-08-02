@@ -9,8 +9,9 @@ mod source_browser;
 pub mod preprocess;
 
 pub(crate) use canvas::{
-    CanvasBoundaryInstance, CanvasGraph, CanvasNodeOrigin, CanvasProjectionPlan,
-    CanvasProjectionTransaction, CanvasRenderNode, CanvasResourceManifest, PreviewImpact,
+    CanvasBoundaryInstance, CanvasGraph, CanvasMarkdownProvenanceState, CanvasNodeOrigin,
+    CanvasProjectionPlan, CanvasProjectionTransaction, CanvasRenderNode, CanvasResourceManifest,
+    PreviewImpact,
 };
 #[cfg(test)]
 pub(crate) use canvas::{CanvasBoundaryMarkerKind, CanvasDocumentGraph, CanvasNodeCapabilities};

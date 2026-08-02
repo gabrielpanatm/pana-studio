@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Mutex,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,6 +12,7 @@ use crate::{
         EditorNavigationOrigin, EditorNavigationSnapshot, EditorSourceProvenance,
         EditorSourceReference, EditorSourceResolution,
     },
+    kernel::project_workspace::SourceIdentityAliasTransition,
     preview::CanvasProjectionIdentity,
     source_graph::model::{SourceGraph, SourceNode, SourceNodeKind, SourceOrigin, SourceRange},
 };
@@ -20,6 +24,7 @@ pub const SELECTION_COORDINATOR_SCHEMA_VERSION: u32 = 1;
 pub enum SelectionSubjectKind {
     HtmlElement,
     TeraBoundary,
+    MarkdownBoundary,
     RuntimeElement,
 }
 
@@ -530,6 +535,23 @@ impl SelectionCoordinatorRuntime {
         source_graph: Option<&SourceGraph>,
         intent: SelectionIntent,
     ) -> Result<SelectionCoordinatorSnapshot, String> {
+        self.apply_with_source_alias_transition(
+            snapshot,
+            active_document_path,
+            source_graph,
+            None,
+            intent,
+        )
+    }
+
+    pub(crate) fn apply_with_source_alias_transition(
+        &self,
+        snapshot: &EditorNavigationSnapshot,
+        active_document_path: Option<&str>,
+        source_graph: Option<&SourceGraph>,
+        source_identity_alias_transition: Option<&SourceIdentityAliasTransition>,
+        intent: SelectionIntent,
+    ) -> Result<SelectionCoordinatorSnapshot, String> {
         let mut state = self
             .state
             .lock()
@@ -585,7 +607,13 @@ impl SelectionCoordinatorRuntime {
                 clear_selection(&mut state, snapshot, active_document_path)?;
             }
             SelectionIntent::Rebase => {
-                rebase_selection(&mut state, snapshot, active_document_path)?;
+                rebase_selection(
+                    &mut state,
+                    snapshot,
+                    active_document_path,
+                    source_graph,
+                    source_identity_alias_transition,
+                )?;
             }
             SelectionIntent::SetHover {
                 editor_node_id,
@@ -872,6 +900,8 @@ fn rebase_selection(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
     active_document_path: Option<&str>,
+    source_graph: Option<&SourceGraph>,
+    source_identity_alias_transition: Option<&SourceIdentityAliasTransition>,
 ) -> Result<(), String> {
     let Some(current) = state.selection.clone() else {
         return ensure_session(state, snapshot, active_document_path);
@@ -888,8 +918,20 @@ fn rebase_selection(
         state.hover = None;
         return Ok(());
     };
+    let source_identity_aliases = source_identity_alias_transition
+        .filter(|transition| {
+            transition.revision_before == current.canvas_identity.workspace_revision
+                && transition.revision_after == snapshot.identity.workspace_revision
+        })
+        .map(|transition| &transition.aliases);
 
-    match rebase_candidate(snapshot, anchor, current.provenance.as_ref()) {
+    match rebase_candidate(
+        snapshot,
+        anchor,
+        current.provenance.as_ref(),
+        source_graph,
+        source_identity_aliases,
+    ) {
         RebaseCandidate::Resolved(node) => {
             commit_node(
                 state,
@@ -1229,7 +1271,31 @@ fn rebase_candidate<'a>(
     snapshot: &'a EditorNavigationSnapshot,
     anchor: &SelectionAnchor,
     provenance: Option<&EditorSourceProvenance>,
+    source_graph: Option<&SourceGraph>,
+    source_identity_aliases: Option<&HashMap<String, String>>,
 ) -> RebaseCandidate<'a> {
+    if let Some(source_identity_aliases) = source_identity_aliases {
+        if let Some(source_node_id) = anchor.source_node_id.as_deref() {
+            match resolve_rebase_source_alias(
+                snapshot,
+                source_graph,
+                source_identity_aliases,
+                source_node_id,
+            ) {
+                SourceAliasResolution::Resolved(resolved_source_id) => {
+                    return rebase_candidate_for_source_id(snapshot, anchor, resolved_source_id);
+                }
+                SourceAliasResolution::Unresolved => {
+                    // A Rust-published transition is authoritative. Falling back
+                    // to a reused physical identity could select a sibling, so an
+                    // unresolved alias fails closed as not rendered.
+                    return RebaseCandidate::NotRendered;
+                }
+                SourceAliasResolution::NotAliased => {}
+            }
+        }
+    }
+
     if let Some(editor_node_id) = anchor.editor_node_id.as_deref() {
         if let Some(node) = snapshot.nodes.iter().find(|node| node.id == editor_node_id) {
             return RebaseCandidate::Resolved(node);
@@ -1281,6 +1347,78 @@ fn rebase_candidate<'a>(
         [node] => RebaseCandidate::Resolved(node),
         [] => RebaseCandidate::NotRendered,
         _ => RebaseCandidate::Ambiguous,
+    }
+}
+
+fn rebase_candidate_for_source_id<'a>(
+    snapshot: &'a EditorNavigationSnapshot,
+    anchor: &SelectionAnchor,
+    source_node_id: &str,
+) -> RebaseCandidate<'a> {
+    let source_matches: Vec<&EditorNavigationNode> = snapshot
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.source_node_id.as_deref() == Some(source_node_id)
+                && node.component_invocation_ids == anchor.component_invocation_ids
+                && node.block_source_instance_ids == anchor.block_source_instance_ids
+                && optional_anchor_matches(
+                    anchor.binding_path.as_deref(),
+                    node.binding_path.as_deref(),
+                )
+                && optional_anchor_matches(
+                    anchor.binding_key.as_deref(),
+                    node.binding_key.as_deref(),
+                )
+        })
+        .collect();
+    match source_matches.as_slice() {
+        [node] => RebaseCandidate::Resolved(node),
+        [] => RebaseCandidate::NotRendered,
+        _ => RebaseCandidate::Ambiguous,
+    }
+}
+
+enum SourceAliasResolution<'a> {
+    NotAliased,
+    Resolved(&'a str),
+    Unresolved,
+}
+
+fn resolve_rebase_source_alias<'a>(
+    snapshot: &EditorNavigationSnapshot,
+    source_graph: Option<&SourceGraph>,
+    aliases: &'a HashMap<String, String>,
+    source_node_id: &str,
+) -> SourceAliasResolution<'a> {
+    let Some(first) = aliases.get(source_node_id) else {
+        return SourceAliasResolution::NotAliased;
+    };
+    if first.trim().is_empty() || first == source_node_id {
+        return SourceAliasResolution::Unresolved;
+    }
+
+    let mut current = first.as_str();
+    let mut visited = HashSet::from([source_node_id.to_string()]);
+    loop {
+        if current.trim().is_empty() || !visited.insert(current.to_string()) {
+            return SourceAliasResolution::Unresolved;
+        }
+
+        let live_in_source_graph =
+            source_graph.is_some_and(|graph| graph.nodes.iter().any(|node| node.id == current));
+        let live_in_snapshot = snapshot
+            .nodes
+            .iter()
+            .any(|node| node.source_node_id.as_deref() == Some(current));
+        if live_in_source_graph || live_in_snapshot {
+            return SourceAliasResolution::Resolved(current);
+        }
+
+        let Some(next) = aliases.get(current).map(String::as_str) else {
+            return SourceAliasResolution::Unresolved;
+        };
+        current = next;
     }
 }
 
@@ -1559,6 +1697,7 @@ fn subject_kind(kind: EditorNavigationNodeKind) -> SelectionSubjectKind {
     match kind {
         EditorNavigationNodeKind::HtmlElement => SelectionSubjectKind::HtmlElement,
         EditorNavigationNodeKind::TeraBoundary => SelectionSubjectKind::TeraBoundary,
+        EditorNavigationNodeKind::MarkdownBoundary => SelectionSubjectKind::MarkdownBoundary,
         EditorNavigationNodeKind::RuntimeElement => SelectionSubjectKind::RuntimeElement,
     }
 }
@@ -1780,8 +1919,12 @@ fn inspector_summary(
             reason = Some(InspectorSelectionSummaryReason::InspectionDisabled);
         }
         SelectionResolution::Resolved
-            if subject
-                .is_some_and(|subject| subject.kind == SelectionSubjectKind::TeraBoundary) =>
+            if subject.is_some_and(|subject| {
+                matches!(
+                    subject.kind,
+                    SelectionSubjectKind::TeraBoundary | SelectionSubjectKind::MarkdownBoundary
+                )
+            }) =>
         {
             state_value = InspectorSelectionSummaryState::Resolved;
             reason = None;
@@ -2199,6 +2342,233 @@ mod tests {
             )
             .unwrap();
         assert_eq!(receipt.selection.resolution, SelectionResolution::Ambiguous);
+        assert!(receipt
+            .selection
+            .projections
+            .preview
+            .render_instance_ids
+            .is_empty());
+    }
+
+    #[test]
+    fn rebase_prefers_source_alias_over_a_physical_identity_reused_by_the_next_sibling() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let original = snapshot(
+            "tx-before-class",
+            vec![
+                node(
+                    "editor_render:first",
+                    "source:plain-span-0",
+                    "render:first",
+                    None,
+                    range(10, 20),
+                ),
+                node(
+                    "editor_render:selected",
+                    "source:plain-span-1",
+                    "render:selected",
+                    None,
+                    range(21, 31),
+                ),
+                node(
+                    "editor_render:third",
+                    "source:plain-span-2",
+                    "render:third",
+                    None,
+                    range(32, 42),
+                ),
+            ],
+        );
+        runtime
+            .apply(
+                &original,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:selected".to_string(),
+                },
+            )
+            .unwrap();
+
+        // Adăugarea clasei schimbă label-ul semantic al span-ului selectat.
+        // Al treilea span preia astfel occurrence-ul, source ID-ul și ID-urile
+        // fizice pe care le avea înainte al doilea span.
+        let mut projected = snapshot(
+            "tx-after-class",
+            vec![
+                node(
+                    "editor_render:first",
+                    "source:plain-span-0",
+                    "render:first",
+                    None,
+                    range(10, 20),
+                ),
+                node(
+                    "editor_render:generated-class",
+                    "source:class-span-0",
+                    "render:generated-class",
+                    None,
+                    range(21, 50),
+                ),
+                node(
+                    "editor_render:selected",
+                    "source:plain-span-1",
+                    "render:selected",
+                    None,
+                    range(51, 61),
+                ),
+            ],
+        );
+        projected.identity.workspace_revision = 8;
+        let transition = SourceIdentityAliasTransition {
+            revision_before: 7,
+            revision_after: 8,
+            aliases: HashMap::from([
+                (
+                    "source:plain-span-1".to_string(),
+                    "source:class-span-0".to_string(),
+                ),
+                (
+                    "source:plain-span-2".to_string(),
+                    "source:plain-span-1".to_string(),
+                ),
+            ]),
+        };
+        let receipt = runtime
+            .apply_with_source_alias_transition(
+                &projected,
+                Some("templates/index.html"),
+                None,
+                Some(&transition),
+                SelectionIntent::Rebase,
+            )
+            .unwrap();
+
+        let anchor = receipt.selection.anchor.unwrap();
+        assert_eq!(receipt.selection.resolution, SelectionResolution::Resolved);
+        assert_eq!(
+            anchor.source_node_id.as_deref(),
+            Some("source:class-span-0")
+        );
+        assert_eq!(
+            anchor.editor_node_id.as_deref(),
+            Some("editor_render:generated-class")
+        );
+        assert_eq!(
+            anchor.render_instance_id.as_deref(),
+            Some("render:generated-class")
+        );
+
+        runtime
+            .apply(
+                &projected,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:selected".to_string(),
+                },
+            )
+            .unwrap();
+        let same_revision = runtime
+            .apply_with_source_alias_transition(
+                &projected,
+                Some("templates/index.html"),
+                None,
+                Some(&transition),
+                SelectionIntent::Rebase,
+            )
+            .unwrap();
+        let anchor = same_revision.selection.anchor.unwrap();
+        assert_eq!(
+            anchor.source_node_id.as_deref(),
+            Some("source:plain-span-1")
+        );
+        assert_eq!(
+            anchor.editor_node_id.as_deref(),
+            Some("editor_render:selected")
+        );
+
+        let mut unrelated_revision = projected.clone();
+        unrelated_revision.identity.workspace_revision = 9;
+        unrelated_revision.identity.transaction_id = "tx-unrelated-change".to_string();
+        unrelated_revision.identity.preview_revision = "preview-unrelated-change".to_string();
+        let after_unrelated_change = runtime
+            .apply_with_source_alias_transition(
+                &unrelated_revision,
+                Some("templates/index.html"),
+                None,
+                Some(&transition),
+                SelectionIntent::Rebase,
+            )
+            .unwrap();
+        let anchor = after_unrelated_change.selection.anchor.unwrap();
+        assert_eq!(
+            anchor.source_node_id.as_deref(),
+            Some("source:plain-span-1")
+        );
+        assert_eq!(
+            anchor.editor_node_id.as_deref(),
+            Some("editor_render:selected")
+        );
+    }
+
+    #[test]
+    fn an_unresolved_published_alias_cannot_fall_back_to_a_reused_physical_identity() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let original = snapshot(
+            "tx-before-transition",
+            vec![node(
+                "editor_render:reused",
+                "source:before",
+                "render:reused",
+                None,
+                range(10, 20),
+            )],
+        );
+        runtime
+            .apply(
+                &original,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:reused".to_string(),
+                },
+            )
+            .unwrap();
+
+        let mut projected = snapshot(
+            "tx-after-transition",
+            vec![node(
+                "editor_render:reused",
+                "source:before",
+                "render:reused",
+                None,
+                range(30, 40),
+            )],
+        );
+        projected.identity.workspace_revision = 8;
+        let transition = SourceIdentityAliasTransition {
+            revision_before: 7,
+            revision_after: 8,
+            aliases: HashMap::from([(
+                "source:before".to_string(),
+                "source:not-rendered".to_string(),
+            )]),
+        };
+        let receipt = runtime
+            .apply_with_source_alias_transition(
+                &projected,
+                Some("templates/index.html"),
+                None,
+                Some(&transition),
+                SelectionIntent::Rebase,
+            )
+            .unwrap();
+
+        assert_eq!(
+            receipt.selection.resolution,
+            SelectionResolution::NotRendered
+        );
         assert!(receipt
             .selection
             .projections

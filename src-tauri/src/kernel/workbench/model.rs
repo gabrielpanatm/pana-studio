@@ -40,8 +40,25 @@ pub enum WorkbenchActivity {
 pub enum WorkbenchSurface {
     #[default]
     Visual,
+    #[serde(alias = "markdown")]
     Code,
-    Markdown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentWorkspaceMode {
+    #[default]
+    List,
+    Edit,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentWorkspaceSnapshot {
+    #[serde(default)]
+    pub mode: ContentWorkspaceMode,
+    #[serde(default)]
+    pub page_path: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -184,6 +201,8 @@ pub struct WorkbenchSnapshot {
     pub groups: Vec<WorkbenchGroupSnapshot>,
     pub bottom_panel: WorkbenchBottomPanelSnapshot,
     #[serde(default)]
+    pub content_workspace: ContentWorkspaceSnapshot,
+    #[serde(default)]
     pub selected_project_entry: Option<WorkbenchProjectEntrySelection>,
 }
 
@@ -254,6 +273,9 @@ pub enum WorkbenchIntent {
     SetActivity {
         activity: WorkbenchActivity,
     },
+    OpenContentPage {
+        relative_path: String,
+    },
     SetBottomPanel {
         open: bool,
         active_view: WorkbenchBottomPanelView,
@@ -274,7 +296,7 @@ pub struct WorkbenchCommandReceipt {
 
 #[cfg(test)]
 mod tests {
-    use super::{WorkbenchActivity, WorkbenchBottomPanelView};
+    use super::{WorkbenchActivity, WorkbenchBottomPanelView, WorkbenchSurface};
 
     #[test]
     fn legacy_site_activity_migrates_to_templates() {
@@ -285,6 +307,18 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&activity).expect("templates activity"),
             r#""templates""#,
+        );
+    }
+
+    #[test]
+    fn legacy_markdown_surface_migrates_to_code() {
+        let surface: WorkbenchSurface =
+            serde_json::from_str(r#""markdown""#).expect("legacy Markdown surface");
+
+        assert_eq!(surface, WorkbenchSurface::Code);
+        assert_eq!(
+            serde_json::to_string(&surface).expect("code surface"),
+            r#""code""#,
         );
     }
 

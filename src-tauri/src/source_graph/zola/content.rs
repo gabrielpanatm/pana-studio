@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, path::Path};
 
 use toml_edit::DocumentMut;
+use zola_config::Config;
+use zola_utils::slugs::slugify_paths;
 
 use crate::source_graph::{
     literals::find_first_string_literal,
@@ -14,6 +16,8 @@ pub(crate) struct ZolaContentFrontmatter {
     pub(crate) title: Option<String>,
     pub(crate) template: Option<String>,
     pub(crate) page_template: Option<String>,
+    pub(crate) slug: Option<String>,
+    pub(crate) path: Option<String>,
     pub(crate) taxonomies: BTreeMap<String, Vec<String>>,
 }
 
@@ -34,6 +38,8 @@ pub(crate) fn parse_zola_content_frontmatter(source: &str) -> ZolaContentFrontma
         title: frontmatter_string_value(frontmatter, "title"),
         template: frontmatter_string_value(frontmatter, "template"),
         page_template: frontmatter_string_value(frontmatter, "page_template"),
+        slug: frontmatter_string_value(frontmatter, "slug"),
+        path: frontmatter_string_value(frontmatter, "path"),
         taxonomies: parse_taxonomies(frontmatter, marker),
     }
 }
@@ -294,17 +300,94 @@ pub(crate) fn rewrite_zola_content_load_reference(
     ))
 }
 
-pub(crate) fn zola_content_url(zola_root: &Path, path: &Path) -> String {
-    let content_path = zola_content_relative_path(zola_root, path)
-        .trim_end_matches(".md")
-        .to_string();
-    if content_path == "_index" {
-        return "/".to_string();
+pub(crate) fn zola_content_url(
+    zola_root: &Path,
+    path: &Path,
+    frontmatter: &ZolaContentFrontmatter,
+    config: Option<&Config>,
+) -> String {
+    let relative = zola_content_relative_path(zola_root, path);
+    let relative_path = Path::new(&relative);
+    let raw_stem = relative_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or_default();
+    let default_language = config
+        .map(|config| config.default_language.as_str())
+        .unwrap_or("en");
+    let other_languages = config
+        .map(Config::other_languages_codes)
+        .unwrap_or_default();
+    let mut name = raw_stem;
+    let mut language = default_language;
+    if let Some((candidate_name, candidate_language)) = raw_stem.split_once('.') {
+        if candidate_language != default_language && other_languages.contains(&candidate_language) {
+            name = candidate_name;
+            language = candidate_language;
+        }
     }
-    if let Some(section_path) = content_path.strip_suffix("/_index") {
-        return format!("/{}/", section_path.trim_matches('/'));
+    let directories = relative_path
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    let mut route_segments = Vec::new();
+    if language != default_language {
+        route_segments.push(language.to_string());
     }
-    format!("/{}/", content_path.trim_matches('/'))
+
+    if name == "_index" {
+        route_segments.extend(directories);
+        return route_from_segments(&route_segments);
+    }
+
+    if let Some(explicit_path) = frontmatter.path.as_deref().map(str::trim) {
+        let normalized = explicit_path.trim_matches('/');
+        return if normalized.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{normalized}/")
+        };
+    }
+
+    let colocated_index = name == "index" && !directories.is_empty();
+    let mut page_components = directories.clone();
+    if colocated_index {
+        page_components.pop();
+    }
+    route_segments.extend(page_components);
+    let file_path_for_slug = if name == "index" {
+        directories.last().map(String::as_str).unwrap_or(name)
+    } else {
+        name
+    };
+    let slug = frontmatter
+        .slug
+        .as_deref()
+        .map(|slug| {
+            config
+                .map(|config| slugify_paths(slug, config.slugify.paths))
+                .unwrap_or_else(|| slug.to_string())
+        })
+        .unwrap_or_else(|| {
+            config
+                .map(|config| slugify_paths(file_path_for_slug, config.slugify.paths))
+                .unwrap_or_else(|| file_path_for_slug.to_string())
+        });
+    if name != "index" || colocated_index {
+        route_segments.push(slug);
+    }
+    route_from_segments(&route_segments)
+}
+
+fn route_from_segments(segments: &[String]) -> String {
+    if segments.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}/", segments.join("/"))
+    }
 }
 
 pub(crate) fn zola_content_relative_path(zola_root: &Path, path: &Path) -> String {
@@ -396,7 +479,7 @@ mod tests {
     #[test]
     fn parses_zola_content_frontmatter_values() {
         let source =
-            "+++\ntitle = \"About\"\ntemplate = \"templates/about.html\"\npage_template = 'blog/page.html'\n+++\n";
+            "+++\ntitle = \"About\"\ntemplate = \"templates/about.html\"\npage_template = 'blog/page.html'\nslug = \"about-us\"\npath = \"company/about\"\n+++\n";
 
         let frontmatter = parse_zola_content_frontmatter(source);
 
@@ -406,6 +489,8 @@ mod tests {
             Some("templates/about.html")
         );
         assert_eq!(frontmatter.page_template.as_deref(), Some("blog/page.html"));
+        assert_eq!(frontmatter.slug.as_deref(), Some("about-us"));
+        assert_eq!(frontmatter.path.as_deref(), Some("company/about"));
     }
 
     #[test]
@@ -474,9 +559,45 @@ mod tests {
             .as_deref(),
             Some("custom/page.html")
         );
-        assert_eq!(zola_content_url(&zola_root, &home), "/");
-        assert_eq!(zola_content_url(&zola_root, &section), "/blog/");
-        assert_eq!(zola_content_url(&zola_root, &page), "/blog/post/");
+        let frontmatter = ZolaContentFrontmatter::default();
+        assert_eq!(zola_content_url(&zola_root, &home, &frontmatter, None), "/");
+        assert_eq!(
+            zola_content_url(&zola_root, &section, &frontmatter, None),
+            "/blog/"
+        );
+        assert_eq!(
+            zola_content_url(&zola_root, &page, &frontmatter, None),
+            "/blog/post/"
+        );
+    }
+
+    #[test]
+    fn resolves_multilingual_and_frontmatter_routes_with_zola_config() {
+        let zola_root = PathBuf::from("/project");
+        let config = Config::parse(
+            "base_url = 'https://example.test'\ndefault_language = 'ro'\n[languages.en]\n",
+        )
+        .unwrap();
+        let home = zola_root.join("content/_index.en.md");
+        let page = zola_root.join("content/comunitate.en.md");
+        let translated = ZolaContentFrontmatter {
+            slug: Some("community".to_string()),
+            ..ZolaContentFrontmatter::default()
+        };
+
+        assert_eq!(
+            zola_content_url(
+                &zola_root,
+                &home,
+                &ZolaContentFrontmatter::default(),
+                Some(&config),
+            ),
+            "/en/",
+        );
+        assert_eq!(
+            zola_content_url(&zola_root, &page, &translated, Some(&config)),
+            "/en/community/",
+        );
     }
 
     #[test]

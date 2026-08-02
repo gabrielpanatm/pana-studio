@@ -598,6 +598,7 @@ fn validate_append_recovery_owner(
             "project-transition-decisions.jsonl"
                 | "project-transition-decision-recovery-acknowledgements.jsonl"
         ),
+        "project_workspace" => leaf == "project-workspace.journal.jsonl",
         _ => false,
     };
     if !allowed {

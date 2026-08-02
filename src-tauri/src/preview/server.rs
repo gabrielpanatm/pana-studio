@@ -58,6 +58,10 @@ pub(crate) struct ActivePreviewGeneration {
     /// poate înlocui sau falsifica ruta unei pagini Zola.
     pub workbench_content: Arc<RwLock<HashMap<String, TemplateWorkbenchProjection>>>,
     pub assets_root: PathBuf,
+    /// Template-only generations reuse the exact immutable artifact generation
+    /// they were rendered against. Holding its Arc keeps that root alive
+    /// without copying every CSS/static artifact into another directory.
+    pub inherited_assets: Option<Arc<ActivePreviewGeneration>>,
 }
 
 impl ActivePreviewGeneration {
@@ -125,6 +129,22 @@ impl PreviewGenerationRegistry {
                     .find(|generation| generation.preview_revision == preview_revision)
                     .cloned()
             })
+    }
+
+    fn resolve_resource(
+        &self,
+        decoded_path: &str,
+        content_hash: &str,
+    ) -> Option<Arc<ActivePreviewGeneration>> {
+        let matches = |generation: &&Arc<ActivePreviewGeneration>| {
+            generation_resource_matches(generation, decoded_path, content_hash)
+        };
+        self.active
+            .iter()
+            .find(matches)
+            .cloned()
+            .or_else(|| self.staged.values().find(matches).cloned())
+            .or_else(|| self.retired.iter().find(matches).cloned())
     }
 
     fn resolve_identity(
@@ -477,10 +497,16 @@ fn serve_request(
         request_header(&request, "referer")
             .and_then(|referer| requested_preview_revision(referer).ok().flatten())
     });
-    let generation = active
+    let requested_resource_hash = requested_resource_hash(&request_target)?;
+    let registry = active
         .read()
-        .map_err(|_| "Snapshot-ul Preview persistent este indisponibil.".to_string())?
-        .resolve(requested_revision.as_deref());
+        .map_err(|_| "Snapshot-ul Preview persistent este indisponibil.".to_string())?;
+    let generation = if let Some(content_hash) = requested_resource_hash.as_deref() {
+        registry.resolve_resource(&decoded, content_hash)
+    } else {
+        registry.resolve(requested_revision.as_deref())
+    };
+    drop(registry);
     let Some(generation) = generation else {
         return Ok(plain_response(
             "HTTP/1.1 503 Service Unavailable",
@@ -511,7 +537,7 @@ fn serve_request(
             ));
         }
     }
-    let exact_revision_lease =
+    let exact_revision_identity =
         requested_revision.as_deref() == Some(generation.preview_revision.as_str());
 
     if decoded.starts_with("/__pana_workbench/") {
@@ -553,7 +579,7 @@ fn serve_request(
     }
 
     if let Some(asset) = read_asset(&generation.assets_root, &decoded)? {
-        let etag = exact_revision_lease
+        let etag = (exact_revision_identity || requested_resource_hash.is_some())
             .then(|| resource_etag(&generation, &decoded))
             .flatten();
         return Ok(asset_response(
@@ -578,6 +604,20 @@ fn serve_request(
 
 fn requested_preview_revision(request_target: &str) -> Result<Option<String>, String> {
     requested_internal_identity(request_target, "__pana_preview_revision", "previewRevision")
+}
+
+fn requested_resource_hash(request_target: &str) -> Result<Option<String>, String> {
+    let hash = requested_internal_identity(request_target, "__pana_resource_hash", "resourceHash")?;
+    if hash.as_deref().is_some_and(|value| {
+        value.len() != "sha256-".len() + 64
+            || !value.starts_with("sha256-")
+            || !value["sha256-".len()..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err("resourceHash din URL este invalid.".to_string());
+    }
+    Ok(hash)
 }
 
 fn requested_canvas_transaction(request_target: &str) -> Result<Option<String>, String> {
@@ -800,6 +840,7 @@ fn is_internal_query(part: &&str) -> bool {
     matches!(
         part.split_once('=').map(|(name, _)| name).unwrap_or(part),
         "__pana_preview_revision"
+            | "__pana_resource_hash"
             | "__pana_canvas_transaction"
             | "__pana_reload"
             | "__pana_interactive_restart"
@@ -865,6 +906,20 @@ fn resource_etag(generation: &ActivePreviewGeneration, decoded_path: &str) -> Op
         .iter()
         .find(|entry| entry.url == normalized)
         .map(|entry| format!("\"{}\"", entry.content_hash))
+}
+
+fn generation_resource_matches(
+    generation: &ActivePreviewGeneration,
+    decoded_path: &str,
+    content_hash: &str,
+) -> bool {
+    let normalized = format!("/{}", decoded_path.trim_start_matches('/'));
+    generation
+        .canvas_transaction
+        .resources
+        .entries
+        .iter()
+        .any(|entry| entry.url == normalized && entry.content_hash == content_hash)
 }
 
 fn asset_response(
@@ -976,6 +1031,7 @@ mod tests {
                 )]),
                 workbench_content: Arc::new(RwLock::new(HashMap::new())),
                 assets_root: std::env::temp_dir(),
+                inherited_assets: None,
             }));
 
         let response = request_preview(&active, "/blog/?__pana_preview_revision=preview-12");
@@ -1046,6 +1102,7 @@ mod tests {
                 content,
                 workbench_content: Arc::new(RwLock::new(HashMap::new())),
                 assets_root: std::env::temp_dir(),
+                inherited_assets: None,
             }));
 
         let missing = request_preview(
@@ -1107,6 +1164,7 @@ mod tests {
                 content: HashMap::new(),
                 workbench_content,
                 assets_root: std::env::temp_dir(),
+                inherited_assets: None,
             }));
 
         let missing_revision = request_preview(&active, &route);
@@ -1155,6 +1213,7 @@ mod tests {
                 content: HashMap::new(),
                 workbench_content: Arc::new(RwLock::new(HashMap::new())),
                 assets_root: std::env::temp_dir(),
+                inherited_assets: None,
             })
         };
         let acknowledge_all =
@@ -1227,6 +1286,7 @@ mod tests {
                 content: HashMap::new(),
                 workbench_content: Arc::new(RwLock::new(HashMap::new())),
                 assets_root: std::env::temp_dir(),
+                inherited_assets: None,
             })
         };
         let mut registry = PreviewGenerationRegistry::default();
@@ -1266,6 +1326,7 @@ mod tests {
             content: HashMap::new(),
             workbench_content: Arc::new(RwLock::new(HashMap::new())),
             assets_root: std::env::temp_dir(),
+            inherited_assets: None,
         });
         registry.stage(Arc::clone(&generation));
         assert!(registry.resolve(None).is_none());
@@ -1280,6 +1341,13 @@ mod tests {
 
         let exact = generation.canvas_transaction.identity.clone();
         assert!(registry.resolve_identity(&exact).is_some());
+        assert_eq!(
+            registry
+                .resolve_workspace_revision("/project", "runtime", 9)
+                .unwrap()
+                .preview_revision,
+            "preview-9"
+        );
         for foreign in [
             CanvasProjectionIdentity {
                 project_root: "/foreign".to_string(),
@@ -1303,6 +1371,87 @@ mod tests {
             },
         ] {
             assert!(registry.resolve_identity(&foreign).is_none());
+        }
+    }
+
+    #[test]
+    fn content_addressed_resource_resolves_exact_bytes_across_generations() {
+        fn generation(
+            workspace_revision: u64,
+            preview_revision: &str,
+            content_hash: &str,
+        ) -> Arc<ActivePreviewGeneration> {
+            let mut canvas_transaction =
+                CanvasProjectionTransaction::test_fixture(workspace_revision, preview_revision);
+            canvas_transaction.resources.total_bytes = 6;
+            canvas_transaction.resources.entries =
+                vec![crate::preview::canvas::CanvasResourceEntry {
+                    url: "/css/site.css".to_string(),
+                    content_hash: content_hash.to_string(),
+                    size_bytes: 6,
+                    content_type: "text/css".to_string(),
+                    kind: crate::preview::canvas::CanvasResourceKind::Stylesheet,
+                }];
+            Arc::new(ActivePreviewGeneration {
+                project_root: "/project".to_string(),
+                runtime_session_id: "runtime".to_string(),
+                workspace_revision,
+                preview_revision: preview_revision.to_string(),
+                canvas_transaction,
+                content: HashMap::new(),
+                workbench_content: Arc::new(RwLock::new(HashMap::new())),
+                assets_root: std::env::temp_dir(),
+                inherited_assets: None,
+            })
+        }
+
+        let old_hash = format!("sha256-{}", "a".repeat(64));
+        let new_hash = format!("sha256-{}", "b".repeat(64));
+        let mut registry = PreviewGenerationRegistry::default();
+        let active = generation(1, "preview-1", &old_hash);
+        let staged = generation(2, "preview-2", &new_hash);
+        registry.active = Some(Arc::clone(&active));
+        registry.stage(Arc::clone(&staged));
+
+        assert_eq!(
+            registry
+                .resolve_resource("/css/site.css", &old_hash)
+                .unwrap()
+                .workspace_revision,
+            1
+        );
+        assert_eq!(
+            registry
+                .resolve_resource("/css/site.css", &new_hash)
+                .unwrap()
+                .workspace_revision,
+            2
+        );
+        assert!(registry
+            .resolve_resource("/css/foreign.css", &new_hash)
+            .is_none());
+        assert!(registry
+            .resolve_resource("/css/site.css", &format!("sha256-{}", "c".repeat(64)))
+            .is_none());
+    }
+
+    #[test]
+    fn resource_hash_query_is_bounded_and_removed_from_public_target() {
+        let hash = format!("sha256-{}", "a".repeat(64));
+        let target = format!("/css/site.css?v=1&__pana_resource_hash={hash}");
+        assert_eq!(
+            requested_resource_hash(&target).unwrap().as_deref(),
+            Some(hash.as_str())
+        );
+        assert_eq!(public_request_target(&target), "/css/site.css?v=1");
+        for invalid in [
+            "sha256-short",
+            "sha256-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        ] {
+            assert!(requested_resource_hash(&format!(
+                "/css/site.css?__pana_resource_hash={invalid}"
+            ))
+            .is_err());
         }
     }
 

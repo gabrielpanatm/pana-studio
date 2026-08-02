@@ -886,7 +886,7 @@ export async function duplicateSelectedHtmlElement(
 export async function insertPaletteElementAtTarget(
   host: HtmlActionsControllerHost,
   request: PreviewInsertDropRequest,
-) {
+): Promise<EditorActionOutcome> {
   const capturedRequest = Object.freeze({
     ...request,
     targetSourceLocation: request.targetSourceLocation
@@ -896,15 +896,18 @@ export async function insertPaletteElementAtTarget(
   });
   const capturedTarget = captureHtmlActionTarget(host.coordinatedElementSelection);
   try {
-    await runInPreviewStructuralLane(host, (lease) =>
+    const result = await runInPreviewStructuralLane(host, (lease) =>
       insertPaletteElementAtTargetInLane(host, capturedRequest, capturedTarget, lease));
+    return result ?? cancelledAction();
   } catch (error) {
+    const result = actionErrorOutcome(error);
     host.structureStatus = t("html-actions-insert-failed", {
-      message: errorMessage(error),
+      message: result.reason ?? result.status,
     });
     host.setGlobalStatus(t("html-actions-insert-error", {
-      message: errorMessage(error),
+      message: result.reason ?? result.status,
     }), "error");
+    return result;
   }
 }
 
@@ -913,7 +916,7 @@ async function insertPaletteElementAtTargetInLane(
   request: PreviewInsertDropRequest,
   capturedTarget: HtmlActionTarget | null,
   lease: PreviewStructuralSessionLease,
-) {
+): Promise<EditorActionOutcome> {
   const targetSourceId = request.targetSourceId ||
     (request.targetKind === "empty-tera-slot" ? request.targetTemplateSourceId : null);
   const targetTpl = sourceLocationForInsertTarget(
@@ -932,18 +935,18 @@ async function insertPaletteElementAtTargetInLane(
   if (!host.canEditHtmlStructure && !targetLocation) {
     host.structureStatus = t("html-actions-switch-preview");
     host.setGlobalStatus(host.structureStatus, "error");
-    return;
+    return blockedAction(host.structureStatus);
   }
   if (request.position === "inside" && !canElementAcceptChildren(request.targetTag, htmlVoidTags)) {
     host.structureStatus = t("html-actions-target-no-children");
     host.setGlobalStatus(host.structureStatus, "error");
-    return;
+    return blockedAction(host.structureStatus);
   }
 
   if (!targetLocation) {
     host.structureStatus = t("html-actions-target-metadata-unstable");
     host.setGlobalStatus(host.structureStatus, "error");
-    return;
+    return blockedAction(host.structureStatus);
   }
 
   const blockId = request.element.kind === "block" ? request.element.blockId ?? null : null;
@@ -999,13 +1002,16 @@ async function insertPaletteElementAtTargetInLane(
         position: label,
       });
     });
+    return committedAction();
   } catch (error) {
+    const result = actionErrorOutcome(error);
     host.structureStatus = t("html-actions-insert-failed", {
-      message: errorMessage(error),
+      message: result.reason ?? result.status,
     });
     host.setGlobalStatus(t("html-actions-insert-error", {
-      message: errorMessage(error),
+      message: result.reason ?? result.status,
     }), "error");
+    return result;
   }
 }
 

@@ -5,7 +5,7 @@
 //! capability from `/`, one normal component at a time. Once the boundary is
 //! captured, every mutating syscall is relative to a held directory handle.
 
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use super::{
     model::{ExpectedLeaf, ExpectedLeafVersion, WriteTarget},
@@ -44,6 +44,14 @@ pub(super) struct CapabilityBoundedFileSnapshot {
     pub version_token: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct CapabilityGenerationCloneStats {
+    pub entries: usize,
+    pub bytes: u64,
+    pub reflinked_files: usize,
+    pub copied_files: usize,
+}
+
 impl CapabilityEffect {
     pub(super) const fn unchanged() -> Self {
         Self {
@@ -75,7 +83,9 @@ impl CapabilityEffect {
 
 #[cfg(target_os = "linux")]
 mod platform {
+    use super::CapabilityGenerationCloneStats;
     use std::{
+        collections::BTreeSet,
         ffi::{OsStr, OsString},
         fs::File,
         io::{Read, Seek, SeekFrom, Write},
@@ -93,6 +103,7 @@ mod platform {
         io::Errno,
     };
     use sha2::{Digest, Sha256};
+    use walkdir::WalkDir;
 
     use crate::kernel::file_buffer_store::hash_bytes;
 
@@ -656,6 +667,332 @@ mod platform {
                 &format!("fișierul generației nu a putut fi materializat complet: {error}"),
             )
         })
+    }
+
+    /// Clones an immutable published Preview tree into a private generation.
+    /// Linux reflinks share unchanged extents copy-on-write; filesystems
+    /// without FICLONE support fall back first to an in-kernel range copy and
+    /// finally to descriptor-bound userspace copying.
+    /// Excluded paths are materialized later from the current Rust projection.
+    pub(super) fn clone_rebuildable_generation_tree(
+        source_authority: &DirectoryAuthority,
+        target_authority: &DirectoryAuthority,
+        excluded: &BTreeSet<PathBuf>,
+        max_entries: usize,
+        max_bytes: u64,
+        public_label: &str,
+    ) -> Result<CapabilityGenerationCloneStats, String> {
+        require_rebuildable_generation_authority(source_authority, public_label)?;
+        require_rebuildable_generation_authority(target_authority, public_label)?;
+        verify_directory_authority_path(source_authority)?;
+        verify_directory_authority_path(target_authority)?;
+
+        let mut plan = Vec::<(PathBuf, bool, u64)>::new();
+        let mut total_bytes = 0_u64;
+        for entry in WalkDir::new(source_authority.root_path())
+            .follow_links(false)
+            .sort_by_file_name()
+        {
+            let entry = entry.map_err(|error| {
+                capability_error(
+                    public_label,
+                    &format!("arborele publicat nu poate fi parcurs: {error}"),
+                )
+            })?;
+            let relative = entry
+                .path()
+                .strip_prefix(source_authority.root_path())
+                .map_err(|_| {
+                    capability_error(public_label, "arborele publicat a ieșit din authority")
+                })?;
+            if relative.as_os_str().is_empty() {
+                continue;
+            }
+            if excluded
+                .iter()
+                .any(|path| relative == path || relative.starts_with(path))
+            {
+                continue;
+            }
+            if entry.file_type().is_symlink() {
+                return Err(capability_error(
+                    public_label,
+                    &format!(
+                        "arborele publicat conține symlink: {}",
+                        entry.path().display()
+                    ),
+                ));
+            }
+            let is_directory = entry.file_type().is_dir();
+            if !is_directory && !entry.file_type().is_file() {
+                return Err(capability_error(
+                    public_label,
+                    &format!(
+                        "arborele publicat conține un tip neacceptat: {}",
+                        entry.path().display()
+                    ),
+                ));
+            }
+            let size = if is_directory {
+                0
+            } else {
+                entry
+                    .metadata()
+                    .map_err(|error| {
+                        capability_error(
+                            public_label,
+                            &format!("fișierul publicat nu poate fi măsurat: {error}"),
+                        )
+                    })?
+                    .len()
+            };
+            total_bytes = total_bytes.checked_add(size).ok_or_else(|| {
+                capability_error(
+                    public_label,
+                    "arborele publicat a depășit contorul de bytes",
+                )
+            })?;
+            if plan.len() >= max_entries || total_bytes > max_bytes {
+                return Err(capability_error(
+                    public_label,
+                    "arborele publicat depășește bugetul generației Preview",
+                ));
+            }
+            plan.push((relative.to_path_buf(), is_directory, size));
+        }
+
+        let mut stats = CapabilityGenerationCloneStats::default();
+        for (relative, is_directory, size) in plan {
+            if is_directory {
+                create_rebuildable_generation_directory(target_authority, &relative, public_label)?;
+            } else {
+                let reflinked = clone_rebuildable_generation_file(
+                    source_authority,
+                    target_authority,
+                    &relative,
+                    size,
+                    public_label,
+                )?;
+                if reflinked {
+                    stats.reflinked_files = stats.reflinked_files.saturating_add(1);
+                } else {
+                    stats.copied_files = stats.copied_files.saturating_add(1);
+                }
+            }
+            stats.entries = stats.entries.saturating_add(1);
+            stats.bytes = stats
+                .bytes
+                .checked_add(size)
+                .ok_or_else(|| capability_error(public_label, "clone bytes overflow"))?;
+        }
+        Ok(stats)
+    }
+
+    fn clone_rebuildable_generation_file(
+        source_authority: &DirectoryAuthority,
+        target_authority: &DirectoryAuthority,
+        relative_path: &Path,
+        expected_size: u64,
+        public_label: &str,
+    ) -> Result<bool, String> {
+        let source_components =
+            rebuildable_generation_components(source_authority, relative_path, public_label)?;
+        let target_components =
+            rebuildable_generation_components(target_authority, relative_path, public_label)?;
+        let (source_leaf, source_parents) = source_components
+            .split_last()
+            .expect("validated clone source path has a leaf");
+        let (target_leaf, target_parents) = target_components
+            .split_last()
+            .expect("validated clone target path has a leaf");
+
+        let mut source_directory =
+            rustix::io::dup(source_authority.directory()).map_err(|error| {
+                capability_error(
+                    public_label,
+                    &format!("source authority nu poate fi duplicat: {error}"),
+                )
+            })?;
+        for component in source_parents {
+            source_directory =
+                open_directory_strict(&source_directory, component).map_err(|error| {
+                    capability_error(
+                        public_label,
+                        &format!("source ancestor nu poate fi deschis: {error}"),
+                    )
+                })?;
+        }
+        let source_descriptor = fs::openat(
+            &source_directory,
+            source_leaf,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("source file nu poate fi deschis: {error}"),
+            )
+        })?;
+        validate_regular_single_link(
+            &source_descriptor,
+            public_label,
+            "rebuildable generation clone source",
+        )?;
+        let source_before = fs::fstat(&source_descriptor).map_err(|error| {
+            capability_error(public_label, &format!("source fstat a eșuat: {error}"))
+        })?;
+        if u64::try_from(source_before.st_size).ok() != Some(expected_size) {
+            return Err(capability_error(
+                public_label,
+                "source size s-a schimbat după planificarea clonei",
+            ));
+        }
+
+        let mut target_directory =
+            rustix::io::dup(target_authority.directory()).map_err(|error| {
+                capability_error(
+                    public_label,
+                    &format!("target authority nu poate fi duplicat: {error}"),
+                )
+            })?;
+        for component in target_parents {
+            target_directory = open_or_create_rebuildable_generation_directory(
+                &target_directory,
+                component,
+                public_label,
+            )?;
+        }
+        let target_descriptor = fs::openat(
+            &target_directory,
+            target_leaf,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(|error| {
+            capability_error(
+                public_label,
+                &format!("target file create-only a eșuat: {error}"),
+            )
+        })?;
+        validate_regular_single_link(
+            &target_descriptor,
+            public_label,
+            "rebuildable generation clone target",
+        )?;
+
+        let mut source_file = File::from(source_descriptor);
+        let mut target_file = File::from(target_descriptor);
+        let reflinked = match fs::ioctl_ficlone(&target_file, &source_file) {
+            Ok(()) => true,
+            Err(_) => {
+                target_file.set_len(0).map_err(|error| {
+                    capability_error(
+                        public_label,
+                        &format!("target fallback truncate a eșuat: {error}"),
+                    )
+                })?;
+                source_file.seek(SeekFrom::Start(0)).map_err(|error| {
+                    capability_error(
+                        public_label,
+                        &format!("source fallback seek a eșuat: {error}"),
+                    )
+                })?;
+                target_file.seek(SeekFrom::Start(0)).map_err(|error| {
+                    capability_error(
+                        public_label,
+                        &format!("target fallback seek a eșuat: {error}"),
+                    )
+                })?;
+                let mut source_offset = 0_u64;
+                let mut target_offset = 0_u64;
+                let mut kernel_copy_complete = true;
+                while source_offset < expected_size {
+                    let remaining = expected_size.saturating_sub(source_offset);
+                    let chunk = usize::try_from(remaining)
+                        .unwrap_or(usize::MAX)
+                        .min(8 * 1024 * 1024);
+                    match fs::copy_file_range(
+                        &source_file,
+                        Some(&mut source_offset),
+                        &target_file,
+                        Some(&mut target_offset),
+                        chunk,
+                    ) {
+                        Ok(0) | Err(_) => {
+                            kernel_copy_complete = false;
+                            break;
+                        }
+                        Ok(_) => {}
+                    }
+                }
+                if !kernel_copy_complete {
+                    target_file.set_len(0).map_err(|error| {
+                        capability_error(
+                            public_label,
+                            &format!("target userspace fallback truncate a eșuat: {error}"),
+                        )
+                    })?;
+                    source_file.seek(SeekFrom::Start(0)).map_err(|error| {
+                        capability_error(
+                            public_label,
+                            &format!("source userspace fallback seek a eșuat: {error}"),
+                        )
+                    })?;
+                    target_file.seek(SeekFrom::Start(0)).map_err(|error| {
+                        capability_error(
+                            public_label,
+                            &format!("target userspace fallback seek a eșuat: {error}"),
+                        )
+                    })?;
+                    let copied =
+                        std::io::copy(&mut source_file, &mut target_file).map_err(|error| {
+                            capability_error(
+                                public_label,
+                                &format!("userspace fallback copy a eșuat: {error}"),
+                            )
+                        })?;
+                    if copied != expected_size {
+                        return Err(capability_error(
+                            public_label,
+                            "userspace fallback copy a produs o dimensiune divergentă",
+                        ));
+                    }
+                }
+                false
+            }
+        };
+
+        let source_after = fs::fstat(&source_file).map_err(|error| {
+            capability_error(public_label, &format!("source post-clone fstat: {error}"))
+        })?;
+        let target_after = fs::fstat(&target_file).map_err(|error| {
+            capability_error(public_label, &format!("target post-clone fstat: {error}"))
+        })?;
+        if !same_file_identity(&source_before, &source_after)
+            || version_token_for_stat(&source_before) != version_token_for_stat(&source_after)
+            || FileType::from_raw_mode(target_after.st_mode) != FileType::RegularFile
+            || target_after.st_nlink != 1
+            || u64::try_from(target_after.st_size).ok() != Some(expected_size)
+        {
+            return Err(capability_error(
+                public_label,
+                "clone postflight a observat identitate sau dimensiune divergentă",
+            ));
+        }
+        validate_named_file_identity(
+            &source_directory,
+            source_leaf,
+            &source_after,
+            "rebuildable generation clone source",
+        )?;
+        validate_named_file_identity(
+            &target_directory,
+            target_leaf,
+            &target_after,
+            "rebuildable generation clone target",
+        )?;
+        Ok(reflinked)
     }
 
     pub(super) fn seal_rebuildable_generation(
@@ -1882,6 +2219,117 @@ mod platform {
             )
         })?;
         sync_directory(&directory, &record.body.public_label)
+    }
+
+    pub(super) fn resolve_atomic_operator(
+        record: &WalRecord,
+        phase: WalPhase,
+        action: WriteAuthorityRecoveryResolutionAction,
+    ) -> Result<String, String> {
+        if action != WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite {
+            return Err(format!(
+                "AtomicFile nu acceptă rezoluția operator {action:?}."
+            ));
+        }
+        if phase != WalPhase::AuxiliaryDurable {
+            return Err(format!(
+                "Abandonarea scrierii pregătite cere faza AuxiliaryDurable, nu {phase:?}."
+            ));
+        }
+        let WalOperationEvidence::AtomicFile(evidence) = &record.body.operation_evidence else {
+            return Err("Rezoluția AtomicFile a primit altă familie WAL.".into());
+        };
+
+        let mut classification_budget = RecoveryReadBudget::new();
+        let assessment = classify_atomic_recovery(record, phase, &mut classification_budget)?;
+        if assessment.classification != WriteAuthorityRecoveryClassification::StagedOnly {
+            return Err(format!(
+                "Scrierea pregătită nu mai este exact staged-only; scanarea este stale ({:?}): {}",
+                assessment.classification, assessment.diagnostic
+            ));
+        }
+
+        let RecoveryAtomicContext::Ready {
+            directory,
+            target_leaf,
+            temp_leaf,
+            ..
+        } = capture_recovery_atomic_context(record, evidence)?
+        else {
+            return Err(
+                "Scrierea pregătită nu mai are parentul capturabil; nicio ștergere nu a fost executată."
+                    .into(),
+            );
+        };
+        let mut commit_budget = RecoveryReadBudget::new();
+        let target = observe_recovery_leaf(
+            &directory,
+            &target_leaf,
+            &record.body.public_label,
+            "target operator discard",
+            &mut commit_budget,
+        )?;
+        if target != evidence.before {
+            return Err(
+                "Target-ul s-a schimbat după scanare; temp-ul și WAL-ul rămân neatinse.".into(),
+            );
+        }
+
+        let descriptor = fs::openat(
+            &directory,
+            &temp_leaf,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            capability_error(
+                &record.body.public_label,
+                &format!("temp-ul staged nu poate fi capturat pentru abandonare: {error}"),
+            )
+        })?;
+        let mut file = File::from(descriptor);
+        let descriptor_stat = fs::fstat(&file).map_err(|error| {
+            capability_error(
+                &record.body.public_label,
+                &format!("temp-ul staged nu poate fi verificat: {error}"),
+            )
+        })?;
+        if FileType::from_raw_mode(descriptor_stat.st_mode) != FileType::RegularFile
+            || descriptor_stat.st_nlink != 1
+        {
+            return Err(capability_error(
+                &record.body.public_label,
+                "temp-ul staged nu este un fișier regular single-link",
+            ));
+        }
+        let observed_temp = wal_evidence_from_open_file(
+            &mut file,
+            &descriptor_stat,
+            &ExpectedLeaf::Unspecified,
+            &record.body.public_label,
+            "operator discard staged temp",
+            Some(&mut commit_budget),
+        )?;
+        if !leaf_matches_new(&observed_temp, evidence) {
+            return Err(
+                "Temp-ul staged nu mai corespunde payloadului WAL; nicio ștergere nu a fost executată."
+                    .into(),
+            );
+        }
+        validate_named_file_identity(
+            &directory,
+            &temp_leaf,
+            &descriptor_stat,
+            "operator-discard-staged-temp",
+        )?;
+        fs::unlinkat(&directory, &temp_leaf, AtFlags::empty()).map_err(|error| {
+            capability_error(
+                &record.body.public_label,
+                &format!("temp-ul staged nu a putut fi abandonat: {error}"),
+            )
+        })?;
+        sync_directory(&directory, &record.body.public_label)?;
+        Ok("Scrierea pregătită a fost abandonată: temp-ul verificat a fost eliminat, iar target-ul original a rămas neschimbat.".into())
     }
 
     pub(super) fn classify_legacy_append_recovery(
@@ -7131,6 +7579,25 @@ pub(super) fn write_rebuildable_generation_file(
 }
 
 #[cfg(target_os = "linux")]
+pub(super) fn clone_rebuildable_generation_tree(
+    source_authority: &DirectoryAuthority,
+    target_authority: &DirectoryAuthority,
+    excluded: &BTreeSet<std::path::PathBuf>,
+    max_entries: usize,
+    max_bytes: u64,
+    public_label: &str,
+) -> Result<CapabilityGenerationCloneStats, String> {
+    platform::clone_rebuildable_generation_tree(
+        source_authority,
+        target_authority,
+        excluded,
+        max_entries,
+        max_bytes,
+        public_label,
+    )
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn seal_rebuildable_generation(
     authority: &DirectoryAuthority,
     public_label: &str,
@@ -7334,6 +7801,15 @@ pub(super) fn discard_rebuildable_atomic_projection(
     phase: super::recovery::WalPhase,
 ) -> Result<(), String> {
     platform::discard_rebuildable_atomic_projection(record, phase)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn resolve_atomic_operator(
+    record: &super::recovery::WalRecord,
+    phase: super::recovery::WalPhase,
+    action: super::recovery::WriteAuthorityRecoveryResolutionAction,
+) -> Result<String, String> {
+    platform::resolve_atomic_operator(record, phase, action)
 }
 
 #[cfg(target_os = "linux")]
@@ -8203,6 +8679,18 @@ pub(super) fn write_rebuildable_generation_file(
 }
 
 #[cfg(not(target_os = "linux"))]
+pub(super) fn clone_rebuildable_generation_tree(
+    _source_authority: &DirectoryAuthority,
+    _target_authority: &DirectoryAuthority,
+    _excluded: &BTreeSet<std::path::PathBuf>,
+    _max_entries: usize,
+    _max_bytes: u64,
+    _public_label: &str,
+) -> Result<CapabilityGenerationCloneStats, String> {
+    unsupported().map(|_| CapabilityGenerationCloneStats::default())
+}
+
+#[cfg(not(target_os = "linux"))]
 pub(super) fn seal_rebuildable_generation(
     _authority: &DirectoryAuthority,
     _public_label: &str,
@@ -8299,6 +8787,15 @@ pub(super) fn discard_rebuildable_atomic_projection(
     _phase: super::recovery::WalPhase,
 ) -> Result<(), String> {
     Err("Cleanup-ul proiecției rebuildable este fail-closed în afara Linux.".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn resolve_atomic_operator(
+    _record: &super::recovery::WalRecord,
+    _phase: super::recovery::WalPhase,
+    _action: super::recovery::WriteAuthorityRecoveryResolutionAction,
+) -> Result<String, String> {
+    Err("WriteAuthority AtomicFile operator recovery este fail-closed în afara Linux.".into())
 }
 
 #[cfg(not(target_os = "linux"))]

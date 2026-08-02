@@ -1345,6 +1345,7 @@ mod tests {
             blocks: blocks.iter().map(|value| (*value).to_string()).collect(),
             macros: Vec::new(),
             semantics: None,
+            markdown_projections: Vec::new(),
             node_id: id.to_string(),
         }
     }
@@ -1459,6 +1460,7 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            markdown_projections: Vec::new(),
             nodes: Vec::<SourceNode>::new(),
             relations: vec![
                 relation("index", "base-local", SourceRelationKind::Extends),
@@ -1589,6 +1591,7 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: vec![
                 relation("blog-list", "base", SourceRelationKind::Extends),
@@ -1688,6 +1691,7 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),
             diagnostics: Vec::new(),
@@ -1745,6 +1749,7 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),
             diagnostics: Vec::new(),

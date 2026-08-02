@@ -27,7 +27,7 @@ use crate::{
         project_workspace::{
             commit_project_workspace_session_mutation, ProjectWorkspaceIdentity,
             ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
-            WorkspaceBinaryRestoreChange, WorkspaceMutationMetadata, WorkspaceProjectionLease,
+            WorkspaceBinaryRestoreChange, WorkspaceMutationMetadata, WorkspaceProjectionSnapshot,
             WorkspaceResourceDelete, WorkspaceResourceMutation,
             PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
         },
@@ -594,7 +594,7 @@ pub async fn remove_font_family(
 fn capture_font_workspace_read_projection<R: Runtime>(
     app: &AppHandle<R>,
     identity: &ProjectWorkspaceIdentity,
-) -> Result<(std::path::PathBuf, WorkspaceProjectionLease), String> {
+) -> Result<(std::path::PathBuf, WorkspaceProjectionSnapshot), String> {
     let state = app.state::<AppState>();
     let project_root = require_current_project_root(&state)?;
     let projection = {
@@ -615,7 +615,7 @@ fn capture_font_workspace_read_projection<R: Runtime>(
             &workspace.session.project_root,
         )?;
         workspace.accepted_disk.require_complete()?;
-        workspace.capture_projection_lease()?
+        workspace.capture_projection_snapshot()?
     };
 
     // Traversarea fonturilor și auditul manifestului sunt filesystem work.
@@ -633,7 +633,7 @@ fn validate_font_workspace_read_projection<R: Runtime>(
     app: &AppHandle<R>,
     identity: &ProjectWorkspaceIdentity,
     project_root: &Path,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<(), String> {
     projection.accepted_disk.require_live_complete(
         &projection.runtime_session_id,
@@ -700,7 +700,7 @@ fn font_inventory_for_workspace(
 
 fn font_inventory_for_projection(
     root: &Path,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> FontInventory {
     font_inventory_for_sources(
         root,
@@ -731,7 +731,7 @@ fn font_manager_snapshot(
 }
 
 fn font_manager_snapshot_for_projection(
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
     inventory: FontInventory,
 ) -> FontManagerSnapshot {
     font_manager_snapshot_for_sources(

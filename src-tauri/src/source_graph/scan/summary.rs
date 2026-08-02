@@ -1,6 +1,6 @@
 use crate::source_graph::model::{
-    SourceCapabilities, SourceDataFormat, SourceDataLocation, SourceDataNode, SourceGraphInclude,
-    SourceNodeKind, SourceOrigin,
+    MarkdownProjection, SourceCapabilities, SourceDataFormat, SourceDataLocation, SourceDataNode,
+    SourceGraphInclude, SourceNodeKind, SourceOrigin,
 };
 use crate::source_graph::tera_semantics::TeraSemanticDocument;
 
@@ -28,6 +28,7 @@ pub(super) struct TemplateSummary {
     pub(super) blocks: Vec<(String, String)>,
     pub(super) macros: Vec<String>,
     pub(super) semantics: Option<TeraSemanticDocument>,
+    pub(super) markdown_projections: Vec<MarkdownProjection>,
 }
 
 #[derive(Clone)]

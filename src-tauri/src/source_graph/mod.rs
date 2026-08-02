@@ -2,6 +2,7 @@ pub(crate) mod component_graph;
 pub(crate) mod html;
 pub(crate) mod identity;
 pub(crate) mod literals;
+pub(crate) mod markdown;
 pub(crate) mod mixed_cst;
 pub mod model;
 mod scan;
@@ -18,6 +19,10 @@ pub use model::SourceGraph;
 pub use scan::{
     build_source_graph, build_source_graph_from_workspace_projection,
     build_source_graph_with_projection,
+};
+pub(crate) use scan::{
+    rebuild_local_template_graph, SourceGraphIncrementalFallback,
+    SourceGraphIncrementalTemplateReport,
 };
 pub use taxonomy_catalog::{build_taxonomy_catalog, TaxonomyCatalogSnapshot};
 pub use template_catalog::{

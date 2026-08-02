@@ -13,6 +13,7 @@
   import CssPane from "$lib/components/inspector/panes/CssPane.svelte";
   import SelectionSummaryCard from "$lib/components/inspector/SelectionSummaryCard.svelte";
   import TeraSourceCard from "$lib/components/inspector/TeraSourceCard.svelte";
+  import MarkdownSourceCard from "$lib/components/inspector/MarkdownSourceCard.svelte";
   import type {
     CssMutationAuthorityReceipt,
     CssInspectorContextResolution,
@@ -237,6 +238,7 @@
     enterTeraBoundary,
     deleteSelectedTeraNode,
     openSelectedTeraSource,
+    openSelectedMarkdownContent,
     pendingTag = null,
     tagStatus = "",
     changeElementTag,
@@ -253,6 +255,8 @@
     getOpenCssRuleContext,
     applyNativeBlockOption,
     persistBlockPropertiesLayout,
+    gridOverlayEnabled = false,
+    onGridOverlayChange,
   }: {
     inspectorSelectionSummary?: InspectorSelectionSummarySnapshot | null;
     inspectorHtmlPhysicalFacts?: InspectorHtmlPhysicalFacts | null;
@@ -305,6 +309,7 @@
     enterTeraBoundary: (scopeId: string) => void | Promise<void>;
     deleteSelectedTeraNode: () => void | Promise<void>;
     openSelectedTeraSource: () => void | Promise<void>;
+    openSelectedMarkdownContent: () => void | Promise<void>;
     pendingTag?: string | null;
     tagStatus?: string;
     changeElementTag: (tag: string) => void;
@@ -333,6 +338,8 @@
     getOpenCssRuleContext?: (file: string, selector: string, viewport: CssViewport) => CssRuleContext | null;
     applyNativeBlockOption: (request: ApplyNativeBlockOptionRequest) => Promise<EditorActionOutcome>;
     persistBlockPropertiesLayout?: (height: number, collapsed: boolean) => void;
+    gridOverlayEnabled?: boolean;
+    onGridOverlayChange?: (enabled: boolean) => void;
   } = $props();
 
   let stableHtmlProjection = $state<StableHtmlInspectorProjection | null>(null);
@@ -446,6 +453,10 @@
   const hasTeraSelection = $derived(
     selectionSnapshot?.resolution === "resolved"
       && selectionSnapshot.subject?.kind === "teraBoundary",
+  );
+  const hasMarkdownSelection = $derived(
+    selectionSnapshot?.resolution === "resolved"
+      && selectionSnapshot.subject?.kind === "markdownBoundary",
   );
 
   let inspectorTab = $state<InspectorTab>("html");
@@ -572,7 +583,22 @@
       resolvedContext.selector,
       resolvedContext.viewport,
     );
-    applyLiveCssRuleContext(liveContext ?? resolvedContext);
+    if (!liveContext) {
+      applyLiveCssRuleContext(resolvedContext);
+      return;
+    }
+    const resolvedRules = resolvedContext.hasViewportRule
+      ? resolvedContext.viewportRules
+      : resolvedContext.baseRules;
+    const liveRules = liveContext.hasViewportRule
+      ? liveContext.viewportRules
+      : liveContext.baseRules;
+    const sameRules = JSON.stringify(liveRules) === JSON.stringify(resolvedRules);
+    applyLiveCssRuleContext({
+      ...liveContext,
+      background: sameRules ? resolvedContext.background : liveContext.background,
+      grid: sameRules ? resolvedContext.grid : liveContext.grid,
+    });
   }
 
   function selectedTemplatePath() {
@@ -995,17 +1021,23 @@
     };
   }
 
-  function draftCssProperty(property: string, value: string) {
+  function draftCssProperties(properties: Readonly<Record<string, string>>) {
     const target = captureCurrentCssMutationTarget();
     if (!target) return;
+    const entries = Object.entries(properties);
+    if (!entries.length) return;
+    const focusedProperty = entries.length === 1 ? entries[0][0] : "background-image";
     onCssCodeTargetChange?.({
       selector: target.selector,
       file: target.file,
-      property,
+      property: focusedProperty,
       expectedSelectionRevision: target.expectedSelection.selectionRevision,
     });
-    const baseline = captureCssPendingValueBaseline(pendingValues, property);
-    const nextPendingValues = { ...pendingValues, [property]: value };
+    const baselines = Object.fromEntries(entries.map(([property]) => [
+      property,
+      captureCssPendingValueBaseline(pendingValues, property),
+    ]));
+    const nextPendingValues = { ...pendingValues, ...properties };
     pendingValues = nextPendingValues;
     const appliedLiveEpoch = onLivePropertiesChange?.(
       target.selector,
@@ -1023,12 +1055,12 @@
       targetKey,
     } = target;
     if (pageTarget?.pageOwned && pageTarget.templatePath) {
-      stageCssRuleMutation({
+      const mutation = {
         key: targetKey,
         identity,
         label: `CSS ${selector}`,
         liveEpoch,
-        run: (properties) => setPageCssRuleAtViewport({
+        run: (properties: Record<string, string>) => setPageCssRuleAtViewport({
           templatePath: pageTarget.templatePath ?? "",
           relativePath: file,
           selector,
@@ -1037,30 +1069,47 @@
           cachebustAssets,
           expectedSelection,
         }, identity),
-      }, property, value, baseline);
+      };
+      for (const [property, value] of entries) {
+        stageCssRuleMutation(mutation, property, value, baselines[property]);
+      }
     } else {
-      stageCssRuleMutation({
+      const mutation = {
         key: targetKey,
         identity,
         label: `CSS ${selector}`,
         liveEpoch,
-        run: (properties) => setCssRuleAtViewport({
+        run: (properties: Record<string, string>) => setCssRuleAtViewport({
           relativePath: file,
           selector,
           properties,
           viewport,
           expectedSelection,
         }, identity),
-      }, property, value, baseline);
+      };
+      for (const [property, value] of entries) {
+        stageCssRuleMutation(mutation, property, value, baselines[property]);
+      }
     }
-    if (!onLivePropertiesChange) onLivePropertyChange?.(selector, property, value);
-    onStatusUpdate?.(t("inspector-css-preview-changed", { property }), "unsaved");
+    if (!onLivePropertiesChange) {
+      for (const [property, value] of entries) onLivePropertyChange?.(selector, property, value);
+    }
+    onStatusUpdate?.(t("inspector-css-preview-changed", { property: focusedProperty }), "unsaved");
+  }
+
+  function draftCssProperty(property: string, value: string) {
+    draftCssProperties({ [property]: value });
   }
 
   function commitCssProperty(property: string, value?: string) {
     if (value !== undefined && pendingValues[property] !== value) {
       draftCssProperty(property, value);
     }
+    scheduleStagedCssPanelFlush();
+  }
+
+  function commitCssProperties(properties: Readonly<Record<string, string>> = {}) {
+    if (Object.keys(properties).length) draftCssProperties(properties);
     scheduleStagedCssPanelFlush();
   }
 
@@ -1111,6 +1160,10 @@
     onStatusUpdate?.(t("inspector-css-edit-cancelled", { property }), "idle");
   }
 
+  function cancelCssProperties(properties: readonly string[]) {
+    for (const property of properties) cancelCssProperty(property);
+  }
+
   const continuousCssPropertyBindings = new Map<string, CssContinuousEditHandlers>();
 
   function continuousCssProperty(property: string): CssContinuousEditHandlers {
@@ -1127,8 +1180,11 @@
 
   const cssPropertyEdit: CssPropertyEditController = {
     draft: draftCssProperty,
+    draftMany: draftCssProperties,
     commit: commitCssProperty,
+    commitMany: commitCssProperties,
     cancel: cancelCssProperty,
+    cancelMany: cancelCssProperties,
     continuous: continuousCssProperty,
   };
 
@@ -1156,6 +1212,16 @@
           {enterTeraBoundary}
           {openSelectedTeraSource}
           {deleteSelectedTeraNode}
+        />
+      </div>
+    </div>
+  {:else if hasMarkdownSelection}
+    <div class="inspector-main tera-main">
+      <div class="inspector-scroll">
+        <MarkdownSourceCard
+          navigationNode={selectedEditorNavigationNode}
+          editSelectedContent={openSelectedMarkdownContent}
+          openSelectedSource={openSelectedTeraSource}
         />
       </div>
     </div>
@@ -1237,6 +1303,8 @@
           {customSuffix}
           {usingCustom}
           {cssPropertyEdit}
+          {gridOverlayEnabled}
+          {onGridOverlayChange}
           {selectCssVariant}
         />
 

@@ -199,6 +199,13 @@ pub fn project_workspace_recovery_path<R: Runtime>(
     Ok(project_session_dir(app, project_root)?.join("project-workspace.json"))
 }
 
+pub fn project_workspace_recovery_journal_path<R: Runtime>(
+    app: &AppHandle<R>,
+    project_root: &str,
+) -> Result<PathBuf, String> {
+    Ok(project_session_dir(app, project_root)?.join("project-workspace.journal.jsonl"))
+}
+
 pub fn project_open_recovery_decision_path<R: Runtime>(
     app: &AppHandle<R>,
     project_root: &str,

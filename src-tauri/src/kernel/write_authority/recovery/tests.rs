@@ -239,8 +239,87 @@ mod linux {
             scan.items[0].classification,
             super::super::WriteAuthorityRecoveryClassification::StagedOnly
         );
+        assert_eq!(
+            scan.items[0].available_resolution_actions,
+            vec![WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite]
+        );
         assert_eq!(fs::read(&temp).unwrap(), payload);
         assert!(!fixture.target.exists());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn atomic_staged_operator_discards_only_verified_temp_and_preserves_original() {
+        let fixture = AtomicRecoveryFixture::new("aux-atomic-discard-staged", true);
+        let operation_id = "wal-aux-atomic-discard-staged";
+        let payload = b"replacement payload";
+        let (coordinator, plan, record) = fixture.prepare(operation_id, payload);
+        let mut guard = coordinator.begin(record).unwrap();
+        let temp = fixture.parent.join(plan.temp_leaf().unwrap());
+        fs::write(&temp, payload).unwrap();
+        guard.mark_auxiliary_durable().unwrap();
+        drop(guard);
+        drop(coordinator);
+
+        let restarted = fixture.restart_coordinator();
+        let scan = restarted.snapshot().unwrap();
+        let item = scan.items.first().expect("AtomicFile staged item");
+        assert_eq!(
+            item.classification,
+            super::super::WriteAuthorityRecoveryClassification::StagedOnly
+        );
+        assert_eq!(
+            item.available_resolution_actions,
+            vec![WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite]
+        );
+        let receipt = restarted
+            .resolve_operator_exclusive(WriteAuthorityRecoveryResolutionInput {
+                operation_id: operation_id.into(),
+                expected_phase: item.phase.unwrap(),
+                evidence_hash: item.evidence_hash.clone().unwrap(),
+                action: WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite,
+            })
+            .unwrap();
+        assert!(!receipt.recovery_scan.blocked, "{receipt:?}");
+        assert!(receipt.diagnostic.contains("target-ul original"));
+        assert_eq!(fs::read(&fixture.target).unwrap(), b"baseline");
+        assert!(!temp.exists());
+        drop(restarted);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn atomic_staged_operator_refuses_changed_target_and_preserves_temp() {
+        let fixture = AtomicRecoveryFixture::new("aux-atomic-discard-stale", true);
+        let operation_id = "wal-aux-atomic-discard-stale";
+        let payload = b"replacement payload";
+        let (coordinator, plan, record) = fixture.prepare(operation_id, payload);
+        let mut guard = coordinator.begin(record).unwrap();
+        let temp = fixture.parent.join(plan.temp_leaf().unwrap());
+        fs::write(&temp, payload).unwrap();
+        guard.mark_auxiliary_durable().unwrap();
+        drop(guard);
+        drop(coordinator);
+
+        let restarted = fixture.restart_coordinator();
+        let scan = restarted.snapshot().unwrap();
+        let item = scan.items.first().expect("AtomicFile staged item");
+        let input = WriteAuthorityRecoveryResolutionInput {
+            operation_id: operation_id.into(),
+            expected_phase: item.phase.unwrap(),
+            evidence_hash: item.evidence_hash.clone().unwrap(),
+            action: WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite,
+        };
+        fs::write(&fixture.target, b"concurrent target").unwrap();
+        let error = restarted.resolve_operator_exclusive(input).unwrap_err();
+        assert!(
+            error.contains("stale") || error.contains("Conflict"),
+            "{error}"
+        );
+        assert_eq!(fs::read(&fixture.target).unwrap(), b"concurrent target");
+        assert_eq!(fs::read(&temp).unwrap(), payload);
+        assert!(restarted.snapshot().unwrap().blocked);
+        drop(restarted);
         fixture.cleanup();
     }
 

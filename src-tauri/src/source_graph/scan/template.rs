@@ -273,6 +273,8 @@ pub(super) fn scan_template(
     );
 
     let zola_references = extract_zola_template_references(&source);
+    let markdown_projections =
+        crate::source_graph::markdown::analyze_template_markdown(&file, &source).projections;
     if zola_references.dynamic_data_loads > 0 {
         builder.add_diagnostic(
             crate::source_graph::model::SourceDiagnosticSeverity::Warning,
@@ -307,6 +309,7 @@ pub(super) fn scan_template(
         blocks,
         macros,
         semantics: tera_document.semantics().cloned(),
+        markdown_projections,
     }
 }
 

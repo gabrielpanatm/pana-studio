@@ -13,7 +13,9 @@ use crate::{
             remove_page_stylesheet_link, PageCssTarget, PageCssWriteResult, WrittenProjectFile,
         },
         rules::{selector_source_target, upsert_css_rule_desktop},
-        validation::{validate_panel_rule_input, validate_panel_variable_value},
+        validation::{
+            normalize_panel_rule_input, validate_panel_rule_input, validate_panel_variable_value,
+        },
         variables::{
             parse_variables_from_source, update_variable_in_source, variable_value_in_source,
             ScssVariable,
@@ -36,6 +38,10 @@ use crate::{
         selection_coordinator::SelectionMutationIdentity,
     },
     project::{strip_zola_root_prefix, zola_project_root},
+    project_model::{
+        model::ProjectModelFileKind, rebuild_project_model_after_workspace_change,
+        ProjectModelIncrementalIntent,
+    },
     state::AppState,
     zola_links::template_contains_asset_path,
     zola_theme::active_theme_from_source,
@@ -548,6 +554,8 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
     let coalesce_key = coalesce_prefix.map(|prefix| format!("{prefix}:{}", input.target));
     let (mutation, removed_files) =
         commit_project_workspace_session_mutation(app, workspace, |candidate| {
+            let previous_model = candidate.project_model.clone();
+            let previous_model_source_revision = candidate.project_model_source_revision;
             let workspace_identity = ProjectWorkspaceIdentity {
                 expected_project_root: candidate.session.project_root.clone(),
                 expected_session_id: candidate.runtime_session_id(),
@@ -579,6 +587,31 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
                     .collect(),
                 crate::kernel::file_buffer_store::now_ms(),
             )?;
+            if mutation.changed
+                && previous_model_source_revision == Some(mutation.revision_before)
+                && previous_model.as_ref().is_some_and(|model| {
+                    !mutation.touched_files.is_empty()
+                        && mutation.touched_files.iter().all(|relative_path| {
+                            matches!(model
+                                .files
+                                .iter()
+                                .filter(|file| file.relative_path == *relative_path)
+                                .collect::<Vec<_>>()
+                                .as_slice(), [file] if file.kind == ProjectModelFileKind::Style)
+                        })
+                })
+            {
+                let projection = candidate.capture_projection_snapshot()?;
+                let outcome = rebuild_project_model_after_workspace_change(
+                    project_root,
+                    previous_model.as_ref(),
+                    previous_model_source_revision,
+                    &projection,
+                    &mutation.touched_files,
+                    ProjectModelIncrementalIntent::StyleDeclaration,
+                )?;
+                candidate.publish_project_model(&projection, outcome.model)?;
+            }
             let removed_files = mutation
                 .entry
                 .as_ref()
@@ -710,7 +743,7 @@ fn collect_scss_replacements(
     Ok(())
 }
 
-const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION: u32 = 1;
+const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1316,7 +1349,7 @@ fn set_css_rule_impl(
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
-    validate_panel_rule_input(&selector, &properties, "desktop")?;
+    let properties = normalize_panel_rule_input(&selector, &properties, "desktop")?;
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
     execute_selection_bound_css_workspace_mutation(
         app,
@@ -1392,7 +1425,7 @@ fn set_css_rule_at_viewport_impl(
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<()>, String> {
-    validate_panel_rule_input(&selector, &properties, &viewport)?;
+    let properties = normalize_panel_rule_input(&selector, &properties, &viewport)?;
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
     execute_selection_bound_css_workspace_mutation(
         app,
@@ -1481,7 +1514,7 @@ fn set_page_css_rule_at_viewport_impl(
     app: &AppHandle,
     state: &State<AppState>,
 ) -> Result<CssMutationCommandReceipt<PageCssWriteResult>, String> {
-    validate_panel_rule_input(&selector, &properties, &viewport)?;
+    let properties = normalize_panel_rule_input(&selector, &properties, &viewport)?;
     let template_path = to_zola_relative_path(&template_path);
     let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
     execute_selection_bound_css_workspace_mutation(

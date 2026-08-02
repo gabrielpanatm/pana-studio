@@ -61,7 +61,6 @@ pub enum CommandCenterAppCommand {
     OpenSettings,
     ShowVisual,
     ShowCode,
-    ShowMarkdown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

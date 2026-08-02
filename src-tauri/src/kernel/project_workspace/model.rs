@@ -17,6 +17,13 @@ pub const PROJECT_WORKSPACE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceIdentityAliasTransition {
+    pub revision_before: u64,
+    pub revision_after: u64,
+    pub aliases: HashMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectWorkspaceIdentity {
@@ -161,6 +168,7 @@ pub struct ProjectWorkspaceSnapshot {
     pub dirty_page_js_count: usize,
     pub project_model_revision: Option<String>,
     pub project_model_source_revision: Option<u64>,
+    pub last_projection_transaction_id: Option<String>,
     pub documents: FileBufferStoreSnapshot,
     pub page_js: PageJsDraftStoreSnapshot,
     pub history: WorkspaceHistorySnapshot,
@@ -194,6 +202,9 @@ pub struct WorkspaceUndoRedoReceipt {
     pub entry: WorkspaceHistoryEntrySnapshot,
     pub documents: Vec<WorkspaceDocumentProjection>,
     pub history: WorkspaceHistorySnapshot,
+    pub application_transaction_id: String,
+    #[serde(skip)]
+    pub(crate) canvas_delta: Option<super::history::WorkspaceCanvasHistoryDelta>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -246,7 +257,7 @@ pub struct WorkspaceHistoryEntrySnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkspaceProjectionLease {
+pub struct WorkspaceProjectionSnapshot {
     pub project_root: String,
     pub runtime_session_id: String,
     pub revision: u64,

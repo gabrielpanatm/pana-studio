@@ -10,6 +10,7 @@
     IconSearch,
     IconX,
   } from "@tabler/icons-svelte";
+  import MarkdownEditor from "$lib/components/markdown/MarkdownEditor.svelte";
   import PageTaxonomyAssignments from "$lib/components/content/PageTaxonomyAssignments.svelte";
   import ProjectPageSettingsTab from "$lib/components/project/ProjectPageSettingsTab.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
@@ -27,7 +28,7 @@
   } = $props();
 
   type ContentView = "all" | "pages" | "sections";
-  type DetailMode = "info" | "create" | "edit";
+  type DetailMode = "info" | "create";
 
   const contentViews = $derived([
     { id: "all" as const, label: t("content-view-all") },
@@ -49,6 +50,11 @@
   let metadataSource = $state("");
   let metadataLoading = $state(false);
   let metadataError = $state("");
+  let loadedMetadataPath = $state("");
+  let metadataRequestSerial = 0;
+  let contentSessionId = "";
+  let pageListElement = $state<HTMLDivElement | null>(null);
+  let pageListScrollTop = $state(0);
 
   const pages = $derived(app.sourceGraph?.pages ?? []);
   const sections = $derived.by(() => {
@@ -77,6 +83,16 @@
   );
   const selectedPage = $derived(
     pages.find((page) => page.id === selectedPageId) ?? filteredPages[0] ?? null,
+  );
+  const editingPagePath = $derived(
+    app.workbenchSnapshot?.contentWorkspace.mode === "edit"
+      ? app.workbenchSnapshot.contentWorkspace.pagePath
+      : null,
+  );
+  const editingPage = $derived(
+    editingPagePath
+      ? pages.find((page) => page.file === editingPagePath) ?? null
+      : null,
   );
   const contentDiagnostics = $derived(
     (app.projectAuditSnapshot?.diagnostics ?? []).filter((diagnostic) => diagnostic.category === "seo"),
@@ -182,30 +198,77 @@
   }
 
   async function beginEdit(page: SourceGraphPage) {
-    const projectRoot = app.sessionProjectRoot;
-    const runtimeSessionId = app.kernelProjectSessionId;
-    detailMode = "edit";
-    metadataLoading = true;
-    metadataError = "";
-    try {
-      const source = await app.readPageSettingsDocument(page.file);
-      if (
-        app.sessionProjectRoot !== projectRoot
-        || app.kernelProjectSessionId !== runtimeSessionId
-        || selectedPage?.id !== page.id
-      ) return;
-      metadataSource = source;
-    } catch (error) {
-      if (selectedPage?.id === page.id) metadataError = errorMessage(error);
-    } finally {
-      if (selectedPage?.id === page.id) metadataLoading = false;
-    }
+    selectedPageId = page.id;
+    await app.openContentPageEditor(page.file);
   }
 
   function updateMetadataSource(relativePath: string, source: string) {
     metadataSource = source;
     app.updatePageFrontmatterSource(relativePath, source);
   }
+
+  $effect(() => {
+    const sessionId = app.kernelProjectSessionId;
+    if (contentSessionId === sessionId) return;
+    contentSessionId = sessionId;
+    activeView = "all";
+    detailMode = "info";
+    query = "";
+    sectionFilter = "all";
+    selectedPageId = "";
+    createError = "";
+    metadataSource = "";
+    metadataError = "";
+    loadedMetadataPath = "";
+    pageListScrollTop = 0;
+  });
+
+  $effect(() => {
+    const relativePath = editingPagePath;
+    const projectRoot = app.sessionProjectRoot;
+    const runtimeSessionId = app.kernelProjectSessionId;
+    const workspaceRevision = app.projectWorkspaceSnapshot?.revision ?? 0;
+    const refreshToken = app.refreshToken;
+    void workspaceRevision;
+    void refreshToken;
+
+    const requestSerial = ++metadataRequestSerial;
+    if (!relativePath) {
+      loadedMetadataPath = "";
+      metadataLoading = false;
+      metadataError = "";
+      return;
+    }
+
+    metadataLoading = loadedMetadataPath !== relativePath;
+    metadataError = "";
+    void app.readPageSettingsDocument(relativePath).then((source) => {
+      if (
+        requestSerial !== metadataRequestSerial
+        || app.sessionProjectRoot !== projectRoot
+        || app.kernelProjectSessionId !== runtimeSessionId
+        || editingPagePath !== relativePath
+      ) return;
+      metadataSource = source;
+      loadedMetadataPath = relativePath;
+    }).catch((error) => {
+      if (requestSerial === metadataRequestSerial && editingPagePath === relativePath) {
+        metadataError = errorMessage(error);
+      }
+    }).finally(() => {
+      if (requestSerial === metadataRequestSerial && editingPagePath === relativePath) {
+        metadataLoading = false;
+      }
+    });
+  });
+
+  $effect(() => {
+    if (editingPagePath || !pageListElement) return;
+    const element = pageListElement;
+    requestAnimationFrame(() => {
+      if (pageListElement === element) element.scrollTop = pageListScrollTop;
+    });
+  });
 
   function handleViewKeydown(event: KeyboardEvent, index: number) {
     let nextIndex: number | null = null;
@@ -222,6 +285,75 @@
   }
 </script>
 
+{#if editingPagePath}
+  <section class="content-page-workspace" aria-label={t("content-page-editor-label")}>
+    <div class="content-editor-panel">
+      {#if metadataError}
+        <div class="editor-diagnostic" role="alert">
+          <IconAlertTriangle size={24} stroke={1.7} />
+          <strong>{t("content-editor-unavailable")}</strong>
+          <span>{metadataError}</span>
+          <button class="ui-button secondary-action" type="button" onclick={() => { void openWorkspaceSource(editingPagePath); }}>
+            <IconCode size={14} /> {t("content-open-markdown")}
+          </button>
+        </div>
+      {:else if editingPage?.frontmatterParseError}
+        <div class="editor-diagnostic" role="alert">
+          <IconAlertTriangle size={24} stroke={1.7} />
+          <strong>{t("content-frontmatter-invalid")}</strong>
+          <span>{editingPage.frontmatterParseError}</span>
+          <button class="ui-button secondary-action" type="button" onclick={() => { void openWorkspaceSource(editingPagePath); }}>
+            <IconCode size={14} /> {t("content-open-markdown")}
+          </button>
+        </div>
+      {:else if metadataLoading && loadedMetadataPath !== editingPagePath}
+        <div class="editor-diagnostic">{t("content-loading-frontmatter")}</div>
+      {:else if editingPage}
+        <MarkdownEditor
+          source={metadataSource}
+          path={editingPagePath}
+          refreshToken={app.refreshToken}
+          onChange={(source, path) => updateMetadataSource(path, source)}
+        />
+      {:else}
+        <div class="editor-diagnostic" role="alert">
+          <IconAlertTriangle size={24} stroke={1.7} />
+          <strong>{t("content-editor-unavailable")}</strong>
+          <span>{t("content-page-no-longer-indexed", { path: editingPagePath })}</span>
+          <button class="ui-button secondary-action" type="button" onclick={() => { void openWorkspaceSource(editingPagePath); }}>
+            <IconCode size={14} /> {t("content-open-markdown")}
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <aside class="content-settings-panel" aria-label={t("content-page-settings-label")}>
+      {#if editingPage?.frontmatterParseError}
+        <div class="settings-diagnostic" role="alert">
+          <IconAlertTriangle size={18} stroke={1.8} />
+          <strong>{t("content-frontmatter-settings-blocked")}</strong>
+          <span>{editingPage.frontmatterParseError}</span>
+        </div>
+      {:else if metadataError}
+        <div class="settings-diagnostic" role="alert"><span>{metadataError}</span></div>
+      {:else if metadataLoading && loadedMetadataPath !== editingPagePath}
+        <div class="settings-diagnostic"><span>{t("content-loading-frontmatter")}</span></div>
+      {:else if editingPage}
+        <div class="metadata-editor">
+          <ProjectPageSettingsTab
+            activeScannedPath={editingPage.file}
+            scannedPages={app.scannedPages}
+            scannedTemplates={app.scannedTemplates}
+            activeTheme={app.scannedProject?.activeTheme ?? null}
+            pageSource={metadataSource}
+            updatePageFrontmatterSource={updateMetadataSource}
+          />
+          <PageTaxonomyAssignments {app} page={editingPage} />
+        </div>
+      {/if}
+    </aside>
+  </section>
+{:else}
 <section class="activity-workspace content-workspace" aria-labelledby="content-title">
   <header class="workspace-header">
     <div>
@@ -286,7 +418,13 @@
       aria-labelledby={`content-tab-${activeView}`}
     >
       <div class="column-head" aria-hidden="true"><span>{t("content-column-content")}</span><span>{t("content-column-kind")}</span><span>{t("content-column-template")}</span></div>
-      <div class="page-list" role="listbox" aria-label={t("content-entries-label")}>
+      <div
+        class="page-list"
+        role="listbox"
+        aria-label={t("content-entries-label")}
+        bind:this={pageListElement}
+        onscroll={(event) => { pageListScrollTop = event.currentTarget.scrollTop; }}
+      >
         {#each filteredPages as page (page.id)}
           <button
             type="button"
@@ -364,29 +502,6 @@
             </button>
           </div>
         </form>
-      {:else if detailMode === "edit" && selectedPage}
-        <header class="detail-header">
-          <div><span>{t("content-controlled-change")}</span><h2>{selectedPage.title}</h2><p>{t("content-edit-description")}</p></div>
-          <button class="ui-icon-button ui-close-button" type="button" aria-label={t("content-finish-editing")} onclick={resetPanel}><IconX size={14} /></button>
-        </header>
-        {#if metadataError}
-          <p class="form-error" role="alert"><IconAlertTriangle size={14} /> {metadataError}</p>
-        {:else if metadataLoading}
-          <div class="empty-state">{t("content-loading-frontmatter")}</div>
-        {:else}
-          <div class="metadata-editor">
-            <ProjectPageSettingsTab
-              activeScannedPath={selectedPage.file}
-              scannedPages={app.scannedPages}
-              scannedTemplates={app.scannedTemplates}
-              activeTheme={app.scannedProject?.activeTheme ?? null}
-              pageSource={metadataSource}
-              updatePageFrontmatterSource={updateMetadataSource}
-            />
-            <PageTaxonomyAssignments {app} page={selectedPage} />
-          </div>
-          <button class="ui-button secondary-action" type="button" onclick={resetPanel}>{t("content-finish-editing")}</button>
-        {/if}
       {:else if selectedPage}
         <span class="detail-kicker">{kindLabel(selectedPage.pageKind)} · {contentSection(selectedPage.file) || t("content-root-short")}</span>
         <h2>{selectedPage.title}</h2>
@@ -426,6 +541,7 @@
     </aside>
   </div>
 </section>
+{/if}
 
 <style>
   .page-main, .detail-header, .route, .quality-card strong, .detail-actions, .primary-action, .secondary-action, .form-error, .form-actions, .form-actions button { display: flex; align-items: center; }
@@ -476,11 +592,20 @@
   .metadata-editor :global(.page-settings-panel) { padding: 0; border: 0; background: transparent; }
   .metadata-editor :global(.page-file-chip) { background: var(--wb-surface-document); }
   .metadata-editor :global(.metadata-group) { border-color: var(--wb-border-subtle); background: var(--wb-surface-document); }
+  .content-page-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 360px); gap: 12px; width: 100%; height: 100%; min-width: 0; min-height: 0; padding: 12px; background: var(--wb-surface-chrome); }
+  .content-editor-panel, .content-settings-panel { min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: 12px; background: var(--wb-surface-document); box-shadow: var(--shadow-panel); }
+  .content-editor-panel :global(.markdown-editor) { height: 100%; }
+  .content-settings-panel { padding: 12px; overflow: auto; }
+  .content-settings-panel .metadata-editor { margin-top: 0; }
+  .editor-diagnostic, .settings-diagnostic { display: flex; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 24px; color: var(--wb-text-muted); text-align: center; }
+  .editor-diagnostic strong, .settings-diagnostic strong { color: var(--text-strong); }
+  .editor-diagnostic span, .settings-diagnostic span { max-width: 560px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+  .settings-diagnostic { height: auto; min-height: 180px; }
   .empty-state { display: flex; min-height: 180px; align-items: center; justify-content: center; flex-direction: column; gap: 6px; padding: 22px; color: var(--wb-text-muted); text-align: center; font-size: 12px; }
   .empty-state strong { color: var(--text-strong); font-size: 12px; }
   button:not(:disabled) { cursor: pointer; }
   button:disabled { cursor: default; opacity: .55; }
   button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-  @media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; } .detail-panel { display: none; } .content-list { border-right: 0; } }
+  @media (max-width: 900px) { .workspace-body { grid-template-columns: 1fr; } .detail-panel { display: none; } .content-list { border-right: 0; } .content-page-workspace { grid-template-columns: 1fr; grid-template-rows: minmax(420px, 1fr) minmax(220px, auto); overflow: auto; } .content-settings-panel { max-height: 440px; } }
 </style>

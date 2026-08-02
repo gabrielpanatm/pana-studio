@@ -51,6 +51,13 @@ pub fn read_project_app_config(
     app_config::read_project_app_config_for_root(&app, &root)
 }
 
+pub(crate) fn read_project_app_config_for_bootstrap(
+    app: &AppHandle,
+    root: &std::path::Path,
+) -> Result<ProjectAppConfig, String> {
+    app_config::read_project_app_config_for_root(app, root)
+}
+
 #[tauri::command]
 pub fn save_project_app_config(
     app: AppHandle,

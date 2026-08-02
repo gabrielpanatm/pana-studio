@@ -7,6 +7,7 @@
     value = "",
     placeholder = "—",
     options = [],
+    disabled = false,
     prefix,
     oninput,
     oncommit,
@@ -16,6 +17,7 @@
     value?: string;
     placeholder?: string;
     options?: string[];
+    disabled?: boolean;
     prefix?: Snippet;
     oninput?: (value: string) => void;
     oncommit?: (value: string) => void;
@@ -84,6 +86,7 @@
     value={draftValue}
     {placeholder}
     autocomplete="off"
+    {disabled}
     onfocus={() => {
       focused = true;
       if (filtered.length) showOpts = true;
@@ -156,5 +159,10 @@
     background: transparent;
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
     outline: none;
+  }
+
+  .tfo-input:disabled {
+    cursor: not-allowed;
+    opacity: .48;
   }
 </style>

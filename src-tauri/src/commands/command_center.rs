@@ -7,7 +7,7 @@ use crate::{
     localization::LocalizedDiagnostic,
     project_model::{
         build_project_model_from_workspace_projection,
-        cache::{capture_project_model_build_lease, publish_project_model_if_current},
+        cache::{capture_project_model_build_context, publish_project_model_if_current},
         model::ProjectModel,
     },
     state::AppState,
@@ -94,22 +94,22 @@ fn current_project_model(
         }
     }
 
-    let (root, session, lease) = capture_project_model_build_lease(state).map_err(|details| {
-        LocalizedDiagnostic::new("command-center-model-build-lease-failed")
-            .with_argument("details", details)
-    })?;
+    let (root, session, context) =
+        capture_project_model_build_context(state).map_err(|details| {
+            LocalizedDiagnostic::new("command-center-model-build-context-failed")
+                .with_argument("details", details)
+        })?;
     if session.project_root != project_root || session.runtime_instance_id() != runtime_session_id {
         return Err(LocalizedDiagnostic::new(
             "command-center-index-stale-during-build",
         ));
     }
-    let model = build_project_model_from_workspace_projection(&root, lease.projection()).map_err(
-        |details| {
+    let model = build_project_model_from_workspace_projection(&root, context.projection())
+        .map_err(|details| {
             LocalizedDiagnostic::new("command-center-model-build-failed")
                 .with_argument("details", details)
-        },
-    )?;
-    publish_project_model_if_current(state, &lease, model.clone()).map_err(|details| {
+        })?;
+    publish_project_model_if_current(state, &context, model.clone()).map_err(|details| {
         LocalizedDiagnostic::new("command-center-model-publish-failed")
             .with_argument("details", details)
     })?;

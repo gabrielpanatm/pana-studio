@@ -11,10 +11,6 @@
   import WorkspaceProjectArea from "$lib/components/workspace/WorkspaceProjectArea.svelte";
   import ActivityRail from "$lib/components/workbench/ActivityRail.svelte";
   import { scannedCacheKey } from "$lib/project/files";
-  import {
-    kernelUndoRedoProjectionLeaseMatches,
-    type KernelUndoRedoProjectionLease,
-  } from "$lib/kernel/undo-redo-projection-lease";
   import { requireProjectWorkspaceUndoRedoCommandReceipt } from "$lib/kernel/project-workspace-undo-redo-receipt";
   import { reconcileProjectWorkspaceTopologyAfterHistory } from "$lib/kernel/project-workspace-history-topology";
   import { isMessageFromExactPreviewFrame } from "$lib/preview/frame-origin";
@@ -46,11 +42,13 @@
     CommandCenterAction,
     ProjectWorkspaceSnapshot,
     ProjectWorkspaceUndoRedoCommandReceipt,
+    ProjectLifecycleSnapshot,
     WorkbenchSurface,
     WorkspaceSourceOpenOptions,
   } from "$lib/types";
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { listen } from "@tauri-apps/api/event";
   import { t } from "$lib/i18n/runtime.svelte";
 
   type ProjectWorkspaceUndoRedoOutcome =
@@ -60,6 +58,12 @@
         receipt: ProjectWorkspaceUndoRedoCommandReceipt;
       }
     | { ok: false; message: string };
+
+  type KernelUndoRedoContext = Readonly<{
+    projectRoot: string;
+    runtimeSessionId: string;
+    projectSessionEpoch: number;
+  }>;
 
   const app = new AppState();
   let TerminalPaneComponent = $state<Component<TerminalPaneProps> | null>(null);
@@ -79,6 +83,26 @@
     app.applicationSurface === "workbench"
       && (app.workbenchSnapshot?.activeActivity ?? "editor") === "editor",
   );
+  const activeLifecycleReadiness = $derived(app.projectLifecycle.activeSession?.readiness ?? null);
+  const lifecycleBlocksEditing = $derived(
+    activeLifecycleReadiness !== null
+      && activeLifecycleReadiness.state !== "ready"
+      && activeLifecycleReadiness.state !== "degraded",
+  );
+  const lifecycleStatus = $derived.by(() => {
+    switch (activeLifecycleReadiness?.state) {
+      case "initializing_frontend":
+        return t("workbench-project-hydrating");
+      case "preparing_preview":
+        return t("workbench-project-preparing-preview");
+      case "awaiting_canvas":
+        return t("workbench-project-awaiting-canvas");
+      case "finalizing_frontend":
+        return t("workbench-project-finalizing-frontend");
+      default:
+        return t("workbench-project-initializing");
+    }
+  });
 
   async function refreshTopbarKernelUndoRedoState() {
     if (!app.scannedProject) {
@@ -120,25 +144,21 @@
       return { ok: false, message };
     }
 
-    const lease: KernelUndoRedoProjectionLease = {
-      expectedProjectRoot: app.sessionProjectRoot,
-      expectedSessionId: app.kernelProjectSessionId,
-      expectedSessionEpoch: app.projectSessionEpoch,
+    const context: KernelUndoRedoContext = {
+      projectRoot: app.sessionProjectRoot,
+      runtimeSessionId: app.kernelProjectSessionId,
+      projectSessionEpoch: app.projectSessionEpoch,
     };
-    if (!lease.expectedProjectRoot || !lease.expectedSessionId) {
+    if (!context.projectRoot || !context.runtimeSessionId) {
       const message = t("workbench-history-session-required");
       return { ok: false, message };
     }
 
     kernelUndoRedoInFlight = true;
-    let frontendLeaseAcquired = false;
     let operationReceipt: ProjectWorkspaceUndoRedoCommandReceipt | null = null;
     try {
-      await app.beginKernelUndoRedoFrontendLease();
-      frontendLeaseAcquired = true;
-      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-frontend"));
-      const before = await refreshTopbarKernelUndoRedoState();
-      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-read"));
+      const before = topbarKernelUndoRedo ?? await refreshTopbarKernelUndoRedoState();
+      requireCurrentKernelUndoRedoContext(context);
       const target = direction === "undo" ? before?.history.nextUndo : before?.history.nextRedo;
       if (!before || !target) {
         const message = direction === "undo"
@@ -161,10 +181,10 @@
         ? await undoProjectWorkspace(identity)
         : await redoProjectWorkspace(identity);
       operationReceipt = receipt;
-      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-receipt"));
+      requireCurrentKernelUndoRedoContext(context);
       requireProjectWorkspaceUndoRedoCommandReceipt(receipt, {
-        projectRoot: lease.expectedProjectRoot,
-        runtimeSessionId: lease.expectedSessionId,
+        projectRoot: context.projectRoot,
+        runtimeSessionId: context.runtimeSessionId,
         direction,
         revisionBefore: before.revision,
         transactionId: target.transactionId,
@@ -176,8 +196,19 @@
       if (receipt.workbench) {
         app.workbenchSnapshot = receipt.workbench.snapshot;
       }
+      app.projectWorkspaceSnapshot = receipt.workspace;
       topbarKernelUndoRedo = receipt.workspace;
-      const previewWarning = await syncAfterKernelUndoRedo(receipt, lease);
+      let previewWarning: string | null = null;
+      let canvasPatchApplied = false;
+      if (receipt.canvasPatch) {
+        try {
+          await app.applyCanvasPatchToPreview(receipt.canvasPatch);
+          canvasPatchApplied = true;
+        } catch (error) {
+          previewWarning = errorMessage(error);
+        }
+      }
+      applyKernelUndoRedoLocalProjection(receipt, context);
       const label = direction === "undo" ? t("workbench-history-undo-label") : t("workbench-history-redo-label");
       app.setGlobalStatus(
         previewWarning
@@ -185,6 +216,13 @@
           : t("workbench-history-applied", { operation: label }),
         previewWarning ? "unsaved" : "restored",
       );
+      void settleKernelUndoRedoCanonicalProjection(receipt, context, canvasPatchApplied).then((warning) => {
+        if (!warning || !kernelUndoRedoContextIsCurrent(context)) return;
+        app.setGlobalStatus(
+          t("workbench-history-applied-preview-warning", { operation: label, warning }),
+          "unsaved",
+        );
+      });
       return { ok: true, snapshot: receipt.workspace.history, receipt };
     } catch (error) {
       const label = direction === "undo" ? t("workbench-history-undo-label") : t("workbench-history-redo-label");
@@ -199,32 +237,31 @@
       await refreshTopbarKernelUndoRedoState();
       return { ok: false, message };
     } finally {
-      if (frontendLeaseAcquired) app.endKernelUndoRedoFrontendLease();
       kernelUndoRedoInFlight = false;
     }
   }
 
-  function kernelUndoRedoUiLeaseIsCurrent(lease: KernelUndoRedoProjectionLease) {
-    return kernelUndoRedoProjectionLeaseMatches(app, lease);
+  function kernelUndoRedoContextIsCurrent(context: KernelUndoRedoContext) {
+    return app.sessionProjectRoot === context.projectRoot
+      && app.kernelProjectSessionId === context.runtimeSessionId
+      && app.projectSessionEpoch === context.projectSessionEpoch;
   }
 
-  function requireCurrentKernelUndoRedoUiLease(
-    lease: KernelUndoRedoProjectionLease,
-    operation: string,
-  ) {
-    if (!kernelUndoRedoUiLeaseIsCurrent(lease)) {
-      throw new Error(t("workbench-history-session-changed", { operation }));
+  function requireCurrentKernelUndoRedoContext(context: KernelUndoRedoContext) {
+    if (!kernelUndoRedoContextIsCurrent(context)) {
+      throw new Error(
+        t("workbench-history-session-changed", { operation: "Undo/Redo" }),
+      );
     }
   }
 
-  async function syncAfterKernelUndoRedo(
+  function applyKernelUndoRedoLocalProjection(
     receipt: ProjectWorkspaceUndoRedoCommandReceipt,
-    lease: KernelUndoRedoProjectionLease,
-  ): Promise<string | null> {
-    requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-projection"));
+    context: KernelUndoRedoContext,
+  ) {
+    requireCurrentKernelUndoRedoContext(context);
     const entry = receipt.result.entry;
     for (const projection of receipt.result.documents) {
-      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-documents"));
       rebaseFileBufferDraftSyncProjection(projection.relativePath, projection.snapshot);
       if (projection.snapshot) {
         applySourceTextFromKernelUndoRedo(projection.relativePath, projection.snapshot.text);
@@ -232,27 +269,51 @@
         removeSourceTextAfterKernelUndoRedo(projection.relativePath);
       }
     }
-    requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-source"));
     if (entry.pageJsPaths.length > 0) app.jsRefreshToken += 1;
     if (entry.documentPaths.some((path) => /\.(?:css|scss)$/i.test(path))) {
       app.notifyCssSourceChanged();
     }
-    await reconcileProjectWorkspaceTopologyAfterHistory(app, receipt, lease);
-    requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-topology"));
     // Inspectorul, CodeMirror și navigatorul trebuie să reflecte snapshot-ul
     // Rust chiar dacă proiecția iframe-ului este momentan indisponibilă.
     app.refreshToken += 1;
+  }
+
+  async function settleKernelUndoRedoCanonicalProjection(
+    receipt: ProjectWorkspaceUndoRedoCommandReceipt,
+    context: KernelUndoRedoContext,
+    canvasPatchApplied: boolean,
+  ): Promise<string | null> {
+    const entry = receipt.result.entry;
     try {
+      await reconcileProjectWorkspaceTopologyAfterHistory(app, receipt, {
+        projectRoot: context.projectRoot,
+        runtimeSessionId: context.runtimeSessionId,
+        projectSessionEpoch: context.projectSessionEpoch,
+        workspaceRevision: receipt.workspace.revision,
+      });
+      if (!kernelUndoRedoContextIsCurrent(context)) return null;
       await projectLatestProjectWorkspacePreview(app, {
         reason: "history-restore",
         minimumWorkspaceRevision: receipt.workspace.revision,
         requestedPaths: [...new Set([...entry.documentPaths, ...entry.pageJsPaths])].sort(),
       });
-      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-preview"));
       return null;
     } catch (error) {
-      requireCurrentKernelUndoRedoUiLease(lease, t("workbench-history-lease-preview-failure"));
-      return errorMessage(error);
+      if (
+        !kernelUndoRedoContextIsCurrent(context)
+        || (app.projectWorkspaceSnapshot?.revision ?? 0) > receipt.workspace.revision
+      ) return null;
+      let warning = errorMessage(error);
+      if (canvasPatchApplied && receipt.canvasPatch) {
+        try {
+          await app.rollbackCanvasPatchInPreview(receipt.canvasPatch);
+        } catch (rollbackError) {
+          warning = `${warning} ${t("structural-projection-canvas-rollback-refused", {
+            message: errorMessage(rollbackError),
+          })}`;
+        }
+      }
+      return warning;
     }
   }
 
@@ -350,9 +411,7 @@
     }
     app.openProjectWorkbench();
     await app.loadScannedProjectFile(file);
-    await app.setCenterView(
-      surface === "code" ? "code" : surface === "markdown" ? "markdown" : "preview",
-    );
+    await app.setCenterView(surface === "code" ? "code" : "preview");
     if (surface === "code") app.requestCodeSelectionReveal();
   }
 
@@ -446,9 +505,6 @@
         break;
       case "show_code":
         await app.setCenterView("code");
-        break;
-      case "show_markdown":
-        await app.setCenterView("markdown");
         break;
     }
   }
@@ -569,13 +625,7 @@
       preferredTemplatePagePath: options.templateContextPagePath,
       preferredTemplateRoute: options.templateContextUrl,
     });
-    await app.setCenterView(
-      options.surface === "visual"
-        ? "preview"
-        : options.surface === "markdown"
-          ? "markdown"
-          : "code",
-    );
+    await app.setCenterView(options.surface === "visual" ? "preview" : "code");
   }
 
   $effect(() => {
@@ -595,6 +645,14 @@
   });
 
   onMount(() => {
+    let disposed = false;
+    let stopProjectLifecycle: (() => void) | null = null;
+    void listen<ProjectLifecycleSnapshot>("project-lifecycle-changed", (event) => {
+      app.projectLifecycle = event.payload;
+    }).then((stop) => {
+      if (disposed) stop();
+      else stopProjectLifecycle = stop;
+    });
     const disposeSmoothWheelScrolling = installSmoothWheelScrolling(window);
     requestAnimationFrame(() => {
       window.setTimeout(() => {
@@ -612,6 +670,8 @@
     window.visualViewport?.addEventListener("scroll", handleVisualViewportChange);
     resetNativeWebviewZoom();
     return () => {
+      disposed = true;
+      stopProjectLifecycle?.();
       disposeSmoothWheelScrolling();
       app.destroy();
       window.removeEventListener("message", handleWindowMessage);
@@ -640,11 +700,12 @@
   class:light-theme={app.uiTheme === "light"}
   class:external-reconcile-lock={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired}
   class:startup-active={!app.scannedProject && app.applicationSurface !== "settings"}
+  class:lifecycle-lock={lifecycleBlocksEditing}
   class="app-shell"
-  inert={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired}
-  aria-busy={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired}
+  inert={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired || lifecycleBlocksEditing}
+  aria-busy={app.externalDiskState.reconciling || app.externalDiskState.workspaceProjectionRecoveryRequired || lifecycleBlocksEditing}
 >
-  {#if app.scannedProject || app.applicationSurface === "settings"}
+  {#if (app.projectLifecycle.activeSession && app.scannedProject) || app.applicationSurface === "settings"}
     <AppChrome
       {app}
       topbarCanUndo={topbarUndoRedo.canUndo}
@@ -709,6 +770,13 @@
     cancel={(requestId: string) => app.cancelProjectOpenRecoveryDecision(requestId)}
   />
 </main>
+
+{#if lifecycleBlocksEditing}
+  <div class="project-lifecycle-overlay" role="status" aria-live="polite">
+    <span class="project-lifecycle-spinner" aria-hidden="true"></span>
+    <span>{lifecycleStatus}</span>
+  </div>
+{/if}
 
 {#if app.externalDiskState.workspaceProjectionRecoveryRequired}
   <dialog open class="external-reconcile-recovery" aria-labelledby="external-reconcile-recovery-title">

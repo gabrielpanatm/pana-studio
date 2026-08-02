@@ -12,6 +12,8 @@
   --brand: #1d7f6a;
   --brand-strong: color-mix(in srgb, var(--brand) 70%, white);
   --brand-soft: color-mix(in srgb, var(--brand) 19%, transparent);
+  --markdown: #f59e0b;
+  --markdown-soft: color-mix(in srgb, var(--markdown) 18%, transparent);
   --focus-ring: color-mix(in srgb, var(--brand) 72%, white);
   --entity-selection-outline: var(--brand);
   --success: #3db27a;
@@ -184,6 +186,8 @@ html[data-pana-theme="light"] {
   --text-strong: #17211f;
   --brand-strong: color-mix(in srgb, var(--brand) 70%, black);
   --brand-soft: color-mix(in srgb, var(--brand) 11%, transparent);
+  --markdown: #c96a06;
+  --markdown-soft: color-mix(in srgb, var(--markdown) 12%, transparent);
   --focus-ring: color-mix(in srgb, var(--brand) 72%, black);
   --success: #2aa66f;
   --warning: #c98518;

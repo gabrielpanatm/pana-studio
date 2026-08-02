@@ -46,6 +46,7 @@ pub struct ProjectHtmlTextPatch {
     pub line_shift: isize,
     pub tag: String,
     pub text: String,
+    pub previous_escaped_text: String,
 }
 
 struct TextApplication {
@@ -54,6 +55,7 @@ struct TextApplication {
     source_start_line: usize,
     line_shift_start: usize,
     line_shift: isize,
+    previous_escaped_text: String,
 }
 
 pub fn plan_html_text(
@@ -157,6 +159,7 @@ fn plan_html_text_from_source_node(
         line_shift: applied.line_shift,
         tag: target_tag,
         text,
+        previous_escaped_text: applied.previous_escaped_text,
     })
 }
 
@@ -205,6 +208,7 @@ fn plan_html_text_from_direct_location(
         line_shift: applied.line_shift,
         tag: tag.tag,
         text,
+        previous_escaped_text: applied.previous_escaped_text,
     })
 }
 
@@ -281,6 +285,7 @@ fn apply_html_text(
         line_shift_start: text_location.line,
         line_shift,
         target_location,
+        previous_escaped_text: current_text.to_string(),
     })
 }
 

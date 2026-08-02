@@ -621,9 +621,33 @@ test("Canvas document commit waits for styledReady and never replaces head/body 
   assert.match(sync, /Promise\.all\(waits\)[\s\S]*entry\.fresh[\s\S]*entry\.link\.remove\(\)/);
   assert.match(
     sync,
+    /waitForStyledFrame\(startedAt,\s*typographyProbe\)\.then\(function \(styledMetrics\) \{[\s\S]*retireObsoleteStylesheets\(preparedStyles\)/,
+  );
+  assert.match(sync, /function headSemanticBaseKey/);
+  assert.match(sync, /document\.head\.insertBefore\(node,\s*cursor \|\| null\)/);
+  assert.match(sync, /stylesheetAttributeMutations \+= replaceCanonicalAttributes/);
+  assert.match(sync, /preloadAttributeMutations \+= replaceCanonicalAttributes/);
+  assert.match(sync, /reusableResourceOrderChanged/);
+  assert.match(sync, /if \(reusableResourceOrderChanged\) \{[\s\S]*pinnedResourceNodes = \[\]/);
+  assert.match(sync, /target\.getAttribute\(name\) !== desired\[name\]/);
+  assert.match(sync, /validateCanonicalDocumentStructure\(nextDocument\)/);
+  assert.match(sync, /rollbackPreparedStylesheets\(preparedStyles\)/);
+  assert.doesNotMatch(
+    sync.slice(
+      sync.indexOf("function reconcileHead"),
+      sync.indexOf("function retireObsoleteStylesheets"),
+    ),
+    /preparedStyles\.currentByKey\[key\]\.remove\(\)/,
+  );
+  assert.match(
+    sync,
     /requestAnimationFrame\(function \(\) \{[\s\S]*requestAnimationFrame\(function \(\) \{[\s\S]*resolve\(\{[\s\S]*styledReady:/,
   );
   assert.match(sync, /canvasPhaseReceipts:\s*phaseReceipts/);
+  assert.match(
+    sync,
+    /stylesheetPromotion:[\s\S]*headNodesReused[\s\S]*fontFallbackFrames[\s\S]*activationToStyledMs/,
+  );
   assert.match(sync, /"resourcesReady"[\s\S]*"committed"[\s\S]*"styledReady"/);
   assert.match(messages, /phase:\s*["']failed["']/);
 });
@@ -640,7 +664,7 @@ test("project startup defers Template Workbench until canonical Preview publicat
     previewStart,
   );
   const workbenchActivation = controller.indexOf(
-    "activateTemplateWorkbench: true",
+    "host.updateTemplateWorkbenchContext(",
     canonicalPublication,
   );
 

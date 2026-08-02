@@ -12,11 +12,13 @@ import {
   type CanvasProjectionPlan,
   type PreviewPhaseReceipt,
   type PreviewRuntimeEventKind,
+  type PreviewStylesheetPromotionMetrics,
 } from "$lib/project/io";
 import type {
   EditableStyles,
   PageSection,
   ProjectFile,
+  ProjectLifecycleSnapshot,
 } from "$lib/types";
 import {
   PreviewRuntimeTransportError,
@@ -43,6 +45,8 @@ export type PreviewControllerHost = PreviewRefreshLeaseHost & {
   pendingCanvasProjection: CanvasProjectionPlan | null;
   activeCanvasIdentity: CanvasProjectionIdentity | null;
   activeCanvasUrl: string;
+  previewNavigationGuardActive?: boolean;
+  previewNavigationRecoveryUrl?: string | null;
   canvasProjectionConfirmation: CanvasProjectionConfirmation | null;
   previewSyncTimer: number | null;
   domTreeFetchTimer: number | null;
@@ -50,6 +54,7 @@ export type PreviewControllerHost = PreviewRefreshLeaseHost & {
   activeRenderedPreviewPageFile: ProjectFile | null;
   isActiveRenderedPreviewPage: boolean;
   projectStatus: string;
+  projectLifecycle: ProjectLifecycleSnapshot;
   overrideRules: Record<string, EditableStyles>;
   variableOverrides: Record<string, string>;
   pageSections: PageSection[];
@@ -60,10 +65,12 @@ export type PreviewControllerHost = PreviewRefreshLeaseHost & {
     identity: CanvasProjectionIdentity,
     durationMs: number,
     diagnostic: string | null,
+    stylesheetMetrics?: PreviewStylesheetPromotionMetrics | null,
   ) => Promise<void>;
   refreshEditorNavigationSnapshot?: (
     identity?: CanvasProjectionIdentity,
     previewUrl?: string,
+    options?: { strict?: boolean },
   ) => Promise<void>;
   setPageSections?: (sections: PageSection[]) => void;
 };
@@ -113,6 +120,46 @@ export function hasMountedCanvasProjectionSurface(host: PreviewControllerHost) {
     && host.canvasSurfaceElement === host.previewFrame
     && host.canvasSurfaceElement.contentWindow,
   );
+}
+
+function beginGuardedPreviewNavigation(
+  host: PreviewControllerHost,
+  candidateUrl: string,
+) {
+  const currentUrl = host.activeCanvasUrl && host.activeCanvasUrl !== "about:blank"
+    ? host.activeCanvasUrl
+    : host.previewSrc;
+  host.previewNavigationRecoveryUrl = host.activeCanvasIdentity
+    && currentUrl
+    && currentUrl !== "about:blank"
+    ? currentUrl
+    : null;
+  host.previewNavigationGuardActive = true;
+  host.previewSrc = candidateUrl;
+}
+
+function restoreLastStyledPreviewAfterNavigationFailure(
+  host: PreviewControllerHost,
+) {
+  const recoveryUrl = host.previewNavigationRecoveryUrl;
+  if (!host.previewNavigationGuardActive || !recoveryUrl) return false;
+  host.previewNavigationRecoveryUrl = null;
+  host.previewSrc = recoveryUrl;
+  return true;
+}
+
+export function settleGuardedPreviewNavigation(
+  host: PreviewControllerHost,
+  identity: CanvasProjectionIdentity | null,
+) {
+  if (!host.previewNavigationGuardActive || !identity) return false;
+  if (
+    !canvasIdentityMatches(identity, host.activeCanvasIdentity)
+    && !canvasIdentityMatches(identity, host.pendingCanvasProjection?.identity)
+  ) return false;
+  host.previewNavigationGuardActive = false;
+  host.previewNavigationRecoveryUrl = null;
+  return true;
 }
 
 export function mountCanvasProjectionSurface(
@@ -389,6 +436,7 @@ async function confirmPendingCanvasProjection(
     if (canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
       host.pendingCanvasProjection = null;
     }
+    restoreLastStyledPreviewAfterNavigationFailure(host);
     throw new PreviewProjectionDiagnosticError(
       "preview_reconcile_failed",
       receipts[0]?.diagnostic || t("preview-controller-browser-transaction-failed"),
@@ -399,7 +447,12 @@ async function confirmPendingCanvasProjection(
   }
   host.activeCanvasIdentity = { ...plan.identity };
   host.activeCanvasUrl = host.previewSrc;
-  void host.refreshEditorNavigationSnapshot?.(plan.identity, host.previewSrc);
+  host.previewNavigationGuardActive = false;
+  host.previewNavigationRecoveryUrl = null;
+  const readiness = host.projectLifecycle?.activeSession?.readiness.state ?? null;
+  if (!readiness || readiness === "ready" || readiness === "degraded") {
+    void host.refreshEditorNavigationSnapshot?.(plan.identity, host.previewSrc);
+  }
   if (canvasIdentityMatches(host.pendingCanvasProjection?.identity, plan.identity)) {
     host.pendingCanvasProjection = null;
   }
@@ -445,6 +498,7 @@ function beginCanvasProjectionConfirmation(
       durationMs,
       `surfaceGeneration=${surfaceGeneration};lastPhase=prepared`,
     );
+    restoreLastStyledPreviewAfterNavigationFailure(host);
     reject(new Error(t("preview-controller-styled-ready-timeout")));
   }, 15_000);
   host.canvasProjectionConfirmation = {
@@ -561,6 +615,77 @@ async function replaceMountedPreviewWithCanonicalDocument(
       ack.error || t("preview-controller-bridge-document-rejected"),
     );
   }
+  const promotion = ack.stylesheetPromotion;
+  const promotionIntegerMetrics = promotion
+    ? [
+        promotion.reused,
+        promotion.staged,
+        promotion.retired,
+        promotion.preloadsReused ?? 0,
+        promotion.preloadsStaged ?? 0,
+        promotion.preloadsRetired ?? 0,
+        promotion.headNodesReused ?? 0,
+        promotion.headNodesCreated ?? 0,
+        promotion.headNodesRetired ?? 0,
+        promotion.headNodesReordered ?? 0,
+        promotion.stylesheetAttributeMutations ?? 0,
+        promotion.preloadAttributeMutations ?? 0,
+        promotion.fontInvalidationCount ?? 0,
+        promotion.fontFallbackFrames ?? 0,
+        promotion.fontActivationErrorCount ?? 0,
+        promotion.fontsReadyMs ?? 0,
+        promotion.activationToStyledMs,
+      ]
+    : [];
+  if (
+    promotion
+    && promotion.schemaVersion === 1
+    && promotion.mode === "in_place"
+    && promotionIntegerMetrics
+      .every((value) => Number.isSafeInteger(value) && value >= 0 && value <= 600_000)
+    && Number.isFinite(promotion.maxTextMetricDelta ?? 0)
+    && (promotion.maxTextMetricDelta ?? 0) >= 0
+    && (promotion.maxTextMetricDelta ?? 0) <= 1_000_000
+    && (promotion.fontActivationErrorCount ?? 0) <= 4_096
+    && (
+      promotion.fontActivationDiagnostic == null
+      || (
+        typeof promotion.fontActivationDiagnostic === "string"
+        && promotion.fontActivationDiagnostic.length > 0
+        && promotion.fontActivationDiagnostic.length <= 4_000
+      )
+    )
+    && (((promotion.fontActivationErrorCount ?? 0) === 0)
+      === (promotion.fontActivationDiagnostic == null))
+  ) {
+    void host.recordCanvasProjectionRuntimeEvent?.(
+      "canvas_stylesheets_promoted",
+      plan.identity,
+      promotion.activationToStyledMs,
+      promotion.fontActivationDiagnostic ?? null,
+      {
+        reused: promotion.reused,
+        staged: promotion.staged,
+        retired: promotion.retired,
+        preloadsReused: promotion.preloadsReused ?? 0,
+        preloadsStaged: promotion.preloadsStaged ?? 0,
+        preloadsRetired: promotion.preloadsRetired ?? 0,
+        headNodesReused: promotion.headNodesReused ?? 0,
+        headNodesCreated: promotion.headNodesCreated ?? 0,
+        headNodesRetired: promotion.headNodesRetired ?? 0,
+        headNodesReordered: promotion.headNodesReordered ?? 0,
+        stylesheetAttributeMutations: promotion.stylesheetAttributeMutations ?? 0,
+        preloadAttributeMutations: promotion.preloadAttributeMutations ?? 0,
+        fontInvalidationCount: promotion.fontInvalidationCount ?? 0,
+        fontFallbackFrames: promotion.fontFallbackFrames ?? 0,
+        maxTextMetricDelta: promotion.maxTextMetricDelta ?? 0,
+        fontActivationErrorCount: promotion.fontActivationErrorCount ?? 0,
+        fontActivationDiagnostic: promotion.fontActivationDiagnostic ?? null,
+        fontsReadyMs: promotion.fontsReadyMs ?? 0,
+        activationToStyledMs: promotion.activationToStyledMs,
+      },
+    );
+  }
   if (!previewRefreshLeaseMatches(host, lease)) return { kind: "stale" };
   return { kind: "committed" };
 }
@@ -638,7 +763,7 @@ export async function refreshRenderedPreviewDocument(
       const confirmation = plan && plan.identity.previewRevision === ready.revision
         ? beginCanvasProjectionConfirmation(host, plan)
         : null;
-      host.previewSrc = ready.url;
+      beginGuardedPreviewNavigation(host, ready.url);
       if (confirmation) await confirmation;
       if (!previewRefreshLeaseMatches(host, lease)) return false;
     }
@@ -706,7 +831,7 @@ export async function reconcileTemplateWorkbenchPreviewDocument(
         0,
         `template_workbench_${inPlace.reason}`,
       );
-      host.previewSrc = ready.url;
+      beginGuardedPreviewNavigation(host, ready.url);
     }
     await confirmation;
     if (!previewRefreshLeaseMatches(host, lease)) return false;

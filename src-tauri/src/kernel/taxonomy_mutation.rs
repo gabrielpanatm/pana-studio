@@ -1158,7 +1158,7 @@ mod tests {
                 ("content/unu.md".to_string(), page.to_string()),
             ]),
         );
-        let projection = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
         let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
         let catalog = build_taxonomy_catalog(&graph, "zola.toml", config);
         let planned = plan_taxonomy_mutation(
@@ -1239,7 +1239,7 @@ generate_feeds = false
                 ("content/unu.md".to_string(), page.to_string()),
             ]),
         );
-        let projection = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
         let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
         let catalog = build_taxonomy_catalog(&graph, "zola.toml", config);
 

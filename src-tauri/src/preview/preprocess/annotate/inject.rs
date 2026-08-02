@@ -5,6 +5,7 @@ use crate::preview::preprocess::annotate::range::LineIndex;
 use crate::project_model::zola_image_engine::encode_preview_presentation;
 use crate::source_graph::{
     mixed_cst::{parse_mixed_cst, MixedCstKind},
+    model::MarkdownProjection,
     tera_cst::{TeraCstKind, TeraTagKind},
 };
 
@@ -32,14 +33,20 @@ pub fn preprocess_template_with_revision(
     debug_assert!(document.is_lossless());
     let line_index = LineIndex::new(source);
     let mut insertions = BTreeMap::<usize, String>::new();
-    project_tera_provenance_insertions(
-        source,
-        relative_path,
-        source_ids,
-        &document,
-        &line_index,
-        &mut insertions,
-    );
+    let mut visual_scope_ids = BTreeSet::<String>::new();
+    let shortcode_projection =
+        source_ids.and_then(|index| index.shortcode_projection_for(relative_path));
+    if shortcode_projection.is_none() {
+        project_tera_provenance_insertions(
+            source,
+            relative_path,
+            source_ids,
+            &document,
+            &line_index,
+            &mut insertions,
+            &mut visual_scope_ids,
+        );
+    }
     project_html_provenance_insertions(
         source,
         relative_path,
@@ -62,7 +69,17 @@ pub fn preprocess_template_with_revision(
         cursor = position;
     }
     result.push_str(&source[cursor..]);
-    inject_empty_tera_slot_placeholders(&result, preview_revision)
+    let result = inject_empty_tera_slot_placeholders(&result, preview_revision, &visual_scope_ids);
+    if let Some(projection) = shortcode_projection {
+        format!(
+            "{}{}{}",
+            markdown_start_marker(projection),
+            result,
+            markdown_end_marker(projection)
+        )
+    } else {
+        result
+    }
 }
 
 fn project_tera_provenance_insertions(
@@ -72,6 +89,7 @@ fn project_tera_provenance_insertions(
     document: &crate::source_graph::mixed_cst::MixedCstDocument,
     line_index: &LineIndex,
     insertions: &mut BTreeMap<usize, String>,
+    visual_scope_ids: &mut BTreeSet<String>,
 ) {
     let root_tera_nodes = document
         .nodes
@@ -82,6 +100,7 @@ fn project_tera_provenance_insertions(
         })
         .collect::<BTreeSet<_>>();
     let mut scope_stack = Vec::<Option<String>>::new();
+    let mut markdown_scope_stack = Vec::<Option<MarkdownProjection>>::new();
 
     for (index, node) in document.tera.nodes.iter().enumerate() {
         let (line, column) = line_index.line_column(source, node.start);
@@ -99,7 +118,12 @@ fn project_tera_provenance_insertions(
 
         match &node.kind {
             TeraCstKind::Variable if root_tera_nodes.contains(&index) => {
-                if let Some(template_source_id) =
+                if let Some(projection) =
+                    source_ids.and_then(|index| index.markdown_projection_for(&source_location))
+                {
+                    append_insertion(insertions, node.start, &markdown_start_marker(projection));
+                    append_insertion(insertions, node.end, &markdown_end_marker(projection));
+                } else if let Some(template_source_id) =
                     source_ids.and_then(|index| index.template_source_id_for(&source_location))
                 {
                     append_insertion(
@@ -151,16 +175,30 @@ fn project_tera_provenance_insertions(
                     | TeraTagKind::Macro
                     | TeraTagKind::Filter => {
                         let keyword = tera_keyword(content);
-                        let marker_id = should_mark_tera_scope(content, keyword, relative_path)
-                            .then(|| {
-                                source_ids
-                                    .and_then(|index| {
-                                        index.template_source_id_for(&source_location)
-                                    })
-                                    .map(str::to_string)
-                            })
-                            .flatten();
+                        let markdown_projection = source_ids
+                            .and_then(|index| index.markdown_projection_for(&source_location))
+                            .cloned();
+                        if let Some(projection) = markdown_projection.as_ref() {
+                            append_insertion(
+                                insertions,
+                                node.end,
+                                &markdown_start_marker(projection),
+                            );
+                        }
+                        let marker_id = (markdown_projection.is_none()
+                            && should_mark_tera_scope(content, keyword, relative_path))
+                        .then(|| {
+                            source_ids
+                                .and_then(|index| index.template_source_id_for(&source_location))
+                                .map(str::to_string)
+                        })
+                        .flatten();
                         if let Some(template_source_id) = marker_id.as_deref() {
+                            if html_render_context_at(document, node.start)
+                                == HtmlRenderContext::Body
+                            {
+                                visual_scope_ids.insert(template_source_id.to_string());
+                            }
                             let external_start = source_ids.is_some_and(|index| {
                                 index.has_external_scope_start(&source_location)
                             });
@@ -176,6 +214,7 @@ fn project_tera_provenance_insertions(
                             }
                         }
                         scope_stack.push(marker_id);
+                        markdown_scope_stack.push(markdown_projection);
                     }
                     TeraTagKind::EndBlock
                     | TeraTagKind::EndFor
@@ -192,6 +231,13 @@ fn project_tera_provenance_insertions(
                                 ),
                             );
                         }
+                        if let Some(Some(projection)) = markdown_scope_stack.pop() {
+                            append_insertion(
+                                insertions,
+                                node.start,
+                                &markdown_end_marker(&projection),
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -199,6 +245,19 @@ fn project_tera_provenance_insertions(
             _ => {}
         }
     }
+}
+
+fn markdown_start_marker(projection: &MarkdownProjection) -> String {
+    let source = projection
+        .runtime_source_expression
+        .as_deref()
+        .map(|expression| format!("{{{{ {expression} | base64_encode }}}}"))
+        .unwrap_or_default();
+    format!("<!-- pana-markdown-start:{}:{} -->", projection.id, source)
+}
+
+fn markdown_end_marker(projection: &MarkdownProjection) -> String {
+    format!("<!-- pana-markdown-end:{} -->", projection.id)
 }
 
 fn project_html_provenance_insertions(
@@ -300,27 +359,40 @@ fn tera_block_name(content: &str) -> Option<&str> {
     }
 }
 
-fn is_non_visual_block_name(name: &str) -> bool {
-    let normalized = name
-        .trim_matches(|character| character == '"' || character == '\'')
-        .to_ascii_lowercase();
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HtmlRenderContext {
+    Head,
+    Body,
+    Unknown,
+}
 
-    matches!(
-        normalized.as_str(),
-        "title"
-            | "description"
-            | "og_title"
-            | "og_description"
-            | "tw_title"
-            | "tw_description"
-            | "canonical"
-            | "robots"
-    ) || normalized.contains("script")
-        || normalized.contains("style")
-        || normalized.contains("css")
-        || normalized.contains("head")
-        || normalized.contains("meta")
-        || normalized.contains("preload")
+fn html_render_context_at(
+    document: &crate::source_graph::mixed_cst::MixedCstDocument,
+    position: usize,
+) -> HtmlRenderContext {
+    document
+        .elements
+        .iter()
+        .filter_map(|element| {
+            let context = match element.tag.as_str() {
+                "head" => HtmlRenderContext::Head,
+                "body" => HtmlRenderContext::Body,
+                _ => return None,
+            };
+            let opening = document.nodes.get(element.opening_node)?;
+            if position < opening.end {
+                return None;
+            }
+            let content_end = element
+                .closing_node
+                .and_then(|index| document.nodes.get(index))
+                .map(|closing| closing.start)
+                .unwrap_or(usize::MAX);
+            (position <= content_end).then_some((opening.end, context))
+        })
+        .max_by_key(|(opening_end, _)| *opening_end)
+        .map(|(_, context)| context)
+        .unwrap_or(HtmlRenderContext::Unknown)
 }
 
 fn is_partial_template_relative_path(relative_path: &str) -> bool {
@@ -344,8 +416,7 @@ fn is_partial_template_relative_path(relative_path: &str) -> bool {
 fn should_mark_tera_scope(content: &str, keyword: &str, relative_path: &str) -> bool {
     match keyword {
         "block" => {
-            !is_partial_template_relative_path(relative_path)
-                && tera_block_name(content).is_some_and(|name| !is_non_visual_block_name(name))
+            !is_partial_template_relative_path(relative_path) && tera_block_name(content).is_some()
         }
         "for" | "if" | "filter" => true,
         _ => false,
@@ -603,7 +674,11 @@ fn inject_tpl_src_on_line_with_state(
     result
 }
 
-fn inject_empty_tera_slot_placeholders(source: &str, preview_revision: Option<&str>) -> String {
+fn inject_empty_tera_slot_placeholders(
+    source: &str,
+    preview_revision: Option<&str>,
+    visual_scope_ids: &BTreeSet<String>,
+) -> String {
     const START_PREFIX: &str = "<!-- pana-template-source-start:";
     const START_SUFFIX: &str = " -->";
 
@@ -629,7 +704,7 @@ fn inject_empty_tera_slot_placeholders(source: &str, preview_revision: Option<&s
         let between = &source[start_end..end_index];
 
         result.push_str(&source[cursor..start_end]);
-        if between.trim().is_empty() {
+        if between.trim().is_empty() && visual_scope_ids.contains(id) {
             result.push_str(&empty_tera_slot_placeholder(id, preview_revision));
         }
         cursor = start_end;

@@ -144,7 +144,7 @@
     inserting = true;
     loadError = "";
     try {
-      await app.insertPaletteElementAtTarget({
+      const outcome = await app.insertPaletteElementAtTarget({
         targetRenderInstanceId: target.renderInstanceId,
         targetSelector: observation.domPath || observation.cssSelector || observation.selector,
         targetSessionId: target.snapshot.runtimeSessionId,
@@ -155,6 +155,10 @@
         position: "after",
         element,
       });
+      if (outcome.status !== "committed") {
+        loadError = outcome.reason ?? t("blocks-insert-failed");
+        return;
+      }
       detailMode = "info";
       await app.setWorkbenchActivity("editor");
     } catch (cause) {

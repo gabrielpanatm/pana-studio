@@ -281,6 +281,24 @@ export async function settleProjectWorkspaceMutation(
     };
   }
 
+  const alreadyPublishedRevision = host.projectWorkspaceSnapshot?.revision ?? -1;
+  if (alreadyPublishedRevision > workspaceRevision) {
+    return {
+      authority,
+      workspaceRevision,
+      transactionId: receipt.mutation.transactionId,
+      projections: {
+        ...emptyDerivedProjection(workspaceRevision, "superseded"),
+        preview: "superseded",
+        previewOutcome: {
+          status: "superseded",
+          workspaceRevision: alreadyPublishedRevision,
+        },
+      },
+      warnings,
+    };
+  }
+
   // The Rust snapshot is visible immediately. Everything below is replaceable
   // derived state and may legitimately lag behind this authority revision.
   host.projectWorkspaceSnapshot = receipt.workspace;
@@ -309,65 +327,83 @@ export async function settleProjectWorkspaceMutation(
     };
   }
 
-  let derived = emptyDerivedProjection(workspaceRevision, "current");
-  try {
-    derived = await host.reconcileWorkspaceDerivedState({
-      expectedProjectRoot: receipt.projectRoot,
-      expectedSessionId: receipt.runtimeSessionId,
-      expectedWorkspaceRevision: workspaceRevision,
-      topologyChanged: (receipt.mutation.entry?.topologyPaths.length ?? 0) > 0,
-      preferredRelativePath: options.preferredRelativePath,
-      refreshSourceGraph: options.refreshSourceGraph ?? true,
-      refreshScss: options.refreshScss ?? true,
-    });
-    warnings.push(...derived.warnings);
-  } catch (error) {
-    const warning = t("workspace-mutation-derived-reconcile-failed", {
-      operation: warningLabel,
-      message: errorMessage(error),
-    });
-    warnings.push(warning);
-    derived = {
-      ...emptyDerivedProjection(workspaceRevision, "degraded"),
-      warnings: [warning],
-    };
-  }
-
-  let preview: WorkspaceDerivedProjectionStatus = options.projectPreview === false
-    ? "deferred"
-    : "current";
-  let previewOutcome: ProjectWorkspacePreviewProjectionOutcome | null = null;
-  const publishedWorkspaceRevision = host.projectWorkspaceSnapshot?.revision ?? workspaceRevision;
-  if (publishedWorkspaceRevision > workspaceRevision) {
-    preview = "superseded";
-    previewOutcome = {
-      status: "superseded",
-      workspaceRevision: publishedWorkspaceRevision,
-    };
-  } else if (options.projectPreview !== false && currentSettlementSession(host, receipt)) {
+  // Topology/source inventories and the canonical Zola candidate consume the
+  // same immutable Rust revision, but neither is an input of the other. Run
+  // them concurrently so Canvas verification is never queued behind a full
+  // frontend rescan.
+  const derivedTask = (async () => {
     try {
-      previewOutcome = await projectLatestProjectWorkspacePreview(host, {
-        reason: options.previewReason ?? "workspace-mutation",
-        minimumWorkspaceRevision: workspaceRevision,
+      const derived = await host.reconcileWorkspaceDerivedState({
+        expectedProjectRoot: receipt.projectRoot,
+        expectedSessionId: receipt.runtimeSessionId,
         expectedWorkspaceRevision: workspaceRevision,
-        expectedWorkspaceTransactionId: receipt.mutation.transactionId ?? undefined,
-        requestedPaths: receipt.mutation.touchedFiles,
-        force: options.forcePreview,
-        onCanvasPlanPrepared: options.onCanvasPlanPrepared,
+        topologyChanged: (receipt.mutation.entry?.topologyPaths.length ?? 0) > 0,
+        preferredRelativePath: options.preferredRelativePath,
+        refreshSourceGraph: options.refreshSourceGraph ?? true,
+        refreshScss: options.refreshScss ?? true,
       });
-      preview = previewProjectionStatus(previewOutcome);
+      return { derived, warning: null as string | null };
     } catch (error) {
-      preview = currentSettlementSession(host, receipt) ? "degraded" : "superseded";
-      const warning = t("workspace-mutation-preview-resync", {
+      const warning = t("workspace-mutation-derived-reconcile-failed", {
         operation: warningLabel,
         message: errorMessage(error),
       });
-      warnings.push(warning);
+      return {
+        derived: {
+          ...emptyDerivedProjection(workspaceRevision, "degraded"),
+          warnings: [warning],
+        },
+        warning,
+      };
     }
-  } else if (!currentSettlementSession(host, receipt)) {
-    preview = "superseded";
-    previewOutcome = { status: "superseded", workspaceRevision };
-  }
+  })();
+
+  const previewTask = (async () => {
+    let preview: WorkspaceDerivedProjectionStatus = options.projectPreview === false
+      ? "deferred"
+      : "current";
+    let previewOutcome: ProjectWorkspacePreviewProjectionOutcome | null = null;
+    let warning: string | null = null;
+    const publishedWorkspaceRevision =
+      host.projectWorkspaceSnapshot?.revision ?? workspaceRevision;
+    if (publishedWorkspaceRevision > workspaceRevision) {
+      preview = "superseded";
+      previewOutcome = {
+        status: "superseded",
+        workspaceRevision: publishedWorkspaceRevision,
+      };
+    } else if (options.projectPreview !== false && currentSettlementSession(host, receipt)) {
+      try {
+        previewOutcome = await projectLatestProjectWorkspacePreview(host, {
+          reason: options.previewReason ?? "workspace-mutation",
+          minimumWorkspaceRevision: workspaceRevision,
+          expectedWorkspaceRevision: workspaceRevision,
+          expectedWorkspaceTransactionId: receipt.mutation.transactionId ?? undefined,
+          requestedPaths: receipt.mutation.touchedFiles,
+          force: options.forcePreview,
+          onCanvasPlanPrepared: options.onCanvasPlanPrepared,
+        });
+        preview = previewProjectionStatus(previewOutcome);
+      } catch (error) {
+        preview = currentSettlementSession(host, receipt) ? "degraded" : "superseded";
+        warning = t("workspace-mutation-preview-resync", {
+          operation: warningLabel,
+          message: errorMessage(error),
+        });
+      }
+    } else if (!currentSettlementSession(host, receipt)) {
+      preview = "superseded";
+      previewOutcome = { status: "superseded", workspaceRevision };
+    }
+    return { preview, previewOutcome, warning };
+  })();
+
+  const [{ derived }, previewResult] = await Promise.all([
+    derivedTask,
+    previewTask,
+  ]);
+  warnings.push(...derived.warnings);
+  if (previewResult.warning) warnings.push(previewResult.warning);
 
   return {
     authority,
@@ -375,8 +411,8 @@ export async function settleProjectWorkspaceMutation(
     transactionId: receipt.mutation.transactionId,
     projections: {
       ...derived,
-      preview,
-      previewOutcome,
+      preview: previewResult.preview,
+      previewOutcome: previewResult.previewOutcome,
     },
     warnings: [...new Set(warnings)],
   };

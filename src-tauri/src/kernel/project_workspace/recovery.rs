@@ -3,6 +3,7 @@ use std::{
     fs,
     io::Read,
     path::Path,
+    time::Instant,
 };
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use crate::{
     app_home::{
         project_open_recovery_decision_path, project_session_dir, project_session_manifest_path,
-        project_workspace_recovery_path,
+        project_workspace_recovery_journal_path, project_workspace_recovery_path,
     },
     js::{PageJsConfig, PageJsDraftStageInput, PageJsDraftStore},
     kernel::{
@@ -28,7 +29,7 @@ use crate::{
 };
 
 use super::{
-    history::WorkspaceHistory,
+    history::{WorkspaceHistory, WorkspaceHistoryRecoveryPatch},
     model::{
         ProjectWorkspaceIdentity, ProjectWorkspaceSaveError, ProjectWorkspaceSaveReceipt,
         PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
@@ -39,6 +40,10 @@ use super::{
 
 const PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 4;
 const PROJECT_WORKSPACE_RECOVERY_MAX_BYTES: u64 = 192 * 1024 * 1024;
+const PROJECT_WORKSPACE_RECOVERY_JOURNAL_SCHEMA_VERSION: u32 = 1;
+const PROJECT_WORKSPACE_RECOVERY_JOURNAL_MAX_BYTES: u64 = 192 * 1024 * 1024;
+const PROJECT_WORKSPACE_RECOVERY_JOURNAL_RECORD_MAX_BYTES: usize = 256 * 1024;
+const PROJECT_WORKSPACE_RECOVERY_CHECKPOINT_INTERVAL: u64 = 32;
 const PROJECT_OPEN_RECOVERY_ASSESSMENT_SCHEMA_VERSION: u32 = 1;
 const PROJECT_OPEN_RECOVERY_DECISION_SCHEMA_VERSION: u32 = 1;
 const PROJECT_OPEN_RECOVERY_DECISION_MAX_BYTES: u64 = 64 * 1024;
@@ -49,6 +54,15 @@ pub const PROJECT_WORKSPACE_MUTATED_EVENT: &str = "pana-project-workspace-mutate
 pub enum ProjectWorkspacePreviewProjection {
     Required,
     Deferred,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProjectWorkspaceCommitTimings {
+    pub candidate_clone_ms: u64,
+    pub mutation_ms: u64,
+    pub recovery_persist_ms: u64,
+    pub authority_publish_ms: u64,
+    pub total_ms: u64,
 }
 
 /// Commits a session-only ProjectWorkspace mutation as one recovery-backed
@@ -74,18 +88,55 @@ pub fn commit_project_workspace_session_mutation_with_projection<R: Runtime, T>(
     preview_projection: ProjectWorkspacePreviewProjection,
     mutate: impl FnOnce(&mut ProjectWorkspace) -> Result<T, String>,
 ) -> Result<T, String> {
+    commit_project_workspace_session_mutation_with_projection_measured(
+        app,
+        live_workspace,
+        preview_projection,
+        mutate,
+    )
+    .map(|(result, _)| result)
+}
+
+pub fn commit_project_workspace_session_mutation_with_projection_measured<R: Runtime, T>(
+    app: &AppHandle<R>,
+    live_workspace: &mut ProjectWorkspace,
+    preview_projection: ProjectWorkspacePreviewProjection,
+    mutate: impl FnOnce(&mut ProjectWorkspace) -> Result<T, String>,
+) -> Result<(T, ProjectWorkspaceCommitTimings), String> {
+    let total_started = Instant::now();
     if let Some(state) = app.try_state::<AppState>() {
         state
             .ai_coordination
             .require_user_source_mutation()
             .map_err(|error| error.to_string())?;
     }
+    let clone_started = Instant::now();
     let mut candidate = live_workspace.clone();
+    let candidate_clone_ms = elapsed_ms(clone_started);
+    let mutation_started = Instant::now();
     let result = mutate(&mut candidate)?;
-    persist_project_workspace_recovery_snapshot(app, &candidate)?;
+    let mutation_ms = elapsed_ms(mutation_started);
+    let recovery_started = Instant::now();
+    persist_project_workspace_recovery_transaction(app, live_workspace, &candidate)?;
+    let recovery_persist_ms = elapsed_ms(recovery_started);
+    let publish_started = Instant::now();
     *live_workspace = candidate;
     emit_project_workspace_mutated(app, live_workspace, preview_projection);
-    Ok(result)
+    let authority_publish_ms = elapsed_ms(publish_started);
+    Ok((
+        result,
+        ProjectWorkspaceCommitTimings {
+            candidate_clone_ms,
+            mutation_ms,
+            recovery_persist_ms,
+            authority_publish_ms,
+            total_ms: elapsed_ms(total_started),
+        },
+    ))
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -194,9 +245,11 @@ struct ProjectWorkspaceRecoveryPayload {
     accepted_page_js: BTreeMap<String, PageJsConfig>,
     page_js_drafts: Vec<ProjectWorkspacePageJsRecoveryDraft>,
     history: WorkspaceHistory,
+    #[serde(default)]
+    last_projection_transaction_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectWorkspacePageJsRecoveryDraft {
     template_path: String,
@@ -206,6 +259,33 @@ struct ProjectWorkspacePageJsRecoveryDraft {
     source: String,
     coalesce_key: Option<String>,
     transaction_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWorkspaceRecoveryJournalEnvelope {
+    schema_version: u32,
+    payload_checksum: String,
+    payload: ProjectWorkspaceRecoveryJournalPayload,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWorkspaceRecoveryJournalPayload {
+    schema_version: u32,
+    project_root: String,
+    base_revision: u64,
+    revision: u64,
+    persisted_at_ms: u128,
+    accepted_manifest: Option<ProjectDiskManifest>,
+    document_changes: BTreeMap<String, Option<FileBufferEntry>>,
+    accepted_binary_resource_hash_changes: BTreeMap<String, Option<String>>,
+    binary_resource_changes: BTreeMap<String, Option<WorkspaceBinaryResource>>,
+    deleted_binary_resources: Option<BTreeSet<String>>,
+    accepted_page_js_changes: BTreeMap<String, Option<PageJsConfig>>,
+    page_js_draft_changes: BTreeMap<String, Option<ProjectWorkspacePageJsRecoveryDraft>>,
+    history: WorkspaceHistoryRecoveryPatch,
+    last_projection_transaction_id: Option<String>,
 }
 
 pub fn persist_project_workspace_recovery<R: Runtime>(
@@ -250,12 +330,109 @@ fn persist_project_workspace_recovery_snapshot<R: Runtime>(
     app: &AppHandle<R>,
     workspace: &ProjectWorkspace,
 ) -> Result<(), String> {
+    let payload = recovery_payload_from_workspace(workspace)?;
+    let source = serialize_recovery_envelope(&payload)?;
+    if source.len() as u64 > PROJECT_WORKSPACE_RECOVERY_MAX_BYTES {
+        return Err(format!(
+            "ProjectWorkspace recovery depășește limita de {} bytes.",
+            PROJECT_WORKSPACE_RECOVERY_MAX_BYTES
+        ));
+    }
+
+    let path = project_workspace_recovery_path(app, &workspace.session.project_root)?;
+    let boundary = project_session_dir(app, &workspace.session.project_root)?;
+    let intent = WriteIntent::new(
+        WriteCategory::InternalAppWrite,
+        WriteOwner::ProjectWorkspace,
+        WriteOperationKind::WriteText,
+        WriteTarget::new(path, boundary, "sessions/project-workspace.json"),
+        WritePolicy::internal_atomic(),
+        "Persist ProjectWorkspace recovery checkpoint",
+    );
+    WriteAuthority::new(app)
+        .write_text(intent, &format!("{source}\n"))
+        .map_err(|error| error.into_terminal_diagnostic())?;
+
+    // A checkpoint already contains every committed journal entry. Stale
+    // records are ignored by revision during recovery, so cleanup failure does
+    // not invalidate this durable transaction.
+    if let Err(error) =
+        remove_project_workspace_recovery_journal(app, &workspace.session.project_root)
+    {
+        eprintln!("[Pană Studio] Jurnalul recovery compactat nu a putut fi curățat: {error}");
+    }
+    Ok(())
+}
+
+fn persist_project_workspace_recovery_transaction<R: Runtime>(
+    app: &AppHandle<R>,
+    base: &ProjectWorkspace,
+    current: &ProjectWorkspace,
+) -> Result<(), String> {
+    if base.session.project_root != current.session.project_root
+        || base.runtime_session_id() != current.runtime_session_id()
+    {
+        return Err(
+            "ProjectWorkspace recovery incremental a refuzat o tranziție între sesiuni."
+                .to_string(),
+        );
+    }
+    if current.revision <= base.revision {
+        return persist_project_workspace_recovery_snapshot(app, current);
+    }
+
+    let checkpoint_path = project_workspace_recovery_path(app, &current.session.project_root)?;
+    let checkpoint_exists =
+        regular_file_len_if_exists(&checkpoint_path, "Checkpoint-ul ProjectWorkspace recovery")?
+            .is_some();
+    if !checkpoint_exists || current.revision % PROJECT_WORKSPACE_RECOVERY_CHECKPOINT_INTERVAL == 0
+    {
+        return persist_project_workspace_recovery_snapshot(app, current);
+    }
+
+    let journal_source = serialize_recovery_journal_transaction(base, current)?;
+    if journal_source.len() + 1 > PROJECT_WORKSPACE_RECOVERY_JOURNAL_RECORD_MAX_BYTES {
+        return persist_project_workspace_recovery_snapshot(app, current);
+    }
+    let journal_path = project_workspace_recovery_journal_path(app, &current.session.project_root)?;
+    let existing_journal_bytes =
+        regular_file_len_if_exists(&journal_path, "Jurnalul ProjectWorkspace recovery")?
+            .unwrap_or_default();
+    let journal_bytes_after = existing_journal_bytes
+        .checked_add(journal_source.len() as u64 + 1)
+        .ok_or_else(|| "Dimensiunea jurnalului recovery a depășit contorul.".to_string())?;
+    if journal_bytes_after > PROJECT_WORKSPACE_RECOVERY_JOURNAL_MAX_BYTES {
+        return persist_project_workspace_recovery_snapshot(app, current);
+    }
+
+    let boundary = project_session_dir(app, &current.session.project_root)?;
+    let intent = WriteIntent::new(
+        WriteCategory::InternalAppWrite,
+        WriteOwner::ProjectWorkspace,
+        WriteOperationKind::AppendText,
+        WriteTarget::new(
+            journal_path,
+            boundary,
+            "sessions/project-workspace.journal.jsonl",
+        ),
+        WritePolicy::internal_append(),
+        "Append ProjectWorkspace recovery delta",
+    );
+    WriteAuthority::new(app)
+        .append_text(intent, &format!("{journal_source}\n"))
+        .map_err(|error| error.into_terminal_diagnostic())?;
+    Ok(())
+}
+
+fn recovery_payload_from_workspace(
+    workspace: &ProjectWorkspace,
+) -> Result<ProjectWorkspaceRecoveryPayload, String> {
     workspace.accepted_disk.require_identity(
         &workspace.runtime_session_id(),
         &workspace.session.project_root,
     )?;
     workspace.accepted_disk.require_complete()?;
-    let payload = ProjectWorkspaceRecoveryPayload {
+    Ok(ProjectWorkspaceRecoveryPayload {
         schema_version: PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION,
         project_root: workspace.session.project_root.clone(),
         accepted_manifest: workspace.accepted_disk.manifest.clone(),
@@ -281,39 +458,139 @@ fn persist_project_workspace_recovery_snapshot<R: Runtime>(
             })
             .collect(),
         history: workspace.history.clone(),
-    };
+        last_projection_transaction_id: workspace.last_projection_transaction_id.clone(),
+    })
+}
+
+fn serialize_recovery_envelope(
+    payload: &ProjectWorkspaceRecoveryPayload,
+) -> Result<String, String> {
     let payload_source = serde_json::to_string(&payload).map_err(|error| {
         format!("ProjectWorkspace recovery nu poate serializa payloadul: {error}")
     })?;
-    let envelope = ProjectWorkspaceRecoveryEnvelope {
-        schema_version: PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION,
-        payload_checksum: hash_text(&payload_source),
-        payload,
-    };
-    let source = serde_json::to_string_pretty(&envelope).map_err(|error| {
-        format!("ProjectWorkspace recovery nu poate serializa învelișul: {error}")
-    })?;
-    if source.len() as u64 > PROJECT_WORKSPACE_RECOVERY_MAX_BYTES {
-        return Err(format!(
-            "ProjectWorkspace recovery depășește limita de {} bytes.",
-            PROJECT_WORKSPACE_RECOVERY_MAX_BYTES
-        ));
-    }
+    let checksum = hash_text(&payload_source);
+    Ok(format!(
+        "{{\"schemaVersion\":{PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION},\"payloadChecksum\":\"{checksum}\",\"payload\":{payload_source}}}"
+    ))
+}
 
-    let path = project_workspace_recovery_path(app, &workspace.session.project_root)?;
-    let boundary = project_session_dir(app, &workspace.session.project_root)?;
-    let intent = WriteIntent::new(
-        WriteCategory::InternalAppWrite,
-        WriteOwner::ProjectWorkspace,
-        WriteOperationKind::WriteText,
-        WriteTarget::new(path, boundary, "sessions/project-workspace.json"),
-        WritePolicy::internal_atomic(),
-        "Persist ProjectWorkspace recovery",
-    );
-    WriteAuthority::new(app)
-        .write_text(intent, &format!("{source}\n"))
-        .map_err(|error| error.into_terminal_diagnostic())?;
-    Ok(())
+fn serialize_recovery_journal_transaction(
+    base: &ProjectWorkspace,
+    current: &ProjectWorkspace,
+) -> Result<String, String> {
+    current
+        .accepted_disk
+        .require_identity(&current.runtime_session_id(), &current.session.project_root)?;
+    current.accepted_disk.require_complete()?;
+    let payload = ProjectWorkspaceRecoveryJournalPayload {
+        schema_version: PROJECT_WORKSPACE_RECOVERY_JOURNAL_SCHEMA_VERSION,
+        project_root: current.session.project_root.clone(),
+        base_revision: base.revision,
+        revision: current.revision,
+        persisted_at_ms: now_ms(),
+        accepted_manifest: (base.accepted_disk.manifest != current.accepted_disk.manifest)
+            .then(|| current.accepted_disk.manifest.clone()),
+        document_changes: recovery_map_changes(&base.documents.files, &current.documents.files),
+        accepted_binary_resource_hash_changes: recovery_map_changes(
+            &base.accepted_binary_resource_hashes,
+            &current.accepted_binary_resource_hashes,
+        ),
+        binary_resource_changes: recovery_map_changes(
+            &base.binary_resources,
+            &current.binary_resources,
+        ),
+        deleted_binary_resources: (base.deleted_binary_resources
+            != current.deleted_binary_resources)
+            .then(|| current.deleted_binary_resources.clone()),
+        accepted_page_js_changes: recovery_map_changes(
+            &base.accepted_page_js,
+            &current.accepted_page_js,
+        ),
+        page_js_draft_changes: recovery_page_js_draft_changes(base, current),
+        history: current.history.recovery_patch_from(&base.history),
+        last_projection_transaction_id: current.last_projection_transaction_id.clone(),
+    };
+    let payload_source = serde_json::to_string(&payload)
+        .map_err(|error| format!("Jurnalul ProjectWorkspace nu poate serializa delta: {error}"))?;
+    let checksum = hash_text(&payload_source);
+    Ok(format!(
+        "{{\"schemaVersion\":{PROJECT_WORKSPACE_RECOVERY_JOURNAL_SCHEMA_VERSION},\"payloadChecksum\":\"{checksum}\",\"payload\":{payload_source}}}"
+    ))
+}
+
+fn recovery_map_changes<V: Clone + PartialEq>(
+    base: &BTreeMap<String, V>,
+    current: &BTreeMap<String, V>,
+) -> BTreeMap<String, Option<V>> {
+    base.keys()
+        .chain(current.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|key| {
+            let before = base.get(&key);
+            let after = current.get(&key);
+            (before != after).then(|| (key, after.cloned()))
+        })
+        .collect()
+}
+
+fn recovery_page_js_draft_changes(
+    base: &ProjectWorkspace,
+    current: &ProjectWorkspace,
+) -> BTreeMap<String, Option<ProjectWorkspacePageJsRecoveryDraft>> {
+    base.page_js
+        .drafts
+        .keys()
+        .chain(current.page_js.drafts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|key| {
+            let before = base.page_js.drafts.get(&key);
+            let after = current.page_js.drafts.get(&key);
+            let equivalent = match (before, after) {
+                (Some(before), Some(after)) => {
+                    before.template_path == after.template_path
+                        && before.base == after.base
+                        && before.current == after.current
+                        && before.cachebust_assets == after.cachebust_assets
+                        && before.source == after.source
+                        && before.coalesce_key == after.coalesce_key
+                        && before.transaction_id == after.transaction_id
+                }
+                (None, None) => true,
+                _ => false,
+            };
+            (!equivalent).then(|| {
+                (
+                    key,
+                    after.map(|draft| ProjectWorkspacePageJsRecoveryDraft {
+                        template_path: draft.template_path.clone(),
+                        base: draft.base.clone(),
+                        current: draft.current.clone(),
+                        cachebust_assets: draft.cachebust_assets,
+                        source: draft.source.clone(),
+                        coalesce_key: draft.coalesce_key.clone(),
+                        transaction_id: draft.transaction_id.clone(),
+                    }),
+                )
+            })
+        })
+        .collect()
+}
+
+fn regular_file_len_if_exists(path: &Path, label: &str) -> Result<Option<u64>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            Ok(Some(metadata.len()))
+        }
+        Ok(_) => Err(format!(
+            "{label} a refuzat un fișier symlink sau non-regular."
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{label} nu poate citi metadata: {error}")),
+    }
 }
 
 pub fn emit_project_workspace_mutated<R: Runtime>(
@@ -355,7 +632,10 @@ pub fn inspect_project_workspace_recovery_for_open<R: Runtime>(
     }
 
     let recovery_path = project_workspace_recovery_path(app, &project_root)?;
-    let Some(source) = read_recovery_source(&recovery_path)? else {
+    let recovery_journal_path = project_workspace_recovery_journal_path(app, &project_root)?;
+    let checkpoint_source = read_recovery_source(&recovery_path)?;
+    let journal_source = read_recovery_journal_source(&recovery_journal_path)?;
+    if checkpoint_source.is_none() && journal_source.is_none() {
         return Ok(ProjectOpenRecoveryAssessment {
             schema_version: PROJECT_OPEN_RECOVERY_ASSESSMENT_SCHEMA_VERSION,
             status: ProjectOpenRecoveryStatus::Missing,
@@ -374,10 +654,10 @@ pub fn inspect_project_workspace_recovery_for_open<R: Runtime>(
             current_file_count: current_manifest.files.len(),
             diagnostic: None,
         });
-    };
+    }
 
     let assessment_token = project_open_recovery_assessment_token(
-        &source,
+        &recovery_bundle_evidence(checkpoint_source.as_deref(), journal_source.as_deref()),
         current_manifest,
         current_root_fingerprint,
     )?;
@@ -389,7 +669,10 @@ pub fn inspect_project_workspace_recovery_for_open<R: Runtime>(
                 && marker.assessment_token == assessment_token
         });
 
-    let envelope = match parse_project_workspace_recovery_envelope(&source) {
+    let envelope = match parse_project_workspace_recovery_bundle(
+        checkpoint_source.as_deref(),
+        journal_source.as_deref(),
+    ) {
         Ok(envelope) => envelope,
         Err(diagnostic) => {
             return Ok(ProjectOpenRecoveryAssessment {
@@ -601,10 +884,17 @@ pub fn restore_project_workspace_recovery<R: Runtime>(
     workspace: &mut ProjectWorkspace,
 ) -> Result<ProjectWorkspaceRecoveryStatus, String> {
     let path = project_workspace_recovery_path(app, &workspace.session.project_root)?;
-    let Some(source) = read_recovery_source(&path)? else {
+    let journal_path =
+        project_workspace_recovery_journal_path(app, &workspace.session.project_root)?;
+    let checkpoint_source = read_recovery_source(&path)?;
+    let journal_source = read_recovery_journal_source(&journal_path)?;
+    if checkpoint_source.is_none() && journal_source.is_none() {
         return Ok(ProjectWorkspaceRecoveryStatus::Missing);
-    };
-    let envelope = parse_project_workspace_recovery_envelope(&source)?;
+    }
+    let envelope = parse_project_workspace_recovery_bundle(
+        checkpoint_source.as_deref(),
+        journal_source.as_deref(),
+    )?;
     let payload = envelope.payload;
     if payload.project_root != workspace.session.project_root
         || payload.accepted_manifest.root != workspace.session.project_root
@@ -762,6 +1052,14 @@ pub fn restore_project_workspace_recovery<R: Runtime>(
     workspace.accepted_page_js = payload.accepted_page_js;
     workspace.page_js = page_js;
     workspace.history = payload.history;
+    workspace.last_projection_transaction_id =
+        payload.last_projection_transaction_id.or_else(|| {
+            workspace
+                .history
+                .snapshot()
+                .next_undo
+                .map(|entry| entry.transaction_id)
+        });
     workspace.revision = payload.revision;
     workspace.project_model = None;
     workspace.project_model_source_revision = None;
@@ -772,6 +1070,7 @@ pub fn clear_project_workspace_recovery<R: Runtime>(
     app: &AppHandle<R>,
     project_root: &str,
 ) -> Result<(), String> {
+    remove_project_workspace_recovery_journal(app, project_root)?;
     let path = project_workspace_recovery_path(app, project_root)?;
     let boundary = project_session_dir(app, project_root)?;
     let intent = WriteIntent::new(
@@ -781,6 +1080,26 @@ pub fn clear_project_workspace_recovery<R: Runtime>(
         WriteTarget::new(path, boundary, "sessions/project-workspace.json"),
         WritePolicy::internal_lifecycle(),
         "Clear ProjectWorkspace recovery",
+    );
+    WriteAuthority::new(app)
+        .remove_file_if_exists(intent)
+        .map_err(|error| error.into_terminal_diagnostic())?;
+    Ok(())
+}
+
+fn remove_project_workspace_recovery_journal<R: Runtime>(
+    app: &AppHandle<R>,
+    project_root: &str,
+) -> Result<(), String> {
+    let path = project_workspace_recovery_journal_path(app, project_root)?;
+    let boundary = project_session_dir(app, project_root)?;
+    let intent = WriteIntent::new(
+        WriteCategory::InternalAppWrite,
+        WriteOwner::ProjectWorkspace,
+        WriteOperationKind::RemoveFile,
+        WriteTarget::new(path, boundary, "sessions/project-workspace.journal.jsonl"),
+        WritePolicy::internal_lifecycle(),
+        "Clear ProjectWorkspace recovery journal",
     );
     WriteAuthority::new(app)
         .remove_file_if_exists(intent)
@@ -811,6 +1130,152 @@ fn parse_project_workspace_recovery_envelope(
         );
     }
     Ok(envelope)
+}
+
+fn parse_project_workspace_recovery_bundle(
+    checkpoint_source: Option<&str>,
+    journal_source: Option<&str>,
+) -> Result<ProjectWorkspaceRecoveryEnvelope, String> {
+    let checkpoint_source = checkpoint_source.ok_or_else(|| {
+        "Jurnalul ProjectWorkspace recovery există fără un checkpoint de bază.".to_string()
+    })?;
+    let mut envelope = parse_project_workspace_recovery_envelope(checkpoint_source)?;
+    if let Some(journal_source) = journal_source {
+        for (index, line) in journal_source.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let journal = serde_json::from_str::<ProjectWorkspaceRecoveryJournalEnvelope>(line)
+                .map_err(|error| {
+                    format!(
+                        "Jurnalul ProjectWorkspace recovery are JSON invalid la linia {}: {error}",
+                        index + 1
+                    )
+                })?;
+            if journal.schema_version != PROJECT_WORKSPACE_RECOVERY_JOURNAL_SCHEMA_VERSION
+                || journal.payload.schema_version
+                    != PROJECT_WORKSPACE_RECOVERY_JOURNAL_SCHEMA_VERSION
+            {
+                return Err(format!(
+                    "Jurnalul ProjectWorkspace recovery are schema incompatibilă {}/{} la linia {}.",
+                    journal.schema_version,
+                    journal.payload.schema_version,
+                    index + 1
+                ));
+            }
+            let payload_source = serde_json::to_string(&journal.payload).map_err(|error| {
+                format!(
+                    "Jurnalul ProjectWorkspace recovery nu poate reserializa linia {}: {error}",
+                    index + 1
+                )
+            })?;
+            if hash_text(&payload_source) != journal.payload_checksum {
+                return Err(format!(
+                    "Jurnalul ProjectWorkspace recovery a eșuat checksum la linia {}.",
+                    index + 1
+                ));
+            }
+            if journal.payload.revision <= envelope.payload.revision {
+                continue;
+            }
+            apply_project_workspace_recovery_journal_payload(
+                &mut envelope.payload,
+                journal.payload,
+            )
+            .map_err(|error| format!("{error} Linia jurnalului: {}.", index + 1))?;
+        }
+    }
+    let effective_payload_source = serde_json::to_string(&envelope.payload).map_err(|error| {
+        format!("ProjectWorkspace recovery efectiv nu poate fi serializat: {error}")
+    })?;
+    envelope.payload_checksum = hash_text(&effective_payload_source);
+    Ok(envelope)
+}
+
+fn apply_project_workspace_recovery_journal_payload(
+    checkpoint: &mut ProjectWorkspaceRecoveryPayload,
+    journal: ProjectWorkspaceRecoveryJournalPayload,
+) -> Result<(), String> {
+    if journal.project_root != checkpoint.project_root
+        || journal.base_revision != checkpoint.revision
+        || journal.revision <= journal.base_revision
+    {
+        return Err(
+            "Jurnalul ProjectWorkspace recovery nu continuă exact checkpoint-ul anterior."
+                .to_string(),
+        );
+    }
+    if let Some(accepted_manifest) = journal.accepted_manifest {
+        checkpoint.accepted_manifest = accepted_manifest;
+    }
+    apply_recovery_map_changes(&mut checkpoint.documents, journal.document_changes);
+    apply_recovery_map_changes(
+        &mut checkpoint.accepted_binary_resource_hashes,
+        journal.accepted_binary_resource_hash_changes,
+    );
+    apply_recovery_map_changes(
+        &mut checkpoint.binary_resources,
+        journal.binary_resource_changes,
+    );
+    if let Some(deleted_binary_resources) = journal.deleted_binary_resources {
+        checkpoint.deleted_binary_resources = deleted_binary_resources;
+    }
+    apply_recovery_map_changes(
+        &mut checkpoint.accepted_page_js,
+        journal.accepted_page_js_changes,
+    );
+    let mut page_js_drafts = checkpoint
+        .page_js_drafts
+        .drain(..)
+        .map(|draft| (draft.template_path.clone(), draft))
+        .collect::<BTreeMap<_, _>>();
+    for (template_path, draft) in journal.page_js_draft_changes {
+        match draft {
+            Some(draft) if draft.template_path == template_path => {
+                page_js_drafts.insert(template_path, draft);
+            }
+            Some(_) => {
+                return Err(
+                    "Jurnalul ProjectWorkspace recovery are o identitate Page JS divergentă."
+                        .to_string(),
+                );
+            }
+            None => {
+                page_js_drafts.remove(&template_path);
+            }
+        }
+    }
+    checkpoint.page_js_drafts = page_js_drafts.into_values().collect();
+    checkpoint.history.apply_recovery_patch(journal.history)?;
+    checkpoint.last_projection_transaction_id = journal.last_projection_transaction_id;
+    checkpoint.revision = journal.revision;
+    checkpoint.persisted_at_ms = journal.persisted_at_ms;
+    Ok(())
+}
+
+fn apply_recovery_map_changes<V>(
+    target: &mut BTreeMap<String, V>,
+    changes: BTreeMap<String, Option<V>>,
+) {
+    for (key, value) in changes {
+        if let Some(value) = value {
+            target.insert(key, value);
+        } else {
+            target.remove(&key);
+        }
+    }
+}
+
+fn recovery_bundle_evidence(
+    checkpoint_source: Option<&str>,
+    journal_source: Option<&str>,
+) -> String {
+    format!(
+        "checkpoint\0{}\0journal\0{}",
+        checkpoint_source.unwrap_or_default(),
+        journal_source.unwrap_or_default()
+    )
 }
 
 fn project_open_recovery_assessment_token(
@@ -886,6 +1351,14 @@ fn read_recovery_source(path: &Path) -> Result<Option<String>, String> {
         path,
         PROJECT_WORKSPACE_RECOVERY_MAX_BYTES,
         "ProjectWorkspace recovery",
+    )
+}
+
+fn read_recovery_journal_source(path: &Path) -> Result<Option<String>, String> {
+    read_bounded_regular_utf8(
+        path,
+        PROJECT_WORKSPACE_RECOVERY_JOURNAL_MAX_BYTES,
+        "Jurnalul ProjectWorkspace recovery",
     )
 }
 
@@ -1186,7 +1659,7 @@ mod tests {
 
         let mut original = workspace(&project, &session);
         load_taxonomy_recovery_baselines(&mut original, &project, config, page);
-        let projection = original.capture_projection_lease().unwrap();
+        let projection = original.capture_projection_snapshot().unwrap();
         let graph = build_source_graph_from_workspace_projection(&project, &projection).unwrap();
         let catalog = build_taxonomy_catalog(&graph, "zola.toml", config);
         let planned = plan_taxonomy_mutation(
@@ -1414,7 +1887,10 @@ mod tests {
             })
             .unwrap_err();
 
-        assert!(error.contains("project-workspace.json") || error.contains("directory"));
+        assert!(
+            !error.trim().is_empty(),
+            "eșecul persistenței recovery trebuie să păstreze un diagnostic"
+        );
         let after = live.snapshot();
         assert_eq!(after.revision, before.revision);
         assert_eq!(after.dirty, before.dirty);
@@ -1426,6 +1902,200 @@ mod tests {
 
         drop(app);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn session_mutations_append_incremental_recovery_and_restore_the_latest_revision() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "pana-project-workspace-incremental-recovery-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let project = root.join("project");
+        fs::create_dir_all(project.join("templates")).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let project = project.canonicalize().unwrap();
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        ensure_app_home(app.handle()).unwrap();
+        let session_dir = root.join("session");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session = test_session(&project, &session_dir);
+        let mut live = workspace(&project, &session);
+        persist_project_workspace_recovery(app.handle(), &live).unwrap();
+
+        for (index, name) in ["one", "two"].into_iter().enumerate() {
+            commit_project_workspace_session_mutation(app.handle(), &mut live, |candidate| {
+                candidate.stage_resource_texts(
+                    &identity(candidate),
+                    WorkspaceMutationMetadata {
+                        label: format!("Create {name}"),
+                        source: "test.incremental_recovery".to_string(),
+                        coalesce_key: None,
+                        transaction_id: Some(format!("incremental-{name}")),
+                    },
+                    vec![super::super::WorkspaceResourceMutation {
+                        relative_path: format!("templates/{name}.html"),
+                        contents: format!("<main>{name}</main>\n"),
+                        create_only: true,
+                    }],
+                    50 + index as u128,
+                )
+            })
+            .unwrap();
+        }
+        commit_project_workspace_session_mutation(app.handle(), &mut live, |candidate| {
+            candidate.undo(&identity(candidate), 60)
+        })
+        .unwrap();
+
+        let checkpoint_path =
+            project_workspace_recovery_path(app.handle(), &session.project_root).unwrap();
+        let checkpoint_source = read_recovery_source(&checkpoint_path).unwrap().unwrap();
+        assert_eq!(
+            parse_project_workspace_recovery_envelope(&checkpoint_source)
+                .unwrap()
+                .payload
+                .revision,
+            0
+        );
+        let journal_path =
+            project_workspace_recovery_journal_path(app.handle(), &session.project_root).unwrap();
+        let journal_source = read_recovery_journal_source(&journal_path)
+            .unwrap()
+            .unwrap();
+        assert_eq!(journal_source.lines().count(), 3);
+
+        let mut restored = workspace(&project, &session);
+        assert_eq!(
+            restore_project_workspace_recovery(app.handle(), &mut restored).unwrap(),
+            ProjectWorkspaceRecoveryStatus::Restored
+        );
+        assert_eq!(restored.revision, 3);
+        assert_eq!(restored.snapshot().history.undo_count, 1);
+        assert_eq!(restored.snapshot().history.redo_count, 1);
+        assert_eq!(
+            restored.documents.text_for("templates/one.html").as_deref(),
+            Some("<main>one</main>\n")
+        );
+        assert!(restored.documents.text_for("templates/two.html").is_none());
+
+        clear_project_workspace_recovery(app.handle(), &session.project_root).unwrap();
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_recovery_cost_scales_with_the_delta_not_the_workspace() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "pana-project-workspace-recovery-cost-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+
+        let small = recovery_serialization_measurement(&root, "small", 8, 4 * 1024);
+        let large = recovery_serialization_measurement(&root, "large", 96, 32 * 1024);
+        eprintln!(
+            "[Pană Studio][perf] recovery_delta small_checkpoint_bytes={} small_journal_bytes={} small_checkpoint_us={} small_journal_us={} large_checkpoint_bytes={} large_journal_bytes={} large_checkpoint_us={} large_journal_us={}",
+            small.0,
+            small.1,
+            small.2,
+            small.3,
+            large.0,
+            large.1,
+            large.2,
+            large.3,
+        );
+        assert!(small.1 < small.0);
+        assert!(large.1.saturating_mul(20) < large.0);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn recovery_serialization_measurement(
+        root: &Path,
+        label: &str,
+        file_count: usize,
+        bytes_per_file: usize,
+    ) -> (usize, usize, u128, u128) {
+        let project = root.join(label);
+        fs::create_dir_all(project.join("templates")).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let mut sources = Vec::new();
+        for index in 0..file_count {
+            let relative_path = format!("templates/page-{index:03}.html");
+            let prefix = format!("<main data-index=\"{index}\">");
+            let source = format!(
+                "{prefix}{}</main>\n",
+                "x".repeat(bytes_per_file.saturating_sub(prefix.len() + 9))
+            );
+            fs::write(project.join(&relative_path), &source).unwrap();
+            sources.push((relative_path, source));
+        }
+        let project = project.canonicalize().unwrap();
+        let session = test_session(&project, &root.join(format!("{label}-session")));
+        let mut base = workspace(&project, &session);
+        for (relative_path, source) in &sources {
+            base.documents.insert_loaded_file(FileBufferEntry {
+                relative_path: relative_path.clone(),
+                absolute_path: project.join(relative_path).to_string_lossy().into_owned(),
+                language: TextBufferLanguage::Html,
+                role: TextBufferRole::Template,
+                baseline: FileBufferBaseline {
+                    hash: hash_text(source),
+                    modified_ms: 1,
+                    size: source.len() as u64,
+                    readonly: false,
+                },
+                baseline_text: source.clone(),
+                draft: None,
+                revision: 1,
+            });
+        }
+        base.accepted_documents = base.documents.files.clone();
+        let mut current = base.clone();
+        let changed_path = &sources[file_count / 2].0;
+        let snapshot = current.documents.text_snapshot(changed_path).unwrap();
+        let changed = snapshot
+            .text
+            .replacen("<main", "<main data-mutated=\"true\"", 1);
+        current
+            .documents
+            .set_draft_if_current(
+                changed_path,
+                changed,
+                &FileBufferMutationExpectation {
+                    expected_revision: snapshot.revision,
+                    expected_hash: snapshot.hash,
+                },
+                2,
+            )
+            .unwrap();
+        current.revision = 1;
+
+        let mut checkpoint_bytes = 0;
+        let mut checkpoint_us = u128::MAX;
+        let mut journal_bytes = 0;
+        let mut journal_us = u128::MAX;
+        for _ in 0..5 {
+            let checkpoint_started = Instant::now();
+            let checkpoint =
+                serialize_recovery_envelope(&recovery_payload_from_workspace(&current).unwrap())
+                    .unwrap();
+            checkpoint_us = checkpoint_us.min(checkpoint_started.elapsed().as_micros());
+            checkpoint_bytes = checkpoint.len();
+
+            let journal_started = Instant::now();
+            let journal = serialize_recovery_journal_transaction(&base, &current).unwrap();
+            journal_us = journal_us.min(journal_started.elapsed().as_micros());
+            journal_bytes = journal.len();
+        }
+        (checkpoint_bytes, journal_bytes, checkpoint_us, journal_us)
     }
 
     fn workspace(project: &Path, session: &ProjectSessionSnapshot) -> ProjectWorkspace {

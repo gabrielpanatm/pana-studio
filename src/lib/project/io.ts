@@ -37,6 +37,8 @@ import type {
   ComponentMutationApplyReceipt,
   ComponentMutationInput,
   CanvasInteractionBindingReceipt,
+  CanvasDragOverReceipt,
+  CanvasDragOverResolveInput,
   CanvasHoverReceipt,
   CanvasInteractionIdentity,
   CanvasInteractionReceipt,
@@ -103,8 +105,10 @@ import type {
   ProjectAuditSnapshot,
   ProjectModelSnapshot,
   TemplateWorkbenchPlan,
-  ProjectOpenRecoveryAssessment,
   ProjectOpenRecoveryDecisionInput,
+  ProjectLifecycleSnapshot,
+  ProjectOpenBootstrapReceipt,
+  ProjectOpenInspectionReceipt,
   ProjectScan,
   StartupCreationApplyRequest,
   StartupCreationCatalog,
@@ -211,6 +215,7 @@ import {
   EDITOR_NAVIGATION_SCHEMA_VERSION,
   EDIT_SCOPE_GRANT_SCHEMA_VERSION,
   EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
+  EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION,
   EDITOR_MOVE_PLAN_SCHEMA_VERSION,
 } from "$lib/types";
 import { invoke } from "@tauri-apps/api/core";
@@ -224,20 +229,66 @@ function schemaMismatch(resource: string, actual: number, expected: number) {
 
 export function openProject(
   path: string,
+  operationId: string,
+  candidateToken: string,
   operatorDecisionId?: string,
   recoveryDecision?: ProjectOpenRecoveryDecisionInput,
-): Promise<ProjectScan> {
-  return invoke<ProjectScan>("open_project", {
+): Promise<ProjectOpenBootstrapReceipt> {
+  return invoke<ProjectOpenBootstrapReceipt>("open_project", {
     path,
+    operationId,
+    candidateToken,
     operatorDecisionId,
     recoveryDecision,
   });
 }
 
-export function inspectProjectOpenRecovery(
+export function inspectProjectOpen(
   path: string,
-): Promise<ProjectOpenRecoveryAssessment> {
-  return invoke<ProjectOpenRecoveryAssessment>("inspect_project_open_recovery", { path });
+  expectedSnapshotToken: string,
+): Promise<ProjectOpenInspectionReceipt> {
+  return invoke<ProjectOpenInspectionReceipt>("inspect_project_open", {
+    path,
+    expectedSnapshotToken,
+  });
+}
+
+export function readProjectLifecycle(): Promise<ProjectLifecycleSnapshot> {
+  return invoke<ProjectLifecycleSnapshot>("read_project_lifecycle");
+}
+
+export function acknowledgeProjectFrontendHydrated(
+  projectRoot: string,
+  runtimeSessionId: string,
+): Promise<ProjectLifecycleSnapshot> {
+  return invoke<ProjectLifecycleSnapshot>("acknowledge_project_frontend_hydrated", {
+    projectRoot,
+    runtimeSessionId,
+  });
+}
+
+export function reportProjectCapabilityDegraded(
+  projectRoot: string,
+  runtimeSessionId: string,
+  capability: "frontend" | "preview" | "canvas" | "source_graph",
+  diagnostic: string,
+): Promise<ProjectLifecycleSnapshot> {
+  return invoke<ProjectLifecycleSnapshot>("report_project_capability_degraded", {
+    projectRoot,
+    runtimeSessionId,
+    capability,
+    diagnostic,
+  });
+}
+
+export function cancelProjectOpen(
+  operationId: string,
+  diagnostic: string,
+): Promise<ProjectLifecycleSnapshot> {
+  return invoke<ProjectLifecycleSnapshot>("cancel_project_open", {
+    operationId,
+    diagnostic,
+  });
 }
 
 export function closeProject(operatorDecisionId?: string): Promise<void> {
@@ -248,8 +299,8 @@ export function readProjectSession(): Promise<ProjectSessionSnapshot | null> {
   return invoke<ProjectSessionSnapshot | null>("read_project_session");
 }
 
-export function reattachProjectSession(): Promise<ProjectScan | null> {
-  return invoke<ProjectScan | null>("reattach_project_session");
+export function reattachProjectSession(): Promise<ProjectOpenBootstrapReceipt | null> {
+  return invoke<ProjectOpenBootstrapReceipt | null>("reattach_project_session");
 }
 
 export function readVersioningSnapshot(
@@ -1198,6 +1249,73 @@ export async function resolveCanvasInteractionIntent(
   return receipt;
 }
 
+export async function resolveCanvasDragOverIntent(
+  input: CanvasDragOverResolveInput,
+): Promise<CanvasDragOverReceipt> {
+  if (input.request.gesture !== "dragOver") {
+    throw new Error("Canvas DragOver acceptă numai gesturi dragOver.");
+  }
+  const receipt = await invoke<CanvasDragOverReceipt>(
+    "resolve_canvas_drag_over_intent",
+    { input },
+  );
+  if (receipt.schemaVersion !== CANVAS_INTERACTION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "CanvasDragOverReceipt",
+      receipt.schemaVersion,
+      CANVAS_INTERACTION_SCHEMA_VERSION,
+    );
+  }
+  requireCanvasInteractionReceipt(receipt.interaction, {
+    request: input.request,
+    editScopeGrant: input.editScopeGrant,
+  });
+  const plan = receipt.plan;
+  const target = receipt.interaction.target;
+  const position = receipt.interaction.dragPosition;
+  const accepted = receipt.interaction.status === "resolved" && target && position;
+  if (Boolean(plan) !== Boolean(accepted)) {
+    throw new Error("CanvasDragOverReceipt are un plan inconsistent cu ținta Rust.");
+  }
+  if (plan && target && position) {
+    if (
+      plan.schemaVersion !== EDITOR_MOVE_PLAN_SCHEMA_VERSION
+      || plan.sourceNodeId !== input.sourceNodeId
+      || plan.targetNodeId !== target.editorNodeId
+      || plan.position !== position
+      || !sameCanvasProjectionIdentity(plan.identity, input.request.identity.canvas)
+      || plan.allowed !== Boolean(plan.token && plan.operation)
+    ) {
+      throw new Error("CanvasDragOverReceipt a întors alt plan semantic.");
+    }
+    requireEditorMoveLiveProjection(plan);
+  }
+  const timings = receipt.timings;
+  if (
+    !timings
+    || !Number.isSafeInteger(timings.emittedAtMs)
+    || timings.emittedAtMs < 0
+    || !Number.isSafeInteger(timings.rustReceivedAtMs)
+    || timings.rustReceivedAtMs < 0
+    || !Number.isSafeInteger(timings.rustCompletedAtMs)
+    || timings.rustCompletedAtMs < timings.rustReceivedAtMs
+    || !Number.isSafeInteger(timings.inputToPlanDurationMs)
+    || timings.inputToPlanDurationMs < 0
+    || (
+      plan?.allowed
+        ? !Number.isSafeInteger(timings.inputToFirstAllowedPlanMs)
+          || (timings.inputToFirstAllowedPlanMs ?? -1) < 0
+          || timings.inputToFirstAllowedPlanMs !== timings.inputToPlanDurationMs
+        : timings.inputToFirstAllowedPlanMs !== null
+    )
+    || !Number.isSafeInteger(timings.rustDurationMs)
+    || timings.rustDurationMs < 0
+  ) {
+    throw new Error("CanvasDragOverReceipt are telemetrie Rust invalidă.");
+  }
+  return receipt;
+}
+
 export async function resolveCanvasHoverIntent(
   input: CanvasInteractionResolveInput,
 ): Promise<CanvasHoverReceipt> {
@@ -1578,7 +1696,34 @@ export async function planEditorMove(
   if (plan.allowed !== Boolean(plan.token && plan.operation)) {
     throw new Error("PlanEditorMove a întors o stare permis/refuz inconsistentă.");
   }
+  requireEditorMoveLiveProjection(plan);
   return plan;
+}
+
+function requireEditorMoveLiveProjection(plan: EditorMovePlan) {
+  const projection = plan.liveProjection;
+  if (!projection) {
+    if (plan.liveProjectionReason === "ready") {
+      throw new Error("PlanEditorMove a omis proiecția live marcată ready.");
+    }
+    return;
+  }
+  if (
+    !plan.allowed
+    || !plan.token
+    || plan.liveProjectionReason !== "ready"
+    || projection.schemaVersion !== EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION
+    || projection.operation !== "move"
+    || projection.scope !== "selectedInstance"
+    || projection.planToken !== plan.token
+    || projection.position !== plan.position
+    || projection.sourceRenderInstanceId.length === 0
+    || projection.targetRenderInstanceId.length === 0
+    || projection.sourceRenderInstanceId === projection.targetRenderInstanceId
+    || !sameCanvasProjectionIdentity(projection.identity, plan.identity)
+  ) {
+    throw new Error("PlanEditorMove a întors o proiecție live inconsistentă.");
+  }
 }
 
 export async function commitEditorMove(
@@ -1603,6 +1748,57 @@ export async function commitEditorMove(
     || receipt.runtimeSessionId !== input.identity.runtimeSessionId
   ) {
     throw new Error("EditorMoveExecutionReceipt aparține altei sesiuni.");
+  }
+  const timings = receipt.timings;
+  if (
+    !timings
+    || !Number.isSafeInteger(timings.inputEmittedAtMs)
+    || timings.inputEmittedAtMs < 0
+    || timings.inputEmittedAtMs !== (input.inputEmittedAtMs ?? 0)
+    || !Number.isSafeInteger(timings.planIssuedAtMs)
+    || timings.planIssuedAtMs <= 0
+    || !Number.isSafeInteger(timings.rustReceivedAtMs)
+    || timings.rustReceivedAtMs <= 0
+    || !Number.isSafeInteger(timings.rustCompletedAtMs)
+    || timings.rustCompletedAtMs < timings.rustReceivedAtMs
+    || !Number.isSafeInteger(timings.inputToReceiptMs)
+    || timings.inputToReceiptMs < 0
+    || !Number.isSafeInteger(timings.pointerUpToCommitReceiptMs)
+    || timings.pointerUpToCommitReceiptMs < 0
+    || timings.pointerUpToCommitReceiptMs !== timings.inputToReceiptMs
+    || !Number.isSafeInteger(timings.planToReceiptMs)
+    || timings.planToReceiptMs < 0
+    || !Number.isSafeInteger(timings.rustCommandMs)
+    || timings.rustCommandMs < 0
+    || !Number.isSafeInteger(timings.candidateCloneMs)
+    || timings.candidateCloneMs < 0
+    || !Number.isSafeInteger(timings.mutationMs)
+    || timings.mutationMs < 0
+    || !Number.isSafeInteger(timings.recoveryPersistMs)
+    || timings.recoveryPersistMs < 0
+    || !Number.isSafeInteger(timings.authorityPublishMs)
+    || timings.authorityPublishMs < 0
+    || !Number.isSafeInteger(timings.authorityTransactionMs)
+    || timings.authorityTransactionMs < 0
+    || !Number.isSafeInteger(timings.planRevalidationMs)
+    || timings.planRevalidationMs < 0
+    || !Number.isSafeInteger(timings.nativeBlockContractMs)
+    || timings.nativeBlockContractMs < 0
+    || !Number.isSafeInteger(timings.workspaceStageMs)
+    || timings.workspaceStageMs < 0
+    || !Number.isSafeInteger(timings.afterProjectModelBuildMs)
+    || timings.afterProjectModelBuildMs < 0
+    || !Number.isSafeInteger(timings.aliasCalculationMs)
+    || timings.aliasCalculationMs < 0
+    || (
+      timings.patchIssuedToReceiptMs !== null
+      && (
+        !Number.isSafeInteger(timings.patchIssuedToReceiptMs)
+        || timings.patchIssuedToReceiptMs < 0
+      )
+    )
+  ) {
+    throw new Error("EditorMoveExecutionReceipt are telemetrie Rust invalidă.");
   }
   return receipt;
 }
@@ -2042,9 +2238,36 @@ export type PreviewPhaseReceipt = {
 export type PreviewRuntimeEventKind =
   | "interactive_js_restarted"
   | "interactive_js_failed"
+  | "canvas_patch_applied"
+  | "canvas_patch_refused"
   | "canvas_patch_rolled_back"
+  | "canvas_drag_preview_applied"
+  | "canvas_drag_preview_skipped"
   | "canvas_fallback"
+  | "canvas_stylesheets_promoted"
   | "canvas_ack_timeout";
+
+export type PreviewStylesheetPromotionMetrics = {
+  reused: number;
+  staged: number;
+  retired: number;
+  preloadsReused?: number;
+  preloadsStaged?: number;
+  preloadsRetired?: number;
+  headNodesReused?: number;
+  headNodesCreated?: number;
+  headNodesRetired?: number;
+  headNodesReordered?: number;
+  stylesheetAttributeMutations?: number;
+  preloadAttributeMutations?: number;
+  fontInvalidationCount?: number;
+  fontFallbackFrames?: number;
+  maxTextMetricDelta?: number;
+  fontActivationErrorCount?: number;
+  fontActivationDiagnostic?: string | null;
+  fontsReadyMs?: number;
+  activationToStyledMs: number;
+};
 
 export type PreviewRuntimeEventInput = {
   schemaVersion: 1;
@@ -2052,6 +2275,7 @@ export type PreviewRuntimeEventInput = {
   kind: PreviewRuntimeEventKind;
   durationMs: number;
   diagnostic: string | null;
+  stylesheetMetrics?: PreviewStylesheetPromotionMetrics | null;
 };
 
 export type PreviewRuntimeEventReceipt = {
@@ -2604,6 +2828,43 @@ export function createScssVariable(
 
 export type CssViewport = "desktop" | "tablet" | "mobile";
 
+function isCssBackgroundProjection(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const background = value as {
+    schemaVersion?: unknown;
+    color?: unknown;
+    layers?: unknown;
+    shorthand?: unknown;
+    opaqueProperties?: unknown;
+    structurallyEditable?: unknown;
+  };
+  return background.schemaVersion === 1
+    && (background.color === null || typeof background.color === "string")
+    && Array.isArray(background.layers)
+    && (background.shorthand === null || typeof background.shorthand === "string")
+    && Boolean(background.opaqueProperties)
+    && typeof background.opaqueProperties === "object"
+    && typeof background.structurallyEditable === "boolean";
+}
+
+function isCssGridProjection(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const grid = value as {
+    schemaVersion?: unknown;
+    templateColumns?: unknown;
+    templateRows?: unknown;
+    templateAreas?: unknown;
+    opaqueProperties?: unknown;
+    structurallyEditable?: unknown;
+  };
+  return grid.schemaVersion === 1
+    && Boolean(grid.templateColumns) && typeof grid.templateColumns === "object"
+    && Boolean(grid.templateRows) && typeof grid.templateRows === "object"
+    && Boolean(grid.templateAreas) && typeof grid.templateAreas === "object"
+    && Boolean(grid.opaqueProperties) && typeof grid.opaqueProperties === "object"
+    && typeof grid.structurallyEditable === "boolean";
+}
+
 export async function resolveCssInspectorContext(options: {
   templatePath: string | null;
   selector: string;
@@ -2635,6 +2896,8 @@ export async function resolveCssInspectorContext(options: {
       || candidate.ruleContext.file !== candidate.file
       || candidate.ruleContext.selector !== resolution.selector
       || candidate.ruleContext.viewport !== resolution.viewport
+      || !isCssBackgroundProjection(candidate.ruleContext.background)
+      || !isCssGridProjection(candidate.ruleContext.grid)
     ) {
       throw new Error("[css_inspector_invalid_receipt] Candidatul CSS nu corespunde rezoluției.");
     }
@@ -2656,6 +2919,8 @@ export async function resolveCssInspectorContext(options: {
     || resolution.target.selector !== resolution.selector
     || resolution.ruleContext.selector !== resolution.selector
     || resolution.ruleContext.viewport !== resolution.viewport
+    || !isCssBackgroundProjection(resolution.ruleContext.background)
+    || !isCssGridProjection(resolution.ruleContext.grid)
     || (resolution.state === "existing" && resolution.candidates.length !== 1)
     || (resolution.state === "creation" && resolution.candidates.length > 1)
   ) {

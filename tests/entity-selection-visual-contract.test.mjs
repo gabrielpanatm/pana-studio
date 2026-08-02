@@ -139,8 +139,9 @@ test("contextual actions remain available for hovered and selected tree entities
   );
   assert.match(
     files,
-    /hoveredPath === node\.path \|\| node\.entry\?\.id === snapshot\?\.selectedEntry\?\.entryId/,
+    /\.file-row:hover \.row-actions,[\s\S]*?\.file-row\[data-ui-selected="true"\] \.row-actions/,
   );
+  assert.doesNotMatch(files, /hoveredPath|onmouseenter|onmouseleave/);
 });
 
 test("wrapped entity triggers cannot reintroduce the generic button hover fill", () => {

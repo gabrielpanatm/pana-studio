@@ -20,6 +20,39 @@
   cursor: progress;
 }
 
+.app-shell.lifecycle-lock {
+  cursor: progress;
+}
+
+.project-lifecycle-overlay {
+  position: fixed;
+  z-index: 2147483646;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: var(--font-body);
+  font-weight: 600;
+  background: var(--app-bg);
+}
+
+.project-lifecycle-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: project-lifecycle-spin 700ms linear infinite;
+}
+
+@keyframes project-lifecycle-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .external-reconcile-recovery {
   position: fixed;
   z-index: 2147483647;

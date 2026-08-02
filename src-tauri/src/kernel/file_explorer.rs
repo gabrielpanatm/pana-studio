@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     kernel::{
-        project_workspace::WorkspaceProjectionLease,
+        project_workspace::WorkspaceProjectionSnapshot,
         project_workspace::{
             PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
             PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES,
@@ -242,7 +242,7 @@ impl FileExplorerRuntime {
 
     pub fn blocked_operation(
         &self,
-        projection: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         workbench: &WorkbenchSnapshot,
         reason: FileExplorerOperationReason,
         diagnostic: String,
@@ -256,7 +256,7 @@ impl FileExplorerRuntime {
 
     pub fn missing_workbench_paths(
         &self,
-        projection: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         workbench: &WorkbenchSnapshot,
     ) -> Result<Vec<String>, String> {
         if projection.project_root != workbench.project_root
@@ -292,7 +292,7 @@ impl FileExplorerRuntime {
 
     pub fn snapshot(
         &self,
-        projection: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         workbench: &WorkbenchSnapshot,
     ) -> Result<FileExplorerSnapshot, String> {
         if projection.project_root != workbench.project_root
@@ -371,6 +371,41 @@ impl FileExplorerRuntime {
         })
     }
 
+    /// Reprojects only Workbench-owned selection metadata over an immutable
+    /// explorer namespace. Selecting a document does not mutate Workspace
+    /// membership, capabilities or hierarchy, so rebuilding the full scan a
+    /// second time would be both redundant and visible as UI latency.
+    pub fn project_workbench_selection(
+        snapshot: &mut FileExplorerSnapshot,
+        workbench: &WorkbenchSnapshot,
+    ) -> Result<(), String> {
+        if snapshot.project_root != workbench.project_root
+            || snapshot.runtime_session_id != workbench.runtime_session_id
+        {
+            return Err(
+                "FileExplorer a refuzat selecția unui Workbench din altă sesiune.".to_string(),
+            );
+        }
+        snapshot.workbench_revision = workbench.revision;
+        snapshot.selection_revision = workbench.revision;
+        snapshot.selected_entry = workbench
+            .selected_project_entry
+            .as_ref()
+            .and_then(|selection| {
+                snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.relative_path == selection.relative_path)
+            })
+            .map(|entry| FileExplorerSelection {
+                entry_id: entry.id.clone(),
+                relative_path: entry.relative_path.clone(),
+                kind: entry.kind,
+            });
+        snapshot.active_document_path = active_document_path(workbench);
+        Ok(())
+    }
+
     pub fn remap_entry_prefix(
         &self,
         runtime_session_id: &str,
@@ -403,7 +438,7 @@ impl FileExplorerRuntime {
 
     pub fn plan_operation(
         &self,
-        projection: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         workbench: &WorkbenchSnapshot,
         request: FileExplorerOperationRequest,
     ) -> Result<FileExplorerOperationPlan, String> {
@@ -775,7 +810,7 @@ fn blocked_plan(
     }
 }
 
-fn materialized_namespace(projection: &WorkspaceProjectionLease) -> BTreeSet<String> {
+fn materialized_namespace(projection: &WorkspaceProjectionSnapshot) -> BTreeSet<String> {
     let mut paths = projection
         .accepted_disk
         .manifest
@@ -983,7 +1018,7 @@ fn entry_id(state: &mut FileExplorerState, path: &str) -> Result<String, String>
 
 fn build_entry(
     file: ProjectFile,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
     ids: &BTreeMap<String, String>,
 ) -> Result<FileExplorerEntry, String> {
     let id = ids
@@ -1015,7 +1050,7 @@ fn build_entry(
     };
     let open_surface = match kind {
         FileExplorerEntryKind::Text if file.kind == ProjectFileKind::Md => {
-            Some(WorkbenchSurface::Markdown)
+            Some(WorkbenchSurface::Code)
         }
         FileExplorerEntryKind::Text
             if role == FileExplorerRole::Template
@@ -1058,7 +1093,7 @@ fn blocked(reason: FileExplorerCapabilityReason) -> FileExplorerCapability {
 fn entry_capabilities(
     kind: FileExplorerEntryKind,
     relative_path: &str,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> FileExplorerCapabilities {
     match kind {
         FileExplorerEntryKind::Text => FileExplorerCapabilities {
@@ -1105,7 +1140,10 @@ fn entry_capabilities(
     }
 }
 
-fn binary_subtree_is_mutable(projection: &WorkspaceProjectionLease, relative_path: &str) -> bool {
+fn binary_subtree_is_mutable(
+    projection: &WorkspaceProjectionSnapshot,
+    relative_path: &str,
+) -> bool {
     let accepted = projection
         .accepted_disk
         .manifest
@@ -1224,7 +1262,7 @@ mod tests {
     };
     use std::collections::{HashMap, HashSet};
 
-    fn projection(source_texts: HashMap<String, String>) -> WorkspaceProjectionLease {
+    fn projection(source_texts: HashMap<String, String>) -> WorkspaceProjectionSnapshot {
         let project_root = "/project".to_string();
         let runtime_session_id = "runtime-1".to_string();
         let accepted_disk = AcceptedProjectDiskManifest::new(
@@ -1238,7 +1276,7 @@ mod tests {
             },
         )
         .unwrap();
-        WorkspaceProjectionLease {
+        WorkspaceProjectionSnapshot {
             project_root,
             runtime_session_id,
             revision: 7,
@@ -1272,6 +1310,7 @@ mod tests {
                 open: false,
                 active_view: WorkbenchBottomPanelView::Problems,
             },
+            content_workspace: Default::default(),
             selected_project_entry: selection,
         }
     }

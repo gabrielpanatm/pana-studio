@@ -164,6 +164,7 @@ impl SourceGraphBuilder {
             structured_documents,
             component_graph: Default::default(),
             block_graph: Default::default(),
+            markdown_projections: Vec::new(),
             nodes: self.nodes,
             relations: self.relations,
             diagnostics: self.diagnostics,

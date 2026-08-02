@@ -10,8 +10,8 @@ use sha2::{Digest, Sha256};
 use crate::{
     kernel::{preview_projection::CanvasPatch, project_workspace::ProjectWorkspaceMutationReceipt},
     preview::{
-        CanvasBoundaryInstance, CanvasGraph, CanvasNodeOrigin, CanvasProjectionIdentity,
-        CanvasRenderNode,
+        CanvasBoundaryInstance, CanvasGraph, CanvasMarkdownProvenanceState, CanvasNodeOrigin,
+        CanvasProjectionIdentity, CanvasRenderNode,
     },
     project_model::{
         model::ProjectModel,
@@ -30,8 +30,9 @@ use crate::{
 
 pub const EDITOR_NAVIGATION_SCHEMA_VERSION: u32 = 3;
 pub const EDIT_SCOPE_GRANT_SCHEMA_VERSION: u32 = 2;
-pub const EDITOR_MOVE_PLAN_SCHEMA_VERSION: u32 = 2;
+pub const EDITOR_MOVE_PLAN_SCHEMA_VERSION: u32 = 3;
 pub const EDITOR_MOVE_EXECUTION_SCHEMA_VERSION: u32 = 1;
+pub const EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION: u32 = 1;
 const MAX_LIVE_EDIT_SCOPE_GRANTS: usize = 64;
 const MAX_LIVE_EDITOR_MOVE_PLANS: usize = 128;
 const MAX_CACHED_EDITOR_NAVIGATION_SNAPSHOTS: usize = 8;
@@ -48,6 +49,7 @@ pub enum EditorNavigationSurface {
 pub enum EditorNavigationNodeKind {
     HtmlElement,
     TeraBoundary,
+    MarkdownBoundary,
     RuntimeElement,
 }
 
@@ -301,6 +303,50 @@ pub enum EditorMoveOperation {
     BlockMove,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum EditorMoveLiveProjectionOperation {
+    Move,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum EditorMoveLiveProjectionScope {
+    SelectedInstance,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum EditorMoveLiveProjectionReason {
+    Ready,
+    PlanBlocked,
+    ExecutionNotHtml,
+    MissingRenderIdentity,
+    AmbiguousSourceIdentity,
+    MultipleRenderedInstances,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorMoveLiveProjectionRollback {
+    pub source_parent_render_instance_id: Option<String>,
+    pub source_next_sibling_render_instance_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorMoveLiveProjection {
+    pub schema_version: u32,
+    pub operation: EditorMoveLiveProjectionOperation,
+    pub scope: EditorMoveLiveProjectionScope,
+    pub plan_token: Option<String>,
+    pub identity: CanvasProjectionIdentity,
+    pub source_render_instance_id: String,
+    pub target_render_instance_id: String,
+    pub position: ProjectMovePosition,
+    pub rollback: EditorMoveLiveProjectionRollback,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorMoveImpact {
@@ -329,6 +375,8 @@ pub struct EditorMovePlan {
     pub target_node_id: String,
     pub position: ProjectMovePosition,
     pub impact: EditorMoveImpact,
+    pub live_projection: Option<EditorMoveLiveProjection>,
+    pub live_projection_reason: EditorMoveLiveProjectionReason,
     pub issued_at_ms: u128,
 }
 
@@ -354,12 +402,76 @@ pub struct EditorMoveExecutionReceipt {
     pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
     pub touched_files: Vec<String>,
     pub diagnostic: Option<String>,
+    pub timings: Option<EditorMoveTimings>,
+    #[serde(skip)]
+    pub(crate) internal_timings: EditorMoveInternalTimings,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorMoveTimings {
+    pub input_emitted_at_ms: u64,
+    pub plan_issued_at_ms: u64,
+    pub rust_received_at_ms: u64,
+    pub rust_completed_at_ms: u64,
+    pub input_to_receipt_ms: u64,
+    pub pointer_up_to_commit_receipt_ms: u64,
+    pub plan_to_receipt_ms: u64,
+    pub rust_command_ms: u64,
+    pub patch_issued_to_receipt_ms: Option<u64>,
+    pub candidate_clone_ms: u64,
+    pub mutation_ms: u64,
+    pub recovery_persist_ms: u64,
+    pub authority_publish_ms: u64,
+    pub authority_transaction_ms: u64,
+    pub plan_revalidation_ms: u64,
+    pub native_block_contract_ms: u64,
+    pub workspace_stage_ms: u64,
+    pub after_project_model_build_ms: u64,
+    pub project_model_build_mode: String,
+    pub project_model_fallback_reason: Option<String>,
+    pub project_model_changed_path_count: usize,
+    pub project_model_invalidated_template_count: usize,
+    pub project_model_invalidated_page_count: usize,
+    pub project_model_replaced_nodes: usize,
+    pub project_model_reused_nodes: usize,
+    pub project_model_reused_relations: usize,
+    pub project_model_clone_ms: u64,
+    pub project_model_template_parse_ms: u64,
+    pub project_model_component_graph_ms: u64,
+    pub project_model_block_graph_ms: u64,
+    pub project_model_tera_graph_ms: u64,
+    pub alias_calculation_ms: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct EditorMoveInternalTimings {
+    pub native_block_contract_ms: u64,
+    pub workspace_stage_ms: u64,
+    pub after_project_model_build_ms: u64,
+    pub project_model_build_mode: String,
+    pub project_model_fallback_reason: Option<String>,
+    pub project_model_changed_path_count: usize,
+    pub project_model_invalidated_template_count: usize,
+    pub project_model_invalidated_page_count: usize,
+    pub project_model_replaced_nodes: usize,
+    pub project_model_reused_nodes: usize,
+    pub project_model_reused_relations: usize,
+    pub project_model_clone_ms: u64,
+    pub project_model_template_parse_ms: u64,
+    pub project_model_component_graph_ms: u64,
+    pub project_model_block_graph_ms: u64,
+    pub project_model_tera_graph_ms: u64,
+    pub alias_calculation_ms: u64,
+}
+
+#[derive(Clone)]
 pub(crate) enum EditorMoveExecution {
     Html {
         intent: ProjectHtmlMoveIntent,
         edit_scope_authorized: bool,
+        source_render_instance_id: Option<String>,
+        target_render_instance_id: Option<String>,
     },
     Tera {
         intent: ProjectTeraMoveIntent,
@@ -369,6 +481,12 @@ pub(crate) enum EditorMoveExecution {
 pub(crate) struct EditorMoveDecision {
     pub plan: EditorMovePlan,
     pub execution: Option<EditorMoveExecution>,
+}
+
+#[derive(Clone)]
+struct StoredEditorMoveDecision {
+    plan: EditorMovePlan,
+    execution: Option<EditorMoveExecution>,
 }
 
 #[derive(Clone)]
@@ -383,7 +501,7 @@ struct EditorNavigationSnapshotCacheEntry {
 #[derive(Default)]
 pub struct EditorNavigationRuntime {
     grants: Mutex<HashMap<String, EditScopeGrant>>,
-    move_plans: Mutex<HashMap<String, EditorMovePlan>>,
+    move_plans: Mutex<HashMap<String, StoredEditorMoveDecision>>,
     snapshots: Mutex<VecDeque<EditorNavigationSnapshotCacheEntry>>,
 }
 
@@ -553,9 +671,21 @@ impl EditorNavigationRuntime {
         Ok(stored)
     }
 
-    pub fn issue_editor_move_plan(
+    pub fn issue_editor_move_plan(&self, plan: EditorMovePlan) -> Result<EditorMovePlan, String> {
+        self.issue_editor_move(plan, None)
+    }
+
+    pub(crate) fn issue_editor_move_decision(
+        &self,
+        decision: EditorMoveDecision,
+    ) -> Result<EditorMovePlan, String> {
+        self.issue_editor_move(decision.plan, decision.execution)
+    }
+
+    fn issue_editor_move(
         &self,
         mut plan: EditorMovePlan,
+        execution: Option<EditorMoveExecution>,
     ) -> Result<EditorMovePlan, String> {
         if !plan.allowed || plan.operation.is_none() {
             return Ok(plan);
@@ -563,29 +693,38 @@ impl EditorNavigationRuntime {
         let token =
             random_move_plan_token(&plan.identity, &plan.source_node_id, &plan.target_node_id)?;
         plan.token = Some(token.clone());
+        if let Some(projection) = plan.live_projection.as_mut() {
+            projection.plan_token = Some(token.clone());
+        }
         plan.issued_at_ms = now_ms();
         let mut plans = self
             .move_plans
             .lock()
             .map_err(|_| "Registrul PlanEditorMove este indisponibil.".to_string())?;
         plans.retain(|_, candidate| {
-            candidate.identity.project_root == plan.identity.project_root
-                && candidate.identity.runtime_session_id == plan.identity.runtime_session_id
-                && candidate.identity.workspace_revision == plan.identity.workspace_revision
-                && candidate.identity.preview_revision == plan.identity.preview_revision
-                && candidate.identity.transaction_id == plan.identity.transaction_id
-                && candidate.model_revision == plan.model_revision
+            candidate.plan.identity.project_root == plan.identity.project_root
+                && candidate.plan.identity.runtime_session_id == plan.identity.runtime_session_id
+                && candidate.plan.identity.workspace_revision == plan.identity.workspace_revision
+                && candidate.plan.identity.preview_revision == plan.identity.preview_revision
+                && candidate.plan.identity.transaction_id == plan.identity.transaction_id
+                && candidate.plan.model_revision == plan.model_revision
         });
         if plans.len() >= MAX_LIVE_EDITOR_MOVE_PLANS {
             if let Some(oldest) = plans
                 .values()
-                .min_by_key(|candidate| candidate.issued_at_ms)
-                .and_then(|candidate| candidate.token.clone())
+                .min_by_key(|candidate| candidate.plan.issued_at_ms)
+                .and_then(|candidate| candidate.plan.token.clone())
             {
                 plans.remove(&oldest);
             }
         }
-        plans.insert(token, plan.clone());
+        plans.insert(
+            token,
+            StoredEditorMoveDecision {
+                plan: plan.clone(),
+                execution,
+            },
+        );
         Ok(plan)
     }
 
@@ -604,16 +743,47 @@ impl EditorNavigationRuntime {
         let stored = plans
             .remove(token)
             .ok_or_else(|| "PlanEditorMove a expirat sau a fost deja consumat.".to_string())?;
-        if stored.schema_version != EDITOR_MOVE_PLAN_SCHEMA_VERSION
-            || stored.token.as_deref() != Some(token)
-            || stored.identity != *identity
-            || stored.model_revision != model_revision
-            || stored.route != route
-            || stored.active_document_path != active_document_path
+        if stored.plan.schema_version != EDITOR_MOVE_PLAN_SCHEMA_VERSION
+            || stored.plan.token.as_deref() != Some(token)
+            || stored.plan.identity != *identity
+            || stored.plan.model_revision != model_revision
+            || stored.plan.route != route
+            || stored.plan.active_document_path != active_document_path
         {
             return Err("PlanEditorMove nu aparține contextului sau reviziei curente.".to_string());
         }
-        Ok(stored)
+        Ok(stored.plan)
+    }
+
+    pub(crate) fn consume_editor_move_decision(
+        &self,
+        token: &str,
+        identity: &CanvasProjectionIdentity,
+        model_revision: &str,
+        route: &str,
+        active_document_path: &str,
+    ) -> Result<EditorMoveDecision, String> {
+        let mut plans = self
+            .move_plans
+            .lock()
+            .map_err(|_| "Registrul PlanEditorMove este indisponibil.".to_string())?;
+        let stored = plans
+            .remove(token)
+            .ok_or_else(|| "PlanEditorMove a expirat sau a fost deja consumat.".to_string())?;
+        let plan = stored.plan;
+        if plan.schema_version != EDITOR_MOVE_PLAN_SCHEMA_VERSION
+            || plan.token.as_deref() != Some(token)
+            || plan.identity != *identity
+            || plan.model_revision != model_revision
+            || plan.route != route
+            || plan.active_document_path != active_document_path
+        {
+            return Err("PlanEditorMove nu aparține contextului sau reviziei curente.".to_string());
+        }
+        Ok(EditorMoveDecision {
+            plan,
+            execution: stored.execution,
+        })
     }
 
     pub fn revoke_all(&self) {
@@ -667,6 +837,8 @@ pub(crate) fn plan_editor_move(
             target_node_id: target_node_id.to_string(),
             position,
             impact,
+            live_projection: None,
+            live_projection_reason: EditorMoveLiveProjectionReason::PlanBlocked,
             issued_at_ms: now_ms(),
         },
         execution: None,
@@ -791,6 +963,14 @@ pub(crate) fn plan_editor_move(
                 "Elementele generate numai la runtime nu au sursă structurală mutabilă.",
             )),
         ),
+        EditorNavigationNodeKind::MarkdownBoundary => (
+            None,
+            None,
+            Some((
+                "editor_move_markdown_read_only",
+                "Conținutul randat din Markdown este atomic și poate fi modificat numai în sursa Markdown.",
+            )),
+        ),
         EditorNavigationNodeKind::TeraBoundary => {
             if !source.capabilities.can_move_atomic {
                 (
@@ -895,6 +1075,8 @@ pub(crate) fn plan_editor_move(
                     Some(EditorMoveExecution::Html {
                         intent,
                         edit_scope_authorized: scoped,
+                        source_render_instance_id: source.render_instance_id.clone(),
+                        target_render_instance_id: target.render_instance_id.clone(),
                     }),
                     None,
                 )
@@ -904,6 +1086,8 @@ pub(crate) fn plan_editor_move(
     if let Some((code, reason)) = diagnostic {
         return blocked(code, reason.to_string(), impact);
     }
+    let (live_projection, live_projection_reason) =
+        editor_move_live_projection(snapshot, source, target, position, execution.as_ref());
     EditorMoveDecision {
         plan: EditorMovePlan {
             schema_version: EDITOR_MOVE_PLAN_SCHEMA_VERSION,
@@ -920,10 +1104,105 @@ pub(crate) fn plan_editor_move(
             target_node_id: target_node_id.to_string(),
             position,
             impact,
+            live_projection,
+            live_projection_reason,
             issued_at_ms: now_ms(),
         },
         execution,
     }
+}
+
+fn editor_move_live_projection(
+    snapshot: &EditorNavigationSnapshot,
+    source: &EditorNavigationNode,
+    target: &EditorNavigationNode,
+    position: ProjectMovePosition,
+    execution: Option<&EditorMoveExecution>,
+) -> (
+    Option<EditorMoveLiveProjection>,
+    EditorMoveLiveProjectionReason,
+) {
+    let Some(EditorMoveExecution::Html {
+        source_render_instance_id,
+        target_render_instance_id,
+        ..
+    }) = execution
+    else {
+        return (None, EditorMoveLiveProjectionReason::ExecutionNotHtml);
+    };
+    if !matches!(
+        source.source_provenance.resolution,
+        EditorSourceResolution::Direct
+            | EditorSourceResolution::Resolved
+            | EditorSourceResolution::FallbackResolved
+    ) || !matches!(
+        target.source_provenance.resolution,
+        EditorSourceResolution::Direct
+            | EditorSourceResolution::Resolved
+            | EditorSourceResolution::FallbackResolved
+    ) {
+        return (
+            None,
+            EditorMoveLiveProjectionReason::AmbiguousSourceIdentity,
+        );
+    }
+    let (Some(source_render_instance_id), Some(target_render_instance_id)) = (
+        source_render_instance_id.as_ref(),
+        target_render_instance_id.as_ref(),
+    ) else {
+        return (None, EditorMoveLiveProjectionReason::MissingRenderIdentity);
+    };
+    let rendered_source_instances = snapshot
+        .nodes
+        .iter()
+        .chain(snapshot.planning_nodes.iter())
+        .filter(|node| node.source_node_id == source.source_node_id)
+        .filter_map(|node| node.render_instance_id.as_deref())
+        .collect::<HashSet<_>>();
+    if rendered_source_instances.len() != 1
+        || !rendered_source_instances.contains(source_render_instance_id.as_str())
+    {
+        // Mutarea sursei unei componente randate de mai multe ori ar schimba
+        // toate instanțele la commit. Până când Rust poate emite setul complet
+        // de perechi DOM, o proiecție doar pentru selecție ar fi falsă.
+        return (
+            None,
+            EditorMoveLiveProjectionReason::MultipleRenderedInstances,
+        );
+    }
+    let source_parent_render_instance_id = source
+        .parent_id
+        .as_deref()
+        .and_then(|parent_id| editor_navigation_node(snapshot, parent_id))
+        .and_then(|parent| parent.render_instance_id.clone());
+    let source_next_sibling_render_instance_id = snapshot
+        .nodes
+        .iter()
+        .chain(snapshot.planning_nodes.iter())
+        .filter(|candidate| {
+            candidate.parent_id == source.parent_id
+                && candidate.order > source.order
+                && candidate.render_instance_id.is_some()
+        })
+        .min_by_key(|candidate| candidate.order)
+        .and_then(|candidate| candidate.render_instance_id.clone());
+    (
+        Some(EditorMoveLiveProjection {
+            schema_version: EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION,
+            operation: EditorMoveLiveProjectionOperation::Move,
+            scope: EditorMoveLiveProjectionScope::SelectedInstance,
+            plan_token: None,
+            identity: snapshot.identity.clone(),
+            source_render_instance_id: source_render_instance_id.clone(),
+            target_render_instance_id: target_render_instance_id.clone(),
+            position,
+            rollback: EditorMoveLiveProjectionRollback {
+                source_parent_render_instance_id,
+                source_next_sibling_render_instance_id,
+            },
+        }),
+        EditorMoveLiveProjectionReason::Ready,
+    )
 }
 
 fn enclosing_edit_scope(
@@ -1074,6 +1353,58 @@ fn editor_source_provenance(
         resolution: invocation
             .map(|invocation| editor_source_resolution(&invocation.status))
             .unwrap_or(EditorSourceResolution::Direct),
+    }
+}
+
+fn markdown_source_provenance(
+    model: &ProjectModel,
+    boundary: &CanvasBoundaryInstance,
+    source: Option<&SourceNode>,
+) -> EditorSourceProvenance {
+    let Some(markdown) = boundary.markdown.as_ref() else {
+        return editor_source_provenance(model, source, &[]);
+    };
+    let resolved = markdown.provenance_state == CanvasMarkdownProvenanceState::Resolved;
+    let definition = resolved.then(|| EditorSourceReference {
+        source_node_id: Some(boundary.source_node_id.clone()),
+        source_kind: source.map(|node| node.kind.clone()),
+        file: markdown.source_file.clone().unwrap_or_default(),
+        range: markdown.source_range.clone(),
+        label: markdown.kind.label().to_string(),
+        origin: EditorNavigationOrigin::Project,
+        theme_name: None,
+        can_open_in_code: true,
+    });
+    let composition = model
+        .source_graph
+        .nodes
+        .iter()
+        .find(|node| node.id == markdown.template_source_node_id)
+        .map(|node| {
+            let mut reference = editor_source_reference(node);
+            reference.range = markdown.template_range.clone().or(reference.range);
+            reference
+        })
+        .or_else(|| {
+            Some(EditorSourceReference {
+                source_node_id: Some(markdown.template_source_node_id.clone()),
+                source_kind: Some(SourceNodeKind::TeraVariable),
+                file: markdown.template_file.clone(),
+                range: markdown.template_range.clone(),
+                label: "Proiecție Markdown".to_string(),
+                origin: EditorNavigationOrigin::Tera,
+                theme_name: None,
+                can_open_in_code: true,
+            })
+        });
+    EditorSourceProvenance {
+        definition,
+        composition,
+        resolution: if resolved {
+            EditorSourceResolution::Resolved
+        } else {
+            EditorSourceResolution::Unresolved
+        },
     }
 }
 
@@ -1255,6 +1586,7 @@ pub(crate) fn build_editor_navigation_snapshot(
 
     let mut nodes = Vec::with_capacity(document.nodes.len() + document.boundaries.len());
     for boundary in &document.boundaries {
+        let markdown = boundary.markdown.as_ref();
         let source = source_nodes.get(boundary.source_node_id.as_str()).copied();
         let parent_id = boundary
             .parent_boundary_instance_id
@@ -1272,37 +1604,55 @@ pub(crate) fn build_editor_navigation_snapshot(
                     })
             });
         let source_kind = source.map(|node| node.kind.clone());
-        let implicitly_open =
-            implicitly_open_boundary_source_ids.contains(boundary.source_node_id.as_str());
-        let can_enter =
-            !implicitly_open && source_kind.as_ref().is_some_and(editable_boundary_kind);
+        let implicitly_open = markdown.is_none()
+            && implicitly_open_boundary_source_ids.contains(boundary.source_node_id.as_str());
+        let can_enter = markdown.is_none()
+            && !implicitly_open
+            && source_kind.as_ref().is_some_and(editable_boundary_kind);
         let local_source = source.is_some_and(|node| node.origin == SourceOrigin::Local);
-        let can_move_atomic =
-            local_source && source_kind.as_ref().is_some_and(movable_boundary_kind);
+        let can_move_atomic = markdown.is_none()
+            && local_source
+            && source_kind.as_ref().is_some_and(movable_boundary_kind);
         let target = model
             .tera_graph
             .nodes
             .iter()
             .find(|node| node.id == boundary.source_node_id)
             .and_then(|node| node.target.clone());
-        let effect_scope = boundary_effect_scope(source_kind.as_ref());
+        let effect_scope = if markdown.is_some() {
+            EditorNavigationEffectScope::SingleSource
+        } else {
+            boundary_effect_scope(source_kind.as_ref())
+        };
         let node_id = editor_boundary_node_id(&boundary.boundary_instance_id);
-        let source_provenance = editor_source_provenance(model, source, &[]);
+        let source_provenance = markdown_source_provenance(model, boundary, source);
+        let markdown_resolved = markdown.is_some_and(|markdown| {
+            markdown.provenance_state == CanvasMarkdownProvenanceState::Resolved
+        });
         nodes.push(EditorNavigationNode {
             id: node_id.clone(),
             parent_id,
             children: Vec::new(),
             order: boundary.document_order,
-            kind: EditorNavigationNodeKind::TeraBoundary,
-            label: source
-                .map(|node| node.label.clone())
+            kind: if markdown.is_some() {
+                EditorNavigationNodeKind::MarkdownBoundary
+            } else {
+                EditorNavigationNodeKind::TeraBoundary
+            },
+            label: markdown
+                .map(|markdown| markdown.kind.label().to_string())
+                .or_else(|| source.map(|node| node.label.clone()))
                 .unwrap_or_else(|| "Boundary Tera".to_string()),
             tag: None,
             source_node_id: Some(boundary.source_node_id.clone()),
             render_instance_id: None,
             source_kind,
-            file: source.map(|node| node.file.clone()),
-            range: source.and_then(|node| node.range.clone()),
+            file: markdown
+                .and_then(|markdown| markdown.source_file.clone())
+                .or_else(|| source.map(|node| node.file.clone())),
+            range: markdown
+                .and_then(|markdown| markdown.source_range.clone())
+                .or_else(|| source.and_then(|node| node.range.clone())),
             origin: source_origin(source),
             theme_name: source.and_then(|node| node.theme_name.clone()),
             source_provenance,
@@ -1329,15 +1679,27 @@ pub(crate) fn build_editor_navigation_snapshot(
             capabilities: EditorNavigationCapabilities {
                 can_select: true,
                 can_inspect: true,
-                can_open_in_code: source.is_some_and(|node| node.capabilities.can_open_in_code),
+                can_open_in_code: if markdown.is_some() {
+                    markdown_resolved
+                } else {
+                    source.is_some_and(|node| node.capabilities.can_open_in_code)
+                },
                 can_enter_boundary: can_enter,
                 can_move_atomic,
                 can_move: can_move_atomic,
                 can_edit_text: false,
                 can_edit_attributes: false,
-                read_only: !local_source,
+                read_only: markdown.is_some() || !local_source,
                 requires_edit_scope_id: can_enter.then_some(node_id),
-                reason_code: source.and_then(|node| node.capabilities.reason_code),
+                reason_code: if markdown.is_some() {
+                    Some(if markdown_resolved {
+                        SourceCapabilityReason::MarkdownRenderedBoundary
+                    } else {
+                        SourceCapabilityReason::MarkdownSourceUnresolved
+                    })
+                } else {
+                    source.and_then(|node| node.capabilities.reason_code)
+                },
             },
         });
     }
@@ -1364,10 +1726,12 @@ pub(crate) fn build_editor_navigation_snapshot(
         };
         let requires_scope_id = containing_boundary
             .filter(|boundary| {
-                !implicitly_open_boundary_source_ids.contains(boundary.source_node_id.as_str())
-                    && source_nodes
-                        .get(boundary.source_node_id.as_str())
-                        .is_some_and(|node| editable_boundary_kind(&node.kind))
+                boundary.markdown.is_some()
+                    || (!implicitly_open_boundary_source_ids
+                        .contains(boundary.source_node_id.as_str())
+                        && source_nodes
+                            .get(boundary.source_node_id.as_str())
+                            .is_some_and(|node| editable_boundary_kind(&node.kind)))
             })
             .map(|boundary| editor_boundary_node_id(&boundary.boundary_instance_id));
         let source_capabilities = source.map(|node| &node.capabilities);
@@ -1525,6 +1889,7 @@ struct EditorNavigationViewBuilder<'a> {
     template: &'a SourceGraphTemplate,
     source_nodes: HashMap<&'a str, &'a SourceNode>,
     global_nodes_by_source: HashMap<&'a str, Vec<&'a EditorNavigationNode>>,
+    markdown_nodes_by_template_source: HashMap<&'a str, Vec<&'a EditorNavigationNode>>,
     view_nodes: Vec<EditorNavigationViewNode>,
     view_ranges: HashMap<String, SourceRange>,
     editor_nodes: Vec<EditorNavigationNode>,
@@ -1558,11 +1923,30 @@ impl<'a> EditorNavigationViewBuilder<'a> {
                     .then_with(|| left.id.cmp(&right.id))
             });
         }
+        let mut markdown_nodes_by_template_source =
+            HashMap::<&str, Vec<&EditorNavigationNode>>::new();
+        for node in global_nodes
+            .iter()
+            .filter(|node| node.kind == EditorNavigationNodeKind::MarkdownBoundary)
+        {
+            if let Some(template_source_node_id) = node
+                .source_provenance
+                .composition
+                .as_ref()
+                .and_then(|reference| reference.source_node_id.as_deref())
+            {
+                markdown_nodes_by_template_source
+                    .entry(template_source_node_id)
+                    .or_default()
+                    .push(node);
+            }
+        }
         Self {
             model,
             template,
             source_nodes,
             global_nodes_by_source,
+            markdown_nodes_by_template_source,
             view_nodes: Vec::new(),
             view_ranges: HashMap::new(),
             editor_nodes: Vec::new(),
@@ -1603,6 +1987,9 @@ impl<'a> EditorNavigationViewBuilder<'a> {
         }
         if source.kind == SourceNodeKind::BlockMarker {
             return Vec::new();
+        }
+        if let Some(markdown) = self.add_markdown_projection(&source, parent_view_id) {
+            return markdown;
         }
 
         let document_wrapper_block =
@@ -1783,6 +2170,65 @@ impl<'a> EditorNavigationViewBuilder<'a> {
             node.children = child_view_ids;
         }
         vec![view_node_id]
+    }
+
+    fn add_markdown_projection(
+        &mut self,
+        template_source: &SourceNode,
+        parent_view_id: Option<&str>,
+    ) -> Option<Vec<String>> {
+        let matches = self
+            .markdown_nodes_by_template_source
+            .get(template_source.id.as_str())?
+            .clone();
+        let representative = matches.first().copied()?;
+        let view_node_id = format!("editor_view_markdown:{}", template_source.id);
+        let mut render_instance_ids = matches
+            .iter()
+            .flat_map(|node| {
+                node.boundary
+                    .iter()
+                    .flat_map(|boundary| boundary.root_render_instance_ids.iter().cloned())
+            })
+            .collect::<Vec<_>>();
+        render_instance_ids.sort();
+        render_instance_ids.dedup();
+        let mut boundary = representative.boundary.clone();
+        if let Some(boundary) = boundary.as_mut() {
+            boundary.root_render_instance_ids = render_instance_ids.clone();
+            boundary.rendered_instance_count = matches.len();
+        }
+        let order = template_source
+            .range
+            .as_ref()
+            .map(|range| range.start)
+            .unwrap_or(representative.order);
+        if let Some(range) = template_source.range.clone() {
+            self.view_ranges.insert(view_node_id.clone(), range);
+        }
+        self.view_nodes.push(EditorNavigationViewNode {
+            id: view_node_id.clone(),
+            editor_node_id: Some(representative.id.clone()),
+            parent_id: parent_view_id.map(str::to_string),
+            children: Vec::new(),
+            order,
+            kind: EditorNavigationViewNodeKind::Boundary,
+            label: representative.label.clone(),
+            tag: None,
+            source_node_id: representative.source_node_id.clone(),
+            source_kind: representative.source_kind.clone(),
+            file: representative
+                .file
+                .clone()
+                .unwrap_or_else(|| template_source.file.clone()),
+            origin: representative.origin,
+            theme_name: representative.theme_name.clone(),
+            render_instance_ids,
+            boundary,
+            relation: None,
+            capabilities: representative.capabilities.clone(),
+        });
+        Some(vec![view_node_id])
     }
 
     fn sort_source_ids(&self, source_ids: &mut [String]) {
@@ -2491,6 +2937,7 @@ fn full_hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
     use std::{
         fs,
         path::PathBuf,
@@ -2500,6 +2947,7 @@ mod tests {
     use crate::{
         preview::{CanvasBoundaryMarkerKind, CanvasDocumentGraph, CanvasNodeCapabilities},
         project_model::build_project_model,
+        source_graph::model::MarkdownProjectionKind,
     };
 
     use super::*;
@@ -2671,6 +3119,8 @@ mod tests {
                     affects_all_rendered_instances: false,
                     requires_preview_reprojection: true,
                 },
+                live_projection: None,
+                live_projection_reason: EditorMoveLiveProjectionReason::ExecutionNotHtml,
                 issued_at_ms: 0,
             })
             .unwrap();
@@ -2793,6 +3243,11 @@ mod tests {
             atomic.plan.operation,
             Some(EditorMoveOperation::AtomicTeraMove)
         );
+        assert!(atomic.plan.live_projection.is_none());
+        assert_eq!(
+            atomic.plan.live_projection_reason,
+            EditorMoveLiveProjectionReason::ExecutionNotHtml
+        );
         assert_eq!(
             atomic.plan.impact.effect_scope,
             EditorNavigationEffectScope::AllRenderedInstances
@@ -2860,12 +3315,20 @@ mod tests {
             opened_child.plan.impact.edit_scope_id.as_deref(),
             Some(scope_id.as_str())
         );
+        assert!(opened_child.plan.live_projection.is_some());
+        assert_eq!(
+            opened_child.plan.live_projection_reason,
+            EditorMoveLiveProjectionReason::Ready
+        );
 
         let mut component_snapshot = snapshot.clone();
         let mut component_node = article_node.clone();
         component_node.id = "editor_render:component-instance".to_string();
         component_node.render_instance_id = Some("component-instance".to_string());
         component_node.component_invocation_ids = vec!["component-invocation-1".to_string()];
+        component_snapshot
+            .nodes
+            .retain(|node| node.id != article_node.id);
         component_snapshot.nodes.push(component_node.clone());
         let component_move = plan_editor_move(
             &runtime,
@@ -2881,12 +3344,61 @@ mod tests {
             component_move.plan.operation,
             Some(EditorMoveOperation::ComponentMove)
         );
+        let component_projection = component_move
+            .plan
+            .live_projection
+            .as_ref()
+            .expect("ComponentMove HTML unic trebuie proiectat live");
+        assert_eq!(
+            component_projection.source_render_instance_id,
+            "component-instance"
+        );
+        assert_eq!(
+            component_move.plan.live_projection_reason,
+            EditorMoveLiveProjectionReason::Ready
+        );
+        let issued_component_move = runtime
+            .issue_editor_move_decision(component_move)
+            .expect("plan ComponentMove tokenizat");
+        assert_eq!(
+            issued_component_move
+                .live_projection
+                .as_ref()
+                .and_then(|projection| projection.plan_token.as_deref()),
+            issued_component_move.token.as_deref()
+        );
+
+        let mut repeated_component_snapshot = component_snapshot.clone();
+        let mut repeated_component_node = component_node.clone();
+        repeated_component_node.id = "editor_render:component-instance-2".to_string();
+        repeated_component_node.render_instance_id = Some("component-instance-2".to_string());
+        repeated_component_snapshot
+            .nodes
+            .push(repeated_component_node);
+        let repeated_component_move = plan_editor_move(
+            &runtime,
+            &repeated_component_snapshot,
+            &model,
+            &component_node.id,
+            &section_node.id,
+            ProjectMovePosition::Before,
+            Some(&grant),
+        );
+        assert!(repeated_component_move.plan.allowed);
+        assert!(repeated_component_move.plan.live_projection.is_none());
+        assert_eq!(
+            repeated_component_move.plan.live_projection_reason,
+            EditorMoveLiveProjectionReason::MultipleRenderedInstances
+        );
 
         let mut block_snapshot = snapshot.clone();
         let mut native_block_node = article_node.clone();
         native_block_node.id = "editor_render:native-block-instance".to_string();
         native_block_node.render_instance_id = Some("native-block-instance".to_string());
         native_block_node.block_source_instance_ids = vec!["block-source-instance-1".to_string()];
+        block_snapshot
+            .nodes
+            .retain(|node| node.id != article_node.id);
         block_snapshot.nodes.push(native_block_node.clone());
         let native_block_move = plan_editor_move(
             &runtime,
@@ -2901,6 +3413,11 @@ mod tests {
         assert_eq!(
             native_block_move.plan.operation,
             Some(EditorMoveOperation::BlockMove)
+        );
+        assert!(native_block_move.plan.live_projection.is_some());
+        assert_eq!(
+            native_block_move.plan.live_projection_reason,
+            EditorMoveLiveProjectionReason::Ready
         );
 
         let cross_scope = plan_editor_move(
@@ -2969,6 +3486,7 @@ mod tests {
                 binding_path: binding_key.map(|key| format!("section.pages[{key}]")),
                 occurrence,
                 marker_kind: CanvasBoundaryMarkerKind::Source,
+                markdown: None,
                 closed: true,
             }
         };
@@ -3143,6 +3661,7 @@ mod tests {
             binding_path: None,
             occurrence: 0,
             marker_kind: CanvasBoundaryMarkerKind::Source,
+            markdown: None,
             closed: true,
         };
         let graph = CanvasGraph {
@@ -3835,6 +4354,166 @@ mod tests {
             Some(&grant),
         );
         assert!(opened_move.plan.allowed, "{:?}", opened_move.plan.reason);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn focused_layers_project_markdown_as_one_atomic_source_boundary() {
+        let root = editor_navigation_test_project("focused-markdown");
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n## Titlu\n\nText cu [legătură](/).\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            "<main><header>Exterior</header>{{ section.content | safe }}<footer>Exterior</footer></main>",
+        )
+        .unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let projection = model
+            .source_graph
+            .markdown_projections
+            .iter()
+            .find(|projection| projection.kind == MarkdownProjectionKind::Body)
+            .expect("section.content projection");
+        let encoded_file = BASE64_STANDARD.encode("_index.md");
+        let rendered = format!(
+            concat!(
+                "<main><header>Exterior</header>",
+                "<!-- pana-markdown-start:{}:{} -->",
+                "<h2>Titlu</h2><p>Text cu <a href=\"/\">legătură</a>.</p>",
+                "<!-- pana-markdown-end:{} -->",
+                "<footer>Exterior</footer></main>"
+            ),
+            projection.id, encoded_file, projection.id,
+        );
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            23,
+            "preview-markdown-23",
+            [("/", rendered.as_str())],
+        )
+        .unwrap();
+        let identity = CanvasProjectionIdentity {
+            project_root: root.to_string_lossy().to_string(),
+            runtime_session_id: "runtime-focused-markdown".to_string(),
+            workspace_revision: 23,
+            transaction_id: "canvas-focused-markdown".to_string(),
+            preview_revision: "preview-markdown-23".to_string(),
+        };
+        let snapshot = build_editor_navigation_snapshot(
+            identity,
+            "/",
+            &model,
+            &graph,
+            Some("templates/index.html"),
+            None,
+        )
+        .unwrap();
+        let markdown = snapshot
+            .nodes
+            .iter()
+            .find(|node| node.kind == EditorNavigationNodeKind::MarkdownBoundary)
+            .expect("canonical Markdown boundary");
+        assert_eq!(markdown.file.as_deref(), Some("content/_index.md"));
+        assert!(markdown.capabilities.can_open_in_code);
+        assert!(!markdown.capabilities.can_enter_boundary);
+        assert!(!markdown.capabilities.can_move_atomic);
+        assert!(!markdown.capabilities.can_move);
+        assert!(!markdown.capabilities.can_edit_text);
+        assert!(!markdown.capabilities.can_edit_attributes);
+        assert!(markdown.capabilities.read_only);
+
+        let view = snapshot.focused_view.as_ref().expect("focused Layers view");
+        let markdown_layers = view
+            .nodes
+            .iter()
+            .filter(|node| node.editor_node_id.as_deref() == Some(markdown.id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(markdown_layers.len(), 1);
+        assert_eq!(
+            markdown_layers[0].kind,
+            EditorNavigationViewNodeKind::Boundary
+        );
+        assert!(markdown_layers[0].children.is_empty());
+        assert_eq!(markdown_layers[0].file, "content/_index.md");
+        assert!(view
+            .nodes
+            .iter()
+            .all(|node| { !matches!(node.tag.as_deref(), Some("h2" | "p" | "a")) }));
+
+        let internal_render_nodes = snapshot
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.kind == EditorNavigationNodeKind::HtmlElement
+                    && node.capabilities.requires_edit_scope_id.as_deref()
+                        == Some(markdown.id.as_str())
+            })
+            .count();
+        assert!(internal_render_nodes >= 3);
+        for exterior_tag in ["header", "footer"] {
+            let exterior = view
+                .nodes
+                .iter()
+                .find(|node| node.tag.as_deref() == Some(exterior_tag))
+                .expect("exterior template HTML remains in Layers");
+            assert!(exterior.capabilities.requires_edit_scope_id.is_none());
+            assert!(exterior.capabilities.can_move);
+        }
+
+        let target = view
+            .nodes
+            .iter()
+            .find(|node| node.tag.as_deref() == Some("footer"))
+            .and_then(|node| node.editor_node_id.as_deref())
+            .expect("exterior target");
+        let blocked = plan_editor_move(
+            &EditorNavigationRuntime::default(),
+            &snapshot,
+            &model,
+            &markdown.id,
+            target,
+            ProjectMovePosition::Before,
+            None,
+        );
+        assert!(!blocked.plan.allowed);
+        assert_eq!(
+            blocked.plan.reason_code.as_deref(),
+            Some("editor_move_markdown_read_only")
+        );
+
+        let graph_after_reprojection = CanvasGraph::from_rendered_documents(
+            &model,
+            24,
+            "preview-markdown-24",
+            [("/", rendered.as_str())],
+        )
+        .unwrap();
+        let snapshot_after_reprojection = build_editor_navigation_snapshot(
+            CanvasProjectionIdentity {
+                project_root: root.to_string_lossy().to_string(),
+                runtime_session_id: "runtime-focused-markdown".to_string(),
+                workspace_revision: 24,
+                transaction_id: "canvas-focused-markdown-2".to_string(),
+                preview_revision: "preview-markdown-24".to_string(),
+            },
+            "/",
+            &model,
+            &graph_after_reprojection,
+            Some("templates/index.html"),
+            None,
+        )
+        .unwrap();
+        let markdown_after_reprojection = snapshot_after_reprojection
+            .nodes
+            .iter()
+            .find(|node| node.kind == EditorNavigationNodeKind::MarkdownBoundary)
+            .expect("reprojected Markdown boundary");
+        assert_eq!(markdown.id, markdown_after_reprojection.id);
+        assert_eq!(markdown.file, markdown_after_reprojection.file);
+        assert_eq!(markdown.range, markdown_after_reprojection.range);
         fs::remove_dir_all(root).unwrap();
     }
 

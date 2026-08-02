@@ -3,11 +3,13 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use zola_config::Config;
 
 mod asset;
 mod builder;
 mod data_file;
 mod files;
+mod incremental;
 mod page;
 pub(crate) mod ranges;
 mod relations;
@@ -17,7 +19,7 @@ mod summary;
 mod template;
 
 use crate::{
-    kernel::project_workspace::WorkspaceProjectionLease,
+    kernel::project_workspace::WorkspaceProjectionSnapshot,
     localization::LocalizedDiagnostic,
     project::{is_zola_project, zola_project_root},
     source_graph::{
@@ -45,11 +47,17 @@ use crate::{
             },
             structured_document::scan_structured_toml_document,
             style::{scan_style, style_scope_for_file},
+            summary::TemplateSummary,
             template::scan_template,
         },
         zola::{parse_zola_content_frontmatter, zola_content_page_kind},
     },
     zola_theme::{active_theme_from_source, ZolaThemeResolver},
+};
+
+pub(crate) use incremental::{
+    rebuild_local_template_graph, SourceGraphIncrementalFallback,
+    SourceGraphIncrementalTemplateReport,
 };
 
 pub fn build_source_graph(project_root: &Path) -> Result<SourceGraph, String> {
@@ -73,7 +81,7 @@ pub fn build_source_graph_with_projection(
 
 pub fn build_source_graph_from_workspace_projection(
     project_root: &Path,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<SourceGraph, String> {
     build_source_graph_internal(
         project_root,
@@ -87,7 +95,7 @@ fn build_source_graph_internal(
     project_root: &Path,
     draft_sources: &HashMap<String, String>,
     deleted_sources: &HashSet<String>,
-    workspace_projection: Option<&WorkspaceProjectionLease>,
+    workspace_projection: Option<&WorkspaceProjectionSnapshot>,
 ) -> Result<SourceGraph, String> {
     let root = project_root
         .canonicalize()
@@ -108,6 +116,14 @@ fn build_source_graph_internal(
     let projected_config = ["zola.toml", "config.toml"]
         .iter()
         .find_map(|path| draft_sources.get(*path));
+    let route_config_source = projected_config.cloned().or_else(|| {
+        ["zola.toml", "config.toml"]
+            .iter()
+            .find_map(|name| fs::read_to_string(zola_root.join(name)).ok())
+    });
+    let route_config = route_config_source
+        .as_deref()
+        .and_then(|source| Config::parse(source).ok());
     let theme_resolver = match workspace_projection {
         Some(_) => ZolaThemeResolver::new(
             projected_config.and_then(|source| active_theme_from_source(source)),
@@ -495,6 +511,7 @@ fn build_source_graph_internal(
             &template_by_name,
             &style_by_file,
             &theme_resolver,
+            route_config.as_ref(),
             draft_sources,
             &mut builder,
         ));
@@ -511,34 +528,7 @@ fn build_source_graph_internal(
 
     let graph_templates = templates
         .into_iter()
-        .map(|template| SourceGraphTemplate {
-            id: template.id,
-            file: template.file,
-            name: template.name,
-            origin: template.origin,
-            theme_name: template.theme_name,
-            is_partial: template.is_partial,
-            extends: template.extends,
-            includes: template.includes,
-            include_groups: template.include_groups,
-            imports: template.imports,
-            get_pages: template.get_pages,
-            get_sections: template.get_sections,
-            internal_links: template.internal_links,
-            asset_urls: template.asset_urls,
-            asset_hashes: template.asset_hashes,
-            data_loads: template.data_loads,
-            image_metadata: template.image_metadata,
-            image_resizes: template.image_resizes,
-            blocks: template
-                .blocks
-                .into_iter()
-                .map(|(block, _node_id)| block)
-                .collect(),
-            macros: template.macros,
-            semantics: template.semantics,
-            node_id: template.node_id,
-        })
+        .map(graph_template_from_summary)
         .collect();
     let graph_styles = styles
         .into_iter()
@@ -633,6 +623,7 @@ fn build_source_graph_internal(
     );
     graph.component_graph = crate::source_graph::component_graph::build_component_graph(&graph);
     graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
+    graph.markdown_projections = crate::source_graph::markdown::build_markdown_projections(&graph);
     let read_error = graph
         .diagnostics
         .iter()
@@ -643,6 +634,38 @@ fn build_source_graph_internal(
             .unwrap_or_else(|_| read_error.diagnostic.code.clone()));
     }
     Ok(graph)
+}
+
+fn graph_template_from_summary(template: TemplateSummary) -> SourceGraphTemplate {
+    SourceGraphTemplate {
+        id: template.id,
+        file: template.file,
+        name: template.name,
+        origin: template.origin,
+        theme_name: template.theme_name,
+        is_partial: template.is_partial,
+        extends: template.extends,
+        includes: template.includes,
+        include_groups: template.include_groups,
+        imports: template.imports,
+        get_pages: template.get_pages,
+        get_sections: template.get_sections,
+        internal_links: template.internal_links,
+        asset_urls: template.asset_urls,
+        asset_hashes: template.asset_hashes,
+        data_loads: template.data_loads,
+        image_metadata: template.image_metadata,
+        image_resizes: template.image_resizes,
+        blocks: template
+            .blocks
+            .into_iter()
+            .map(|(block, _node_id)| block)
+            .collect(),
+        macros: template.macros,
+        semantics: template.semantics,
+        markdown_projections: template.markdown_projections,
+        node_id: template.node_id,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -713,7 +736,7 @@ fn content_directory(zola_root: &Path, content_path: &Path) -> Option<PathBuf> {
 fn add_workspace_manifest_only_paths(
     project_root: &Path,
     active_theme: Option<&str>,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
     local_assets: &mut Vec<std::path::PathBuf>,
     theme_assets: &mut Vec<std::path::PathBuf>,
     data_files: &mut Vec<std::path::PathBuf>,
@@ -1072,6 +1095,41 @@ mod tests {
             .unwrap();
         assert!(card_parent.kind == SourceNodeKind::For);
         assert!(!card_node.capabilities.can_edit_visual);
+    }
+
+    #[test]
+    fn source_graph_publishes_exact_multilingual_slug_routes() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = 'https://example.test'\ndefault_language = 'ro'\n[languages.en]\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.en.md"),
+            "+++\ntitle = 'Home'\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/comunitate.en.md"),
+            "+++\ntitle = 'Community'\nslug = 'community'\n+++\n",
+        )
+        .unwrap();
+
+        let graph = build_source_graph(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        let routes = graph
+            .pages
+            .iter()
+            .map(|page| (page.file.as_str(), page.url.as_str()))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(routes.get("content/_index.en.md"), Some(&"/en/"));
+        assert_eq!(
+            routes.get("content/comunitate.en.md"),
+            Some(&"/en/community/"),
+        );
     }
 
     #[test]

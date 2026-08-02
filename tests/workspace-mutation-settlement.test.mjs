@@ -77,6 +77,41 @@ function mutation(changed = true) {
   };
 }
 
+function projectionReceipt(input) {
+  const previewRevision = `preview-${input.expectedWorkspaceRevision}`;
+  return {
+    operation: "workspace_projection",
+    projectRoot: input.expectedProjectRoot,
+    runtimeSessionId: input.expectedSessionId,
+    requestedPaths: input.requestedPaths,
+    previewRevision,
+    canvasProjection: {
+      schemaVersion: 1,
+      identity: {
+        projectRoot: input.expectedProjectRoot,
+        runtimeSessionId: input.expectedSessionId,
+        workspaceRevision: input.expectedWorkspaceRevision,
+        transactionId: `canvas-${input.expectedWorkspaceRevision}`,
+        previewRevision,
+      },
+      workspaceTransactionId: "tx-2",
+      phase: "prepared",
+      impact: {
+        kinds: ["htmlStructure"],
+        paths: input.requestedPaths,
+        requiresFullDocument: false,
+      },
+      resources: {
+        schemaVersion: 1,
+        previewRevision,
+        totalBytes: 0,
+        entries: [],
+      },
+    },
+    workspaceRevision: input.expectedWorkspaceRevision,
+  };
+}
+
 function host(overrides = {}) {
   return {
     sessionProjectRoot: "/project",
@@ -124,6 +159,21 @@ test("proiecția text Rust înlocuiește cache-ul gol al unui fișier creat îna
   assert.equal(fileBufferDraftSyncSnapshot().cursorCount, 1);
 });
 
+test("o confirmare derivată veche nu poate regresa snapshot-ul unei mutații CSS mai noi", async () => {
+  const target = host({ projectWorkspaceSnapshot: snapshot(3) });
+
+  const settlement = await settleProjectWorkspaceMutation(
+    target,
+    workspaceMutationAuthorityReceipt(mutation(), snapshot(2)),
+    { projectPreview: false },
+  );
+
+  assert.equal(settlement.authority, "committed");
+  assert.equal(settlement.projections.preview, "superseded");
+  assert.equal(settlement.projections.previewOutcome.workspaceRevision, 3);
+  assert.equal(target.projectWorkspaceSnapshot.revision, 3);
+});
+
 test("un commit Rust rămâne reușit când toate proiecțiile derivate eșuează", async () => {
   const target = host({
     async reconcileWorkspaceDerivedState() {
@@ -155,6 +205,52 @@ test("un commit Rust rămâne reușit când toate proiecțiile derivate eșueaz�
   assert.equal(settlement.projections.preview, "degraded");
   assert.equal(previewAttempts, 1);
   assert.equal(settlement.warnings.length, 2);
+});
+
+test("reconcilierea derivată și proiecția canonică pornesc în paralel", async () => {
+  let derivedStarted = false;
+  let previewStarted = false;
+  let releaseBoth;
+  const bothStarted = new Promise((resolve) => {
+    releaseBoth = resolve;
+  });
+  const releaseWhenBothStarted = () => {
+    if (derivedStarted && previewStarted) releaseBoth();
+  };
+  const target = host({
+    async reconcileWorkspaceDerivedState({ expectedWorkspaceRevision }) {
+      derivedStarted = true;
+      releaseWhenBothStarted();
+      await bothStarted;
+      return {
+        workspaceRevision: expectedWorkspaceRevision,
+        topology: "current",
+        sourceGraph: "current",
+        scss: "current",
+        warnings: [],
+      };
+    },
+  });
+  mockIPC(async (command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(2);
+    if (command === "project_project_workspace_preview") {
+      previewStarted = true;
+      releaseWhenBothStarted();
+      await bothStarted;
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  const settlement = await settleProjectWorkspaceMutation(
+    target,
+    workspaceMutationAuthorityReceipt(mutation(), snapshot(2)),
+  );
+
+  assert.equal(derivedStarted, true);
+  assert.equal(previewStarted, true);
+  assert.equal(settlement.projections.topology, "current");
+  assert.equal(settlement.projections.preview, "current");
 });
 
 test("lipsa Canvas-ului amână numai Preview-ul", async () => {

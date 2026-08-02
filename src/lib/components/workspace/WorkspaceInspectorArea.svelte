@@ -143,6 +143,7 @@
         await app.deleteSelectedTeraNode();
       }}
       openSelectedTeraSource={() => app.openSelectedTeraSource()}
+      openSelectedMarkdownContent={() => app.openSelectedMarkdownContent()}
       pendingTag={app.pendingTag}
       tagStatus={app.tagStatus}
       changeElementTag={(tag) => app.changeElementTag(tag)}
@@ -150,6 +151,8 @@
       onCssWorkspaceMutationCommitted={(authority, liveEpoch) =>
         app.projectCommittedInspectorCssMutation(authority, liveEpoch)}
       onInspectorLivePropertiesRejected={(liveEpoch) => app.clearInspectorLiveProperties(liveEpoch)}
+      gridOverlayEnabled={app.gridOverlayEnabled}
+      onGridOverlayChange={(enabled) => app.setGridOverlayEnabled(enabled)}
       injectPreviewCss={(css) => app.injectRawCss("pana-animation-preview", css)}
       onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind as GlobalStatusKind)}
       onPendingChange={(area, pending) => app.setInspectorPending(area, pending, "inspector-pane")}

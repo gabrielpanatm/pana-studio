@@ -10,7 +10,7 @@ use crate::{
         html::{html_label, should_project_html_tag},
         identity::SourceIdentityAssigner,
         mixed_cst::{parse_mixed_cst, MixedCstKind},
-        model::SourceNodeKind,
+        model::{MarkdownProjection, MarkdownProjectionKind, SourceNodeKind},
         tera::{for_collection_root, parse_tera_items, set_assignment_name, TeraItemKind},
     },
 };
@@ -23,6 +23,8 @@ pub struct SourceIdIndex {
     pub(super) scope_start_marker_by_location: HashMap<String, String>,
     pub(super) external_scope_start_by_scope_location: HashSet<String>,
     pub(super) zola_image_by_source_location: HashMap<String, ZolaImagePresentation>,
+    pub(super) markdown_projection_by_location: HashMap<String, MarkdownProjection>,
+    pub(super) shortcode_projection_by_template: HashMap<String, MarkdownProjection>,
 }
 
 #[derive(Clone)]
@@ -99,8 +101,35 @@ impl SourceIdIndex {
         self.zola_image_by_source_location.get(source_location)
     }
 
+    pub(super) fn markdown_projection_for(
+        &self,
+        source_location: &str,
+    ) -> Option<&MarkdownProjection> {
+        self.markdown_projection_by_location.get(source_location)
+    }
+
+    pub(super) fn shortcode_projection_for(
+        &self,
+        relative_path: &str,
+    ) -> Option<&MarkdownProjection> {
+        self.shortcode_projection_by_template
+            .get(relative_path.trim_start_matches('/'))
+    }
+
     pub(super) fn index_template_source(&mut self, source: &str, relative_path: &str) {
         let graph_file = relative_path.trim_start_matches('/').to_string();
+        let markdown =
+            crate::source_graph::markdown::analyze_template_markdown(&graph_file, source);
+        self.markdown_projection_by_location.extend(
+            markdown
+                .projection_by_location
+                .into_iter()
+                .filter(|(_, projection)| projection.kind != MarkdownProjectionKind::Shortcode),
+        );
+        if let Some(shortcode) = markdown.shortcode_projection {
+            self.shortcode_projection_by_template
+                .insert(graph_file.clone(), shortcode);
+        }
         let mut identities = SourceIdentityAssigner::default();
         let line_index = LineIndex::new(source);
         let tera_scopes = self.index_tera_source(

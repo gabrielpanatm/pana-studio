@@ -25,7 +25,7 @@
     announceCanvasAgentReady();
     var identity = mountedCanvasIdentity();
     var committedAt = Math.max(0, Math.round(performance.now() - startedAt));
-    waitForStyledFrame(startedAt).then(function (readiness) {
+    waitForStyledFrame(startedAt, null, true).then(function (readiness) {
       var styledReadyAt = Math.max(0, Math.round(performance.now() - startedAt));
       post("ready", {
         canvasIdentity: identity,
@@ -57,7 +57,7 @@
                 : styledReadyAt,
               styledReady: styledReadyAt
             },
-            diagnostic: null
+            diagnostic: readiness.fontActivationDiagnostic || null
           }
         ]
       });

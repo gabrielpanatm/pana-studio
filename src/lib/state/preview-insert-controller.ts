@@ -1,4 +1,5 @@
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
+import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
 import type { SourceEditLocation, SourceEditTarget } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import type { DropPosition } from "$lib/ui/drag";
@@ -18,7 +19,9 @@ export type PreviewInsertDropRequest = {
 };
 
 export type PreviewInsertControllerHost = {
-  insertPaletteElementAtTarget: (request: PreviewInsertDropRequest) => Promise<void>;
+  insertPaletteElementAtTarget: (
+    request: PreviewInsertDropRequest,
+  ) => Promise<EditorActionOutcome>;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
   resolveSourceEditTargetForSourceId?: (sourceId: string | null | undefined) => SourceEditTarget | null;
   previewDropTargetStatus?: (target: {

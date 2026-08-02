@@ -209,7 +209,7 @@ fn is_text_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn project_model_file(
+pub(super) fn project_model_file(
     relative_path: String,
     contents: String,
     from_draft: bool,

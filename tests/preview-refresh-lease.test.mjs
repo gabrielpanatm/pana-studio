@@ -13,6 +13,7 @@ import {
   prepareCanvasProjectionNavigation,
   refreshRenderedPreviewDocument,
   reloadPreview,
+  settleGuardedPreviewNavigation,
   unmountCanvasProjectionSurface,
 } from "$lib/state/preview-controller";
 import {
@@ -290,6 +291,13 @@ test("înlocuirea directă a iframe-ului închide confirmarea generației preced
 });
 
 test("timeout-ul autentic este raportat numai pentru generația Canvas încă montată", async () => {
+  const previousIdentity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 10,
+    transactionId: "canvas-workspace-10",
+    previewRevision: "workspace-10",
+  };
   const identity = {
     projectRoot: "/project-a",
     runtimeSessionId: "session-a:runtime-1",
@@ -319,6 +327,10 @@ test("timeout-ul autentic este raportat numai pentru generația Canvas încă mo
       previewFrame: frame,
       canvasSurfaceElement: frame,
       canvasSurfaceGeneration: 7,
+      previewSrc: "http://127.0.0.1:1111/candidate",
+      activeCanvasIdentity: previousIdentity,
+      previewNavigationGuardActive: true,
+      previewNavigationRecoveryUrl: "http://127.0.0.1:1111/last-styled",
       async recordCanvasProjectionRuntimeEvent(...args) {
         events.push(args);
       },
@@ -332,6 +344,14 @@ test("timeout-ul autentic este raportat numai pentru generația Canvas încă mo
     assert.equal(events[0][0], "canvas_ack_timeout");
     assert.deepEqual(events[0][1], identity);
     assert.match(events[0][3], /surfaceGeneration=7;lastPhase=prepared/);
+    assert.equal(activeHost.previewSrc, "http://127.0.0.1:1111/last-styled");
+    assert.equal(activeHost.previewNavigationGuardActive, true);
+    assert.equal(activeHost.previewNavigationRecoveryUrl, null);
+    assert.equal(
+      settleGuardedPreviewNavigation(activeHost, previousIdentity),
+      true,
+    );
+    assert.equal(activeHost.previewNavigationGuardActive, false);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
@@ -577,6 +597,62 @@ test("preview embedded întârziat nu se publică după redeschiderea aceluiași
   assert.equal(loadCount, 0);
 });
 
+test("bootstrap-ul cu eroare Zola deschide sesiunea degradată fără a repeta randarea", async () => {
+  let startCount = 0;
+  let resetCount = 0;
+  const lifecycle = {
+    schemaVersion: 1,
+    transition: "active",
+    activeSession: {
+      projectRoot: "/project-a",
+      runtimeSessionId: "session-a:runtime-1",
+      readiness: {
+        state: "degraded",
+        capability: "preview",
+        diagnostic: "Expected expression",
+      },
+    },
+  };
+  mockIPC((command, args) => {
+    assert.equal(command, "report_project_capability_degraded");
+    assert.equal(args.capability, "preview");
+    assert.equal(args.diagnostic, "Expected expression");
+    return lifecycle;
+  });
+  const activeHost = {
+    scannedProject: {
+      root: "/project-a",
+      files: [],
+      previewBaseUrl: "http://127.0.0.1:43250",
+      previewWarning: "Expected expression",
+    },
+    sessionProjectRoot: "/project-a",
+    kernelProjectSessionId: "session-a:runtime-1",
+    projectTransitionFrontendLeaseActive: false,
+    projectLifecycle: { activeSession: null },
+    resetControlledPreviewState() {
+      resetCount += 1;
+    },
+  };
+
+  const outcome = await startPreviewAfterOpen(activeHost, {
+    expectedProjectRoot: "/project-a",
+    expectedSessionId: "session-a:runtime-1",
+    previewWarning: "Expected expression",
+  }, {
+    async start() {
+      startCount += 1;
+      throw new Error("prima randare nu trebuie repetată");
+    },
+  });
+
+  assert.equal(outcome.status, "degraded");
+  assert.equal(outcome.message, "Expected expression");
+  assert.equal(startCount, 0);
+  assert.equal(resetCount, 1);
+  assert.equal(activeHost.projectLifecycle, lifecycle);
+});
+
 test("Project Transition invalidează preview-ul embedded înainte de schimbarea proiecției UI", async () => {
   const startGate = deferred();
   let loadCount = 0;
@@ -643,7 +719,7 @@ test("prima montare Canvas folosește direct lease-ul exact fără preflight Pre
     impact: { kinds: ["fullDocument"], paths: [], requiresFullDocument: true },
     resources: { schemaVersion: 1, previewRevision: "preview-direct-4", totalBytes: 0, entries: [] },
   };
-  let loadOptions = null;
+  let loadCount = 0;
   const activeHost = {
     scannedProject: {
       root: "/project-a",
@@ -673,7 +749,7 @@ test("prima montare Canvas folosește direct lease-ul exact fără preflight Pre
       return "http://127.0.0.1:43219/";
     },
     async loadScannedProjectFile(_file, options) {
-      loadOptions = options;
+      loadCount += 1;
     },
     markCanvasProjectionSurfaceCurrent() {},
     clearNotification() {},
@@ -699,7 +775,7 @@ test("prima montare Canvas folosește direct lease-ul exact fără preflight Pre
   });
 
   assert.equal(outcome.status, "canonical");
-  assert.equal(loadOptions.deferPreviewRefresh, true);
+  assert.equal(loadCount, 0);
   assert.equal(
     activeHost.previewSrc,
     bindCanvasCandidateIdentityToPreviewUrl(
@@ -771,11 +847,11 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
     previewUrlForScannedFile(file) {
       return `http://127.0.0.1:43220${file.previewPath ?? "/"}?__pana_preview_revision=preview-main-4`;
     },
-    async loadScannedProjectFile(file, options) {
-      events.push(`load:${file.role}`);
+    async updateTemplateWorkbenchContext(project, file, _preferredPagePath, options) {
+      events.push(`workbench:${file.role}`);
       assert.equal(events.includes("main-canonical"), true);
+      assert.equal(project.root, "/project-a");
       assert.equal(file.relativePath, template.relativePath);
-      assert.equal(options.activateTemplateWorkbench, true);
       assert.equal(options.strict, true);
     },
     clearNotification() {},
@@ -805,7 +881,7 @@ test("restaurarea unui template așteaptă publicarea Canvas principal înainte 
   mainCanvasGate.resolve();
   const outcome = await starting;
   assert.equal(outcome.status, "canonical");
-  assert.deepEqual(events, ["main-prepared", "main-canonical", "load:template"]);
+  assert.deepEqual(events, ["main-prepared", "main-canonical", "workbench:template"]);
 });
 
 test("pornirea cu activitatea Șabloane amână Canvas-ul fără warning sau activare prematură", async () => {
@@ -988,7 +1064,7 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
     schemaVersion: 1,
     identity: canvasIdentity,
     workspaceTransactionId: null,
-    phase: "canonicalVerified",
+    phase: "prepared",
     impact: { kinds: ["htmlStructure"], paths: ["content/_index.md"], requiresFullDocument: true },
     resources: { schemaVersion: 1, previewRevision: "workspace-3", totalBytes: 0, entries: [] },
   };
@@ -1010,10 +1086,15 @@ test("un server Preview pornit rămâne reatașabil după un eșec frontend de m
     kernelProjectSessionId: "session-a:runtime-1",
     projectTransitionFrontendLeaseActive: false,
     activeScannedPath: "content/_index.md",
+    activePreviewPath: "about:blank",
+    browserPreviewRoute: "/",
+    previewSrc: "about:blank",
+    previewDocumentMarkup: null,
     pendingCanvasProjection: null,
     previewWorkspaceRevision: null,
     activeCanvasIdentity: null,
-    async loadScannedProjectFile() {
+    activeCanvasUrl: "",
+    prepareCanvasProjectionNavigation() {
       throw new Error("iframe mount failed");
     },
     resetControlledPreviewState() { resetCount += 1; },
@@ -1237,6 +1318,13 @@ test("eșecul reconcilerului pe aceeași rută păstrează ultimul document și 
 
 test("un bridge fără ACK recuperează aceeași revizie prin navigarea iframe-ului", async () => {
   const canonicalUrl = "http://127.0.0.1:1111/";
+  const previousIdentity = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 9,
+    transactionId: "canvas-workspace-9",
+    previewRevision: "workspace-9",
+  };
   const identity = {
     projectRoot: "/project-a",
     runtimeSessionId: "session-a:runtime-1",
@@ -1277,6 +1365,8 @@ test("un bridge fără ACK recuperează aceeași revizie prin navigarea iframe-u
   };
   const activeHost = host({
     previewSrc: canonicalUrl,
+    activeCanvasUrl: canonicalUrl,
+    activeCanvasIdentity: previousIdentity,
     previewDocumentMarkup: null,
     previewWorkspaceRevision: "workspace-10",
     previewUrlForScannedFile() { return canonicalUrl; },
@@ -1296,12 +1386,16 @@ test("un bridge fără ACK recuperează aceeași revizie prin navigarea iframe-u
   await sendStarted.promise;
   await nextTurn();
   assert.match(activeHost.previewSrc, /__pana_preview_revision=workspace-10/);
+  assert.equal(activeHost.previewNavigationGuardActive, true);
+  assert.equal(activeHost.previewNavigationRecoveryUrl, canonicalUrl);
   assert.equal(await confirmMountedCanvasProjection(
     activeHost,
     identity,
     canvasPhaseReceipts(identity),
   ), true);
   assert.equal(await refreshing, true);
+  assert.equal(activeHost.previewNavigationGuardActive, false);
+  assert.equal(activeHost.previewNavigationRecoveryUrl, null);
   assert.equal(activeHost.pendingCanvasProjection, null);
   assert.equal(activeHost.previewWorkspaceRevision, null);
 });

@@ -1,6 +1,7 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use percent_encoding::percent_decode_str;
 use sha2::{Digest, Sha256};
 use tauri_utils::html::{parse, serialize_node, NodeRef};
 
@@ -61,6 +62,36 @@ pub(crate) struct PreparedInitialPreviewHtml {
     pub visitor: String,
     source: String,
     preview_revision: String,
+    document_route: String,
+    resource_versions: PreviewResourceVersions,
+}
+
+/// Identitățile resurselor sunt produse autoritativ de manifestul Rust al
+/// generației. Toate documentele unei generații partajează același Arc, deci
+/// suprafețele lazy Motion/Interactive nu copiază catalogul și nu recitesc
+/// asset-urile.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PreviewResourceVersions {
+    by_path: Arc<BTreeMap<String, String>>,
+}
+
+impl PreviewResourceVersions {
+    pub(crate) fn from_entries(entries: impl IntoIterator<Item = (String, String)>) -> Self {
+        let by_path = entries
+            .into_iter()
+            .filter(|(path, digest)| {
+                path.starts_with('/') && !path.contains(['?', '#']) && !digest.trim().is_empty()
+            })
+            .collect();
+        Self {
+            by_path: Arc::new(by_path),
+        }
+    }
+
+    fn digest_for(&self, document_route: &str, resource_url: &str) -> Option<&str> {
+        let path = local_resource_path(document_route, resource_url)?;
+        self.by_path.get(&path).map(String::as_str)
+    }
 }
 
 impl PreparedInitialPreviewHtml {
@@ -68,12 +99,20 @@ impl PreparedInitialPreviewHtml {
         match surface {
             PreviewHtmlSurface::Editor => Ok(Cow::Borrowed(&self.editor)),
             PreviewHtmlSurface::Visitor => Ok(Cow::Borrowed(&self.visitor)),
-            PreviewHtmlSurface::Motion => {
-                prepare_motion_document(&self.source, &self.preview_revision).map(Cow::Owned)
-            }
-            PreviewHtmlSurface::Interactive => {
-                prepare_interactive_document(&self.source, &self.preview_revision).map(Cow::Owned)
-            }
+            PreviewHtmlSurface::Motion => prepare_motion_document(
+                &self.source,
+                &self.preview_revision,
+                &self.document_route,
+                &self.resource_versions,
+            )
+            .map(Cow::Owned),
+            PreviewHtmlSurface::Interactive => prepare_interactive_document(
+                &self.source,
+                &self.preview_revision,
+                &self.document_route,
+                &self.resource_versions,
+            )
+            .map(Cow::Owned),
         }
     }
 }
@@ -233,6 +272,20 @@ pub(crate) fn prepare_design_safe_html(
     html: &str,
     preview_revision: &str,
 ) -> Result<PreparedDesignSafeHtml, String> {
+    prepare_design_safe_html_with_resources(
+        html,
+        preview_revision,
+        "/",
+        &PreviewResourceVersions::default(),
+    )
+}
+
+pub(crate) fn prepare_design_safe_html_with_resources(
+    html: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) -> Result<PreparedDesignSafeHtml, String> {
     if html.len() > MAX_PREVIEW_HTML_BYTES {
         return Err(format!(
             "Documentul HTML de preview depășește limita de {} bytes.",
@@ -247,14 +300,23 @@ pub(crate) fn prepare_design_safe_html(
             html,
             PreviewHtmlSurface::Editor,
             Some(preview_revision),
+            document_route,
+            resource_versions,
         )?,
         visitor: sanitize_design_safe_document(
             html,
             PreviewHtmlSurface::Visitor,
             Some(preview_revision),
+            document_route,
+            resource_versions,
         )?,
-        motion: prepare_motion_document(html, preview_revision)?,
-        interactive: prepare_interactive_document(html, preview_revision)?,
+        motion: prepare_motion_document(html, preview_revision, document_route, resource_versions)?,
+        interactive: prepare_interactive_document(
+            html,
+            preview_revision,
+            document_route,
+            resource_versions,
+        )?,
     })
 }
 
@@ -266,20 +328,40 @@ pub(crate) fn prepare_initial_preview_html(
     html: &str,
     preview_revision: &str,
 ) -> Result<PreparedInitialPreviewHtml, String> {
+    prepare_initial_preview_html_with_resources(
+        html,
+        preview_revision,
+        "/",
+        &PreviewResourceVersions::default(),
+    )
+}
+
+pub(crate) fn prepare_initial_preview_html_with_resources(
+    html: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) -> Result<PreparedInitialPreviewHtml, String> {
     require_preview_html_input(html, preview_revision)?;
     Ok(PreparedInitialPreviewHtml {
         editor: sanitize_design_safe_document(
             html,
             PreviewHtmlSurface::Editor,
             Some(preview_revision),
+            document_route,
+            resource_versions,
         )?,
         visitor: sanitize_design_safe_document(
             html,
             PreviewHtmlSurface::Visitor,
             Some(preview_revision),
+            document_route,
+            resource_versions,
         )?,
         source: html.to_string(),
         preview_revision: preview_revision.to_string(),
+        document_route: document_route.to_string(),
+        resource_versions: resource_versions.clone(),
     })
 }
 
@@ -296,7 +378,12 @@ fn require_preview_html_input(html: &str, preview_revision: &str) -> Result<(), 
     Ok(())
 }
 
-fn prepare_motion_document(html: &str, preview_revision: &str) -> Result<String, String> {
+fn prepare_motion_document(
+    html: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) -> Result<String, String> {
     let source_document = parse(html.to_string());
     let script_sources = source_document
         .select("script[src]")
@@ -308,7 +395,12 @@ fn prepare_motion_document(html: &str, preview_revision: &str) -> Result<String,
         .collect::<Vec<_>>();
 
     sanitize_document_tree(&source_document);
-    revision_local_resource_urls(&source_document, preview_revision);
+    revision_local_resource_urls(
+        &source_document,
+        preview_revision,
+        document_route,
+        resource_versions,
+    );
     let html = source_document.select_first("html").map_err(|_| {
         "Documentul Previzualizare Motion nu are element html normalizat.".to_string()
     })?;
@@ -318,7 +410,13 @@ fn prepare_motion_document(html: &str, preview_revision: &str) -> Result<String,
     html.attributes
         .borrow_mut()
         .insert("data-pana-motion-preview", "true".to_string());
-    append_motion_scripts(&source_document, &script_sources, preview_revision)?;
+    append_motion_scripts(
+        &source_document,
+        &script_sources,
+        preview_revision,
+        document_route,
+        resource_versions,
+    )?;
     append_interactive_runtime(&source_document, false)?;
     String::from_utf8(serialize_node(&source_document)).map_err(|error| {
         format!("Documentul Previzualizare Motion nu a putut fi serializat: {error}")
@@ -344,12 +442,15 @@ fn append_motion_scripts(
     document: &NodeRef,
     sources: &[String],
     preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
 ) -> Result<(), String> {
     let body = document
         .select_first("body")
         .map_err(|_| "Documentul Previzualizare Motion nu are un element body.".to_string())?;
     for source in sources {
-        let revised = revise_resource_url(source, preview_revision);
+        let revised =
+            revise_resource_url(source, preview_revision, document_route, resource_versions);
         let script_document = parse(format!(
             "<!doctype html><html><body><script src=\"{revised}\" defer></script></body></html>"
         ));
@@ -364,10 +465,20 @@ fn append_motion_scripts(
     Ok(())
 }
 
-fn prepare_interactive_document(html: &str, preview_revision: &str) -> Result<String, String> {
+fn prepare_interactive_document(
+    html: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) -> Result<String, String> {
     let document = parse(html.to_string());
     remove_authored_content_security_policy(&document);
-    revision_local_resource_urls(&document, preview_revision);
+    revision_local_resource_urls(
+        &document,
+        preview_revision,
+        document_route,
+        resource_versions,
+    );
     let html = document.select_first("html").map_err(|_| {
         "Documentul Previzualizare interactivă nu are element html normalizat.".to_string()
     })?;
@@ -453,11 +564,18 @@ fn sanitize_design_safe_document(
     html: &str,
     surface: PreviewHtmlSurface,
     preview_revision: Option<&str>,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
 ) -> Result<String, String> {
     let document = parse(html.to_string());
     sanitize_document_tree(&document);
     if let Some(preview_revision) = preview_revision {
-        revision_local_resource_urls(&document, preview_revision);
+        revision_local_resource_urls(
+            &document,
+            preview_revision,
+            document_route,
+            resource_versions,
+        );
         let html = document
             .select_first("html")
             .map_err(|_| "Documentul Editare sigură nu are element html normalizat.".to_string())?;
@@ -476,7 +594,12 @@ fn sanitize_design_safe_document(
     })
 }
 
-fn revision_local_resource_urls(document: &NodeRef, preview_revision: &str) {
+fn revision_local_resource_urls(
+    document: &NodeRef,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) {
     for node in document.descendants() {
         let Some(element) = node.as_element() else {
             continue;
@@ -488,9 +611,9 @@ fn revision_local_resource_urls(document: &NodeRef, preview_revision: &str) {
                 continue;
             };
             let revised = if *attribute_name == "srcset" {
-                revise_srcset(&value, preview_revision)
+                revise_srcset(&value, preview_revision, document_route, resource_versions)
             } else {
-                revise_resource_url(&value, preview_revision)
+                revise_resource_url(&value, preview_revision, document_route, resource_versions)
             };
             attributes.insert(*attribute_name, revised);
         }
@@ -508,7 +631,12 @@ fn revisioned_url_attributes(element: &str) -> &'static [&'static str] {
     }
 }
 
-fn revise_srcset(value: &str, preview_revision: &str) -> String {
+fn revise_srcset(
+    value: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) -> String {
     value
         .split(',')
         .map(|candidate| {
@@ -516,7 +644,8 @@ fn revise_srcset(value: &str, preview_revision: &str) -> String {
             let mut parts = candidate.splitn(2, char::is_whitespace);
             let url = parts.next().unwrap_or_default();
             let descriptor = parts.next().unwrap_or_default().trim();
-            let revised = revise_resource_url(url, preview_revision);
+            let revised =
+                revise_resource_url(url, preview_revision, document_route, resource_versions);
             if descriptor.is_empty() {
                 revised
             } else {
@@ -527,22 +656,114 @@ fn revise_srcset(value: &str, preview_revision: &str) -> String {
         .join(", ")
 }
 
-fn revise_resource_url(value: &str, preview_revision: &str) -> String {
+fn revise_resource_url(
+    value: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+) -> String {
     let trimmed = value.trim();
+    let lowercase = trimmed.to_ascii_lowercase();
     if trimmed.is_empty()
         || trimmed.starts_with('#')
-        || trimmed.starts_with("data:")
-        || trimmed.starts_with("blob:")
-        || trimmed.starts_with("mailto:")
-        || trimmed.starts_with("tel:")
+        || trimmed.starts_with("//")
+        || lowercase.starts_with("data:")
+        || lowercase.starts_with("blob:")
+        || lowercase.starts_with("mailto:")
+        || lowercase.starts_with("tel:")
         || (trimmed.contains("://")
             && !trimmed.starts_with("http://127.0.0.1:")
             && !trimmed.starts_with("http://localhost:"))
     {
         return value.to_string();
     }
-    let separator = if trimmed.contains('?') { '&' } else { '?' };
-    format!("{trimmed}{separator}__pana_preview_revision={preview_revision}")
+    if let Some(content_hash) = resource_versions.digest_for(document_route, trimmed) {
+        return replace_internal_resource_query(trimmed, "__pana_resource_hash", content_hash);
+    }
+    replace_internal_resource_query(trimmed, "__pana_preview_revision", preview_revision)
+}
+
+fn replace_internal_resource_query(value: &str, name: &str, identity: &str) -> String {
+    let (without_fragment, fragment) = value
+        .split_once('#')
+        .map(|(head, tail)| (head, Some(tail)))
+        .unwrap_or((value, None));
+    let (path, query) = without_fragment
+        .split_once('?')
+        .map(|(path, query)| (path, Some(query)))
+        .unwrap_or((without_fragment, None));
+    let mut pairs = query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .filter(|pair| {
+            let key = pair.split_once('=').map(|(key, _)| key).unwrap_or(pair);
+            !matches!(key, "__pana_preview_revision" | "__pana_resource_hash")
+        })
+        .filter(|pair| !pair.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    pairs.push(format!("{name}={identity}"));
+    let mut revised = format!("{path}?{}", pairs.join("&"));
+    if let Some(fragment) = fragment {
+        revised.push('#');
+        revised.push_str(fragment);
+    }
+    revised
+}
+
+fn local_resource_path(document_route: &str, value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let without_query = trimmed.split(['?', '#']).next().unwrap_or_default();
+    if without_query.is_empty() || without_query.starts_with("//") {
+        return None;
+    }
+    let resource_path = if let Some(scheme) = without_query.find("://") {
+        let origin = &without_query[..scheme].to_ascii_lowercase();
+        let authority_and_path = &without_query[scheme + 3..];
+        let (authority, path) = authority_and_path
+            .split_once('/')
+            .map(|(authority, path)| (authority, format!("/{path}")))
+            .unwrap_or((authority_and_path, "/".to_string()));
+        let local_http = origin == "http"
+            && (authority.starts_with("127.0.0.1:") || authority.starts_with("localhost:"));
+        if !local_http {
+            return None;
+        }
+        path
+    } else {
+        let first_separator = without_query.find('/').unwrap_or(without_query.len());
+        if without_query[..first_separator].contains(':') {
+            return None;
+        }
+        without_query.to_string()
+    };
+    let decoded = percent_decode_str(&resource_path).decode_utf8().ok()?;
+    let absolute = if decoded.starts_with('/') {
+        decoded.into_owned()
+    } else {
+        let route = if document_route.starts_with('/') {
+            document_route
+        } else {
+            "/"
+        };
+        let base = if route.ends_with('/') {
+            route
+        } else {
+            route.rsplit_once('/').map(|(base, _)| base).unwrap_or("")
+        };
+        format!("{base}/{decoded}")
+    };
+    let mut segments = Vec::new();
+    for segment in absolute.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            value => segments.push(value),
+        }
+    }
+    Some(format!("/{}", segments.join("/")))
 }
 
 fn sanitize_document_tree(document: &NodeRef) {
@@ -659,8 +880,9 @@ mod tests {
 
     use super::{
         bind_canvas_identity_to_editor_html, bridge_csp_hash, build_prepared_design_safe_response,
-        interactive_runtime_csp_hash, prepare_design_safe_html, prepare_initial_preview_html,
-        PreviewHtmlSurface, BRIDGE_SCRIPT, CANVAS_AGENT_SCRIPT, INTERACTIVE_RUNTIME_SCRIPT,
+        interactive_runtime_csp_hash, prepare_design_safe_html,
+        prepare_design_safe_html_with_resources, prepare_initial_preview_html, PreviewHtmlSurface,
+        PreviewResourceVersions, BRIDGE_SCRIPT, CANVAS_AGENT_SCRIPT, INTERACTIVE_RUNTIME_SCRIPT,
         MAX_PREVIEW_HTML_BYTES, TEST_PREVIEW_PROXY_PORT,
     };
 
@@ -697,6 +919,106 @@ mod tests {
                 .as_ref(),
             eager.interactive
         );
+    }
+
+    #[test]
+    fn local_resources_are_versioned_by_content_and_not_by_preview_revision() {
+        let source = r#"<!doctype html><html><head>
+            <link rel="stylesheet" href="../css/site.css?theme=dark#critical">
+            <link rel="stylesheet" href="https://cdn.example.com/external.css">
+            <link rel="stylesheet" href="//cdn.example.com/protocol-relative.css">
+        </head><body>
+            <img src="/images/logo.svg">
+            <img src="data:image/svg+xml;base64,PHN2Zy8+">
+        </body></html>"#;
+        let digest_a = format!("sha256-{}", "a".repeat(64));
+        let digest_b = format!("sha256-{}", "b".repeat(64));
+        let stable = PreviewResourceVersions::from_entries([
+            ("/css/site.css".to_string(), digest_a.clone()),
+            ("/images/logo.svg".to_string(), digest_b.clone()),
+        ]);
+        let first = prepare_design_safe_html_with_resources(
+            source,
+            "workspace-1",
+            "/pages/index.html",
+            &stable,
+        )
+        .unwrap();
+        let second = prepare_design_safe_html_with_resources(
+            source,
+            "workspace-2",
+            "/pages/index.html",
+            &stable,
+        )
+        .unwrap();
+
+        let first_document = parse(first.editor.clone());
+        let second_document = parse(second.editor.clone());
+        let first_stylesheet = first_document
+            .select_first("link[rel~='stylesheet']")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href")
+            .map(str::to_string)
+            .unwrap();
+        let second_stylesheet = second_document
+            .select_first("link[rel~='stylesheet']")
+            .unwrap()
+            .attributes
+            .borrow()
+            .get("href")
+            .map(str::to_string)
+            .unwrap();
+        assert_eq!(first_stylesheet, second_stylesheet);
+        assert_eq!(
+            first_stylesheet,
+            format!("../css/site.css?theme=dark&__pana_resource_hash={digest_a}#critical")
+        );
+        assert!(first
+            .editor
+            .contains(&format!("/images/logo.svg?__pana_resource_hash={digest_b}")));
+        assert!(first
+            .editor
+            .contains("https://cdn.example.com/external.css"));
+        assert!(first
+            .editor
+            .contains("//cdn.example.com/protocol-relative.css"));
+        assert!(first.editor.contains("data:image/svg+xml;base64,PHN2Zy8+"));
+        assert!(!first.editor.contains("__pana_preview_revision"));
+
+        let changed = PreviewResourceVersions::from_entries([
+            (
+                "/css/site.css".to_string(),
+                format!("sha256-{}", "c".repeat(64)),
+            ),
+            ("/images/logo.svg".to_string(), digest_b),
+        ]);
+        let third = prepare_design_safe_html_with_resources(
+            source,
+            "workspace-3",
+            "/pages/index.html",
+            &changed,
+        )
+        .unwrap();
+        assert_ne!(first.editor, third.editor);
+        assert!(third
+            .editor
+            .contains(&format!("__pana_resource_hash=sha256-{}", "c".repeat(64))));
+    }
+
+    #[test]
+    fn missing_local_resource_keeps_exact_revision_fallback() {
+        let prepared = prepare_design_safe_html_with_resources(
+            r#"<html><head><link rel="stylesheet" href="/missing.css"></head></html>"#,
+            "workspace-9",
+            "/",
+            &PreviewResourceVersions::default(),
+        )
+        .unwrap();
+        assert!(prepared
+            .editor
+            .contains("/missing.css?__pana_preview_revision=workspace-9"));
     }
 
     #[test]

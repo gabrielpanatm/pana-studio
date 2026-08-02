@@ -8,6 +8,7 @@ export function escapeHtmlAttribute(value: string) {
 
 const applicationAccentProperty = "--pana-studio-accent";
 const applicationTextOnAccentProperty = "--pana-studio-text-on-accent";
+const applicationMarkdownProperty = "--pana-studio-markdown";
 
 function normalizedApplicationColor(value: string, fallback: string) {
   return /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : fallback;
@@ -25,6 +26,10 @@ export function applyApplicationAppearanceToPreviewDocument(
   previewDocument.documentElement.style.setProperty(
     applicationTextOnAccentProperty,
     normalizedApplicationColor(textOnAccent, "#ffffff"),
+  );
+  previewDocument.documentElement.style.setProperty(
+    applicationMarkdownProperty,
+    "#f59e0b",
   );
 }
 

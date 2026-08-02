@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 function source(path) {
@@ -106,7 +106,7 @@ test("proiecția workspace cere o origine Preview navigabilă, nu doar un iframe
 test("all ten CSS sections share the explicit property edit contract", () => {
   const editor = source("src/lib/components/inspector/ClassEditor.svelte");
   const sections = [
-    "Typography", "Colors", "Spacing", "Layout", "Position",
+    "Typography", "Background", "Spacing", "Layout", "Position",
     "Size", "Border", "Shadow", "Transform", "Effects",
   ];
   for (const section of sections) {
@@ -123,8 +123,11 @@ test("CSS edits use explicit draft, commit and cancel boundaries", () => {
   const typography = source("src/lib/components/inspector/sections/TypographySection.svelte");
 
   assert.match(contract, /draft: \(property: string, value: string\)/);
+  assert.match(contract, /draftMany: \(properties: Readonly<Record<string, string>>\)/);
   assert.match(contract, /commit: \(property: string, value\?: string\)/);
   assert.match(contract, /cancel: \(property: string\)/);
+  assert.match(contract, /commitMany:/);
+  assert.match(contract, /cancelMany:/);
   assert.match(inspector, /function draftCssProperty/);
   assert.match(inspector, /function commitCssProperty/);
   assert.match(inspector, /function cancelCssProperty/);
@@ -165,12 +168,39 @@ test("Undo quiesces CSS reads and focus errors until history projection settles"
 });
 
 test("structured compound editors preserve unsupported values in raw mode", () => {
-  const colors = source("src/lib/components/inspector/sections/ColorsSection.svelte");
+  const background = source("src/lib/components/inspector/sections/BackgroundSection.svelte");
+  const gradient = source("src/lib/components/inspector/controls/GradientEditor.svelte");
   const shadows = source("src/lib/components/inspector/sections/ShadowSection.svelte");
 
-  assert.match(colors, /isBackgroundGradientStructurallyEditable/);
-  assert.match(colors, /t\("inspector-colors-complex-gradient"\)/);
+  assert.match(background, /background\.shorthand/);
+  assert.match(background, /inspector-background-opaque-description/);
+  assert.match(background, /serializeBackgroundLonghands/);
+  assert.match(gradient, /inspector-background-gradient-css-source/);
+  assert.match(gradient, /parseCssGradient/);
   assert.match(shadows, /boxStructured/);
   assert.match(shadows, /textStructured/);
   assert.match(shadows, /t\("inspector-shadow-complex"\)/);
+});
+
+test("background editing is Rust-first, layered and committed as one property set", () => {
+  const rustModel = source("src-tauri/src/css/background.rs");
+  const viewport = source("src-tauri/src/css/viewport.rs");
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const background = source("src/lib/components/inspector/sections/BackgroundSection.svelte");
+  const typography = source("src/lib/components/inspector/sections/TypographySection.svelte");
+  const legacyEditor = new URL("../src/lib/components/inspector/sections/ColorsSection.svelte", import.meta.url);
+
+  assert.match(rustModel, /pub struct CssBackground/);
+  assert.match(rustModel, /pub struct CssBackgroundLayer/);
+  assert.match(rustModel, /split_top_level_commas/);
+  assert.match(rustModel, /pub fn to_longhands/);
+  assert.match(viewport, /pub background: CssBackground/);
+  assert.match(inspector, /function draftCssProperties/);
+  assert.match(inspector, /stageCssRuleMutation\(mutation, property, value/);
+  assert.match(background, /BACKGROUND_LONGHAND_PROPERTIES/);
+  assert.match(background, /edit\.commitMany\(properties\)/);
+  assert.match(background, /moveLayer/);
+  assert.match(background, /duplicateLayer/);
+  assert.match(typography, /edit\.continuous\("color"\)/);
+  assert.equal(existsSync(legacyEditor), false);
 });

@@ -180,10 +180,12 @@ pub struct PreviewProjectionIntentReceipt {
 /// are authoritative; selector data is only a guarded fallback for the exact
 /// currently mounted document. Render instance IDs are populated when the
 /// active CanvasGraph can disambiguate a repeated source occurrence.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CanvasPatchAnchor {
     pub source_id: String,
+    #[serde(default)]
+    pub alternate_source_ids: Vec<String>,
     pub render_instance_id: Option<String>,
     pub selector_fallback: Option<String>,
     pub expected_tag: Option<String>,
@@ -197,14 +199,47 @@ impl CanvasPatchAnchor {
     ) -> Self {
         Self {
             source_id: source_id.into(),
+            alternate_source_ids: Vec::new(),
             render_instance_id: None,
             selector_fallback: bounded_optional(selector_fallback, 4_096),
             expected_tag: bounded_optional(expected_tag, 128),
         }
     }
+
+    pub(crate) fn source_instance(
+        source_id: impl Into<String>,
+        render_instance_id: Option<&str>,
+        selector_fallback: Option<&str>,
+        expected_tag: Option<&str>,
+    ) -> Self {
+        Self {
+            source_id: source_id.into(),
+            alternate_source_ids: Vec::new(),
+            render_instance_id: bounded_optional(render_instance_id, 512),
+            selector_fallback: bounded_optional(selector_fallback, 4_096),
+            expected_tag: bounded_optional(expected_tag, 128),
+        }
+    }
+
+    pub(crate) fn with_alternate_source_ids(
+        mut self,
+        source_ids: impl IntoIterator<Item = String>,
+    ) -> Self {
+        self.alternate_source_ids = source_ids
+            .into_iter()
+            .map(|source_id| source_id.trim().to_string())
+            .filter(|source_id| {
+                !source_id.is_empty() && source_id.len() <= 512 && source_id != &self.source_id
+            })
+            .take(4)
+            .collect();
+        self.alternate_source_ids.sort();
+        self.alternate_source_ids.dedup();
+        self
+    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CanvasPatchOperation {
     SetAttributes {
@@ -222,6 +257,10 @@ pub enum CanvasPatchOperation {
         target: CanvasPatchAnchor,
         text: String,
     },
+    SetTextHtml {
+        target: CanvasPatchAnchor,
+        escaped_text: String,
+    },
     ReplaceTag {
         target: CanvasPatchAnchor,
         new_tag: String,
@@ -230,6 +269,8 @@ pub enum CanvasPatchOperation {
         target: CanvasPatchAnchor,
         position: ProjectMovePosition,
         html: String,
+        #[serde(default)]
+        inserted: Option<CanvasPatchAnchor>,
     },
     Move {
         source: CanvasPatchAnchor,
@@ -239,6 +280,8 @@ pub enum CanvasPatchOperation {
     Duplicate {
         source: CanvasPatchAnchor,
         html: String,
+        #[serde(default)]
+        inserted: Option<CanvasPatchAnchor>,
     },
     Delete {
         target: CanvasPatchAnchor,
@@ -325,6 +368,59 @@ impl CanvasPatch {
             base_workspace_revision: workspace_mutation.revision_before,
             workspace_revision: workspace_mutation.revision_after,
             workspace_transaction_id: workspace_transaction_id.to_string(),
+            before_model_revision: before_model_revision.to_string(),
+            after_model_revision: after_model_revision.to_string(),
+            operation,
+        })
+    }
+
+    pub(crate) fn issued_for_history(
+        project_root: &str,
+        runtime_session_id: &str,
+        base_workspace_revision: u64,
+        workspace_revision: u64,
+        workspace_transaction_id: &str,
+        before_model_revision: &str,
+        after_model_revision: &str,
+        operation: CanvasPatchOperation,
+    ) -> Result<Self, String> {
+        let transaction_id = workspace_transaction_id.trim();
+        if transaction_id.is_empty()
+            || transaction_id.len() > 256
+            || workspace_revision <= base_workspace_revision
+            || project_root.trim().is_empty()
+            || runtime_session_id.trim().is_empty()
+            || before_model_revision.trim().is_empty()
+            || after_model_revision.trim().is_empty()
+        {
+            return Err(
+                "CanvasPatch History a refuzat o identitate sau revizie invalidă.".to_string(),
+            );
+        }
+        let canonical = serde_json::to_vec(&(
+            CANVAS_PATCH_SCHEMA_VERSION,
+            project_root,
+            runtime_session_id,
+            base_workspace_revision,
+            workspace_revision,
+            transaction_id,
+            before_model_revision,
+            after_model_revision,
+            &operation,
+        ))
+        .map_err(|error| format!("CanvasPatch History nu a putut fi serializat: {error}"))?;
+        if canonical.len() > MAX_CANVAS_PATCH_BYTES {
+            return Err("CanvasPatch History depășește bugetul de 2 MiB.".to_string());
+        }
+        Ok(Self {
+            schema_version: CANVAS_PATCH_SCHEMA_VERSION,
+            patch_id: format!("canvas_patch_{}", full_hex(&Sha256::digest(&canonical))),
+            issued_at_ms: Self::current_time_ms(),
+            project_root: project_root.to_string(),
+            runtime_session_id: runtime_session_id.to_string(),
+            base_workspace_revision,
+            workspace_revision,
+            workspace_transaction_id: transaction_id.to_string(),
             before_model_revision: before_model_revision.to_string(),
             after_model_revision: after_model_revision.to_string(),
             operation,

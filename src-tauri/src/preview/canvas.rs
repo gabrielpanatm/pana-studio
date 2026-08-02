@@ -10,6 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri_utils::html::{parse, serialize_node, NodeRef};
@@ -19,9 +20,10 @@ use crate::{
     js::parse_page_js,
     project_model::model::ProjectModel,
     source_graph::model::{
-        ComponentInvocationKind, RenderedBlockInstance, RenderedComponentInstance,
-        SourceRelationKind,
+        ComponentInvocationKind, MarkdownProjection, MarkdownProjectionKind, RenderedBlockInstance,
+        RenderedComponentInstance, SourceGraphPage, SourceRange, SourceRelationKind,
     },
+    source_graph::zola_shortcode::ZolaShortcodeInvocation,
 };
 
 pub const CANVAS_PROJECTION_SCHEMA_VERSION: u32 = 1;
@@ -165,6 +167,27 @@ pub(crate) struct CanvasRenderNode {
 pub(crate) enum CanvasBoundaryMarkerKind {
     Source,
     Expression,
+    Markdown,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CanvasMarkdownProvenanceState {
+    Resolved,
+    Unresolved,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CanvasMarkdownBoundary {
+    pub projection_id: String,
+    pub kind: MarkdownProjectionKind,
+    pub source_file: Option<String>,
+    pub source_range: Option<SourceRange>,
+    pub template_source_node_id: String,
+    pub template_file: String,
+    pub template_range: Option<SourceRange>,
+    pub provenance_state: CanvasMarkdownProvenanceState,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
@@ -179,6 +202,7 @@ pub(crate) struct CanvasBoundaryInstance {
     pub binding_path: Option<String>,
     pub occurrence: usize,
     pub marker_kind: CanvasBoundaryMarkerKind,
+    pub markdown: Option<CanvasMarkdownBoundary>,
     pub closed: bool,
 }
 
@@ -244,6 +268,11 @@ struct CanvasSemanticIndex<'a> {
     block_definition_by_source_instance: HashMap<String, Option<String>>,
     binding_path_by_source: HashMap<String, String>,
     repeated_sources: HashSet<String>,
+    markdown_projection_by_id: HashMap<&'a str, &'a MarkdownProjection>,
+    page_by_file: HashMap<String, &'a SourceGraphPage>,
+    page_by_route: HashMap<String, &'a SourceGraphPage>,
+    source_by_file: HashMap<String, &'a str>,
+    source_range_by_node_id: HashMap<&'a str, &'a SourceRange>,
 }
 
 pub(crate) struct CanvasDocumentAnnotator<'a> {
@@ -254,6 +283,7 @@ pub(crate) struct CanvasDocumentAnnotator<'a> {
 struct CanvasBoundaryFrame {
     draft_index: usize,
     source_node_id: String,
+    marker_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +293,7 @@ struct CanvasBoundaryDraft {
     parent_draft_index: Option<usize>,
     render_instance_ids: Vec<String>,
     marker_kind: CanvasBoundaryMarkerKind,
+    markdown: Option<CanvasMarkdownBoundary>,
     closed: bool,
 }
 
@@ -282,6 +313,40 @@ impl<'a> CanvasSemanticIndex<'a> {
         let mut block_definition_by_source_instance = HashMap::<String, Option<String>>::new();
         let mut binding_path_by_source = HashMap::<String, String>::new();
         let mut repeated_sources = HashSet::new();
+        let markdown_projection_by_id = model
+            .source_graph
+            .markdown_projections
+            .iter()
+            .map(|projection| (projection.id.as_str(), projection))
+            .collect::<HashMap<_, _>>();
+        let page_by_file = model
+            .source_graph
+            .pages
+            .iter()
+            .map(|page| (normalized_content_file(&page.file), page))
+            .collect::<HashMap<_, _>>();
+        let page_by_route = model
+            .source_graph
+            .pages
+            .iter()
+            .map(|page| (normalized_route(&page.url), page))
+            .collect::<HashMap<_, _>>();
+        let source_by_file = model
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    normalized_project_path(&file.relative_path),
+                    file.contents.as_str(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let source_range_by_node_id = model
+            .source_graph
+            .nodes
+            .iter()
+            .filter_map(|node| node.range.as_ref().map(|range| (node.id.as_str(), range)))
+            .collect::<HashMap<_, _>>();
         let nodes_by_id = model
             .source_graph
             .nodes
@@ -362,6 +427,11 @@ impl<'a> CanvasSemanticIndex<'a> {
             block_definition_by_source_instance,
             binding_path_by_source,
             repeated_sources,
+            markdown_projection_by_id,
+            page_by_file,
+            page_by_route,
+            source_by_file,
+            source_range_by_node_id,
         }
     }
 
@@ -406,6 +476,92 @@ impl<'a> CanvasSemanticIndex<'a> {
         provenance
             .iter()
             .any(|source_id| self.repeated_sources.contains(source_id))
+    }
+
+    fn resolve_markdown_boundary(
+        &self,
+        projection_id: &str,
+        encoded_source_file: &str,
+        route: &str,
+        occurrence: usize,
+    ) -> Option<(String, CanvasMarkdownBoundary)> {
+        let projection = self.markdown_projection_by_id.get(projection_id).copied()?;
+        let runtime_file = decode_markdown_source_file(encoded_source_file);
+        let page = runtime_file
+            .as_deref()
+            .and_then(|file| {
+                self.page_by_file
+                    .get(&normalized_content_file(file))
+                    .copied()
+            })
+            .or_else(|| {
+                projection.static_content_path.as_deref().and_then(|file| {
+                    self.page_by_file
+                        .get(&normalized_content_file(file))
+                        .copied()
+                })
+            })
+            .or_else(|| {
+                matches!(
+                    projection.kind,
+                    MarkdownProjectionKind::Body
+                        | MarkdownProjectionKind::Summary
+                        | MarkdownProjectionKind::Toc
+                )
+                .then(|| self.page_by_route.get(&normalized_route(route)).copied())
+                .flatten()
+            });
+
+        let shortcode = (projection.kind == MarkdownProjectionKind::Shortcode)
+            .then(|| {
+                let page = self.page_by_route.get(&normalized_route(route)).copied()?;
+                let shortcode_name = shortcode_name_from_template(&projection.template_file)?;
+                find_shortcode_invocation(&page.shortcodes, &shortcode_name, occurrence)
+                    .map(|invocation| (page, invocation))
+            })
+            .flatten();
+
+        let (source_node_id, source_file, source_range) =
+            if let Some((page, invocation)) = shortcode {
+                let source_node_id = invocation.source_node_id.clone()?;
+                (
+                    source_node_id.clone(),
+                    Some(page.file.clone()),
+                    self.source_range_by_node_id
+                        .get(source_node_id.as_str())
+                        .map(|range| (*range).clone()),
+                )
+            } else if let Some(page) = page {
+                let source = self
+                    .source_by_file
+                    .get(&normalized_project_path(&page.file))
+                    .copied();
+                (
+                    page.content_node_id.clone(),
+                    Some(page.file.clone()),
+                    source.and_then(|source| markdown_source_range(source, projection.kind)),
+                )
+            } else {
+                (projection.template_source_node_id.clone(), None, None)
+            };
+        let resolved = source_file.is_some() && source_range.is_some();
+        Some((
+            source_node_id,
+            CanvasMarkdownBoundary {
+                projection_id: projection.id.clone(),
+                kind: projection.kind,
+                source_file,
+                source_range,
+                template_source_node_id: projection.template_source_node_id.clone(),
+                template_file: projection.template_file.clone(),
+                template_range: projection.template_range.clone(),
+                provenance_state: if resolved {
+                    CanvasMarkdownProvenanceState::Resolved
+                } else {
+                    CanvasMarkdownProvenanceState::Unresolved
+                },
+            },
+        ))
     }
 }
 
@@ -563,6 +719,7 @@ fn build_canvas_document(
     let mut diagnostics = Vec::new();
     let mut occurrences = HashMap::new();
     let mut binding_occurrences = HashMap::new();
+    let mut markdown_occurrences = HashMap::new();
     let mut provenance_stack = Vec::new();
     let mut boundary_stack = Vec::new();
     let mut boundary_drafts = Vec::new();
@@ -578,6 +735,7 @@ fn build_canvas_document(
         &mut boundary_drafts,
         &mut occurrences,
         &mut binding_occurrences,
+        &mut markdown_occurrences,
         &mut nodes,
         &mut diagnostics,
         &mut document_nodes,
@@ -606,6 +764,7 @@ impl CanvasDocumentAnnotator<'_> {
         let document = parse(html.to_string());
         let mut occurrences = HashMap::new();
         let mut binding_occurrences = HashMap::new();
+        let mut markdown_occurrences = HashMap::new();
         let mut nodes = Vec::new();
         let mut diagnostics = Vec::new();
         let mut total_nodes = 0usize;
@@ -623,6 +782,7 @@ impl CanvasDocumentAnnotator<'_> {
             &mut boundary_drafts,
             &mut occurrences,
             &mut binding_occurrences,
+            &mut markdown_occurrences,
             &mut nodes,
             &mut diagnostics,
             &mut total_nodes,
@@ -1099,6 +1259,170 @@ fn normalized_project_path(path: &str) -> String {
     path.trim().trim_start_matches('/').replace('\\', "/")
 }
 
+fn normalized_content_file(path: &str) -> String {
+    let normalized = normalized_project_path(path);
+    if normalized.starts_with("content/") {
+        normalized
+    } else {
+        format!("content/{normalized}")
+    }
+}
+
+fn normalized_route(route: &str) -> String {
+    let mut route = route.trim().to_string();
+    if let Some((_, authority_and_path)) = route.split_once("://") {
+        route = authority_and_path
+            .find('/')
+            .map(|path_start| authority_and_path[path_start..].to_string())
+            .unwrap_or_else(|| "/".to_string());
+    }
+    if !route.starts_with('/') {
+        route.insert(0, '/');
+    }
+    if !route.ends_with('/')
+        && !route
+            .rsplit('/')
+            .next()
+            .is_some_and(|part| part.contains('.'))
+    {
+        route.push('/');
+    }
+    route
+}
+
+fn decode_markdown_source_file(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let bytes = BASE64_STANDARD.decode(value).ok()?;
+    String::from_utf8(bytes)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn shortcode_name_from_template(template_file: &str) -> Option<String> {
+    let logical = normalized_project_path(template_file);
+    let logical = logical
+        .split_once("/templates/")
+        .map(|(_, path)| path)
+        .or_else(|| logical.strip_prefix("templates/"))
+        .unwrap_or(logical.as_str());
+    logical
+        .strip_prefix("shortcodes/")?
+        .strip_suffix(".html")
+        .or_else(|| logical.strip_prefix("shortcodes/")?.strip_suffix(".md"))
+        .map(str::to_string)
+}
+
+fn find_shortcode_invocation<'a>(
+    invocations: &'a [ZolaShortcodeInvocation],
+    name: &str,
+    occurrence: usize,
+) -> Option<&'a ZolaShortcodeInvocation> {
+    fn collect<'a>(
+        invocations: &'a [ZolaShortcodeInvocation],
+        name: &str,
+        output: &mut Vec<&'a ZolaShortcodeInvocation>,
+    ) {
+        for invocation in invocations {
+            if invocation.name == name {
+                output.push(invocation);
+            }
+            collect(&invocation.inner, name, output);
+        }
+    }
+    let mut matches = Vec::new();
+    collect(invocations, name, &mut matches);
+    matches.sort_by_key(|invocation| invocation.range.start);
+    matches.get(occurrence).copied()
+}
+
+fn markdown_source_range(source: &str, kind: MarkdownProjectionKind) -> Option<SourceRange> {
+    let start = markdown_content_start(source);
+    let end = match kind {
+        MarkdownProjectionKind::Body | MarkdownProjectionKind::Toc => source.len(),
+        MarkdownProjectionKind::Summary => markdown_summary_end(source, start),
+        MarkdownProjectionKind::Filter | MarkdownProjectionKind::Shortcode => return None,
+    };
+    Some(canvas_source_range(source, start, end))
+}
+
+fn markdown_content_start(source: &str) -> usize {
+    let bom_len = source
+        .starts_with('\u{feff}')
+        .then_some('\u{feff}'.len_utf8())
+        .unwrap_or_default();
+    let without_bom = &source[bom_len..];
+    let Some(marker) = ["+++", "---"]
+        .iter()
+        .find(|marker| without_bom.starts_with(**marker))
+    else {
+        return bom_len;
+    };
+    let body_start = bom_len + marker.len();
+    let rest = &source[body_start..];
+    let close = format!("\n{marker}");
+    let Some(close_relative) = rest.find(&close) else {
+        return bom_len;
+    };
+    let mut start = body_start + close_relative + close.len();
+    if source.get(start..start + 2) == Some("\r\n") {
+        start += 2;
+    } else if source.get(start..start + 1) == Some("\n") {
+        start += 1;
+    }
+    start
+}
+
+fn markdown_summary_end(source: &str, start: usize) -> usize {
+    let mut cursor = start;
+    while let Some(relative_open) = source[cursor..].find("<!--") {
+        let open = cursor + relative_open;
+        let content_start = open + 4;
+        let Some(relative_close) = source[content_start..].find("-->") else {
+            break;
+        };
+        let close = content_start + relative_close;
+        if source[content_start..close].trim() == "more" {
+            return open;
+        }
+        cursor = close + 3;
+    }
+    source.len()
+}
+
+fn canvas_source_range(source: &str, start: usize, end: usize) -> SourceRange {
+    fn line_column(source: &str, offset: usize) -> (usize, usize) {
+        let mut line = 1;
+        let mut column = 1;
+        for (index, character) in source.char_indices() {
+            if index >= offset {
+                break;
+            }
+            if character == '\n' {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+        }
+        (line, column)
+    }
+    let start = start.min(source.len());
+    let end = end.clamp(start, source.len());
+    let (line, column) = line_column(source, start);
+    let (end_line, end_column) = line_column(source, end);
+    SourceRange {
+        start,
+        end,
+        line,
+        column,
+        end_line,
+        end_column,
+    }
+}
+
 fn collect_render_nodes(
     node: &NodeRef,
     route: &str,
@@ -1109,6 +1433,7 @@ fn collect_render_nodes(
     boundary_drafts: &mut Vec<CanvasBoundaryDraft>,
     occurrences: &mut HashMap<(String, String, String), usize>,
     binding_occurrences: &mut HashMap<(String, String, String, String), usize>,
+    markdown_occurrences: &mut HashMap<String, usize>,
     nodes: &mut Vec<CanvasRenderNode>,
     diagnostics: &mut Vec<CanvasGraphDiagnostic>,
     total_nodes: &mut usize,
@@ -1122,6 +1447,8 @@ fn collect_render_nodes(
             provenance_stack,
             boundary_stack,
             boundary_drafts,
+            semantic_index,
+            markdown_occurrences,
             document_order,
             route,
             diagnostics,
@@ -1302,6 +1629,7 @@ fn collect_render_nodes(
             boundary_drafts,
             occurrences,
             binding_occurrences,
+            markdown_occurrences,
             nodes,
             diagnostics,
             total_nodes,
@@ -1345,12 +1673,14 @@ fn apply_canvas_marker(
     stack: &mut Vec<String>,
     boundary_stack: &mut Vec<CanvasBoundaryFrame>,
     boundary_drafts: &mut Vec<CanvasBoundaryDraft>,
+    semantic_index: &CanvasSemanticIndex<'_>,
+    markdown_occurrences: &mut HashMap<String, usize>,
     document_order: usize,
     route: &str,
     diagnostics: &mut Vec<CanvasGraphDiagnostic>,
 ) {
     let marker = comment.trim();
-    let start = marker
+    let tera_start = marker
         .strip_prefix("pana-template-source-start:")
         .map(|source_id| (source_id, CanvasBoundaryMarkerKind::Source))
         .or_else(|| {
@@ -1358,91 +1688,138 @@ fn apply_canvas_marker(
                 .strip_prefix("pana-template-expression-start:")
                 .map(|source_id| (source_id, CanvasBoundaryMarkerKind::Expression))
         });
-    if let Some((source_id, marker_kind)) = start.filter(|(value, _)| !value.trim().is_empty()) {
-        let source_id = source_id.trim();
+    let markdown_start = marker
+        .strip_prefix("pana-markdown-start:")
+        .and_then(|value| value.split_once(':'))
+        .map(|(projection_id, encoded_file)| (projection_id.trim(), encoded_file.trim()))
+        .filter(|(projection_id, _)| !projection_id.is_empty());
+    let start = if let Some((projection_id, encoded_file)) = markdown_start {
+        let occurrence = markdown_occurrences
+            .entry(projection_id.to_string())
+            .or_default();
+        let current_occurrence = *occurrence;
+        *occurrence = occurrence.saturating_add(1);
+        match semantic_index.resolve_markdown_boundary(
+            projection_id,
+            encoded_file,
+            route,
+            current_occurrence,
+        ) {
+            Some((source_node_id, markdown)) => Some((
+                projection_id.to_string(),
+                source_node_id,
+                CanvasBoundaryMarkerKind::Markdown,
+                Some(markdown),
+            )),
+            None => {
+                diagnostics.push(CanvasGraphDiagnostic {
+                    code: "unknown_markdown_projection".to_string(),
+                    message: format!(
+                        "CanvasGraph a întâlnit proiecția Markdown necunoscută {projection_id}."
+                    ),
+                    route: Some(route.to_string()),
+                    source_node_id: None,
+                });
+                None
+            }
+        }
+    } else {
+        tera_start
+            .filter(|(value, _)| !value.trim().is_empty())
+            .map(|(source_id, marker_kind)| {
+                let source_id = source_id.trim().to_string();
+                (source_id.clone(), source_id, marker_kind, None)
+            })
+    };
+    if let Some((marker_id, source_node_id, marker_kind, markdown)) = start {
         let draft_index = boundary_drafts.len();
         boundary_drafts.push(CanvasBoundaryDraft {
-            source_node_id: source_id.to_string(),
+            source_node_id: source_node_id.clone(),
             document_order,
             parent_draft_index: boundary_stack.last().map(|frame| frame.draft_index),
             render_instance_ids: Vec::new(),
             marker_kind,
+            markdown,
             closed: false,
         });
         boundary_stack.push(CanvasBoundaryFrame {
             draft_index,
-            source_node_id: source_id.to_string(),
+            source_node_id: source_node_id.clone(),
+            marker_id,
         });
-        stack.push(source_id.to_string());
+        stack.push(source_node_id);
         return;
     }
     let end = marker
         .strip_prefix("pana-template-source-end:")
-        .or_else(|| marker.strip_prefix("pana-template-expression-end:"));
-    let Some(source_id) = end.map(str::trim).filter(|value| !value.is_empty()) else {
+        .or_else(|| marker.strip_prefix("pana-template-expression-end:"))
+        .or_else(|| marker.strip_prefix("pana-markdown-end:"));
+    let Some(marker_id) = end.map(str::trim).filter(|value| !value.is_empty()) else {
         return;
     };
-    if stack.last().is_some_and(|active| active == source_id) {
-        stack.pop();
-        close_boundary_frame(boundary_stack, boundary_drafts, source_id);
+    if boundary_stack
+        .last()
+        .is_some_and(|frame| frame.marker_id == marker_id)
+    {
+        close_boundary_frame(stack, boundary_stack, boundary_drafts);
         return;
     }
-    if let Some(position) = stack.iter().rposition(|active| active == source_id) {
-        stack.truncate(position);
-        recover_boundary_frames(boundary_stack, boundary_drafts, source_id);
+    if let Some(position) = boundary_stack
+        .iter()
+        .rposition(|frame| frame.marker_id == marker_id)
+    {
+        recover_boundary_frames(stack, boundary_stack, boundary_drafts, position);
         diagnostics.push(CanvasGraphDiagnostic {
             code: "recovered_provenance_stack".to_string(),
             message: format!(
-                "CanvasGraph a recuperat o închidere de proveniență neordonată pentru {source_id}."
+                "CanvasGraph a recuperat o închidere de proveniență neordonată pentru {marker_id}."
             ),
             route: Some(route.to_string()),
-            source_node_id: Some(source_id.to_string()),
+            source_node_id: Some(marker_id.to_string()),
         });
     } else {
         diagnostics.push(CanvasGraphDiagnostic {
             code: "unmatched_provenance_end".to_string(),
             message: format!(
-                "CanvasGraph a întâlnit un marker final fără început pentru {source_id}."
+                "CanvasGraph a întâlnit un marker final fără început pentru {marker_id}."
             ),
             route: Some(route.to_string()),
-            source_node_id: Some(source_id.to_string()),
+            source_node_id: Some(marker_id.to_string()),
         });
     }
 }
 
 fn close_boundary_frame(
+    stack: &mut Vec<String>,
     boundary_stack: &mut Vec<CanvasBoundaryFrame>,
     boundary_drafts: &mut [CanvasBoundaryDraft],
-    source_id: &str,
 ) {
-    if boundary_stack
-        .last()
-        .is_some_and(|frame| frame.source_node_id == source_id)
-    {
-        if let Some(frame) = boundary_stack.pop() {
-            if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
-                draft.closed = true;
-            }
+    if let Some(frame) = boundary_stack.pop() {
+        if stack
+            .last()
+            .is_some_and(|source_node_id| source_node_id == &frame.source_node_id)
+        {
+            stack.pop();
+        }
+        if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
+            draft.closed = true;
         }
     }
 }
 
 fn recover_boundary_frames(
+    stack: &mut Vec<String>,
     boundary_stack: &mut Vec<CanvasBoundaryFrame>,
     boundary_drafts: &mut [CanvasBoundaryDraft],
-    source_id: &str,
+    position: usize,
 ) {
-    let Some(position) = boundary_stack
-        .iter()
-        .rposition(|frame| frame.source_node_id == source_id)
-    else {
-        return;
-    };
+    let recovered_count = boundary_stack.len().saturating_sub(position);
     for frame in boundary_stack.drain(position..) {
         if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
             draft.closed = true;
         }
     }
+    stack.truncate(stack.len().saturating_sub(recovered_count));
 }
 
 fn finalize_boundary_instances(
@@ -1542,6 +1919,7 @@ fn finalize_boundary_instances(
                     })
                     .count(),
                 marker_kind: draft.marker_kind,
+                markdown: draft.markdown.clone(),
                 closed: draft.closed,
             }
         })
@@ -2054,7 +2432,7 @@ fn full_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::{
-        kernel::project_workspace::WorkspaceProjectionLease,
+        kernel::project_workspace::WorkspaceProjectionSnapshot,
         project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
         project_model::build_project_model_from_workspace_projection,
         source_graph::model::SourceNodeKind,
@@ -2084,12 +2462,80 @@ mod tests {
     }
 
     #[test]
+    fn canvas_graph_resolves_markdown_boundary_to_exact_content_range() {
+        let root = test_project_root("markdown-boundary");
+        let markdown = "+++\ntitle = 'Acasă'\n+++\n## Titlu\n\nText.\n<!-- more -->\nRest.\n";
+        let model = test_project_model(
+            &root,
+            41,
+            HashMap::from([
+                ("zola.toml".to_string(), "base_url = '/'\n".to_string()),
+                (
+                    "templates/index.html".to_string(),
+                    "{{ section.content | safe }}".to_string(),
+                ),
+                ("content/_index.md".to_string(), markdown.to_string()),
+            ]),
+        );
+        let projection = model
+            .source_graph
+            .markdown_projections
+            .iter()
+            .find(|projection| projection.kind == MarkdownProjectionKind::Body)
+            .unwrap();
+        let encoded_file = BASE64_STANDARD.encode("_index.md");
+        let rendered = format!(
+            "<!-- pana-markdown-start:{}:{} --><h2>Titlu</h2><p>Text.</p><!-- pana-markdown-end:{} -->",
+            projection.id, encoded_file, projection.id,
+        );
+
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            41,
+            "preview-41",
+            [("/", rendered.as_str())],
+        )
+        .unwrap();
+
+        let boundary = &graph.documents[0].boundaries[0];
+        let markdown_boundary = boundary.markdown.as_ref().unwrap();
+        assert_eq!(boundary.marker_kind, CanvasBoundaryMarkerKind::Markdown);
+        assert_eq!(
+            markdown_boundary.source_file.as_deref(),
+            Some("content/_index.md")
+        );
+        assert_eq!(
+            markdown_boundary.provenance_state,
+            CanvasMarkdownProvenanceState::Resolved
+        );
+        assert_eq!(
+            markdown_boundary.source_range.as_ref().unwrap().start,
+            markdown.find("## Titlu").unwrap()
+        );
+        assert!(!boundary.root_render_instance_ids.is_empty());
+        assert!(graph.documents[0]
+            .nodes
+            .iter()
+            .all(|node| node.provenance_stack.contains(&boundary.source_node_id)));
+        assert!(graph.diagnostics.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn markdown_summary_range_stops_before_flexible_more_marker() {
+        let source = "---\ntitle: Test\n---\nIntro.\n<!--   more   -->\nRest.\n";
+        let range = markdown_source_range(source, MarkdownProjectionKind::Summary).unwrap();
+        assert_eq!(range.start, source.find("Intro.").unwrap());
+        assert_eq!(range.end, source.find("<!--").unwrap());
+    }
+
+    #[test]
     fn canvas_graph_distinguishes_repeated_render_instances() {
         let root = test_project_root("render-instances");
         let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
         let session = "canvas-test".to_string();
         let template = "<main><article>Card</article></main>";
-        let lease = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: canonical.clone(),
             runtime_session_id: session.clone(),
             revision: 3,
@@ -2113,7 +2559,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let model = build_project_model_from_workspace_projection(&root, &lease).unwrap();
+        let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let source_id = model
             .source_graph
             .nodes
@@ -2374,7 +2820,7 @@ mod tests {
         let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
         let session = "canvas-large-test".to_string();
         let template = "<main><article>Card</article></main>";
-        let lease = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: canonical.clone(),
             runtime_session_id: session.clone(),
             revision: 30,
@@ -2398,7 +2844,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let model = build_project_model_from_workspace_projection(&root, &lease).unwrap();
+        let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let source_id = model
             .source_graph
             .nodes
@@ -2435,7 +2881,7 @@ mod tests {
         let root = test_project_root("runtime-nodes");
         let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
         let session = "canvas-runtime-test".to_string();
-        let lease = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: canonical.clone(),
             runtime_session_id: session.clone(),
             revision: 4,
@@ -2478,7 +2924,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let model = build_project_model_from_workspace_projection(&root, &lease).unwrap();
+        let model = build_project_model_from_workspace_projection(&root, &projection).unwrap();
         let graph = CanvasGraph::from_rendered_documents(
             &model,
             4,
@@ -2745,7 +3191,7 @@ mod tests {
         let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
         let session = format!("canvas-test-{revision}");
         let changed_paths = source_texts.keys().cloned().collect::<HashSet<_>>();
-        let lease = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: canonical.clone(),
             runtime_session_id: session.clone(),
             revision,
@@ -2766,6 +3212,6 @@ mod tests {
             )
             .unwrap(),
         };
-        build_project_model_from_workspace_projection(root, &lease).unwrap()
+        build_project_model_from_workspace_projection(root, &projection).unwrap()
     }
 }

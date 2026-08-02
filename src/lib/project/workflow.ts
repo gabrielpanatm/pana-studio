@@ -11,7 +11,7 @@ export function isTemplateProjectFile(file: ProjectFile) {
 
 export function preferredCenterViewForProjectFile(file: ProjectFile) {
   if (file.kind === "MD") {
-    return "markdown";
+    return "code";
   }
 
   if (isTemplateProjectFile(file) || (file.kind === "HTML" && isRenderedPreviewPageFile(file))) {

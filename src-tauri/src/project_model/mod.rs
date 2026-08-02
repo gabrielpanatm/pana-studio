@@ -9,6 +9,7 @@ pub mod delete_engine;
 pub mod duplicate_engine;
 mod files;
 pub(crate) mod html_editor_schema;
+pub(crate) mod incremental;
 pub mod insert_engine;
 pub mod model;
 pub mod move_engine;
@@ -23,7 +24,7 @@ pub mod text_engine;
 pub mod zola_image_engine;
 
 use crate::{
-    kernel::project_workspace::WorkspaceProjectionLease,
+    kernel::project_workspace::WorkspaceProjectionSnapshot,
     localization::LocalizedDiagnostic,
     project::{is_zola_project, zola_project_root},
     project_model::{
@@ -36,6 +37,10 @@ use crate::{
     },
 };
 
+pub(crate) use incremental::{
+    rebuild_project_model_after_workspace_change, ProjectModelIncrementalBuildReport,
+    ProjectModelIncrementalIntent,
+};
 pub use model::ProjectModelSnapshot;
 
 pub fn build_project_model(
@@ -49,7 +54,7 @@ pub fn build_project_model(
 /// projection. No clean text file is filled from the live project disk.
 pub fn build_project_model_from_workspace_projection(
     project_root: &Path,
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<ProjectModel, String> {
     let root = project_root
         .canonicalize()
@@ -133,7 +138,7 @@ mod tests {
     };
 
     use crate::{
-        kernel::project_workspace::WorkspaceProjectionLease,
+        kernel::project_workspace::WorkspaceProjectionSnapshot,
         project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
         project_model::move_engine::{
             html_identity_aliases, html_node_id_at_line, plan_html_move, ProjectHtmlMoveIntent,
@@ -210,7 +215,7 @@ mod tests {
         .unwrap();
         let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
         let session_id = "workspace-projection-test".to_string();
-        let projection = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: canonical.clone(),
             runtime_session_id: session_id.clone(),
             revision: 7,

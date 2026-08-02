@@ -11,7 +11,6 @@ import {
   type EditorActionOutcome,
 } from "$lib/editor-runtime/action-outcome";
 import { projectCommittedEditorMoveMutation } from "$lib/kernel/preview-projection-control";
-import { runInPreviewStructuralLane } from "$lib/kernel/preview-structural-lane";
 import { t } from "$lib/i18n/runtime.svelte";
 import type {
   EditScopeGrant,
@@ -45,8 +44,7 @@ export type EditorNavigationControllerHost = {
     previewUrl?: string,
   ) => Promise<void>;
   flushInteractiveEditorDrafts: (reason: EditFlushReason) => Promise<void>;
-} & Parameters<typeof runInPreviewStructuralLane>[0]
-  & Parameters<typeof projectCommittedEditorMoveMutation>[0];
+} & Parameters<typeof projectCommittedEditorMoveMutation>[0];
 
 export function editorNavigationNodeSelector(node: EditorNavigationNode): string | null {
   const renderInstanceId = node.renderInstanceId
@@ -315,6 +313,8 @@ export async function moveEditorNavigationNode(
   sourceNodeId: string,
   targetNodeId: string,
   position: ProjectMovePosition,
+  preplanned: EditorMovePlan | null = null,
+  inputEmittedAtMs = 0,
 ): Promise<EditorActionOutcome> {
   try {
     const capturedSnapshot = host.editorNavigationSnapshot;
@@ -340,49 +340,77 @@ export async function moveEditorNavigationNode(
     if (!settledSource || !settledTarget || settledSource.id === settledTarget.id) {
       throw new Error(t("editor-navigation-snapshot-stale"));
     }
-    const outcome = await runInPreviewStructuralLane(host, async () => {
-      const plan = await previewEditorNavigationMove(
-        host,
-        settledSource.id,
-        settledTarget.id,
-        position,
-      );
-      if (!plan.allowed || !plan.token) {
-        const reason = plan.reason ?? t("editor-navigation-move-refused");
-        host.setGlobalStatus(reason, "error");
-        return blockedAction(reason);
-      }
-      const receipt = await commitEditorMove({
-        identity: plan.identity,
-        route: plan.route,
-        activeDocumentPath: plan.activeDocumentPath,
-        previewContextRenderInstanceId:
-          host.editorNavigationSnapshot?.focusedView
-            ?.previewContextRenderInstanceId ?? null,
-        planToken: plan.token,
-        editScopeGrant: host.editorEditScopeGrant,
-      });
-      if (receipt.status !== "committed" || !receipt.workspaceMutation) {
-        const reason = receipt.diagnostic ?? t("editor-navigation-commit-refused");
-        host.setGlobalStatus(reason, "error");
-        return blockedAction(reason);
-      }
-      await projectCommittedEditorMoveMutation(host, {
-        projectRoot: plan.identity.projectRoot,
-        sessionId: plan.identity.runtimeSessionId,
-        projectSessionEpoch: host.projectSessionEpoch,
-        selection: null,
-      }, receipt);
-      exitEditorNavigationScope(host);
-      host.setGlobalStatus(t("editor-navigation-move-confirmed"), "idle");
-      return committedAction();
+    const plan = editorMovePlanMatchesCurrentSnapshot(
+      preplanned,
+      settledSnapshot,
+      settledSource.id,
+      settledTarget.id,
+      position,
+    )
+      ? preplanned
+      : await previewEditorNavigationMove(
+          host,
+          settledSource.id,
+          settledTarget.id,
+          position,
+        );
+    if (!plan.allowed || !plan.token) {
+      const reason = plan.reason ?? t("editor-navigation-move-refused");
+      host.setGlobalStatus(reason, "error");
+      return blockedAction(reason);
+    }
+    const receipt = await commitEditorMove({
+      identity: plan.identity,
+      route: plan.route,
+      activeDocumentPath: plan.activeDocumentPath,
+      previewContextRenderInstanceId:
+        host.editorNavigationSnapshot?.focusedView
+          ?.previewContextRenderInstanceId ?? null,
+      planToken: plan.token,
+      inputEmittedAtMs,
+      editScopeGrant: host.editorEditScopeGrant,
     });
-    return outcome ?? blockedAction(t("editor-navigation-session-inactive"));
+    if (receipt.status !== "committed" || !receipt.workspaceMutation) {
+      const reason = receipt.diagnostic ?? t("editor-navigation-commit-refused");
+      host.setGlobalStatus(reason, "error");
+      return blockedAction(reason);
+    }
+    await projectCommittedEditorMoveMutation(host, {
+      projectRoot: plan.identity.projectRoot,
+      sessionId: plan.identity.runtimeSessionId,
+      projectSessionEpoch: host.projectSessionEpoch,
+      expectedWorkspaceRevision: receipt.workspaceMutation.revisionAfter,
+    }, receipt);
+    exitEditorNavigationScope(host);
+    host.setGlobalStatus(t("editor-navigation-move-confirmed"), "idle");
+    return committedAction();
   } catch (error) {
     const reason = errorMessage(error);
     host.setGlobalStatus(reason, "error");
     return failedAction(reason);
   }
+}
+
+function editorMovePlanMatchesCurrentSnapshot(
+  plan: EditorMovePlan | null,
+  snapshot: EditorNavigationSnapshot,
+  sourceNodeId: string,
+  targetNodeId: string,
+  position: ProjectMovePosition,
+): plan is EditorMovePlan {
+  return Boolean(
+    plan
+    && plan.allowed
+    && plan.token
+    && plan.operation
+    && sameCanvasIdentity(plan.identity, snapshot.identity)
+    && plan.modelRevision === snapshot.modelRevision
+    && plan.route === snapshot.route
+    && plan.activeDocumentPath === snapshot.focusedView?.activeDocumentPath
+    && plan.sourceNodeId === sourceNodeId
+    && plan.targetNodeId === targetNodeId
+    && plan.position === position,
+  );
 }
 
 function requireFocusedActiveDocument(snapshot: EditorNavigationSnapshot) {

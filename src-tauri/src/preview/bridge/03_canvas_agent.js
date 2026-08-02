@@ -4,6 +4,7 @@
   var CANVAS_AGENT_HOVER_ID = "pana-studio-canvas-agent-hover";
   var CANVAS_AGENT_SELECTION_ID = "pana-studio-canvas-agent-selection";
   var CANVAS_AGENT_DRAG_ID = "pana-studio-canvas-agent-drag";
+  var CANVAS_AGENT_GRID_ID = "pana-studio-canvas-agent-grid";
   var CANVAS_AGENT_ACTION_ATTR = "data-pana-canvas-agent-action";
   var CANVAS_AGENT_HOVER_ATTR = "data-pana-canvas-agent-hover";
   var CANVAS_AGENT_HOVER_STYLE_ID = "pana-studio-canvas-agent-hover-style";
@@ -24,6 +25,9 @@
   var canvasAgentDragActive = false;
   var canvasAgentDragSerial = 0;
   var canvasAgentSuppressClick = false;
+  var canvasAgentPendingDrop = null;
+  var activeCanvasAgentDragPreview = null;
+  var canvasAgentGridOverlayEnabled = false;
   var canvasAgentOverlayRequests = {
     hover: null,
     selection: null,
@@ -153,6 +157,7 @@
     canvasAgentGestureSequence += 1;
     postCanvasAgent("gesture", {
       documentEpoch: canvasAgentDocumentEpoch,
+      emittedAtMs: Math.max(1, Math.trunc(Date.now())),
       gestureSequence: canvasAgentGestureSequence,
       gesture: gesture,
       pointer: {
@@ -172,6 +177,7 @@
       hitPath: hitPath,
       drag: drag || null
     });
+    return canvasAgentGestureSequence;
   }
 
   function scheduleCanvasAgentPointerGesture(event, gesture, drag) {
@@ -294,11 +300,169 @@
     }
   }
 
-  function clearCanvasAgentDrag() {
+  function restoreCanvasAgentDragPreview(retire) {
+    var preview = activeCanvasAgentDragPreview;
+    if (!preview) return false;
+    var source = preview.source;
+    var parent = preview.originalParent;
+    var nextSibling = preview.originalNextSibling;
+    if (source instanceof Element) {
+      source.style.pointerEvents = preview.originalPointerEvents;
+    }
+    if (source instanceof Element && parent instanceof Node) {
+      parent.insertBefore(
+        source,
+        nextSibling && nextSibling.parentNode === parent ? nextSibling : null
+      );
+    }
+    if (retire !== false) activeCanvasAgentDragPreview = null;
+    updateCanvasAgentOverlays();
+    return true;
+  }
+
+  function exactCanvasAgentRenderElement(renderInstanceId) {
+    if (
+      typeof renderInstanceId !== "string"
+      || !renderInstanceId
+      || renderInstanceId.length > 512
+    ) return null;
+    var escaped = window.CSS && typeof window.CSS.escape === "function"
+      ? window.CSS.escape(renderInstanceId)
+      : renderInstanceId.replace(/["\\]/g, "\\$&");
+    var matches = document.querySelectorAll(
+      "[" + CANVAS_AGENT_RENDER_ATTR + '="' + escaped + '"]'
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function projectCanvasAgentDragPreview(data) {
+    var projection = data && data.projection;
+    var pendingDropMatches = canvasAgentPendingDrop
+      && data
+      && data.dragSessionId === canvasAgentPendingDrop.sessionId
+      && data.gestureSequence === canvasAgentPendingDrop.gestureSequence;
+    if (
+      !data
+      || data.agentInstanceId !== canvasAgentInstanceId
+      || data.documentEpoch !== canvasAgentDocumentEpoch
+      || !pendingDropMatches
+      || !Number.isSafeInteger(data.gestureSequence)
+      || data.gestureSequence <= 0
+      || !Number.isSafeInteger(data.inputEmittedAtMs)
+      || data.inputEmittedAtMs <= 0
+      || !projection
+      || projection.schemaVersion !== 1
+      || projection.operation !== "move"
+      || projection.scope !== "selectedInstance"
+      || !projection.planToken
+      || (
+        projection.position !== "before"
+        && projection.position !== "after"
+        && projection.position !== "inside"
+      )
+    ) return false;
+    var source = exactCanvasAgentRenderElement(projection.sourceRenderInstanceId);
+    var target = exactCanvasAgentRenderElement(projection.targetRenderInstanceId);
+    if (
+      !(source instanceof Element)
+      || !(target instanceof Element)
+      || source === target
+      || source.contains(target)
+    ) return false;
+
+    var current = activeCanvasAgentDragPreview;
+    if (
+      current
+      && (
+        current.dragSessionId !== data.dragSessionId
+        || current.source !== source
+      )
+    ) {
+      restoreCanvasAgentDragPreview(true);
+      current = null;
+    }
+    if (!current) {
+      var rollback = projection.rollback || {};
+      var expectedParent = rollback.sourceParentRenderInstanceId
+        ? exactCanvasAgentRenderElement(rollback.sourceParentRenderInstanceId)
+        : null;
+      var expectedNextSibling = rollback.sourceNextSiblingRenderInstanceId
+        ? exactCanvasAgentRenderElement(rollback.sourceNextSiblingRenderInstanceId)
+        : null;
+      if (
+        (rollback.sourceParentRenderInstanceId && source.parentElement !== expectedParent)
+        || (
+          rollback.sourceNextSiblingRenderInstanceId
+          && source.nextElementSibling !== expectedNextSibling
+        )
+      ) return false;
+      current = {
+        dragSessionId: data.dragSessionId,
+        planToken: projection.planToken,
+        gestureSequence: 0,
+        source: source,
+        originalParent: source.parentNode,
+        originalNextSibling: source.nextSibling,
+        originalPointerEvents: source.style.pointerEvents
+      };
+      activeCanvasAgentDragPreview = current;
+    }
+    if (data.gestureSequence <= current.gestureSequence) return false;
+    restoreCanvasAgentDragPreview(false);
+    if (projection.position === "before") target.before(source);
+    else if (projection.position === "after") target.after(source);
+    else target.appendChild(source);
+    source.style.pointerEvents = "none";
+    current.planToken = projection.planToken;
+    current.gestureSequence = data.gestureSequence;
+    canvasAgentPendingDrop = null;
+    updateCanvasAgentOverlays();
+    postCanvasAgent("dragPreviewApplied", {
+      documentEpoch: canvasAgentDocumentEpoch,
+      dragSessionId: data.dragSessionId,
+      gestureSequence: data.gestureSequence,
+      planToken: projection.planToken,
+      dragPreviewAppliedMs: Math.max(0, Date.now() - data.inputEmittedAtMs)
+    });
+    return true;
+  }
+
+  function cancelCanvasAgentDragPreview(data) {
+    if (
+      data
+      && data.agentInstanceId
+      && data.agentInstanceId !== canvasAgentInstanceId
+    ) return false;
+    if (
+      data
+      && data.documentEpoch
+      && data.documentEpoch !== canvasAgentDocumentEpoch
+    ) return false;
+    if (
+      data
+      && data.dragSessionId
+      && activeCanvasAgentDragPreview
+      && data.dragSessionId !== activeCanvasAgentDragPreview.dragSessionId
+    ) return false;
+    if (
+      data
+      && data.dragSessionId
+      && canvasAgentPendingDrop
+      && data.dragSessionId !== canvasAgentPendingDrop.sessionId
+    ) return false;
+    canvasAgentPendingDrop = null;
+    return restoreCanvasAgentDragPreview(true);
+  }
+
+  function clearCanvasAgentDrag(preservePreview) {
     document.removeEventListener("pointermove", handleCanvasAgentPointerMove, true);
     canvasAgentDragCandidate = null;
     canvasAgentDragActive = false;
     hideCanvasAgentDragIndicator();
+    if (preservePreview !== true) {
+      canvasAgentPendingDrop = null;
+      restoreCanvasAgentDragPreview(true);
+    }
   }
 
   function handleCanvasAgentPointerUp(event) {
@@ -320,15 +484,21 @@
       canvasAgentPointerFrame = null;
       canvasAgentPendingPointerMove = null;
     }
-    emitCanvasAgentGesture(event, "drop", false, null, {
+    var dropGestureSequence = emitCanvasAgentGesture(event, "drop", false, null, {
       sessionId: candidate.sessionId,
       position: canvasAgentDropPosition(event)
     });
+    if (Number.isSafeInteger(dropGestureSequence) && dropGestureSequence > 0) {
+      canvasAgentPendingDrop = {
+        sessionId: candidate.sessionId,
+        gestureSequence: dropGestureSequence
+      };
+    }
     canvasAgentSuppressClick = true;
     window.setTimeout(function () {
       canvasAgentSuppressClick = false;
     }, 160);
-    clearCanvasAgentDrag();
+    clearCanvasAgentDrag(true);
   }
 
   function boundedCanvasAgentString(value, maximumLength) {
@@ -526,6 +696,9 @@
       "}",
       "[" + CANVAS_AGENT_HOVER_ATTR + "=\"tera\"] {",
       "outline-color: #3b82f6 !important;",
+      "}",
+      "[" + CANVAS_AGENT_HOVER_ATTR + "=\"markdown\"] {",
+      "outline-color: var(--pana-studio-markdown, #f59e0b) !important;",
       "}"
     ].join("");
     document.head.appendChild(style);
@@ -543,7 +716,11 @@
   function renderCanvasAgentHover(data) {
     canvasAgentOverlayRequests.hover = data;
     var elements = canvasAgentProjectionElements(data.projection);
-    var hoverKind = data.targetKind === "teraBoundary" ? "tera" : "html";
+    var hoverKind = data.targetKind === "teraBoundary"
+      ? "tera"
+      : data.targetKind === "markdownBoundary"
+        ? "markdown"
+        : "html";
     clearCanvasAgentHoverTargets();
     if (elements.length === 0) return;
     ensureCanvasAgentHoverStyle();
@@ -782,16 +959,192 @@
       return;
     }
     var isTera = data.targetKind === "teraBoundary";
+    var isMarkdown = data.targetKind === "markdownBoundary";
     overlay.style.display = "block";
     overlay.style.borderColor = isTera
       ? "#3b82f6"
-      : "var(--pana-studio-accent, #1d7f6a)";
+      : isMarkdown
+        ? "var(--pana-studio-markdown, #f59e0b)"
+        : "var(--pana-studio-accent, #1d7f6a)";
     overlay.style.left = Math.round(rect.left) + "px";
     overlay.style.top = Math.round(rect.top) + "px";
     overlay.style.width = Math.round(rect.width) + "px";
     overlay.style.height = Math.round(rect.height) + "px";
     overlay.style.borderRadius = borderRadiusForElements(elements);
     if (channel === "selection") renderCanvasAgentAction(overlay, data, rect);
+    if (channel === "selection") updateCanvasAgentGridOverlay();
+  }
+
+  function canvasGridTrackPixels(value) {
+    var tracks = [];
+    var pattern = /(-?\d+(?:\.\d+)?)px/g;
+    var match;
+    while ((match = pattern.exec(String(value || ""))) !== null) {
+      var pixels = Number(match[1]);
+      if (Number.isFinite(pixels) && pixels >= 0) tracks.push(pixels);
+    }
+    return tracks;
+  }
+
+  function canvasGridPixels(value) {
+    var parsed = Number.parseFloat(String(value || "0"));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function ensureCanvasAgentGridOverlay() {
+    var overlay = document.getElementById(CANVAS_AGENT_GRID_ID);
+    if (overlay) return overlay;
+    overlay = document.createElement("div");
+    overlay.id = CANVAS_AGENT_GRID_ID;
+    overlay.setAttribute("data-pana-canvas-agent-overlay", "grid");
+    overlay.style.cssText = [
+      "position: fixed",
+      "z-index: 2147483644",
+      "display: none",
+      "overflow: visible",
+      "border: 1px solid #7c3aed",
+      "background: transparent",
+      "box-shadow: inset 0 0 0 1px rgba(255,255,255,0.42)",
+      "pointer-events: none",
+      "box-sizing: border-box"
+    ].join(";");
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function appendCanvasGridLine(overlay, axis, offset, crossOffset, length, number) {
+    var line = document.createElement("span");
+    line.setAttribute("data-pana-grid-line", axis);
+    line.style.cssText = [
+      "position: absolute",
+      axis === "column" ? "left:" + Math.round(offset) + "px" : "top:" + Math.round(offset) + "px",
+      axis === "column" ? "top:" + Math.round(crossOffset) + "px" : "left:" + Math.round(crossOffset) + "px",
+      axis === "column" ? "width:1px" : "height:1px",
+      axis === "column" ? "height:" + Math.max(0, Math.round(length)) + "px" : "width:" + Math.max(0, Math.round(length)) + "px",
+      "background:#7c3aed",
+      "opacity:.82",
+      "pointer-events:none"
+    ].join(";");
+    var label = document.createElement("small");
+    label.textContent = String(number);
+    label.style.cssText = [
+      "position:absolute",
+      axis === "column" ? "left:-8px" : "top:-8px",
+      axis === "column" ? "top:-17px" : "left:-17px",
+      "display:grid",
+      "width:15px",
+      "height:15px",
+      "place-items:center",
+      "border-radius:4px",
+      "background:#7c3aed",
+      "color:#fff",
+      "font:9px/1 system-ui,sans-serif"
+    ].join(";");
+    line.appendChild(label);
+    overlay.appendChild(line);
+  }
+
+  function appendCanvasGridGap(overlay, axis, offset, crossOffset, breadth, length) {
+    if (!(breadth > 0)) return;
+    var gap = document.createElement("span");
+    gap.setAttribute("data-pana-grid-gap", axis);
+    gap.style.cssText = [
+      "position:absolute",
+      axis === "column" ? "left:" + Math.round(offset) + "px" : "top:" + Math.round(offset) + "px",
+      axis === "column" ? "top:" + Math.round(crossOffset) + "px" : "left:" + Math.round(crossOffset) + "px",
+      axis === "column" ? "width:" + Math.round(breadth) + "px" : "height:" + Math.round(breadth) + "px",
+      axis === "column" ? "height:" + Math.round(length) + "px" : "width:" + Math.round(length) + "px",
+      "background:rgba(124,58,237,.10)",
+      "pointer-events:none"
+    ].join(";");
+    overlay.appendChild(gap);
+  }
+
+  function appendCanvasGridAreaLabels(overlay, element, containerRect) {
+    Array.prototype.forEach.call(element.children, function (child) {
+      if (!(child instanceof Element) || isStudioOverlayElement(child)) return;
+      var area = window.getComputedStyle(child).gridArea;
+      if (!area || area === "auto" || area.indexOf("auto / auto") === 0 || /^\d/.test(area)) return;
+      var rect = child.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      var label = document.createElement("span");
+      label.textContent = area;
+      label.setAttribute("data-pana-grid-area-label", area);
+      label.style.cssText = [
+        "position:absolute",
+        "left:" + Math.round(rect.left - containerRect.left + 4) + "px",
+        "top:" + Math.round(rect.top - containerRect.top + 4) + "px",
+        "max-width:" + Math.max(20, Math.round(rect.width - 8)) + "px",
+        "overflow:hidden",
+        "padding:2px 5px",
+        "border-radius:4px",
+        "background:rgba(124,58,237,.88)",
+        "color:#fff",
+        "font:10px/1.2 system-ui,sans-serif",
+        "text-overflow:ellipsis",
+        "white-space:nowrap",
+        "pointer-events:none"
+      ].join(";");
+      overlay.appendChild(label);
+    });
+  }
+
+  function updateCanvasAgentGridOverlay() {
+    var overlay = ensureCanvasAgentGridOverlay();
+    overlay.replaceChildren();
+    if (!canvasAgentGridOverlayEnabled || !canvasAgentSelectionActive()) {
+      overlay.style.display = "none";
+      return;
+    }
+    var request = canvasAgentOverlayRequests.selection;
+    var elements = request ? canvasAgentProjectionElements(request.projection) : [];
+    var element = canvasAgentPrimaryProjectionElement(request && request.projection, elements);
+    if (!(element instanceof Element)) { overlay.style.display = "none"; return; }
+    var computed = window.getComputedStyle(element);
+    if (computed.display !== "grid" && computed.display !== "inline-grid") {
+      overlay.style.display = "none";
+      return;
+    }
+    var rect = element.getBoundingClientRect();
+    var columns = canvasGridTrackPixels(computed.gridTemplateColumns);
+    var rows = canvasGridTrackPixels(computed.gridTemplateRows);
+    var columnGap = canvasGridPixels(computed.columnGap);
+    var rowGap = canvasGridPixels(computed.rowGap);
+    var startX = canvasGridPixels(computed.borderLeftWidth) + canvasGridPixels(computed.paddingLeft);
+    var startY = canvasGridPixels(computed.borderTopWidth) + canvasGridPixels(computed.paddingTop);
+    var contentWidth = columns.reduce(function (sum, value) { return sum + value; }, 0) + Math.max(0, columns.length - 1) * columnGap;
+    var contentHeight = rows.reduce(function (sum, value) { return sum + value; }, 0) + Math.max(0, rows.length - 1) * rowGap;
+    overlay.style.display = "block";
+    overlay.style.left = Math.round(rect.left) + "px";
+    overlay.style.top = Math.round(rect.top) + "px";
+    overlay.style.width = Math.round(rect.width) + "px";
+    overlay.style.height = Math.round(rect.height) + "px";
+    var x = startX;
+    appendCanvasGridLine(overlay, "column", x, startY, contentHeight, 1);
+    columns.forEach(function (track, index) {
+      x += track;
+      appendCanvasGridLine(overlay, "column", x, startY, contentHeight, index + 2);
+      if (index < columns.length - 1) {
+        appendCanvasGridGap(overlay, "column", x, startY, columnGap, contentHeight);
+        x += columnGap;
+      }
+    });
+    var y = startY;
+    appendCanvasGridLine(overlay, "row", y, startX, contentWidth, 1);
+    rows.forEach(function (track, index) {
+      y += track;
+      appendCanvasGridLine(overlay, "row", y, startX, contentWidth, index + 2);
+      if (index < rows.length - 1) {
+        appendCanvasGridGap(overlay, "row", y, startX, rowGap, contentWidth);
+        y += rowGap;
+      }
+    });
+    appendCanvasGridAreaLabels(overlay, element, rect);
+  }
+
+  function setCanvasAgentGridOverlay(data) {
+    canvasAgentGridOverlayEnabled = Boolean(data && data.enabled);
+    updateCanvasAgentGridOverlay();
   }
 
   function clearCanvasAgentOverlays() {
@@ -799,7 +1152,7 @@
     canvasAgentOverlayRequests.selection = null;
     canvasAgentOverlayRequests.drag = null;
     clearCanvasAgentHoverTargets();
-    [CANVAS_AGENT_HOVER_ID, CANVAS_AGENT_SELECTION_ID, CANVAS_AGENT_DRAG_ID].forEach(function (overlayId) {
+    [CANVAS_AGENT_HOVER_ID, CANVAS_AGENT_SELECTION_ID, CANVAS_AGENT_DRAG_ID, CANVAS_AGENT_GRID_ID].forEach(function (overlayId) {
       var overlay = document.getElementById(overlayId);
       if (overlay) overlay.style.display = "none";
     });
@@ -816,6 +1169,7 @@
     if (canvasAgentOverlayRequests.drag) {
       renderCanvasAgentOverlay(canvasAgentOverlayRequests.drag);
     }
+    updateCanvasAgentGridOverlay();
   }
 
   document.addEventListener("pointerover", handleCanvasAgentPointerOver, true);
@@ -828,6 +1182,8 @@
         event.target.closest("[" + CANVAS_AGENT_ACTION_ATTR + "]")) return;
     emitCanvasAgentGesture(event, "pointerDown");
     if (event.button !== 0) return;
+    restoreCanvasAgentDragPreview(true);
+    canvasAgentPendingDrop = null;
     clearCanvasAgentHoverDwell();
     var hitPath = canvasAgentHitPath(event);
     if (hitPath.length === 0) return;

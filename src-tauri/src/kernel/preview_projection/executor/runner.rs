@@ -15,6 +15,7 @@ use crate::{
         tera_insert_engine::{ProjectTeraInsertPatch, ProjectTeraInsertPlan},
         tera_move_engine::{ProjectTeraMovePatch, ProjectTeraMovePlan},
         text_engine::{ProjectHtmlTextPatch, ProjectHtmlTextPlan},
+        ProjectModelIncrementalIntent,
     },
 };
 
@@ -22,7 +23,8 @@ use super::{
     super::{
         model::PreviewProjectionDiagnostic,
         structural_write::{
-            stage_preview_structural_write, PreviewStructuralWrite, PreviewStructuralWriteCommit,
+            stage_preview_structural_write_in_transaction, PreviewStructuralWrite,
+            PreviewStructuralWriteCommit,
         },
     },
     spec::PreviewStructuralPlanSpec,
@@ -52,6 +54,27 @@ where
     run_preview_structural_plan_in_history_group(project_root, workspace, spec, None, plan)
 }
 
+pub(super) fn run_preview_structural_plan_with_model<P, Plan>(
+    project_root: &Path,
+    workspace: &mut ProjectWorkspace,
+    before_model: ProjectModel,
+    spec: PreviewStructuralPlanSpec,
+    plan: impl FnOnce(&ProjectModel) -> Plan,
+) -> Result<Result<PreviewStructuralPlanCommitted<P>, PreviewStructuralPlanBlocked>, String>
+where
+    P: PreviewStructuralPatch,
+    Plan: PreviewStructuralPlan<Patch = P>,
+{
+    run_preview_structural_plan_with_model_in_history_group(
+        project_root,
+        workspace,
+        before_model,
+        spec,
+        None,
+        plan,
+    )
+}
+
 pub(super) fn run_preview_structural_plan_in_history_group<P, Plan>(
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
@@ -63,11 +86,33 @@ where
     P: PreviewStructuralPatch,
     Plan: PreviewStructuralPlan<Patch = P>,
 {
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let before_model = crate::project_model::build_project_model_from_workspace_projection(
         project_root,
         &projection,
     )?;
+    run_preview_structural_plan_with_model_in_history_group(
+        project_root,
+        workspace,
+        before_model,
+        spec,
+        history_group_id,
+        plan,
+    )
+}
+
+fn run_preview_structural_plan_with_model_in_history_group<P, Plan>(
+    project_root: &Path,
+    workspace: &mut ProjectWorkspace,
+    before_model: ProjectModel,
+    spec: PreviewStructuralPlanSpec,
+    history_group_id: Option<&str>,
+    plan: impl FnOnce(&ProjectModel) -> Plan,
+) -> Result<Result<PreviewStructuralPlanCommitted<P>, PreviewStructuralPlanBlocked>, String>
+where
+    P: PreviewStructuralPatch,
+    Plan: PreviewStructuralPlan<Patch = P>,
+{
     let mut patch = match structural_plan_patch_or_block(plan(&before_model), spec) {
         Ok(patch) => patch,
         Err(blocked) => return Ok(Err(blocked)),
@@ -91,7 +136,7 @@ where
             return Err("Mutația grupată nu are cheie History proiectabilă.".to_string())
         }
     };
-    let commit = stage_preview_structural_write(
+    let commit = stage_preview_structural_write_in_transaction(
         project_root,
         workspace,
         PreviewStructuralWrite::new(
@@ -99,7 +144,8 @@ where
             patch.file().to_string(),
             patch.contents().to_string(),
         )
-        .with_coalesce_key(coalesce_key),
+        .with_coalesce_key(coalesce_key)
+        .with_project_model_incremental_intent(patch.project_model_incremental_intent()),
     )?;
     if patch.contents() != commit.primary_contents {
         patch.replace_authoritative_contents(commit.primary_contents.clone());
@@ -139,6 +185,10 @@ pub(super) trait PreviewStructuralPatch {
     }
 
     fn replace_authoritative_contents(&mut self, contents: String);
+
+    fn project_model_incremental_intent(&self) -> ProjectModelIncrementalIntent {
+        ProjectModelIncrementalIntent::Unsupported
+    }
 }
 
 pub(super) trait PreviewStructuralPlan {
@@ -148,7 +198,7 @@ pub(super) trait PreviewStructuralPlan {
 }
 
 macro_rules! preview_structural_patch {
-    ($patch:ty) => {
+    ($patch:ty, $intent:expr) => {
         impl PreviewStructuralPatch for $patch {
             fn file(&self) -> &str {
                 &self.file
@@ -162,6 +212,10 @@ macro_rules! preview_structural_patch {
                 self.after_revision =
                     crate::project_model::move_engine::content_revision(&contents);
                 self.contents = contents;
+            }
+
+            fn project_model_incremental_intent(&self) -> ProjectModelIncrementalIntent {
+                $intent
             }
         }
     };
@@ -179,14 +233,38 @@ macro_rules! preview_structural_plan {
     };
 }
 
-preview_structural_patch!(ProjectHtmlMovePatch);
-preview_structural_patch!(ProjectHtmlInsertPatch);
-preview_structural_patch!(ProjectHtmlTagPatch);
-preview_structural_patch!(ProjectHtmlDuplicatePatch);
-preview_structural_patch!(ProjectHtmlDeletePatch);
-preview_structural_patch!(ProjectTeraInsertPatch);
-preview_structural_patch!(ProjectTeraMovePatch);
-preview_structural_patch!(ProjectTeraDeletePatch);
+preview_structural_patch!(
+    ProjectHtmlMovePatch,
+    ProjectModelIncrementalIntent::HtmlStructural
+);
+preview_structural_patch!(
+    ProjectHtmlInsertPatch,
+    ProjectModelIncrementalIntent::HtmlStructural
+);
+preview_structural_patch!(
+    ProjectHtmlTagPatch,
+    ProjectModelIncrementalIntent::HtmlStructural
+);
+preview_structural_patch!(
+    ProjectHtmlDuplicatePatch,
+    ProjectModelIncrementalIntent::HtmlStructural
+);
+preview_structural_patch!(
+    ProjectHtmlDeletePatch,
+    ProjectModelIncrementalIntent::HtmlStructural
+);
+preview_structural_patch!(
+    ProjectTeraInsertPatch,
+    ProjectModelIncrementalIntent::Unsupported
+);
+preview_structural_patch!(
+    ProjectTeraMovePatch,
+    ProjectModelIncrementalIntent::Unsupported
+);
+preview_structural_patch!(
+    ProjectTeraDeletePatch,
+    ProjectModelIncrementalIntent::Unsupported
+);
 
 impl PreviewStructuralPatch for ProjectHtmlAttributePatch {
     fn file(&self) -> &str {
@@ -207,6 +285,10 @@ impl PreviewStructuralPatch for ProjectHtmlAttributePatch {
     fn replace_authoritative_contents(&mut self, contents: String) {
         self.after_revision = crate::project_model::move_engine::content_revision(&contents);
         self.contents = contents;
+    }
+
+    fn project_model_incremental_intent(&self) -> ProjectModelIncrementalIntent {
+        ProjectModelIncrementalIntent::HtmlStructural
     }
 }
 
@@ -229,6 +311,10 @@ impl PreviewStructuralPatch for ProjectHtmlTextPatch {
     fn replace_authoritative_contents(&mut self, contents: String) {
         self.after_revision = crate::project_model::move_engine::content_revision(&contents);
         self.contents = contents;
+    }
+
+    fn project_model_incremental_intent(&self) -> ProjectModelIncrementalIntent {
+        ProjectModelIncrementalIntent::HtmlStructural
     }
 }
 

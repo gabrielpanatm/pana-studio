@@ -186,7 +186,7 @@ pub fn workspace_create_semantic_template(
     let workspace = live_workspace(&mut slot)?;
     require_destination_available(workspace, &destination)?;
 
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(&root, &projection)?;
     let target_id = input
         .target_id
@@ -362,7 +362,7 @@ pub fn workspace_override_theme_template(
     })?;
     let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
     let workspace = live_workspace(&mut slot)?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(&root, &projection)?;
     let catalog = build_template_catalog(&graph);
     let entry = catalog
@@ -479,7 +479,7 @@ pub fn workspace_set_template_assignment(
     let source_text = workspace.documents.text_for(&content_path).ok_or_else(|| {
         format!("ProjectWorkspace nu urmărește pagina {content_path} pentru atribuire.")
     })?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(&root, &projection)?;
     let page = graph
         .pages
@@ -555,7 +555,7 @@ fn stage_template_rename(
 ) -> Result<ProjectWorkspaceMutationReceipt, String> {
     require_destination_available(workspace, &destination)?;
     let contents = require_template_text(workspace, &source)?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
     let rewrite = plan_template_reference_workspace_mutation_from_graph(
         project_root,
@@ -610,7 +610,7 @@ pub fn workspace_delete_template(
     let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
     let workspace = live_workspace(&mut slot)?;
     require_template_text(workspace, &relative_path)?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(&root, &projection)?;
     let catalog = build_template_catalog(&graph);
     let entry = catalog
@@ -872,7 +872,7 @@ fn validate_parent_template(
         return Err("Un șablon nu se poate extinde pe sine.".to_string());
     }
 
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
     let catalog = build_template_catalog(&graph);
     let parent = catalog
@@ -1251,7 +1251,7 @@ mod tests {
                 ),
             ],
         );
-        let projection = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
         let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
 
         let archive = semantic_creation_assignment(

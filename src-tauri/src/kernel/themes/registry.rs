@@ -225,7 +225,7 @@ struct ProjectThemeContext {
 
 impl ProjectThemeContext {
     fn from_workspace(workspace: &ProjectWorkspace) -> Result<Self, String> {
-        let projection = workspace.capture_projection_lease()?;
+        let projection = workspace.capture_projection_snapshot()?;
         let zola_prefix = zola_prefix(workspace)?;
         let config_path = find_config_path(&projection.source_texts, &zola_prefix);
         let active_theme = config_path
@@ -400,6 +400,11 @@ fn load_pack(root: &Path) -> Result<ThemePack, ThemeRegistryError> {
         .iter()
         .map(|file| file.relative_path.as_str())
         .collect::<HashSet<_>>();
+    let recipe_paths = recipe_files
+        .iter()
+        .map(|file| file.relative_path.as_str())
+        .collect::<HashSet<_>>();
+    validate_local_style_assets(&theme_files, &recipe_files, &theme_paths, &recipe_paths)?;
     for anchor in &manifest.editor_anchors {
         let normalized =
             normalize_project_relative_path(anchor).map_err(ThemeRegistryError::InvalidManifest)?;
@@ -409,10 +414,6 @@ fn load_pack(root: &Path) -> Result<ThemePack, ThemeRegistryError> {
             )));
         }
     }
-    let recipe_paths = recipe_files
-        .iter()
-        .map(|file| file.relative_path.as_str())
-        .collect::<HashSet<_>>();
     for requirement in manifest
         .required_pages
         .iter()
@@ -546,6 +547,196 @@ fn validate_manifest(manifest: &ThemeManifest) -> Result<(), ThemeRegistryError>
         }
     }
     Ok(())
+}
+
+fn validate_local_style_assets(
+    theme_files: &[ThemePackFile],
+    recipe_files: &[ThemePackFile],
+    theme_paths: &HashSet<&str>,
+    recipe_paths: &HashSet<&str>,
+) -> Result<(), ThemeRegistryError> {
+    for (tree, files) in [("theme", theme_files), ("recipe", recipe_files)] {
+        for file in files {
+            if !is_style_source(&file.relative_path) {
+                continue;
+            }
+            let source = std::str::from_utf8(&file.bytes).map_err(|_| {
+                ThemeRegistryError::InvalidManifest(format!(
+                    "{tree}/{} declară o sursă de stil non-UTF-8.",
+                    file.relative_path
+                ))
+            })?;
+            for reference in css_url_references(source) {
+                let Some(asset_path) = root_relative_asset_path(&reference)? else {
+                    continue;
+                };
+                let supplied = theme_paths.contains(asset_path.as_str())
+                    || (tree == "recipe" && recipe_paths.contains(asset_path.as_str()));
+                if !supplied {
+                    return Err(ThemeRegistryError::InvalidManifest(format!(
+                        "{tree}/{} referă resursa locală `{reference}`, dar `{asset_path}` lipsește din pachet.",
+                        file.relative_path
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_style_source(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "css" | "scss" | "sass"
+            )
+        })
+}
+
+fn root_relative_asset_path(reference: &str) -> Result<Option<String>, ThemeRegistryError> {
+    let reference = reference.trim();
+    if !reference.starts_with('/') || reference.starts_with("//") {
+        return Ok(None);
+    }
+    if reference.contains("#{") || reference.contains('$') {
+        return Ok(None);
+    }
+    let path = reference[1..].split(['?', '#']).next().unwrap_or_default();
+    if path.is_empty() {
+        return Err(ThemeRegistryError::InvalidManifest(
+            "O referință url() locală indică rădăcina, nu o resursă statică.".to_string(),
+        ));
+    }
+    let expected = format!("static/{path}");
+    let normalized =
+        normalize_project_relative_path(&expected).map_err(ThemeRegistryError::InvalidManifest)?;
+    if normalized != expected {
+        return Err(ThemeRegistryError::InvalidManifest(format!(
+            "Referință url() locală necanonică: `{reference}`."
+        )));
+    }
+    Ok(Some(normalized))
+}
+
+fn css_url_references(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut references = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes
+            .get(index..index + 2)
+            .is_some_and(|candidate| candidate == b"/*")
+        {
+            index += 2;
+            while index + 1 < bytes.len()
+                && !bytes
+                    .get(index..index + 2)
+                    .is_some_and(|candidate| candidate == b"*/")
+            {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes
+            .get(index..index + 2)
+            .is_some_and(|candidate| candidate == b"//")
+        {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            continue;
+        }
+        if matches!(bytes[index], b'\'' | b'"') {
+            index = skip_css_quoted(bytes, index);
+            continue;
+        }
+        let url_token = bytes
+            .get(index..index + 3)
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(b"url"));
+        let boundary = index == 0
+            || !matches!(bytes[index - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'-');
+        if !url_token || !boundary {
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 3;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'(') {
+            index += 1;
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let value_start;
+        let value_end;
+        if matches!(bytes.get(cursor), Some(b'\'' | b'"')) {
+            let quote = bytes[cursor];
+            cursor += 1;
+            value_start = cursor;
+            let mut escaped = false;
+            while cursor < bytes.len() {
+                let byte = bytes[cursor];
+                if !escaped && byte == quote {
+                    break;
+                }
+                escaped = !escaped && byte == b'\\';
+                if byte != b'\\' {
+                    escaped = false;
+                }
+                cursor += 1;
+            }
+            if cursor >= bytes.len() {
+                break;
+            }
+            value_end = cursor;
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+        } else {
+            value_start = cursor;
+            while cursor < bytes.len() && bytes[cursor] != b')' {
+                cursor += 1;
+            }
+            value_end = cursor;
+        }
+        if bytes.get(cursor) == Some(&b')') {
+            if let Some(value) = source.get(value_start..value_end) {
+                references.push(value.trim().to_string());
+            }
+            index = cursor + 1;
+        } else {
+            index += 1;
+        }
+    }
+    references
+}
+
+fn skip_css_quoted(bytes: &[u8], start: usize) -> usize {
+    let quote = bytes[start];
+    let mut index = start + 1;
+    let mut escaped = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !escaped && byte == quote {
+            return index + 1;
+        }
+        escaped = !escaped && byte == b'\\';
+        if byte != b'\\' {
+            escaped = false;
+        }
+        index += 1;
+    }
+    bytes.len()
 }
 
 #[derive(Clone, Copy)]
@@ -988,6 +1179,44 @@ mod tests {
             ThemeRegistryError::UnsafeEntry(_)
         ));
         cleanup(executable);
+    }
+
+    #[test]
+    fn registry_requires_root_relative_style_assets_to_exist_in_the_pack() {
+        let missing = temp_dir("missing-style-asset");
+        create_pack(&missing, "demo", "demo", "0.22.0");
+        fs::create_dir_all(missing.join("demo/theme/sass")).unwrap();
+        fs::write(
+            missing.join("demo/theme/sass/fonts.scss"),
+            "@font-face { src: url('/fonturi/missing.woff2') format('woff2'); }\n",
+        )
+        .unwrap();
+        let error = ThemeRegistry::load_from_root(missing.clone()).unwrap_err();
+        assert!(matches!(error, ThemeRegistryError::InvalidManifest(_)));
+        assert!(error.to_string().contains("static/fonturi/missing.woff2"));
+        cleanup(missing);
+
+        let complete = temp_dir("complete-style-asset");
+        create_pack(&complete, "demo", "demo", "0.22.0");
+        fs::create_dir_all(complete.join("demo/theme/sass")).unwrap();
+        fs::create_dir_all(complete.join("demo/theme/static/fonturi")).unwrap();
+        fs::write(
+            complete.join("demo/theme/static/fonturi/present.woff2"),
+            b"font fixture",
+        )
+        .unwrap();
+        fs::write(
+            complete.join("demo/theme/sass/fonts.scss"),
+            concat!(
+                "// url('/fonturi/commented-out.woff2')\n",
+                "/* url('/fonturi/also-commented.woff2') */\n",
+                "@font-face { src: url('/fonturi/present.woff2?v=1#face') format('woff2'); }\n",
+                ".inline { background: url(\"data:image/svg+xml,%3Csvg/%3E\"); }\n",
+            ),
+        )
+        .unwrap();
+        ThemeRegistry::load_from_root(complete.clone()).unwrap();
+        cleanup(complete);
     }
 
     #[cfg(unix)]

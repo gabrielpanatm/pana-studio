@@ -18,7 +18,7 @@ pub struct FileBufferStore {
     pub limits: FileBufferStoreLimits,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBufferEntry {
     pub relative_path: String,
@@ -119,7 +119,7 @@ pub struct FileBufferBaseline {
     pub readonly: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileBufferDraft {
     pub text: String,

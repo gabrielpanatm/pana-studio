@@ -409,6 +409,9 @@ pub(in crate::kernel::write_authority::capability) fn resolve_remove_tree_operat
                     .into(),
             )
         }
+        WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite => {
+            Err("Acțiunea operator DiscardStagedWrite este rezervată familiei AtomicFile.".into())
+        }
         WriteAuthorityRecoveryResolutionAction::AcceptCurrentState => Err(
             "Acțiunea operator AcceptCurrentState este rezervată familiilor Directory/Symlink."
                 .into(),

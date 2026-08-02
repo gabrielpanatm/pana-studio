@@ -27,7 +27,7 @@ use crate::{
             WorkspaceResourceMutation, WorkspaceTextChange, WorkspaceTextResourceMutationInput,
         },
     },
-    project_model::cache::{capture_project_model_build_lease, publish_project_model_if_current},
+    project_model::cache::{capture_project_model_build_context, publish_project_model_if_current},
     state::AppState,
 };
 
@@ -176,7 +176,7 @@ pub fn create_design_class(
     let workspace = slot
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru creare clasă.".to_string())?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let model =
         crate::project_model::build_project_model_from_workspace_projection(&root, &projection)?;
     let inventory =
@@ -215,17 +215,17 @@ pub async fn read_design_class_inventory(
 ) -> Result<DesignClassInventorySnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let (root, session, lease) = capture_project_model_build_lease(&state)?;
+        let (root, session, context) = capture_project_model_build_context(&state)?;
         let model = crate::project_model::build_project_model_from_workspace_projection(
             &root,
-            lease.projection(),
+            context.projection(),
         )?;
         let snapshot = build_design_class_inventory(
             &model,
             session.runtime_instance_id(),
-            lease.projection().revision,
+            context.projection().revision,
         );
-        publish_project_model_if_current(&state, &lease, model)?;
+        publish_project_model_if_current(&state, &context, model)?;
         Ok(snapshot)
     })
     .await
@@ -240,15 +240,15 @@ pub fn rename_design_class(
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<DesignClassRenameReceipt, String> {
-    let (root, _session, lease) = capture_project_model_build_lease(&state)?;
-    if identity.expected_project_root != lease.projection().project_root
-        || identity.expected_session_id != lease.projection().runtime_session_id
+    let (root, _session, context) = capture_project_model_build_context(&state)?;
+    if identity.expected_project_root != context.projection().project_root
+        || identity.expected_session_id != context.projection().runtime_session_id
     {
         return Err("Rename clasă a refuzat un request pentru alt ProjectSession.".to_string());
     }
     let model = crate::project_model::build_project_model_from_workspace_projection(
         &root,
-        lease.projection(),
+        context.projection(),
     )?;
     let plan = plan_design_class_rename(&model, &old_name, &new_name)?;
     let changed_files = plan
@@ -269,7 +269,7 @@ pub fn rename_design_class(
     let workspace = slot
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru rename clasă.".to_string())?;
-    if workspace.revision != lease.projection().revision {
+    if workspace.revision != context.projection().revision {
         return Err(
             "Rename clasă a fost anulat deoarece ProjectWorkspace s-a schimbat după analiză."
                 .to_string(),

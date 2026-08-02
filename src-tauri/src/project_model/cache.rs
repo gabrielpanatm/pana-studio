@@ -7,7 +7,7 @@ use std::{
 use crate::{
     kernel::{
         project_session::ProjectSessionSnapshot,
-        project_workspace::{ProjectWorkspace, WorkspaceProjectionLease},
+        project_workspace::{ProjectWorkspace, WorkspaceProjectionSnapshot},
     },
     project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
     project_model::model::ProjectModel,
@@ -15,29 +15,29 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ProjectModelBuildLease {
-    projection: WorkspaceProjectionLease,
+pub(crate) struct ProjectModelBuildContext {
+    projection: WorkspaceProjectionSnapshot,
     accepted_disk_generation: u64,
     accepted_disk_fingerprint: String,
 }
 
-impl ProjectModelBuildLease {
-    pub(crate) fn projection(&self) -> &WorkspaceProjectionLease {
+impl ProjectModelBuildContext {
+    pub(crate) fn projection(&self) -> &WorkspaceProjectionSnapshot {
         &self.projection
     }
 }
 
-pub(crate) fn capture_project_model_build_lease(
+pub(crate) fn capture_project_model_build_context(
     state: &AppState,
-) -> Result<(PathBuf, ProjectSessionSnapshot, ProjectModelBuildLease), String> {
+) -> Result<(PathBuf, ProjectSessionSnapshot, ProjectModelBuildContext), String> {
     let started = Instant::now();
     let (root, session, accepted_disk, projection) = {
         let current_root = state
             .current_root
             .lock()
-            .map_err(|_| "Nu am putut captura root-ul pentru ProjectModel lease.".to_string())?;
+            .map_err(|_| "Nu am putut captura root-ul pentru ProjectModel context.".to_string())?;
         let workspace = state.project_workspace.lock().map_err(|_| {
-            "Nu am putut captura ProjectWorkspace pentru ProjectModel lease.".to_string()
+            "Nu am putut captura ProjectWorkspace pentru ProjectModel context.".to_string()
         })?;
 
         let root = current_root
@@ -57,7 +57,7 @@ pub(crate) fn capture_project_model_build_lease(
             root.clone(),
             workspace.session.clone(),
             workspace.accepted_disk.clone(),
-            workspace.capture_projection_lease()?,
+            workspace.capture_projection_snapshot()?,
         )
     };
 
@@ -72,7 +72,7 @@ pub(crate) fn capture_project_model_build_lease(
     let result = (
         root,
         session,
-        ProjectModelBuildLease {
+        ProjectModelBuildContext {
             projection,
             accepted_disk_generation,
             accepted_disk_fingerprint,
@@ -80,7 +80,7 @@ pub(crate) fn capture_project_model_build_lease(
     );
     #[cfg(debug_assertions)]
     eprintln!(
-        "[Pană Studio][perf] project_model_lease total_ms={}",
+        "[Pană Studio][perf] project_model_context total_ms={}",
         started.elapsed().as_millis()
     );
     Ok(result)
@@ -88,11 +88,11 @@ pub(crate) fn capture_project_model_build_lease(
 
 pub(crate) fn publish_project_model_if_current(
     state: &AppState,
-    lease: &ProjectModelBuildLease,
+    context: &ProjectModelBuildContext,
     model: ProjectModel,
 ) -> Result<(), String> {
     let started = Instant::now();
-    let result = publish_project_model_with_aliases_if_current(state, lease, model, None);
+    let result = publish_project_model_with_aliases_if_current(state, context, model, None);
     #[cfg(debug_assertions)]
     eprintln!(
         "[Pană Studio][perf] project_model_publish total_ms={} success={}",
@@ -104,7 +104,7 @@ pub(crate) fn publish_project_model_if_current(
 
 pub(crate) fn publish_project_model_with_aliases_if_current(
     state: &AppState,
-    lease: &ProjectModelBuildLease,
+    context: &ProjectModelBuildContext,
     model: ProjectModel,
     alias_updates: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
@@ -119,13 +119,13 @@ pub(crate) fn publish_project_model_with_aliases_if_current(
         "ProjectModel publish a devenit stale: proiectul a fost închis.".to_string()
     })?;
 
-    validate_live_lease(&current_root, workspace, lease)?;
-    validate_model_root(&model, &lease.projection.project_root)?;
+    validate_live_context(&current_root, workspace, context)?;
+    validate_model_root(&model, &context.projection.project_root)?;
 
     let live_source_ids = alias_updates
         .as_ref()
         .map(|_| project_model_source_ids(&model));
-    workspace.publish_project_model(&lease.projection, model)?;
+    workspace.publish_project_model(&context.projection, model)?;
     if let (Some(updates), Some(live_source_ids)) = (alias_updates, live_source_ids) {
         reconcile_source_identity_aliases(
             &mut workspace.source_identity_aliases,
@@ -168,17 +168,17 @@ fn reconcile_source_identity_aliases(
     }
 }
 
-fn validate_live_lease(
+fn validate_live_context(
     current_root: &Option<PathBuf>,
     workspace: &ProjectWorkspace,
-    lease: &ProjectModelBuildLease,
+    context: &ProjectModelBuildContext,
 ) -> Result<(), String> {
     let root = current_root.as_ref().ok_or_else(|| {
         "ProjectModel publish a devenit stale: proiectul a fost închis.".to_string()
     })?;
     require_matching_root(root, &workspace.session)?;
-    if workspace.runtime_session_id() != lease.projection.runtime_session_id
-        || workspace.session.project_root != lease.projection.project_root
+    if workspace.runtime_session_id() != context.projection.runtime_session_id
+        || workspace.session.project_root != context.projection.project_root
     {
         return Err(
             "ProjectModel publish a devenit stale: instanța ProjectSession s-a schimbat."
@@ -187,8 +187,8 @@ fn validate_live_lease(
     }
 
     require_accepted_disk_matches_live(root, &workspace.session, &workspace.accepted_disk)?;
-    if workspace.accepted_disk.generation != lease.accepted_disk_generation
-        || accepted_disk_fingerprint(&workspace.accepted_disk)? != lease.accepted_disk_fingerprint
+    if workspace.accepted_disk.generation != context.accepted_disk_generation
+        || accepted_disk_fingerprint(&workspace.accepted_disk)? != context.accepted_disk_fingerprint
     {
         return Err(
             "ProjectModel publish a devenit stale: manifestul disk acceptat s-a schimbat."
@@ -196,10 +196,10 @@ fn validate_live_lease(
         );
     }
 
-    if workspace.revision != lease.projection.revision {
+    if workspace.revision != context.projection.revision {
         return Err(format!(
-            "ProjectModel publish a devenit stale: generația lease este {}, iar generația curentă este {}.",
-            lease.projection.revision, workspace.revision
+            "ProjectModel publish a devenit stale: generația context este {}, iar generația curentă este {}.",
+            context.projection.revision, workspace.revision
         ));
     }
     Ok(())
@@ -224,7 +224,7 @@ fn require_accepted_disk_matches_live(
 
 fn accepted_disk_fingerprint(accepted: &AcceptedProjectDiskManifest) -> Result<String, String> {
     serde_json::to_string(accepted).map_err(|error| {
-        format!("AcceptedProjectDiskManifest nu poate fi serializat pentru lease: {error}")
+        format!("AcceptedProjectDiskManifest nu poate fi serializat pentru context: {error}")
     })
 }
 
@@ -245,7 +245,7 @@ fn validate_model_root(model: &ProjectModel, expected_root: &str) -> Result<(), 
 fn require_matching_root(root: &Path, session: &ProjectSessionSnapshot) -> Result<(), String> {
     if root != Path::new(&session.project_root) {
         return Err(format!(
-            "ProjectModel lease a fost blocat: current_root este {}, iar ProjectSession aparține {}.",
+            "ProjectModel context a fost blocat: current_root este {}, iar ProjectSession aparține {}.",
             root.display(),
             session.project_root
         ));

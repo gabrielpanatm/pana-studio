@@ -18,6 +18,7 @@ import {
 import {
   bindCanvasInteractionAgent,
   requestEditorEditScope,
+  resolveCanvasDragOverIntent,
   resolveCanvasHoverIntent,
   resolveCanvasInteractionIntent,
 } from "$lib/project/io";
@@ -64,6 +65,7 @@ type CanvasDragMovePreview = {
   plan: EditorMovePlan | null;
   error: string;
   promise: Promise<EditorMovePlan | null> | null;
+  projectedGestureSequence: number | null;
 };
 
 type CanvasDragPermission = {
@@ -85,6 +87,9 @@ type CanvasInteractionFrontendRuntime = {
   pointerHoverGeneration: number;
   pointerHoverRunningGeneration: number | null;
   pendingPointerMove: CanvasAgentGestureMessage | null;
+  pendingDragOver: CanvasAgentGestureMessage | null;
+  dragOverRunningGeneration: number | null;
+  dragOverTail: Promise<void>;
   latestPointerMoveSequence: number;
   latestDragOverSequence: number;
   lastObservedAgentSequence: number;
@@ -118,6 +123,9 @@ function runtimeFor(app: AppState) {
     pointerHoverGeneration: 0,
     pointerHoverRunningGeneration: null,
     pendingPointerMove: null,
+    pendingDragOver: null,
+    dragOverRunningGeneration: null,
+    dragOverTail: Promise.resolve(),
     latestPointerMoveSequence: 0,
     latestDragOverSequence: 0,
     lastObservedAgentSequence: 0,
@@ -168,6 +176,9 @@ function clearRuntimeInteractionState(runtime: CanvasInteractionFrontendRuntime)
   runtime.interactionGeneration += 1;
   runtime.pointerHoverGeneration += 1;
   runtime.pendingPointerMove = null;
+  runtime.pendingDragOver = null;
+  runtime.dragOverRunningGeneration = null;
+  runtime.dragOverTail = Promise.resolve();
   runtime.binding = null;
   runtime.pendingBinding = null;
   runtime.pendingInspections.clear();
@@ -371,6 +382,23 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
     void applyDomInspection(app, runtime, message);
     return true;
   }
+  if (message.type === "dragPreviewApplied") {
+    const preview = runtime.dragMovePreview;
+    if (
+      preview
+      && preview.sessionId === message.dragSessionId
+      && preview.plan?.token === message.planToken
+      && preview.projectedGestureSequence === message.gestureSequence
+    ) {
+      void app.recordCanvasProjectionRuntimeEvent(
+        "canvas_drag_preview_applied",
+        binding.identity.canvas,
+        message.dragPreviewAppliedMs,
+        null,
+      );
+    }
+    return true;
+  }
   if (message.type === "action") {
     if (message.actionSequence <= runtime.lastObservedAgentSequence) return true;
     runtime.lastObservedAgentSequence = message.actionSequence;
@@ -399,6 +427,9 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
     return true;
   } else if (message.gesture === "dragOver") {
     runtime.latestDragOverSequence = message.gestureSequence;
+    runtime.pendingDragOver = message;
+    drainLatestCanvasDragOver(app, runtime);
+    return true;
   }
   const generation = runtime.interactionGeneration;
   runtime.gestureTail = runtime.gestureTail
@@ -414,6 +445,83 @@ export function handleCanvasAgentMessage(app: AppState, event: MessageEvent) {
       failCanvasInteractionBinding(app, runtime, error);
     });
   return true;
+}
+
+function drainLatestCanvasDragOver(
+  app: AppState,
+  runtime: CanvasInteractionFrontendRuntime,
+) {
+  const generation = runtime.interactionGeneration;
+  if (runtime.dragOverRunningGeneration === generation) return;
+  runtime.dragOverRunningGeneration = generation;
+
+  const dragOverTask = (async () => {
+    // DragStart rămâne un fapt ordonat. Primul DragOver îl așteaptă înainte
+    // de a citi sursa fixată de recepția Rust.
+    await runtime.gestureTail;
+    while (generation === runtime.interactionGeneration) {
+      const message = runtime.pendingDragOver;
+      runtime.pendingDragOver = null;
+      if (!message) return;
+      if (message.gestureSequence !== runtime.latestDragOverSequence) continue;
+
+      const binding = currentBinding(app, runtime);
+      const source = runtime.dragSource;
+      const sessionId = message.drag?.sessionId;
+      if (
+        !binding
+        || !source
+        || !sessionId
+        || source.sessionId !== sessionId
+        || message.documentEpoch !== binding.identity.documentEpoch
+        || message.agentInstanceId !== binding.identity.agentInstanceId
+      ) continue;
+
+      const receipt = await resolveCanvasDragOverIntent({
+        request: createCanvasInteractionRequest(binding.identity, message),
+        sourceNodeId: source.target.editorNodeId,
+        editScopeGrant: app.editorEditScopeGrant,
+      });
+      if (
+        generation !== runtime.interactionGeneration
+        || currentBinding(app, runtime) !== binding
+        || message.gestureSequence !== runtime.latestDragOverSequence
+        || runtime.dragSource !== source
+        || runtime.dragSource?.sessionId !== sessionId
+      ) continue;
+      if (receipt.interaction.status === "stale") continue;
+      if (receipt.interaction.status === "rejected") {
+        throw new Error(
+          receipt.interaction.diagnostics[0]?.message
+            ?? "Recepția Canvas DragOver este invalidă.",
+        );
+      }
+      projectResolvedCanvasDragOver(
+        app,
+        runtime,
+        binding,
+        source,
+        sessionId,
+        receipt.interaction,
+        receipt.plan,
+      );
+    }
+  })().catch((error) => {
+    if (generation === runtime.interactionGeneration) {
+      failCanvasInteractionBinding(app, runtime, error);
+    }
+  }).finally(() => {
+    if (runtime.dragOverRunningGeneration === generation) {
+      runtime.dragOverRunningGeneration = null;
+    }
+    if (
+      runtime.pendingDragOver
+      && runtime.dragOverRunningGeneration !== runtime.interactionGeneration
+    ) {
+      drainLatestCanvasDragOver(app, runtime);
+    }
+  });
+  runtime.dragOverTail = dragOverTask;
 }
 
 function drainLatestPointerHover(
@@ -787,8 +895,11 @@ async function resolveGesture(
     receipt,
     selectionSnapshot.selectionRevision,
   );
-  if (receipt.target.kind === "teraBoundary") {
-    if (message.gesture === "contextMenu") {
+  if (
+    receipt.target.kind === "teraBoundary"
+    || receipt.target.kind === "markdownBoundary"
+  ) {
+    if (receipt.target.kind === "teraBoundary" && message.gesture === "contextMenu") {
       openTeraContextMenu(app, receipt.target, message.pointer);
     }
     return;
@@ -881,44 +992,67 @@ async function resolveDragGesture(
     return;
   }
 
+  // Pointer-up can overtake the 6–14 ms Rust DragOver round-trip. Settle the
+  // already-issued latest-wins plan first so the authorized DOM projection is
+  // retained while the authoritative commit runs.
+  let dragOverTail: Promise<void>;
+  do {
+    dragOverTail = runtime.dragOverTail;
+    await dragOverTail;
+  } while (runtime.dragOverTail !== dragOverTail);
+  if (generation !== runtime.interactionGeneration || runtime.dragSource !== source) return;
   const movePreview = runtime.dragMovePreview;
   runtime.dragSource = null;
-  runtime.dragMovePreview = null;
   clearReceiptOverlay(app, binding, "drag");
-  const target = receipt.target;
-  if (!target || !drag.position || source.target.editorNodeId === target.editorNodeId) {
+  // Drop confirmă ultimul fapt DragOver ordonat și tokenizat de Rust. Recepția
+  // Drop păstrează un fallback pentru cazul fără plan settled, dar nu mută și
+  // nu reinterpretează DOM-ul înainte de această confirmare.
+  const settledPreview = movePreview
+    && movePreview.sessionId === drag.sessionId
+    && movePreview.sourceNodeId === source.target.editorNodeId
+    ? movePreview
+    : null;
+  const targetNodeId = settledPreview?.targetNodeId
+    ?? receipt.target?.editorNodeId
+    ?? null;
+  const position = settledPreview?.position ?? drag.position;
+  if (!targetNodeId || !position || source.target.editorNodeId === targetNodeId) {
+    retireCanvasDragMovePreview(runtime, movePreview);
+    cancelCanvasDragDomPreview(app, binding, drag.sessionId);
     return;
   }
   let plan: EditorMovePlan | null = null;
   let planError = "";
   if (
-    movePreview
-    && movePreview.sessionId === drag.sessionId
-    && movePreview.sourceNodeId === source.target.editorNodeId
-    && movePreview.targetNodeId === target.editorNodeId
-    && movePreview.position === drag.position
+    settledPreview
+    && settledPreview.targetNodeId === targetNodeId
+    && settledPreview.position === position
   ) {
-    plan = movePreview.promise
-      ? await movePreview.promise
-      : movePreview.plan;
-    planError = movePreview.error;
+    plan = settledPreview.promise
+      ? await settledPreview.promise
+      : settledPreview.plan;
+    planError = settledPreview.error;
   } else {
     try {
       plan = await app.previewEditorNavigationMove(
         source.target.editorNodeId,
-        target.editorNodeId,
-        drag.position,
+        targetNodeId,
+        position,
       );
     } catch (error) {
       planError = errorMessage(error);
     }
   }
   if (!plan) {
+    retireCanvasDragMovePreview(runtime, movePreview);
+    cancelCanvasDragDomPreview(app, binding, drag.sessionId);
     if (generation !== runtime.interactionGeneration) return;
     if (planError) app.setGlobalStatus(planError, "error");
     return;
   }
   if (!plan.allowed) {
+    retireCanvasDragMovePreview(runtime, movePreview);
+    cancelCanvasDragDomPreview(app, binding, drag.sessionId);
     if (generation !== runtime.interactionGeneration) return;
     app.setGlobalStatus(
       plan.reason ?? t("editor-navigation-move-refused"),
@@ -926,13 +1060,136 @@ async function resolveDragGesture(
     );
     return;
   }
-  if (generation !== runtime.interactionGeneration) return;
-  await app.moveEditorNavigationNode(
-    source.target.editorNodeId,
-    target.editorNodeId,
-    drag.position,
+  if (generation !== runtime.interactionGeneration) {
+    retireCanvasDragMovePreview(runtime, movePreview);
+    return;
+  }
+  projectCanvasDropDomPreview(
+    app,
+    binding,
+    drag.sessionId,
+    message.gestureSequence,
+    message.emittedAtMs,
+    plan,
+    settledPreview,
   );
+  const outcome = await app.moveEditorNavigationNode(
+    source.target.editorNodeId,
+    targetNodeId,
+    position,
+    plan,
+    message.emittedAtMs,
+  );
+  retireCanvasDragMovePreview(runtime, movePreview);
+  if (outcome.status !== "committed") {
+    cancelCanvasDragDomPreview(app, binding, drag.sessionId);
+  }
   await retryCanvasInteractionBinding(app);
+}
+
+function projectResolvedCanvasDragOver(
+  app: AppState,
+  runtime: CanvasInteractionFrontendRuntime,
+  binding: CanvasInteractionBindingReceipt,
+  source: NonNullable<CanvasInteractionFrontendRuntime["dragSource"]>,
+  sessionId: string,
+  receipt: CanvasInteractionReceipt,
+  plan: EditorMovePlan | null,
+) {
+  const target = receipt.target;
+  const position = receipt.dragPosition;
+  if (
+    !target
+    || !position
+    || source.target.editorNodeId === target.editorNodeId
+    || !plan
+  ) {
+    runtime.dragMovePreview = null;
+    clearReceiptOverlay(app, binding, "drag");
+    cancelCanvasDragDomPreview(app, binding, sessionId);
+    return;
+  }
+
+  const preview: CanvasDragMovePreview = {
+    sessionId,
+    sourceNodeId: source.target.editorNodeId,
+    targetNodeId: target.editorNodeId,
+    position,
+    receipt,
+    pending: false,
+    plan,
+    error: "",
+    promise: null,
+    projectedGestureSequence: null,
+  };
+  runtime.dragMovePreview = preview;
+  renderReceiptOverlay(
+    app,
+    binding,
+    "drag",
+    receipt,
+    undefined,
+    sessionId,
+    canvasDragPermission(preview),
+  );
+}
+
+function projectCanvasDropDomPreview(
+  app: AppState,
+  binding: CanvasInteractionBindingReceipt,
+  sessionId: string,
+  gestureSequence: number,
+  inputEmittedAtMs: number,
+  plan: EditorMovePlan,
+  preview: CanvasDragMovePreview | null,
+) {
+  const liveProjection = plan.liveProjection;
+  if (
+    plan.allowed
+    && liveProjection
+    && liveProjection.planToken === plan.token
+  ) {
+    if (preview) preview.projectedGestureSequence = gestureSequence;
+    app.postPreviewMessage({
+      type: "project-canvas-drag-preview",
+      agentInstanceId: binding.identity.agentInstanceId,
+      documentEpoch: binding.identity.documentEpoch,
+      dragSessionId: sessionId,
+      gestureSequence,
+      inputEmittedAtMs,
+      projection: liveProjection,
+    });
+    return;
+  }
+  if (plan.allowed) {
+    void app.recordCanvasProjectionRuntimeEvent(
+      "canvas_drag_preview_skipped",
+      binding.identity.canvas,
+      Math.max(0, Date.now() - inputEmittedAtMs),
+      plan.liveProjectionReason,
+    );
+  }
+  cancelCanvasDragDomPreview(app, binding, sessionId);
+}
+
+function retireCanvasDragMovePreview(
+  runtime: CanvasInteractionFrontendRuntime,
+  preview: CanvasDragMovePreview | null,
+) {
+  if (runtime.dragMovePreview === preview) runtime.dragMovePreview = null;
+}
+
+function cancelCanvasDragDomPreview(
+  app: AppState,
+  binding: CanvasInteractionBindingReceipt,
+  sessionId: string,
+) {
+  app.postPreviewMessage({
+    type: "cancel-canvas-drag-preview",
+    agentInstanceId: binding.identity.agentInstanceId,
+    documentEpoch: binding.identity.documentEpoch,
+    dragSessionId: sessionId,
+  });
 }
 
 function projectCanvasDragPermission(
@@ -978,6 +1235,7 @@ function projectCanvasDragPermission(
     plan: null,
     error: "",
     promise: null,
+    projectedGestureSequence: null,
   };
   runtime.dragMovePreview = preview;
   renderReceiptOverlay(
@@ -1334,7 +1592,10 @@ function projectCurrentSelectionOverlay(
     selectionRevision: selection.selectionRevision,
     projection: canvasOverlayFromNavigationNode(node),
   });
-  if (target.kind !== "teraBoundary") {
+  if (app.gridOverlayEnabled) {
+    app.postPreviewMessage({ type: "set-canvas-grid-overlay", enabled: true });
+  }
+  if (target.kind !== "teraBoundary" && target.kind !== "markdownBoundary") {
     requestDomInspection(app, runtimeFor(app), target, {
       selectionRevision: selection.selectionRevision,
       pointer: {
@@ -1475,7 +1736,7 @@ export function projectSelectionSnapshotOnCanvas(
     selectionRevision: selection.selectionRevision,
     projection: canvasOverlayFromNavigationNode(node),
   });
-  if (target.kind === "teraBoundary") return true;
+  if (target.kind === "teraBoundary" || target.kind === "markdownBoundary") return true;
   requestDomInspection(app, runtime, target, {
     selectionRevision: selection.selectionRevision,
     pointer: {
@@ -1521,7 +1782,7 @@ async function commitNavigationSelection(
     selectionRevision: selectionSnapshot.selectionRevision,
     projection: canvasOverlayFromNavigationNode(node),
   });
-  if (target.kind === "teraBoundary") return;
+  if (target.kind === "teraBoundary" || target.kind === "markdownBoundary") return;
   requestDomInspection(app, runtime, target, {
     selectionRevision: selectionSnapshot.selectionRevision,
     pointer: {

@@ -172,7 +172,7 @@ pub fn read_ui_block_graph(
             .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru blocuri.".to_string())?;
         (
             root,
-            workspace.capture_projection_lease()?,
+            workspace.capture_projection_snapshot()?,
             workspace.session.project_root.clone(),
             workspace.runtime_session_id(),
             workspace.revision,

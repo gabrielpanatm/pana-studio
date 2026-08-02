@@ -59,6 +59,9 @@ pub(super) fn resolve_recovery_record(
         );
     }
     let diagnostic = match &record.body.operation_evidence {
+        WalOperationEvidence::AtomicFile(_) => {
+            capability::resolve_atomic_operator(&record, name.phase, input.action)?
+        }
         WalOperationEvidence::Copy(_) => capability::resolve_copy_operator(
             &record,
             name.phase,
@@ -95,7 +98,7 @@ pub(super) fn resolve_recovery_record(
         }
         _ => {
             return Err(
-                "Rezoluția operator este disponibilă numai pentru familiile Copy/Directory/Symlink/RemoveFile/RemoveDirectoryTree WAL."
+                "Rezoluția operator este disponibilă numai pentru familiile AtomicFile/Copy/Directory/Symlink/RemoveFile/RemoveDirectoryTree WAL."
                     .into(),
             );
         }

@@ -387,15 +387,6 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
             700,
             CommandCenterAppCommand::ShowCode,
         ),
-        (
-            "command.show_markdown",
-            "Arată editorul Markdown",
-            "Deschide editorul semantic pentru documentul Markdown activ",
-            "markdown content editor continut",
-            None,
-            690,
-            CommandCenterAppCommand::ShowMarkdown,
-        ),
     ] {
         push_app_command(
             &mut candidates,
@@ -689,11 +680,6 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "command-center-command-show-code-subtitle",
     ),
     (
-        "command.show_markdown",
-        "command-center-command-show-markdown-title",
-        "command-center-command-show-markdown-subtitle",
-    ),
-    (
         "activity.editor",
         "command-center-activity-editor-title",
         "command-center-activity-editor-subtitle",
@@ -784,7 +770,7 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             format!("Pagină · {} · {}", page.url, page.file),
             format!("page content markdown {} {}", page.url, page.file),
             page.file.clone(),
-            WorkbenchSurface::Markdown,
+            WorkbenchSurface::Code,
             650,
             None,
             Some(
@@ -1030,7 +1016,7 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
         let surface = if matches!(file.kind, ProjectModelFileKind::Content)
             && file.relative_path.to_lowercase().ends_with(".md")
         {
-            WorkbenchSurface::Markdown
+            WorkbenchSurface::Code
         } else {
             WorkbenchSurface::Code
         };
@@ -1242,6 +1228,7 @@ mod tests {
                     blocks: vec!["hero".to_string()],
                     macros: vec!["card".to_string()],
                     semantics: None,
+                    markdown_projections: Vec::new(),
                     node_id: "node:index".to_string(),
                 }],
                 styles: Vec::new(),
@@ -1251,6 +1238,7 @@ mod tests {
                 structured_documents: Vec::new(),
                 component_graph: Default::default(),
                 block_graph: Default::default(),
+                markdown_projections: Vec::new(),
                 nodes: Vec::new(),
                 relations: Vec::new(),
                 diagnostics: Vec::new(),

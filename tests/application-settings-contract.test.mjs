@@ -24,7 +24,10 @@ test("Setările sunt o suprafață globală, nu o activitate a proiectului", () 
     /Settings/,
   );
   assert.match(center, /retainedAuxiliarySurface === "settings"[\s\S]*<SettingsWorkspace/);
-  assert.match(route, /\{#if app\.scannedProject \|\| app\.applicationSurface === "settings"\}/);
+  assert.match(
+    route,
+    /\{#if \(app\.projectLifecycle\.activeSession && app\.scannedProject\) \|\| app\.applicationSurface === "settings"\}/,
+  );
   assert.match(startup, /app\.openApplicationSettings\(\)/);
   assert.match(rail, /settingsActive/);
   assert.match(rail, /aria-current=\{settingsActive \? "page"/);

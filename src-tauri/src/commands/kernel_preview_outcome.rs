@@ -27,6 +27,11 @@ pub(super) trait PreviewStructuralCommandOutcome {
 
     fn command_succeeded(&self) -> bool;
     fn after_model_mut(&mut self) -> &mut Option<ProjectModel>;
+    fn workspace_mutation(
+        &self,
+    ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
+        None
+    }
     fn take_alias_updates(&mut self) -> HashMap<String, String> {
         HashMap::new()
     }
@@ -61,6 +66,12 @@ impl PreviewStructuralCommandOutcome for EditorMoveExecutionOutcome {
         &mut self.after_model
     }
 
+    fn workspace_mutation(
+        &self,
+    ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
+        self.receipt.workspace_mutation.as_ref()
+    }
+
     fn take_alias_updates(&mut self) -> HashMap<String, String> {
         std::mem::take(&mut self.alias_updates)
     }
@@ -87,6 +98,12 @@ macro_rules! preview_structural_outcome {
                 &mut self.after_model
             }
 
+            fn workspace_mutation(
+                &self,
+            ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
+                self.receipt.workspace_mutation.as_ref()
+            }
+
             fn canvas_patch_mut(&mut self) -> Option<&mut CanvasPatch> {
                 self.receipt.canvas_patch.as_mut()
             }
@@ -109,6 +126,12 @@ macro_rules! preview_structural_outcome_with_aliases {
 
             fn after_model_mut(&mut self) -> &mut Option<ProjectModel> {
                 &mut self.after_model
+            }
+
+            fn workspace_mutation(
+                &self,
+            ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
+                self.receipt.workspace_mutation.as_ref()
             }
 
             fn take_alias_updates(&mut self) -> HashMap<String, String> {

@@ -32,7 +32,10 @@ test("project creation is a detached Rust-first startup flow outside the editor 
     read("src-tauri/src/commands/project.rs"),
   ]);
 
-  assert.match(route, /\{#if app\.scannedProject \|\| app\.applicationSurface === "settings"\}[\s\S]*<AppChrome[\s\S]*\{:else\}[\s\S]*<StartupView/);
+  assert.match(
+    route,
+    /\{#if \(app\.projectLifecycle\.activeSession && app\.scannedProject\) \|\| app\.applicationSurface === "settings"\}[\s\S]*<AppChrome[\s\S]*\{:else\}[\s\S]*<StartupView/,
+  );
   assert.match(startup, /startupCreationCatalog\?\.options/);
   assert.match(startup, /startupCreationPlan\.affectedFiles/);
   assert.match(controller, /inspectStartupFolder\(selected\)/);
@@ -50,9 +53,10 @@ test("project creation is a detached Rust-first startup flow outside the editor 
     projectCommands.indexOf("pub fn read_project_file"),
   );
   assert.ok(
-    openProjectBody.indexOf("require_valid_zola_candidate(&root)?")
-      < openProjectBody.indexOf("prepare_project_session(&app, &root, &scan)?"),
-    "ProjectSession nu poate fi pregătită înaintea clasificării Rust valide",
+    openProjectBody.indexOf("project_lifecycle.begin_preparing(")
+      < openProjectBody.indexOf("prepare_project_session_with_fingerprint("),
+    "ProjectSession nu poate fi pregătită înaintea acceptării inspecției Rust",
   );
+  assert.match(openProjectBody, /render_candidate_with_pending_project_authority[\s\S]*begin_commit/);
   assert.doesNotMatch(`${startup}\n${controller}\n${io}\n${rust}`, /zola_init|initZolaProject|ProjectBootstrapLease/);
 });

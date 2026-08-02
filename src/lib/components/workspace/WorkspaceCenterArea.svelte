@@ -216,7 +216,6 @@
   ]);
   function centerViewForSurface(surface: WorkbenchSurface): CenterView {
     if (surface === "code") return "code";
-    if (surface === "markdown") return "markdown";
     return "preview";
   }
 
@@ -432,6 +431,7 @@
             {responsiveBreakpoints}
             previewDocumentMarkup={app.previewDocumentMarkup}
             previewSrc={app.previewSrc}
+            previewNavigationGuardActive={app.previewNavigationGuardActive}
             interactivePreviewEnabled={app.interactivePreviewEnabled
               && !app.aiEditLeaseFrontendLockActive
               && !app.kernelUndoRedoFrontendQuiesceActive
@@ -439,11 +439,6 @@
             interactivePreviewUrl={app.interactivePreviewUrl}
             motionPreviewMode={app.motionWorkspace.previewMode}
             motionPreviewRequest={app.motionWorkspace.previewRequest}
-            refreshToken={app.refreshToken}
-            editorReadOnly={app.projectTransitionFrontendLeaseActive
-              || app.kernelUndoRedoFrontendQuiesceActive
-              || app.kernelUndoRedoFrontendLeaseActive
-              || app.aiEditLeaseFrontendLockActive}
             workbenchSnapshot={app.workbenchSnapshot}
             {dirtyWorkbenchPaths}
             {activateWorkbenchDocument}
@@ -485,7 +480,6 @@
             source={app.source}
             sourceLanguage={app.sourceLanguage}
             sourceLength={app.source.length}
-            onMarkdownChange={(nextSource, path) => app.updateMarkdownSource(nextSource, path)}
           />
         </div>
       {/key}

@@ -11,6 +11,7 @@ use crate::{
         EditorNavigationOrigin, EditorNavigationSnapshot, EditorSourceProvenance,
     },
     preview::CanvasProjectionIdentity,
+    project_model::model::ProjectModel,
     source_graph::model::{SourceCapabilityReason, SourceRange},
 };
 
@@ -117,6 +118,11 @@ pub struct CanvasDragSample {
 pub struct CanvasInteractionRequest {
     pub schema_version: u32,
     pub identity: CanvasInteractionIdentity,
+    /// Timestamp-ul capturat de agent la emiterea faptului fizic. Rust îl
+    /// folosește exclusiv pentru telemetrie end-to-end; nu participă la
+    /// autorizare sau la ordonarea gesturilor.
+    #[serde(default)]
+    pub emitted_at_ms: u64,
     pub gesture_sequence: u64,
     pub gesture: CanvasInteractionGesture,
     pub pointer: CanvasPointerSample,
@@ -197,6 +203,7 @@ pub enum CanvasInteractionStatus {
 pub enum CanvasInteractionTargetKind {
     HtmlElement,
     TeraBoundary,
+    MarkdownBoundary,
     RuntimeElement,
 }
 
@@ -313,6 +320,7 @@ pub struct CanvasInteractionBindingReceipt {
 struct LiveCanvasAgent {
     identity: CanvasInteractionIdentity,
     snapshot: EditorNavigationSnapshot,
+    model: Option<ProjectModel>,
     projection: CanvasInteractionProjection,
     active_document_path: Option<String>,
     last_accepted_ordered_sequence: u64,
@@ -333,6 +341,13 @@ pub struct CanvasInteractionSelectionContext {
     pub active_document_path: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct CanvasInteractionPlanningContext {
+    pub snapshot: EditorNavigationSnapshot,
+    pub model: ProjectModel,
+    pub active_document_path: Option<String>,
+}
+
 #[derive(Default)]
 pub struct CanvasInteractionRuntime {
     agents: Mutex<Vec<LiveCanvasAgent>>,
@@ -347,6 +362,36 @@ impl CanvasInteractionRuntime {
     pub fn bind_agent(
         &self,
         snapshot: &EditorNavigationSnapshot,
+        active_document_path: Option<&str>,
+        identity: CanvasInteractionIdentity,
+    ) -> Result<CanvasInteractionBindingReceipt, String> {
+        self.bind_agent_inner(snapshot, None, active_document_path, identity)
+    }
+
+    /// Leagă agentul de snapshot-ul și modelul deja validate de Rust.
+    ///
+    /// Modelul rămâne în registrul efemer al documentului fizic și permite
+    /// ca DragOver să rezolve ținta plus PlanEditorMove într-o singură
+    /// secțiune atomică, fără o nouă captură ProjectWorkspace.
+    pub fn bind_agent_with_model(
+        &self,
+        snapshot: &EditorNavigationSnapshot,
+        model: &ProjectModel,
+        active_document_path: Option<&str>,
+        identity: CanvasInteractionIdentity,
+    ) -> Result<CanvasInteractionBindingReceipt, String> {
+        self.bind_agent_inner(
+            snapshot,
+            Some(model.clone()),
+            active_document_path,
+            identity,
+        )
+    }
+
+    fn bind_agent_inner(
+        &self,
+        snapshot: &EditorNavigationSnapshot,
+        model: Option<ProjectModel>,
         active_document_path: Option<&str>,
         identity: CanvasInteractionIdentity,
     ) -> Result<CanvasInteractionBindingReceipt, String> {
@@ -396,6 +441,7 @@ impl CanvasInteractionRuntime {
         agents.push(LiveCanvasAgent {
             identity: identity.clone(),
             snapshot: snapshot.clone(),
+            model,
             projection: CanvasInteractionProjection::from_snapshot(snapshot),
             active_document_path: active_document_path.map(str::to_string),
             last_accepted_ordered_sequence: 0,
@@ -407,6 +453,72 @@ impl CanvasInteractionRuntime {
             last_accepted_sequence: 0,
             active_document_path: active_document_path.map(str::to_string),
         })
+    }
+
+    /// Rezolvă DragOver și execută planificarea semantică sub aceeași
+    /// ordonare Rust. Callback-ul primește numai snapshot-ul și ProjectModel
+    /// fixate la bind; nu poate consulta o revizie implicită mai nouă.
+    pub fn resolve_drag_over<T>(
+        &self,
+        authorized_edit_scope_id: Option<&str>,
+        request: &CanvasInteractionRequest,
+        project: impl FnOnce(
+            &EditorNavigationSnapshot,
+            &ProjectModel,
+            Option<&str>,
+            &CanvasInteractionReceipt,
+        ) -> Result<T, String>,
+    ) -> Result<(CanvasInteractionReceipt, Option<T>), String> {
+        if request.gesture != CanvasInteractionGesture::DragOver {
+            return Err("Lane-ul Canvas drag acceptă numai gesturi DragOver.".to_string());
+        }
+        let mut agents = self
+            .agents
+            .lock()
+            .map_err(|_| "Registrul CanvasAgent este indisponibil.".to_string())?;
+        let Some(agent) = agents
+            .iter_mut()
+            .find(|agent| agent.identity == request.identity)
+        else {
+            return Ok((
+                receipt_with_diagnostic(
+                    request,
+                    CanvasInteractionStatus::Stale,
+                    CanvasInteractionDiagnosticCode::AgentBindingMissing,
+                    "Gestul nu aparține niciunui CanvasAgent activ.",
+                    None,
+                ),
+                None,
+            ));
+        };
+        let receipt = resolve_canvas_interaction(
+            CanvasInteractionContext {
+                binding: &agent.identity,
+                projection: &agent.projection,
+                authorized_edit_scope_id,
+                last_accepted_sequence: agent.last_accepted_ordered_sequence,
+            },
+            request,
+        );
+        if !matches!(
+            receipt.status,
+            CanvasInteractionStatus::Resolved | CanvasInteractionStatus::NoTarget
+        ) {
+            return Ok((receipt, None));
+        }
+        agent.last_accepted_ordered_sequence = request.gesture_sequence;
+        let Some(model) = agent.model.as_ref() else {
+            return Err(
+                "CanvasAgent nu are ProjectModel-ul Rust fixat pentru DragOver.".to_string(),
+            );
+        };
+        let projection = project(
+            &agent.snapshot,
+            model,
+            agent.active_document_path.as_deref(),
+            &receipt,
+        )?;
+        Ok((receipt, Some(projection)))
     }
 
     /// Rezolvă și consumă atomic secvența gestului. Chiar și un `NoTarget`
@@ -559,6 +671,41 @@ impl CanvasInteractionRuntime {
                 snapshot: agent.snapshot.clone(),
                 active_document_path: agent.active_document_path.clone(),
             }))
+    }
+
+    pub fn planning_context(
+        &self,
+        identity: &CanvasProjectionIdentity,
+        route: &str,
+    ) -> Result<CanvasInteractionPlanningContext, String> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|_| "Registrul CanvasAgent este indisponibil.".to_string())?;
+        let agent = agents
+            .iter()
+            .find(|agent| {
+                agent.projection.identity == *identity
+                    && agent.projection.route == route
+                    && agent.snapshot.identity == *identity
+                    && agent.snapshot.route == route
+            })
+            .ok_or_else(|| {
+                "PlanEditorMove nu aparține niciunui CanvasAgent Rust activ.".to_string()
+            })?;
+        let model = agent.model.clone().ok_or_else(|| {
+            "CanvasAgent nu are ProjectModel-ul Rust fixat pentru commit.".to_string()
+        })?;
+        if model.revision != agent.snapshot.model_revision {
+            return Err(
+                "CanvasAgent a refuzat un ProjectModel diferit de snapshot-ul fixat.".to_string(),
+            );
+        }
+        Ok(CanvasInteractionPlanningContext {
+            snapshot: agent.snapshot.clone(),
+            model,
+            active_document_path: agent.active_document_path.clone(),
+        })
     }
 
     pub fn revoke_all(&self) {
@@ -828,7 +975,12 @@ fn closed_boundary_or_node<'a>(
         .editor_nodes
         .get(required_scope_id)
         .and_then(|index| context.projection.node(*index))
-        .filter(|candidate| candidate.kind == EditorNavigationNodeKind::TeraBoundary)
+        .filter(|candidate| {
+            matches!(
+                candidate.kind,
+                EditorNavigationNodeKind::TeraBoundary | EditorNavigationNodeKind::MarkdownBoundary
+            )
+        })
         .unwrap_or(node)
 }
 
@@ -864,6 +1016,9 @@ fn project_target(
         kind: match node.kind {
             EditorNavigationNodeKind::HtmlElement => CanvasInteractionTargetKind::HtmlElement,
             EditorNavigationNodeKind::TeraBoundary => CanvasInteractionTargetKind::TeraBoundary,
+            EditorNavigationNodeKind::MarkdownBoundary => {
+                CanvasInteractionTargetKind::MarkdownBoundary
+            }
             EditorNavigationNodeKind::RuntimeElement => CanvasInteractionTargetKind::RuntimeElement,
         },
         label: node.label.clone(),
@@ -943,7 +1098,7 @@ mod tests {
             EditorNavigationCapabilities, EditorNavigationSurface,
         },
         kernel::selection_coordinator::{SelectionCoordinatorRuntime, SelectionIntent},
-        source_graph::model::SourceNodeKind,
+        source_graph::model::{SourceCapabilityReason, SourceNodeKind},
     };
 
     fn canvas_identity() -> CanvasProjectionIdentity {
@@ -1127,10 +1282,64 @@ mod tests {
         )
     }
 
+    fn markdown_snapshot() -> EditorNavigationSnapshot {
+        let markdown_scope = "editor_boundary:markdown-1";
+        let mut boundary = boundary_node();
+        boundary.id = markdown_scope.to_string();
+        boundary.children = vec!["editor_render:markdown-render".to_string()];
+        boundary.kind = EditorNavigationNodeKind::MarkdownBoundary;
+        boundary.label = "Conținut Markdown".to_string();
+        boundary.file = Some("content/_index.md".to_string());
+        boundary.boundary.as_mut().unwrap().boundary_instance_id = "markdown-1".to_string();
+        boundary.boundary.as_mut().unwrap().root_render_instance_ids =
+            vec!["markdown-render".to_string()];
+        boundary.capabilities = EditorNavigationCapabilities {
+            can_select: true,
+            can_inspect: true,
+            can_open_in_code: true,
+            can_enter_boundary: false,
+            can_move_atomic: false,
+            can_move: false,
+            can_edit_text: false,
+            can_edit_attributes: false,
+            read_only: true,
+            requires_edit_scope_id: None,
+            reason_code: Some(SourceCapabilityReason::MarkdownRenderedBoundary),
+        };
+
+        let mut descendant = html_node();
+        descendant.id = "editor_render:markdown-render".to_string();
+        descendant.parent_id = Some(markdown_scope.to_string());
+        descendant.render_instance_id = Some("markdown-render".to_string());
+        descendant.capabilities = EditorNavigationCapabilities {
+            can_select: true,
+            can_inspect: true,
+            can_open_in_code: false,
+            can_enter_boundary: false,
+            can_move_atomic: false,
+            can_move: false,
+            can_edit_text: false,
+            can_edit_attributes: false,
+            read_only: true,
+            requires_edit_scope_id: Some(markdown_scope.to_string()),
+            reason_code: Some(SourceCapabilityReason::MarkdownRenderedBoundary),
+        };
+
+        editor_navigation_snapshot_for_test(
+            canvas_identity(),
+            "model-7",
+            "/",
+            EditorNavigationSurface::CanonicalPreview,
+            vec![markdown_scope.to_string()],
+            vec![boundary, descendant],
+        )
+    }
+
     fn request(id: &str) -> CanvasInteractionRequest {
         CanvasInteractionRequest {
             schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
             identity: interaction_identity(),
+            emitted_at_ms: 0,
             gesture_sequence: 9,
             gesture: CanvasInteractionGesture::Click,
             pointer: CanvasPointerSample {
@@ -1216,6 +1425,37 @@ mod tests {
         assert_eq!(
             receipt.overlay.expect("overlay").render_instance_ids,
             vec!["render-1"]
+        );
+    }
+
+    #[test]
+    fn markdown_descendant_hit_promotes_to_read_only_atomic_boundary() {
+        let snapshot = markdown_snapshot();
+        let receipt = resolve(&snapshot, &request("markdown-render"), None, 8);
+
+        let target = receipt.target.expect("markdown target");
+        assert_eq!(target.kind, CanvasInteractionTargetKind::MarkdownBoundary);
+        assert_eq!(target.editor_node_id, "editor_boundary:markdown-1");
+        assert_eq!(target.file.as_deref(), Some("content/_index.md"));
+        assert!(target.actions.can_select);
+        assert!(target.actions.can_inspect);
+        assert!(target.actions.can_open_in_code);
+        assert!(!target.actions.can_enter_boundary);
+        assert!(!target.actions.can_move_atomic);
+        assert!(!target.actions.can_move);
+        assert!(!target.actions.can_edit_text);
+        assert!(!target.actions.can_edit_attributes);
+        assert!(target.actions.read_only);
+        assert_eq!(
+            target.actions.reason_code,
+            Some(SourceCapabilityReason::MarkdownRenderedBoundary)
+        );
+        assert_eq!(
+            receipt
+                .overlay
+                .expect("markdown overlay")
+                .render_instance_ids,
+            vec!["markdown-render"]
         );
     }
 

@@ -12,6 +12,7 @@ import {
 } from "$lib/project/files";
 import {
   readSourceGraph,
+  type CanvasProjectionIdentity,
   type PreviewPhaseReceipt,
 } from "$lib/project/io";
 import {
@@ -27,7 +28,10 @@ import {
   handleCanvasAgentMessage,
   retryCanvasInteractionBinding,
 } from "$lib/state/canvas-interaction-controller";
-import { confirmMountedCanvasProjection } from "$lib/state/preview-controller";
+import {
+  confirmMountedCanvasProjection,
+  settleGuardedPreviewNavigation,
+} from "$lib/state/preview-controller";
 import {
   contrastingTextColor,
   normalizedProjectPath,
@@ -296,15 +300,23 @@ export function handlePreviewMessage(app: AppState, event: MessageEvent) {
     return;
   }
   if (data.type === "ready") {
+    const readyIdentity = data.canvasIdentity && typeof data.canvasIdentity === "object"
+      ? data.canvasIdentity as CanvasProjectionIdentity
+      : null;
+    const readyReceipts = Array.isArray(data.canvasPhaseReceipts)
+      ? data.canvasPhaseReceipts as PreviewPhaseReceipt[]
+      : [];
+    if (
+      readyReceipts.length === 3
+      && readyReceipts[2]?.phase === "styledReady"
+    ) {
+      settleGuardedPreviewNavigation(app.previewControllerHost(), readyIdentity);
+    }
     syncApplicationAppearanceToPreview(app);
     void confirmMountedCanvasProjection(
       app.previewControllerHost(),
-      data.canvasIdentity && typeof data.canvasIdentity === "object"
-        ? data.canvasIdentity
-        : null,
-      Array.isArray(data.canvasPhaseReceipts)
-        ? data.canvasPhaseReceipts as PreviewPhaseReceipt[]
-        : [],
+      readyIdentity,
+      readyReceipts,
     ).catch((error) => {
       app.setGlobalStatus(
         t("preview-runtime-canvas-confirmation-failed", {

@@ -136,6 +136,61 @@ fn injects_source_id_when_index_matches() {
 }
 
 #[test]
+fn wraps_page_markdown_with_typed_projection_markers() {
+    let source = "{{ page.content | safe }}";
+    let index = SourceIdIndex::for_template_source("templates/page.html", source);
+
+    let result = preprocess_template(source, "templates/page.html", Some(&index));
+
+    assert!(result.contains("<!-- pana-markdown-start:mdp_"));
+    assert!(result.contains("{{ page.relative_path | base64_encode }}"));
+    assert!(result.contains("<!-- pana-markdown-end:mdp_"));
+    assert!(!result.contains("pana-template-expression-start"));
+}
+
+#[test]
+fn keeps_shortcode_output_inside_one_atomic_markdown_boundary() {
+    let source = "<figure>{{ body | markdown | safe }}</figure>";
+    let path = "templates/shortcodes/figure.html";
+    let index = SourceIdIndex::for_template_source(path, source);
+
+    let result = preprocess_template(source, path, Some(&index));
+
+    assert!(result.starts_with("<!-- pana-markdown-start:mdp_"));
+    assert!(result.ends_with(" -->"));
+    assert_eq!(result.matches("pana-markdown-start").count(), 1);
+    assert_eq!(result.matches("pana-markdown-end").count(), 1);
+    assert!(!result.contains("pana-template-expression-start"));
+}
+
+#[test]
+fn wraps_toc_loop_as_one_markdown_boundary_owned_by_the_page() {
+    let source = r#"{% for heading in page.toc %}<a href="{{ heading.permalink }}">{{ heading.title }}</a>{% endfor %}"#;
+    let path = "templates/page.html";
+    let index = SourceIdIndex::for_template_source(path, source);
+
+    let result = preprocess_template(source, path, Some(&index));
+
+    assert_eq!(result.matches("pana-markdown-start").count(), 1);
+    assert_eq!(result.matches("pana-markdown-end").count(), 1);
+    assert!(result.contains("{{ page.relative_path | base64_encode }}"));
+    assert!(!result.contains("{{ heading.relative_path"));
+}
+
+#[test]
+fn wraps_markdown_filter_section_without_nested_tera_boundary() {
+    let source = "{% filter markdown %}# Titlu{% endfilter %}";
+    let path = "templates/page.html";
+    let index = SourceIdIndex::for_template_source(path, source);
+
+    let result = preprocess_template(source, path, Some(&index));
+
+    assert_eq!(result.matches("pana-markdown-start").count(), 1);
+    assert_eq!(result.matches("pana-markdown-end").count(), 1);
+    assert!(!result.contains("pana-template-source-start"));
+}
+
+#[test]
 fn injects_template_source_id_for_html_inside_block() {
     let source = "{% block content %}\n<section class=\"hero\"></section>\n{% endblock %}";
     let index = SourceIdIndex::for_template_source("templates/index.html", source);
@@ -148,7 +203,7 @@ fn injects_template_source_id_for_html_inside_block() {
 
 #[test]
 fn wraps_empty_block_with_template_source_markers() {
-    let source = "{% block content %}{% endblock %}";
+    let source = "<html><head></head><body>{% block content %}{% endblock %}</body></html>";
     let index = SourceIdIndex::for_template_source("templates/index.html", source);
 
     let result = preprocess_template(source, "templates/index.html", Some(&index));
@@ -160,15 +215,50 @@ fn wraps_empty_block_with_template_source_markers() {
 }
 
 #[test]
-fn skips_non_visual_blocks_when_wrapping_template_source_markers() {
-    let source = "{% block scripts %}\n<script src=\"/app.js\"></script>\n{% endblock %}";
+fn head_block_keeps_source_identity_without_visual_placeholder() {
+    let source = r#"<!doctype html>
+<html>
+<head>
+{% block preincarcare %}{% endblock %}
+<link rel="preload" href="/font.woff2" as="font" crossorigin>
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+{% block continut %}{% endblock %}
+</body>
+</html>"#;
     let index = SourceIdIndex::for_template_source("templates/index.html", source);
 
     let result = preprocess_template(source, "templates/index.html", Some(&index));
 
-    assert!(!result.contains("pana-template-source-start"));
-    assert!(!result.contains("pana-template-source-end"));
-    assert!(result.contains("<script src=\"/app.js\"></script>"));
+    let head = result
+        .split("<head>")
+        .nth(1)
+        .and_then(|tail| tail.split("</head>").next())
+        .expect("head remains structurally delimited");
+    let body = result
+        .split("<body>")
+        .nth(1)
+        .and_then(|tail| tail.split("</body>").next())
+        .expect("body remains structurally delimited");
+
+    assert!(head.contains("pana-template-source-start"));
+    assert!(!head.contains("pana-studio-empty-tera-slot"));
+    assert!(!head.contains("<div"));
+    assert!(head.contains(r#"<link rel="preload" href="/font.woff2""#));
+    assert!(head.contains(r#"<link rel="stylesheet" href="/site.css">"#));
+    assert!(body.contains("pana-studio-empty-tera-slot"));
+}
+
+#[test]
+fn unknown_template_context_fails_closed_without_visual_placeholder() {
+    let source = "{% block continut %}{% endblock %}";
+    let index = SourceIdIndex::for_template_source("templates/child.html", source);
+
+    let result = preprocess_template(source, "templates/child.html", Some(&index));
+
+    assert!(result.contains("pana-template-source-start"));
+    assert!(!result.contains("pana-studio-empty-tera-slot"));
 }
 
 #[test]

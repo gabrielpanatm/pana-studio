@@ -587,6 +587,9 @@ pub(in crate::kernel::write_authority::capability) fn resolve_remove_leaf_operat
                     .into(),
             )
         }
+        WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite => {
+            Err("Acțiunea operator DiscardStagedWrite este rezervată familiei AtomicFile.".into())
+        }
         WriteAuthorityRecoveryResolutionAction::ContinueTreeRemoval
         | WriteAuthorityRecoveryResolutionAction::RestoreRemainingTree => {
             Err("Acțiunea operator este rezervată familiei RemoveDirectoryTree.".into())

@@ -379,6 +379,19 @@ fn resolve_html_node<'a>(
                 break;
             }
             current = next.clone();
+            // Alias updates are published from one exact ProjectModel
+            // revision to the next. A same-tag reorder can produce a
+            // permutation whose target IDs are also alias keys; once the
+            // direct target is live, following that key again would walk into
+            // a sibling's mapping (or a cycle) instead of the selected node.
+            if let Some(node) = model
+                .source_graph
+                .nodes
+                .iter()
+                .find(|node| node.id == current && node.kind == SourceNodeKind::Html)
+            {
+                return Some(node);
+            }
             continue;
         }
         if let Some(node) = model
@@ -420,6 +433,22 @@ pub(super) fn resolve_html_node_for_anchor<'a>(
         .filter(|node| node_tag_matches(node, tag));
     let location_node =
         location.and_then(|location| resolve_html_node_at_location(model, location, tag));
+
+    // A Rust-published alias represents the logical element across an already
+    // committed structural mutation. The Canvas fast path can keep the old
+    // source location until the background canonical projection settles; for
+    // same-tag siblings that old position may now belong to another element.
+    // In that narrow case the authoritative alias must win. Unaliased stale or
+    // contradictory identities remain conjunctive and fail closed below.
+    if source_id.is_some_and(|id| {
+        aliases
+            .get(id)
+            .is_some_and(|resolved| !resolved.trim().is_empty() && resolved != id)
+    }) {
+        if let Some(id_node) = id_node {
+            return Some(id_node);
+        }
+    }
     resolve_conjunctive_anchor(source_id, location, id_node, location_node)
 }
 

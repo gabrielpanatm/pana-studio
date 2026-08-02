@@ -15,7 +15,7 @@ use crate::kernel::{
     selection_coordinator::SelectionCoordinatorRuntime, workbench::WorkbenchRuntime,
 };
 use crate::preview::{PersistentZolaPreviewEngine, SourceBrowserEngine};
-use crate::project::{ProjectDiskWatchHandle, StartupFlowRuntime};
+use crate::project::{ProjectDiskWatchHandle, ProjectLifecycleRuntime, StartupFlowRuntime};
 use crate::versioning::VersionNetworkOperationControl;
 
 pub struct McpServerHandle {
@@ -70,6 +70,8 @@ pub struct AppState {
     pub global_status: GlobalStatusRuntime,
     pub selection_coordinator: SelectionCoordinatorRuntime,
     pub startup_flow: StartupFlowRuntime,
+    pub project_lifecycle: ProjectLifecycleRuntime,
+    pub project_lifecycle_transition: Mutex<()>,
     pub mcp_access_token: Mutex<Option<String>>,
     pub current_root: Mutex<Option<PathBuf>>,
     pub project_disk_watch: Mutex<Option<ProjectDiskWatchHandle>>,
@@ -101,6 +103,8 @@ impl Default for AppState {
             global_status: GlobalStatusRuntime::default(),
             selection_coordinator: SelectionCoordinatorRuntime::default(),
             startup_flow: StartupFlowRuntime::default(),
+            project_lifecycle: ProjectLifecycleRuntime::default(),
+            project_lifecycle_transition: Mutex::new(()),
             mcp_access_token: Mutex::new(None),
             current_root: Mutex::new(None),
             project_disk_watch: Mutex::new(None),

@@ -5,9 +5,10 @@ use crate::kernel::{
 };
 
 use super::model::{
-    WorkbenchActivity, WorkbenchBottomPanelSnapshot, WorkbenchCanvasViewportSnapshot,
-    WorkbenchCommandReceipt, WorkbenchDocumentSnapshot, WorkbenchGroupId, WorkbenchGroupSnapshot,
-    WorkbenchIdentity, WorkbenchIntent, WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap,
+    ContentWorkspaceMode, ContentWorkspaceSnapshot, WorkbenchActivity,
+    WorkbenchBottomPanelSnapshot, WorkbenchCanvasViewportSnapshot, WorkbenchCommandReceipt,
+    WorkbenchDocumentSnapshot, WorkbenchGroupId, WorkbenchGroupSnapshot, WorkbenchIdentity,
+    WorkbenchIntent, WorkbenchProjectEntryKind, WorkbenchProjectEntryRemap,
     WorkbenchProjectEntrySelection, WorkbenchSnapshot, WorkbenchSplit, WorkbenchSurface,
     WORKBENCH_COMMAND_SCHEMA_VERSION, WORKBENCH_DEFAULT_SPLIT_RATIO_BASIS_POINTS,
     WORKBENCH_MAX_OPEN_DOCUMENTS, WORKBENCH_MAX_SPLIT_RATIO_BASIS_POINTS,
@@ -29,6 +30,7 @@ struct WorkbenchSession {
     canvas_viewport: WorkbenchCanvasViewportSnapshot,
     groups: Vec<WorkbenchGroupSnapshot>,
     bottom_panel: WorkbenchBottomPanelSnapshot,
+    content_workspace: ContentWorkspaceSnapshot,
     selected_project_entry: Option<WorkbenchProjectEntrySelection>,
 }
 
@@ -49,6 +51,7 @@ impl WorkbenchSession {
                 open: false,
                 active_view: Default::default(),
             },
+            content_workspace: ContentWorkspaceSnapshot::default(),
             selected_project_entry: None,
         }
     }
@@ -83,6 +86,7 @@ impl WorkbenchSession {
             canvas_viewport: snapshot.canvas_viewport,
             groups: snapshot.groups,
             bottom_panel: snapshot.bottom_panel,
+            content_workspace: snapshot.content_workspace,
             selected_project_entry: snapshot.selected_project_entry,
         };
         if candidate.selected_project_entry.is_none() {
@@ -106,6 +110,7 @@ impl WorkbenchSession {
             canvas_viewport: self.canvas_viewport.clone(),
             groups: self.groups.clone(),
             bottom_panel: self.bottom_panel.clone(),
+            content_workspace: self.content_workspace.clone(),
             selected_project_entry: self.selected_project_entry.clone(),
         }
     }
@@ -216,6 +221,18 @@ impl WorkbenchSession {
             }
             WorkbenchIntent::SetActivity { activity } => {
                 self.active_activity = activity;
+                if activity == WorkbenchActivity::Content {
+                    self.content_workspace = ContentWorkspaceSnapshot::default();
+                }
+                Ok(())
+            }
+            WorkbenchIntent::OpenContentPage { relative_path } => {
+                let relative_path = normalize_content_page_path(&relative_path)?;
+                self.active_activity = WorkbenchActivity::Content;
+                self.content_workspace = ContentWorkspaceSnapshot {
+                    mode: ContentWorkspaceMode::Edit,
+                    page_path: Some(relative_path),
+                };
                 Ok(())
             }
             WorkbenchIntent::SetBottomPanel { open, active_view } => {
@@ -367,6 +384,29 @@ impl WorkbenchSession {
                 Some(selection)
             });
         self.selected_project_entry = selection_override.or(next_selection);
+        self.content_workspace.page_path = self
+            .content_workspace
+            .page_path
+            .take()
+            .and_then(|path| {
+                if deleted_prefixes
+                    .iter()
+                    .any(|prefix| path_is_in_prefix(&path, prefix))
+                {
+                    None
+                } else if let Some((source, destination)) = remaps
+                    .iter()
+                    .find(|(source, _)| path_is_in_prefix(&path, source))
+                {
+                    Some(remap_path_prefix(&path, source, destination))
+                } else {
+                    Some(path)
+                }
+            })
+            .filter(|path| normalize_content_page_path(path).is_ok());
+        if self.content_workspace.page_path.is_none() {
+            self.content_workspace = ContentWorkspaceSnapshot::default();
+        }
         if self.selected_project_entry.is_none() {
             self.select_active_document();
         }
@@ -694,9 +734,33 @@ impl WorkbenchSession {
                 return Err("Workbench conține o selecție ProjectEntry necanonică.".to_string());
             }
         }
+        match (
+            self.content_workspace.mode,
+            self.content_workspace.page_path.as_deref(),
+        ) {
+            (ContentWorkspaceMode::List, None) => {}
+            (ContentWorkspaceMode::Edit, Some(path)) => {
+                normalize_content_page_path(path)?;
+            }
+            _ => {
+                return Err(
+                    "Workbench conține o stare Content listă/editor inconsistentă.".to_string(),
+                );
+            }
+        }
         self.require_group(self.active_group_id)?;
         Ok(())
     }
+}
+
+fn normalize_content_page_path(relative_path: &str) -> Result<String, String> {
+    let normalized = normalize_project_relative_path(relative_path)?;
+    if !normalized.starts_with("content/") || !normalized.to_ascii_lowercase().ends_with(".md") {
+        return Err(
+            "Editorul semantic Content acceptă numai pagini Markdown din content/.".to_string(),
+        );
+    }
+    Ok(normalized)
 }
 
 fn validate_canvas_viewport(viewport: &WorkbenchCanvasViewportSnapshot) -> Result<(), String> {
@@ -723,6 +787,22 @@ pub struct WorkbenchRuntime {
 }
 
 impl WorkbenchRuntime {
+    pub fn publish_prepared(
+        &self,
+        session: &ProjectSessionSnapshot,
+        snapshot: WorkbenchSnapshot,
+    ) -> Result<WorkbenchSnapshot, String> {
+        let candidate = WorkbenchSession::from_persisted(session, snapshot)?;
+        candidate.require_invariants()?;
+        let published = candidate.snapshot();
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "WorkbenchRuntime mutex este compromis.".to_string())?;
+        *state = Some(candidate);
+        Ok(published)
+    }
+
     pub fn read(&self, session: &ProjectSessionSnapshot) -> Result<WorkbenchSnapshot, String> {
         let mut state = self
             .state
@@ -1485,5 +1565,122 @@ mod tests {
         assert_eq!(receipt.revision_before, before.revision);
         assert_eq!(receipt.snapshot.active_activity, WorkbenchActivity::Assets);
         assert_eq!(runtime.read(&project).unwrap(), receipt.snapshot);
+    }
+
+    #[test]
+    fn content_page_editor_is_rust_owned_and_content_activity_resets_to_list() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let editing = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::OpenContentPage {
+                    relative_path: " ./content\\ghid.md ".to_string(),
+                },
+            )
+            .unwrap()
+            .snapshot;
+
+        assert_eq!(editing.active_activity, WorkbenchActivity::Content);
+        assert_eq!(editing.content_workspace.mode, ContentWorkspaceMode::Edit);
+        assert_eq!(
+            editing.content_workspace.page_path.as_deref(),
+            Some("content/ghid.md")
+        );
+
+        let listed = runtime
+            .apply(
+                &project,
+                &identity(&editing),
+                WorkbenchIntent::SetActivity {
+                    activity: WorkbenchActivity::Content,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        assert_eq!(
+            listed.content_workspace,
+            ContentWorkspaceSnapshot::default()
+        );
+    }
+
+    #[test]
+    fn content_page_editor_rejects_non_content_and_non_markdown_paths() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+
+        for relative_path in [
+            "templates/index.html",
+            "content/page.txt",
+            "../content/page.md",
+        ] {
+            let error = runtime
+                .apply(
+                    &project,
+                    &identity(&before),
+                    WorkbenchIntent::OpenContentPage {
+                        relative_path: relative_path.to_string(),
+                    },
+                )
+                .unwrap_err();
+            assert!(!error.is_empty());
+            assert_eq!(runtime.read(&project).unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn content_page_editor_follows_safe_remaps_and_closes_when_page_disappears() {
+        let runtime = WorkbenchRuntime::default();
+        let project = session("project-a", "/project/a", 10);
+        let before = runtime.read(&project).unwrap();
+        let editing = runtime
+            .apply(
+                &project,
+                &identity(&before),
+                WorkbenchIntent::OpenContentPage {
+                    relative_path: "content/ghid.md".to_string(),
+                },
+            )
+            .unwrap()
+            .snapshot;
+        let remapped = runtime
+            .apply(
+                &project,
+                &identity(&editing),
+                WorkbenchIntent::ReconcileProjectEntries {
+                    remaps: vec![WorkbenchProjectEntryRemap {
+                        source_prefix: "content/ghid.md".to_string(),
+                        destination_prefix: "content/documentatie.md".to_string(),
+                    }],
+                    deleted_prefixes: Vec::new(),
+                    selection_override: None,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        assert_eq!(
+            remapped.content_workspace.page_path.as_deref(),
+            Some("content/documentatie.md")
+        );
+
+        let deleted = runtime
+            .apply(
+                &project,
+                &identity(&remapped),
+                WorkbenchIntent::ReconcileProjectEntries {
+                    remaps: Vec::new(),
+                    deleted_prefixes: vec!["content/documentatie.md".to_string()],
+                    selection_override: None,
+                },
+            )
+            .unwrap()
+            .snapshot;
+        assert_eq!(
+            deleted.content_workspace,
+            ContentWorkspaceSnapshot::default()
+        );
     }
 }

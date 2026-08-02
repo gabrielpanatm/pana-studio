@@ -40,6 +40,7 @@ export type CodeEditorController = {
   setTheme: (theme: "dark" | "light") => void;
   setReadOnly: (readOnly: boolean) => void;
   setSelectedRange: (range: CodeSelectionRanges | null, reveal?: boolean) => void;
+  revealLineColumn: (line: number, column: number) => void;
 };
 
 export type CodeEditorDocumentChangeSet = {
@@ -202,6 +203,27 @@ export function createCodeEditorController(options: CodeEditorControllerOptions)
       }
 
       view.dispatch({ effects });
+      syncingSelection = false;
+    },
+    revealLineColumn(lineNumber, columnNumber) {
+      const line = view.state.doc.line(
+        Math.max(1, Math.min(view.state.doc.lines, Math.trunc(lineNumber))),
+      );
+      const position = Math.min(
+        line.to,
+        line.from + Math.max(0, Math.trunc(columnNumber) - 1),
+      );
+      const end = Math.min(view.state.doc.length, position + 1);
+      const range = { from: position, to: end };
+      syncingSelection = true;
+      view.dispatch({
+        selection: { anchor: position, head: end },
+        effects: [
+          setSelectedSourceRange.of(range),
+          EditorView.scrollIntoView(position, { y: "center" }),
+        ],
+      });
+      view.focus();
       syncingSelection = false;
     },
   };

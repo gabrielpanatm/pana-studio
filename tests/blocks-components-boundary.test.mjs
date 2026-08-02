@@ -90,14 +90,35 @@ test("selecția unui descendent alege rădăcina celui mai apropiat bloc imbrica
   const canvasAgent = source("../src-tauri/src/preview/bridge/03_canvas_agent.js");
   const app = source("../src/lib/state/app.svelte.ts");
   const inspector = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
+  const registry = source("../src/lib/blocks/registry.ts");
+  const types = source("../src/lib/types.ts");
+  const navigation = source("../src-tauri/src/kernel/editor_navigation.rs");
+  const navigationNodeType = types.slice(
+    types.indexOf("export type EditorNavigationNode ="),
+    types.indexOf("export type EditorNavigationRelation ="),
+  );
+  const navigationNodeStruct = navigation.slice(
+    navigation.indexOf("pub struct EditorNavigationNode"),
+    navigation.indexOf("pub struct EditorNavigationViewNode"),
+  );
 
   assert.match(embeddedBridge, /element\.closest\("\[data-pana-block\],\[data-pana-component\]"\)/);
   assert.match(embeddedBridge, /markerKind:\s*canonical \? "canonical" : "legacy"/);
   assert.match(canvasAgent, /physicalBlockContext/);
   assert.doesNotMatch(canvasAgent, /rootSourceId|rootTemplateSourceId|rootSessionId/);
   assert.match(app, /bounded\.providerId !== physical\.providerId/);
+  assert.match(app, /navigationNode\?\.renderInstanceId === coordinated\.renderInstanceId/);
+  assert.match(app, /rootSourceId: navigationOwnsSelection/);
+  assert.match(app, /\? \[\.\.\.navigationNode\.blockSourceInstanceIds\]/);
+  assert.match(navigationNodeType, /renderInstanceId: string \| null/);
+  assert.doesNotMatch(navigationNodeType, /renderInstanceIds/);
+  assert.match(navigationNodeStruct, /pub render_instance_id: Option<String>/);
+  assert.doesNotMatch(navigationNodeStruct, /render_instance_ids/);
   assert.match(app, /rootSessionId: coordinated\.snapshot\.runtimeSessionId/);
-  assert.match(inspector, /instance\.rootSourceNodeId === blockContext\.rootSourceId/);
+  assert.match(inspector, /resolveUiBlockSourceInstanceForSelection\(graph, blockContext\)/);
+  assert.match(registry, /Array\.isArray\(selection\.sourceInstanceIds\)/);
+  assert.match(registry, /sourceInstanceIds\.length - 1/);
+  assert.match(registry, /sourceInstanceMatchesSelection\(instance, selection\)/);
   assert.doesNotMatch(inspector, /querySelector\(|getAttribute\(/);
 });
 
@@ -129,6 +150,30 @@ test("scrierea structurală reconciliază markup, SCSS și Page JS într-o singu
   assert.match(structural, /stage_composite_changes/);
   assert.match(structural, /native_block_insert_and_last_delete_are_atomic_and_noop_safe/);
   assert.doesNotMatch(frontend, /applyNativeBlockContract|reconcileNativeBlock/);
+});
+
+test("activitatea Blocuri părăsește inserarea numai după confirmarea commitului", () => {
+  const controller = source("../src/lib/state/html-actions-controller.ts");
+  const app = source("../src/lib/state/app.svelte.ts");
+  const workspace = source("../src/lib/components/creation/BlocksWorkspace.svelte");
+
+  assert.match(
+    controller,
+    /insertPaletteElementAtTarget\([\s\S]*?Promise<EditorActionOutcome>/,
+  );
+  assert.match(controller, /return committedAction\(\);/);
+  assert.match(
+    app,
+    /return await insertPaletteElementAtTargetFromController\(/,
+  );
+  assert.match(
+    workspace,
+    /const outcome = await app\.insertPaletteElementAtTarget\([\s\S]*?if \(outcome\.status !== "committed"\)/,
+  );
+  assert.ok(
+    workspace.indexOf('if (outcome.status !== "committed")')
+      < workspace.indexOf('await app.setWorkbenchActivity("editor")'),
+  );
 });
 
 test("compatibilitatea legacy este citire controlată, nu un al doilea model", () => {

@@ -61,6 +61,7 @@ export type BlockSelectionContext = {
   markerKind: "canonical" | "legacy";
   rootSelector: string;
   rootTag: string;
+  sourceInstanceIds: string[];
   rootSourceId: string | null;
   rootTemplateSourceId: string | null;
   rootSessionId: string | null;
@@ -409,6 +410,25 @@ export type CssProperty = {
   value: string;
 };
 
+export type {
+  CssBackground,
+  CssBackgroundLayer,
+  CssBackgroundLayerKind,
+  CssGradient,
+  CssGradientItem,
+  CssGradientKind,
+  CssGradientStop,
+} from "$lib/inspector/background-model";
+
+export type {
+  CssGrid,
+  CssGridAreas,
+  CssGridTrack,
+  CssGridTrackKind,
+  CssGridTrackList,
+  CssGridTrackListMode,
+} from "$lib/inspector/grid-model";
+
 export type CssRuleContext = {
   file: string;
   selector: string;
@@ -418,6 +438,8 @@ export type CssRuleContext = {
   viewportRules: CssProperty[];
   hasBaseRule: boolean;
   hasViewportRule: boolean;
+  background: import("$lib/inspector/background-model").CssBackground;
+  grid: import("$lib/inspector/grid-model").CssGrid;
 };
 
 export type PageCssTarget = {
@@ -432,7 +454,7 @@ export type PageCssTarget = {
   reason: string;
 };
 
-export const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION = 1;
+export const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION = 3;
 
 export type CssInspectorContextState = "existing" | "creation" | "ambiguous";
 
@@ -595,7 +617,7 @@ export type ZolaProjectSettings = {
 };
 
 export type SourceLanguage = "html" | "css" | "scss" | "js" | "markdown" | "plain";
-export type CenterView = "preview" | "code" | "markdown" | "kernel";
+export type CenterView = "preview" | "code" | "kernel";
 export type ApplicationSurface = "workbench" | "settings";
 export type ApplicationTheme = "light" | "dark";
 export type ApplicationLanguagePreference =
@@ -1110,6 +1132,39 @@ export type ProjectScan = {
   acceptedDiskManifest?: ProjectDiskManifest;
 };
 
+export type ProjectTransitionState =
+  | "idle"
+  | "inspecting"
+  | "awaiting_recovery_decision"
+  | "preparing"
+  | "committing";
+
+export type ActiveProjectReadiness =
+  | { state: "initializing_frontend" }
+  | { state: "preparing_preview" }
+  | { state: "awaiting_canvas" }
+  | { state: "finalizing_frontend" }
+  | { state: "ready" }
+  | { state: "degraded"; capability: string; diagnostic: string };
+
+export type ActiveProjectLifecycleSession = {
+  projectRoot: string;
+  runtimeSessionId: string;
+  readiness: ActiveProjectReadiness;
+  committedAtMs: number;
+  readinessChangedAtMs: number;
+};
+
+export type ProjectLifecycleSnapshot = {
+  schemaVersion: 1;
+  revision: number;
+  activeSession: ActiveProjectLifecycleSession | null;
+  transition: ProjectTransitionState;
+  operationId: string | null;
+  transitionStartedAtMs: number | null;
+  reason: string;
+};
+
 export type StartupStage =
   | "idle"
   | "inspecting"
@@ -1236,6 +1291,48 @@ export type ProjectOpenRecoveryAssessment = {
 export type ProjectOpenRecoveryDecisionInput = {
   action: "abandon";
   assessmentToken: string;
+};
+
+export type ProjectOpenInspectionReceipt = {
+  schemaVersion: 1;
+  operationId: string;
+  operationStartedAtMs: number;
+  candidateToken: string;
+  recovery: ProjectOpenRecoveryAssessment;
+  lifecycle: ProjectLifecycleSnapshot;
+};
+
+export type ProjectOpenBootstrapReceipt = {
+  schemaVersion: 3;
+  project: ProjectScan;
+  lifecycle: ProjectLifecycleSnapshot;
+  fileBuffers: FileBufferStoreSnapshot;
+  workspace: ProjectWorkspaceSnapshot;
+  projectConfig: ProjectAppConfig;
+  workbench: WorkbenchSnapshot;
+  activeDocument: ProjectBootstrapDocument | null;
+  targetCssFile: string | null;
+  initialSurface: ProjectBootstrapInitialSurface | null;
+};
+
+export type ProjectBootstrapInitialSurface = {
+  documentPath: string;
+  route: string;
+  previewUrl: string;
+  plan: TemplateWorkbenchPlan;
+  canvasProjection: import("$lib/project/io").CanvasProjectionPlan;
+};
+
+export type ProjectBootstrapDocument = {
+  relativePath: string;
+  source: string;
+  previewPath: string | null;
+  diagnosticLocation: ProjectBootstrapSourceLocation | null;
+};
+
+export type ProjectBootstrapSourceLocation = {
+  line: number;
+  column: number;
 };
 
 export type ProjectRootFingerprint = {
@@ -1552,7 +1649,7 @@ export type ProjectWorkspaceMutationReceipt = {
 // Keep this in lockstep with
 // src-tauri/src/kernel/project_workspace/model.rs::PROJECT_WORKSPACE_SCHEMA_VERSION.
 export const PROJECT_WORKSPACE_SCHEMA_VERSION = 3;
-export const PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION = 3;
+export const PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION = 4;
 
 export type WorkspaceEntryMutationReceipt = {
   schemaVersion: 1;
@@ -1583,6 +1680,7 @@ export type ProjectWorkspaceSnapshot = {
   dirtyPageJsCount: number;
   projectModelRevision: string | null;
   projectModelSourceRevision: number | null;
+  lastProjectionTransactionId: string | null;
   documents: FileBufferStoreSnapshot;
   pageJs: PageJsDraftStoreSnapshot;
   history: WorkspaceHistorySnapshot;
@@ -1606,7 +1704,12 @@ export type WorkbenchActivity =
   | "audit"
   | "publish";
 
-export type WorkbenchSurface = "visual" | "code" | "markdown";
+export type WorkbenchSurface = "visual" | "code";
+export type ContentWorkspaceMode = "list" | "edit";
+export type ContentWorkspaceSnapshot = {
+  mode: ContentWorkspaceMode;
+  pagePath: string | null;
+};
 export type WorkbenchProjectEntryKind = "directory" | "text" | "binary";
 export type WorkbenchProjectEntrySelection = {
   relativePath: string;
@@ -1673,6 +1776,7 @@ export type WorkbenchSnapshot = {
   canvasViewport: WorkbenchCanvasViewportSnapshot;
   groups: WorkbenchGroupSnapshot[];
   bottomPanel: WorkbenchBottomPanelSnapshot;
+  contentWorkspace: ContentWorkspaceSnapshot;
   selectedProjectEntry: WorkbenchProjectEntrySelection | null;
 };
 
@@ -1721,6 +1825,7 @@ export type WorkbenchIntent =
   | { kind: "set_split_ratio"; ratioBasisPoints: number }
   | { kind: "set_canvas_viewport"; viewport: WorkbenchCanvasViewportSnapshot }
   | { kind: "set_activity"; activity: WorkbenchActivity }
+  | { kind: "open_content_page"; relativePath: string }
   | {
       kind: "set_bottom_panel";
       open: boolean;
@@ -1900,8 +2005,7 @@ export type CommandCenterAppCommand =
   | "toggle_theme"
   | "open_settings"
   | "show_visual"
-  | "show_code"
-  | "show_markdown";
+  | "show_code";
 
 export type CommandCenterAction =
   | { kind: "set_activity"; activity: WorkbenchActivity }
@@ -1971,6 +2075,7 @@ export type WorkspaceUndoRedoReceipt = {
   entry: WorkspaceHistoryEntrySnapshot;
   documents: WorkspaceDocumentProjection[];
   history: WorkspaceHistorySnapshot;
+  applicationTransactionId: string;
 };
 
 export type WorkspaceDocumentProjection = {
@@ -1985,6 +2090,7 @@ export type ProjectWorkspaceUndoRedoCommandReceipt = {
   result: WorkspaceUndoRedoReceipt;
   workspace: ProjectWorkspaceSnapshot;
   workbench: WorkbenchCommandReceipt | null;
+  canvasPatch: CanvasPatch | null;
 };
 
 export type KernelDiskConflictStatus = "clean" | "info" | "warning" | "error";
@@ -2416,6 +2522,7 @@ export type WriteAuthorityRecoveryClassification =
   | "unreadable_or_corrupt";
 
 export type WriteAuthorityRecoveryResolutionAction =
+  | "discard_staged_write"
   | "restore_original"
   | "accept_restored_state"
   | "accept_current_state"
@@ -3153,7 +3260,9 @@ export type SourceCapabilityReason =
   | "staticAsset"
   | "dataOutputReadOnly"
   | "dataThemeReadOnly"
-  | "dataFormatVisualUnsupported";
+  | "dataFormatVisualUnsupported"
+  | "markdownRenderedBoundary"
+  | "markdownSourceUnresolved";
 
 export type SourceCapabilities = {
   canOpenInCode: boolean;
@@ -3182,6 +3291,7 @@ export type EditorNavigationSurface =
 export type EditorNavigationNodeKind =
   | "htmlElement"
   | "teraBoundary"
+  | "markdownBoundary"
   | "runtimeElement";
 
 export type EditorNavigationViewNodeKind =
@@ -3270,7 +3380,6 @@ export type EditorNavigationNode = {
   tag: string | null;
   sourceNodeId: string | null;
   renderInstanceId: string | null;
-  renderInstanceIds: string[];
   sourceKind: SourceNodeKind | null;
   file: string | null;
   range: SourceRange | null;
@@ -3412,6 +3521,7 @@ export type CanvasDragSample = {
 export type CanvasInteractionRequest = {
   schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
   identity: CanvasInteractionIdentity;
+  emittedAtMs: number;
   gestureSequence: number;
   gesture: CanvasInteractionGesture;
   pointer: CanvasPointerSample;
@@ -3428,6 +3538,7 @@ export type CanvasInteractionStatus =
 export type CanvasInteractionTargetKind =
   | "htmlElement"
   | "teraBoundary"
+  | "markdownBoundary"
   | "runtimeElement";
 
 export type CanvasInteractionScopeState =
@@ -3522,6 +3633,28 @@ export type CanvasInteractionResolveInput = {
   editScopeGrant: EditScopeGrant | null;
 };
 
+export type CanvasDragOverTimings = {
+  emittedAtMs: number;
+  rustReceivedAtMs: number;
+  rustCompletedAtMs: number;
+  inputToPlanDurationMs: number;
+  inputToFirstAllowedPlanMs: number | null;
+  rustDurationMs: number;
+};
+
+export type CanvasDragOverResolveInput = {
+  request: CanvasInteractionRequest;
+  sourceNodeId: string;
+  editScopeGrant: EditScopeGrant | null;
+};
+
+export type CanvasDragOverReceipt = {
+  schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
+  interaction: CanvasInteractionReceipt;
+  plan: EditorMovePlan | null;
+  timings: CanvasDragOverTimings;
+};
+
 export type CanvasHoverReceipt = {
   schemaVersion: typeof CANVAS_INTERACTION_SCHEMA_VERSION;
   interaction: CanvasInteractionReceipt;
@@ -3536,6 +3669,7 @@ export const SELECTION_COORDINATOR_SCHEMA_VERSION = 1 as const;
 export type SelectionSubjectKind =
   | "htmlElement"
   | "teraBoundary"
+  | "markdownBoundary"
   | "runtimeElement";
 
 export type SelectionSubject = {
@@ -3773,8 +3907,9 @@ export type EditScopeGrant = {
   issuedAtMs: number;
 };
 
-export const EDITOR_MOVE_PLAN_SCHEMA_VERSION = 2 as const;
+export const EDITOR_MOVE_PLAN_SCHEMA_VERSION = 3 as const;
 export const EDITOR_MOVE_EXECUTION_SCHEMA_VERSION = 1 as const;
+export const EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION = 1 as const;
 
 export type EditorMoveOperation =
   | "htmlSourceMove"
@@ -3789,6 +3924,29 @@ export type EditorMoveImpact = {
   renderedInstanceCount: number;
   affectsAllRenderedInstances: boolean;
   requiresPreviewReprojection: boolean;
+};
+
+export type EditorMoveLiveProjectionReason =
+  | "ready"
+  | "planBlocked"
+  | "executionNotHtml"
+  | "missingRenderIdentity"
+  | "ambiguousSourceIdentity"
+  | "multipleRenderedInstances";
+
+export type EditorMoveLiveProjection = {
+  schemaVersion: typeof EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION;
+  operation: "move";
+  scope: "selectedInstance";
+  planToken: string | null;
+  identity: EditorNavigationIdentity;
+  sourceRenderInstanceId: string;
+  targetRenderInstanceId: string;
+  position: ProjectMovePosition;
+  rollback: {
+    sourceParentRenderInstanceId: string | null;
+    sourceNextSiblingRenderInstanceId: string | null;
+  };
 };
 
 export type EditorMovePlan = {
@@ -3806,6 +3964,8 @@ export type EditorMovePlan = {
   targetNodeId: string;
   position: ProjectMovePosition;
   impact: EditorMoveImpact;
+  liveProjection: EditorMoveLiveProjection | null;
+  liveProjectionReason: EditorMoveLiveProjectionReason;
   issuedAtMs: number;
 };
 
@@ -3826,6 +3986,7 @@ export type EditorMoveCommitInput = {
   activeDocumentPath: string;
   previewContextRenderInstanceId?: string | null;
   planToken: string;
+  inputEmittedAtMs?: number;
   editScopeGrant?: EditScopeGrant | null;
 };
 
@@ -3844,6 +4005,29 @@ export type EditorMoveExecutionReceipt = {
   workspaceMutation: ProjectWorkspaceMutationReceipt | null;
   touchedFiles: string[];
   diagnostic: string | null;
+  timings: EditorMoveTimings | null;
+};
+
+export type EditorMoveTimings = {
+  inputEmittedAtMs: number;
+  planIssuedAtMs: number;
+  rustReceivedAtMs: number;
+  rustCompletedAtMs: number;
+  inputToReceiptMs: number;
+  pointerUpToCommitReceiptMs: number;
+  planToReceiptMs: number;
+  rustCommandMs: number;
+  patchIssuedToReceiptMs: number | null;
+  candidateCloneMs: number;
+  mutationMs: number;
+  recoveryPersistMs: number;
+  authorityPublishMs: number;
+  authorityTransactionMs: number;
+  planRevalidationMs: number;
+  nativeBlockContractMs: number;
+  workspaceStageMs: number;
+  afterProjectModelBuildMs: number;
+  aliasCalculationMs: number;
 };
 
 export type SourceEditLocation = {
@@ -3958,7 +4142,31 @@ export type SourceGraphTemplate = {
   blocks: string[];
   macros: string[];
   semantics: TeraSemanticDocument | null;
+  markdownProjections: MarkdownProjection[];
   nodeId: string;
+};
+
+export type MarkdownProjectionKind = "body" | "summary" | "filter" | "toc" | "shortcode";
+
+export type MarkdownSourceBindingKind =
+  | "currentPage"
+  | "currentSection"
+  | "staticPage"
+  | "staticSection"
+  | "runtimePage"
+  | "runtimeSection"
+  | "shortcodeInvocation"
+  | "unresolved";
+
+export type MarkdownProjection = {
+  id: string;
+  kind: MarkdownProjectionKind;
+  templateSourceNodeId: string;
+  templateFile: string;
+  templateRange: SourceRange | null;
+  bindingKind: MarkdownSourceBindingKind;
+  staticContentPath: string | null;
+  runtimeSourceExpression: string | null;
 };
 
 export type TeraSemanticDocument = {
@@ -4583,6 +4791,7 @@ export type SourceGraph = {
   structuredDocuments: SourceStructuredDocument[];
   componentGraph: ComponentGraph;
   blockGraph: BlockGraph;
+  markdownProjections: MarkdownProjection[];
   nodes: SourceGraphNode[];
   relations: SourceGraphRelation[];
   diagnostics: SourceGraphDiagnostic[];
@@ -5639,6 +5848,7 @@ export type PageContractAuthorityReceipt = {
 
 export type CanvasPatchAnchor = {
   sourceId: string;
+  alternateSourceIds: string[];
   renderInstanceId: string | null;
   selectorFallback: string | null;
   expectedTag: string | null;
@@ -5655,10 +5865,22 @@ export type CanvasPatchOperation =
       value: string | null;
     }
   | { kind: "setText"; target: CanvasPatchAnchor; text: string }
+  | { kind: "setTextHtml"; target: CanvasPatchAnchor; escapedText: string }
   | { kind: "replaceTag"; target: CanvasPatchAnchor; newTag: string }
-  | { kind: "insert"; target: CanvasPatchAnchor; position: ProjectMovePosition; html: string }
+  | {
+      kind: "insert";
+      target: CanvasPatchAnchor;
+      position: ProjectMovePosition;
+      html: string;
+      inserted: CanvasPatchAnchor | null;
+    }
   | { kind: "move"; source: CanvasPatchAnchor; target: CanvasPatchAnchor; position: ProjectMovePosition }
-  | { kind: "duplicate"; source: CanvasPatchAnchor; html: string }
+  | {
+      kind: "duplicate";
+      source: CanvasPatchAnchor;
+      html: string;
+      inserted: CanvasPatchAnchor | null;
+    }
   | { kind: "delete"; target: CanvasPatchAnchor };
 
 export type CanvasPatch = {
@@ -5741,6 +5963,7 @@ export type ProjectHtmlTextPatch = {
   lineShift: number;
   tag: string;
   text: string;
+  previousEscapedText: string;
 };
 
 export type PreviewHtmlTextExecutionStatus = "committed" | "blocked";

@@ -24,6 +24,7 @@ use crate::{
         zola_shortcode::{parse_zola_shortcodes, ZolaShortcodeInvocation},
     },
 };
+use zola_config::Config;
 
 pub(super) fn scan_content_page(
     project_root: &Path,
@@ -34,6 +35,7 @@ pub(super) fn scan_content_page(
     template_by_name: &HashMap<String, TemplateSummary>,
     style_by_file: &HashMap<String, String>,
     resolver: &ZolaThemeResolver,
+    route_config: Option<&Config>,
     draft_sources: &HashMap<String, String>,
     builder: &mut SourceGraphBuilder,
 ) -> SourceGraphPage {
@@ -158,7 +160,7 @@ pub(super) fn scan_content_page(
         id: node_id.clone(),
         file,
         title,
-        url: zola_content_url(zola_root, path),
+        url: zola_content_url(zola_root, path, &frontmatter, route_config),
         page_kind,
         frontmatter_template: frontmatter.template,
         frontmatter_page_template: frontmatter.page_template,

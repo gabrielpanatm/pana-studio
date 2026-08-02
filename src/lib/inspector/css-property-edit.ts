@@ -40,7 +40,10 @@ export type CssContinuousEditHandlers = Readonly<{
  */
 export type CssPropertyEditController = Readonly<{
   draft: (property: string, value: string) => void;
+  draftMany: (properties: Readonly<Record<string, string>>) => void;
   commit: (property: string, value?: string) => void;
+  commitMany: (properties?: Readonly<Record<string, string>>) => void;
   cancel: (property: string) => void;
+  cancelMany: (properties: readonly string[]) => void;
   continuous: (property: string) => CssContinuousEditHandlers;
 }>;

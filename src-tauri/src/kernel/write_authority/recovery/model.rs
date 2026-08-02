@@ -512,6 +512,7 @@ impl WalRecordBody {
                             "project-transition-decisions.jsonl"
                                 | "project-transition-decision-recovery-acknowledgements.jsonl"
                         ),
+                        "project_workspace" => leaf == "project-workspace.journal.jsonl",
                         _ => false,
                     };
                     if !session_parent || !owner_path {
@@ -1370,11 +1371,12 @@ pub enum WriteAuthorityRecoveryClassification {
     UnreadableOrCorrupt,
 }
 
-pub const WRITE_AUTHORITY_RECOVERY_RESOLUTION_SCHEMA_VERSION: u32 = 6;
+pub const WRITE_AUTHORITY_RECOVERY_RESOLUTION_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteAuthorityRecoveryResolutionAction {
+    DiscardStagedWrite,
     RestoreOriginal,
     AcceptRestoredState,
     AcceptCurrentState,

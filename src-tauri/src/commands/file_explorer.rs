@@ -94,7 +94,7 @@ pub fn read_file_explorer_snapshot(
             .ok_or_else(|| "FileExplorer cere un proiect activ.".to_string())?;
         workspace.require_identity(&identity)?;
         (
-            workspace.capture_projection_lease()?,
+            workspace.capture_projection_snapshot()?,
             workspace.session.clone(),
         )
     };
@@ -153,7 +153,7 @@ pub fn select_file_explorer_entry(
             .ok_or_else(|| "FileExplorer cere un proiect activ.".to_string())?;
         workspace.require_identity(&input.identity)?;
         (
-            workspace.capture_projection_lease()?,
+            workspace.capture_projection_snapshot()?,
             workspace.session.clone(),
         )
     };
@@ -189,9 +189,11 @@ pub fn select_file_explorer_entry(
         },
         |snapshot: &WorkbenchSnapshot| persist_workbench(&app, &session, snapshot),
     )?;
-    let mut snapshot = state
-        .file_explorer
-        .snapshot(&projection, &workbench.snapshot)?;
+    let mut snapshot = explorer_before;
+    crate::kernel::file_explorer::FileExplorerRuntime::project_workbench_selection(
+        &mut snapshot,
+        &workbench.snapshot,
+    )?;
     if state
         .ai_coordination
         .require_user_source_mutation()
@@ -226,7 +228,7 @@ pub fn plan_file_explorer_operation(
             .ok_or_else(|| "FileExplorer cere un proiect activ.".to_string())?;
         workspace.require_identity(&input.identity)?;
         (
-            workspace.capture_projection_lease()?,
+            workspace.capture_projection_snapshot()?,
             workspace.session.clone(),
         )
     };
@@ -290,7 +292,7 @@ pub fn commit_file_explorer_operation(
         &workspace.session.project_root,
         &project_root,
     )?;
-    let before_projection = workspace.capture_projection_lease()?;
+    let before_projection = workspace.capture_projection_snapshot()?;
     let plan = state.file_explorer.consume_plan(
         &workspace.runtime_session_id(),
         workspace.revision,
@@ -331,7 +333,7 @@ pub fn commit_file_explorer_operation(
             workbench_before.selected_project_entry.clone(),
         )?;
     }
-    let after_projection = workspace.capture_projection_lease()?;
+    let after_projection = workspace.capture_projection_snapshot()?;
     drop(workspace_slot);
 
     if let (Some(source), Some(destination)) = (
@@ -415,7 +417,7 @@ struct PreparedWorkspaceChanges {
 
 fn prepare_workspace_changes(
     project_root: &Path,
-    projection: &crate::kernel::project_workspace::WorkspaceProjectionLease,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
     plan: &FileExplorerCommitPlan,
 ) -> Result<PreparedWorkspaceChanges, String> {
     if plan.source_path.is_none() {
@@ -517,7 +519,7 @@ fn prepare_workspace_changes(
 
 fn accepted_binary_bytes(
     root: &Path,
-    projection: &crate::kernel::project_workspace::WorkspaceProjectionLease,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
     relative_path: &str,
 ) -> Result<Option<Vec<u8>>, String> {
     if !projection
@@ -601,7 +603,7 @@ fn require_schema(schema_version: u32) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::{
-        kernel::project_workspace::WorkspaceProjectionLease,
+        kernel::project_workspace::WorkspaceProjectionSnapshot,
         project::{AcceptedProjectDiskManifest, ProjectDiskManifest, ProjectDiskManifestEntry},
     };
     use std::{
@@ -613,10 +615,10 @@ mod tests {
         root: &Path,
         source_texts: HashMap<String, String>,
         accepted_files: Vec<ProjectDiskManifestEntry>,
-    ) -> WorkspaceProjectionLease {
+    ) -> WorkspaceProjectionSnapshot {
         let project_root = root.to_string_lossy().into_owned();
         let runtime_session_id = "file-explorer-command-test".to_string();
-        WorkspaceProjectionLease {
+        WorkspaceProjectionSnapshot {
             project_root: project_root.clone(),
             runtime_session_id: runtime_session_id.clone(),
             revision: 4,

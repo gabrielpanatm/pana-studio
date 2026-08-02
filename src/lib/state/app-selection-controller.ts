@@ -81,6 +81,22 @@ export async function openSelectedTeraSource(app: AppState) {
   app.requestCodeSelectionReveal();
 }
 
+export async function openSelectedMarkdownContent(app: AppState) {
+  const navigationNode = app.selectedEditorNavigationNode;
+  const source = navigationNode?.sourceProvenance.definition;
+  const relativePath = source?.file.replaceAll("\\", "/").replace(/^\.\//, "") ?? "";
+  if (
+    navigationNode?.kind !== "markdownBoundary"
+    || navigationNode.sourceProvenance.resolution !== "resolved"
+    || !relativePath.startsWith("content/")
+    || !relativePath.toLocaleLowerCase().endsWith(".md")
+  ) {
+    app.setGlobalStatus(t("markdown-boundary-unresolved"), "error");
+    return;
+  }
+  await app.openContentPageEditor(relativePath);
+}
+
 export function selectTeraLayerSource(
   app: AppState,
   _section: PageSection,

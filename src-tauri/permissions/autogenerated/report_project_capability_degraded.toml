@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-report-project-capability-degraded"
+description = "Enables the report_project_capability_degraded command without any pre-configured scope."
+commands.allow = ["report_project_capability_degraded"]
+
+[[permission]]
+identifier = "deny-report-project-capability-degraded"
+description = "Denies the report_project_capability_degraded command without any pre-configured scope."
+commands.deny = ["report_project_capability_degraded"]

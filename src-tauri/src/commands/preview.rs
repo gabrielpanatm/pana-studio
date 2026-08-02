@@ -4,12 +4,12 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::{
     kernel::{
         observability::{
-            append_event, append_events, KernelEventKind, KernelLogEvent, KernelLogLevel,
+            append_event, append_events, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel,
         },
         write_authority::WriteAuthorityRuntime,
     },
@@ -22,7 +22,7 @@ use crate::{
         ProjectPreviewMutationKind, ProjectPreviewMutationReceipt, ProjectPreviewRequestIdentity,
         ProjectPreviewStartReceipt,
     },
-    project::{is_zola_project, zola_project_root},
+    project::{is_zola_project, zola_project_root, ActiveProjectReadiness},
     project_model::template_workbench::{
         resolve_template_workbench_plan, TemplateWorkbenchPlan, TemplateWorkbenchPlanInput,
     },
@@ -37,9 +37,53 @@ const PREVIEW_RUNTIME_EVENT_SCHEMA_VERSION: u32 = 1;
 pub enum PreviewRuntimeEventKind {
     InteractiveJsRestarted,
     InteractiveJsFailed,
+    CanvasPatchApplied,
+    CanvasPatchRefused,
     CanvasPatchRolledBack,
+    CanvasDragPreviewApplied,
+    CanvasDragPreviewSkipped,
     CanvasFallback,
+    CanvasStylesheetsPromoted,
     CanvasAckTimeout,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewStylesheetPromotionMetrics {
+    pub reused: u32,
+    pub staged: u32,
+    pub retired: u32,
+    #[serde(default)]
+    pub preloads_reused: u32,
+    #[serde(default)]
+    pub preloads_staged: u32,
+    #[serde(default)]
+    pub preloads_retired: u32,
+    #[serde(default)]
+    pub head_nodes_reused: u32,
+    #[serde(default)]
+    pub head_nodes_created: u32,
+    #[serde(default)]
+    pub head_nodes_retired: u32,
+    #[serde(default)]
+    pub head_nodes_reordered: u32,
+    #[serde(default)]
+    pub stylesheet_attribute_mutations: u32,
+    #[serde(default)]
+    pub preload_attribute_mutations: u32,
+    #[serde(default)]
+    pub font_invalidation_count: u32,
+    #[serde(default)]
+    pub font_fallback_frames: u32,
+    #[serde(default)]
+    pub max_text_metric_delta: f64,
+    #[serde(default)]
+    pub font_activation_error_count: u32,
+    #[serde(default)]
+    pub font_activation_diagnostic: Option<String>,
+    #[serde(default)]
+    pub fonts_ready_ms: u64,
+    pub activation_to_styled_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -50,6 +94,8 @@ pub struct PreviewRuntimeEventInput {
     pub kind: PreviewRuntimeEventKind,
     pub duration_ms: u64,
     pub diagnostic: Option<String>,
+    #[serde(default)]
+    pub stylesheet_metrics: Option<PreviewStylesheetPromotionMetrics>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -198,6 +244,10 @@ fn append_projection_publication_event<R: tauri::Runtime>(
     .with_attribute("durabilityOperationCount", stats.durability_operations)
     .with_attribute("materializedEntryCount", stats.materialized_entries)
     .with_attribute("materializedBytes", stats.materialized_bytes)
+    .with_attribute("reusedEntryCount", stats.reused_entries)
+    .with_attribute("reusedBytes", stats.reused_bytes)
+    .with_attribute("reflinkedFileCount", stats.reflinked_files)
+    .with_attribute("copiedFallbackFileCount", stats.copied_fallback_files)
     .with_attribute("totalMs", candidate.timings.total_ms)
     .with_attribute(
         "sourcePublicationMs",
@@ -323,14 +373,25 @@ pub async fn start_project_preview(
 ) -> Result<Option<ProjectPreviewStartReceipt>, String> {
     let root = require_project_preview_session(state.inner(), &input)?;
     if !is_zola_project(&root) {
+        let _ = state.project_lifecycle.set_readiness(
+            &input.expected_project_root,
+            &input.expected_session_id,
+            ActiveProjectReadiness::Degraded {
+                capability: "preview".to_string(),
+                diagnostic: "Root-ul activ nu mai este un proiect Zola valid.".to_string(),
+            },
+            "preview_not_zola",
+        );
         return Ok(None);
     }
     let zola_root = zola_project_root(&root);
     let task_identity = input.clone();
     let task_project_root = root.clone();
+    let preview_app = app.clone();
 
-    let receipt = tauri::async_runtime::spawn_blocking(
+    let receipt_result = tauri::async_runtime::spawn_blocking(
         move || -> Result<ProjectPreviewStartReceipt, String> {
+            let app = preview_app;
             let state = app.state::<AppState>();
             let _operation = state
                 .preview_workspace_operation
@@ -357,10 +418,7 @@ pub async fn start_project_preview(
             let engine = engine_slot
                 .as_mut()
                 .expect("engine replacement must publish an engine");
-            if engine.active_matches_revision(projection.revision)? {
-                let active = engine
-                    .active_generation()?
-                    .expect("matching active revision must exist");
+            if let Some(active) = engine.generation_for_workspace_revision(projection.revision)? {
                 append_canvas_observation_event(
                     &app,
                     &active.canvas_transaction.plan(),
@@ -403,9 +461,63 @@ pub async fn start_project_preview(
         },
     )
     .await
-    .map_err(|error| format!("Preview task eșuat: {error}"))??;
+    .map_err(|error| format!("Preview task eșuat: {error}"))
+    .and_then(|result| result);
+    let receipt = match receipt_result {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            let _ = state.project_lifecycle.set_readiness(
+                &input.expected_project_root,
+                &input.expected_session_id,
+                ActiveProjectReadiness::Degraded {
+                    capability: "preview".to_string(),
+                    diagnostic: error.clone(),
+                },
+                "preview_prepare_failed",
+            );
+            return Err(error);
+        }
+    };
 
     require_project_preview_workspace_revision(state.inner(), &input, receipt.workspace_revision)?;
+    let readiness = if receipt.canvas_projection.phase == CanvasProjectionPhase::CanonicalVerified {
+        ActiveProjectReadiness::FinalizingFrontend
+    } else {
+        ActiveProjectReadiness::AwaitingCanvas
+    };
+    let lifecycle = state.project_lifecycle.set_readiness(
+        &input.expected_project_root,
+        &input.expected_session_id,
+        readiness,
+        "preview_prepared",
+    )?;
+    if let Some(active) = lifecycle.active_session.as_ref() {
+        let _ = append_event(
+            &app,
+            KernelLogEvent::new(
+                KernelLogLevel::Info,
+                KernelEventKind::ProjectLifecycleTransition,
+                "project_lifecycle",
+                "project_transition",
+                "preview_prepared",
+                Some(receipt.canvas_projection.identity.transaction_id.clone()),
+                "ProjectLifecycle a confirmat generația Preview inițială.",
+                None,
+            )
+            .with_attribute("projectRoot", &active.project_root)
+            .with_attribute("sessionId", &active.runtime_session_id)
+            .with_attribute("readiness", &active.readiness)
+            .with_attribute(
+                "commitToPreviewPreparedMs",
+                now_ms()
+                    .saturating_sub(active.committed_at_ms)
+                    .min(u64::MAX as u128) as u64,
+            )
+            .with_attribute("workspaceRevision", receipt.workspace_revision)
+            .with_attribute("previewRevision", &receipt.preview_revision),
+        );
+    }
+    let _ = app.emit("project-lifecycle-changed", lifecycle);
     Ok(Some(receipt))
 }
 
@@ -468,17 +580,15 @@ pub async fn project_project_workspace_preview(
             let engine = engine_slot
                 .as_mut()
                 .expect("engine replacement must publish an engine");
-            if engine.active_matches_revision(projection.revision)? {
-                if let Some(active) = engine.active_generation()? {
-                    append_canvas_observation_event(
-                        &app,
-                        &active.canvas_transaction.plan(),
-                        KernelEventKind::PreviewCanvasCacheHit,
-                        KernelLogLevel::Info,
-                        "canvas.cache_hit",
-                        None,
-                    );
-                }
+            if let Some(active) = engine.generation_for_workspace_revision(projection.revision)? {
+                append_canvas_observation_event(
+                    &app,
+                    &active.canvas_transaction.plan(),
+                    KernelEventKind::PreviewCanvasCacheHit,
+                    KernelLogLevel::Info,
+                    "canvas.cache_hit",
+                    None,
+                );
                 return Ok((None, Vec::new()));
             }
             let candidate = engine.render_candidate_with_project_model(
@@ -714,6 +824,7 @@ pub fn acknowledge_canvas_projection_phase(
             Some("CSS/fonts ready și frame stilizat confirmat înainte de promovare.".to_string()),
         );
     }
+    update_lifecycle_from_canvas_plan(&app, state.inner(), &plan, input.diagnostic.as_deref())?;
     Ok(plan)
 }
 
@@ -740,6 +851,7 @@ pub fn acknowledge_canvas_projection_phases(
         return Err(error);
     }
     let canvas_identity = first.identity.clone();
+    let final_diagnostic = inputs.last().and_then(|input| input.diagnostic.clone());
     let (final_plan, events) = {
         let _operation = state
             .preview_workspace_operation
@@ -833,7 +945,85 @@ pub fn acknowledge_canvas_projection_phases(
         )
     };
     let _ = append_events(&app, events);
+    update_lifecycle_from_canvas_plan(
+        &app,
+        state.inner(),
+        &final_plan,
+        final_diagnostic.as_deref(),
+    )?;
     Ok(final_plan)
+}
+
+fn update_lifecycle_from_canvas_plan(
+    app: &AppHandle,
+    state: &AppState,
+    plan: &CanvasProjectionPlan,
+    diagnostic: Option<&str>,
+) -> Result<(), String> {
+    let (readiness, reason) = match plan.phase {
+        CanvasProjectionPhase::CanonicalVerified => {
+            let current = state
+                .project_lifecycle
+                .snapshot()?
+                .active_session
+                .map(|active| active.readiness);
+            if matches!(current, Some(ActiveProjectReadiness::Ready)) {
+                (ActiveProjectReadiness::Ready, "canvas_canonical_verified")
+            } else {
+                (
+                    ActiveProjectReadiness::FinalizingFrontend,
+                    "canvas_canonical_awaiting_initial_surface",
+                )
+            }
+        }
+        CanvasProjectionPhase::Failed => (
+            ActiveProjectReadiness::Degraded {
+                capability: "canvas".to_string(),
+                diagnostic: diagnostic.unwrap_or("Canvas Runtime a eșuat.").to_string(),
+            },
+            "canvas_failed",
+        ),
+        _ => return Ok(()),
+    };
+    let snapshot = state.project_lifecycle.set_readiness(
+        &plan.identity.project_root,
+        &plan.identity.runtime_session_id,
+        readiness,
+        reason,
+    )?;
+    if let Some(active) = snapshot.active_session.as_ref() {
+        let level = if plan.phase == CanvasProjectionPhase::Failed {
+            KernelLogLevel::Error
+        } else {
+            KernelLogLevel::Info
+        };
+        let _ = append_event(
+            app,
+            KernelLogEvent::new(
+                level,
+                KernelEventKind::ProjectLifecycleTransition,
+                "project_lifecycle",
+                "project_transition",
+                reason,
+                Some(plan.identity.transaction_id.clone()),
+                "ProjectLifecycle a acceptat rezultatul Canvas autoritar.",
+                diagnostic.map(str::to_string),
+            )
+            .with_attribute("projectRoot", &active.project_root)
+            .with_attribute("sessionId", &active.runtime_session_id)
+            .with_attribute("readiness", &active.readiness)
+            .with_attribute(
+                "commitToReadinessMs",
+                now_ms()
+                    .saturating_sub(active.committed_at_ms)
+                    .min(u64::MAX as u128) as u64,
+            )
+            .with_attribute("workspaceRevision", plan.identity.workspace_revision)
+            .with_attribute("previewRevision", &plan.identity.preview_revision),
+        );
+    }
+    let _ = app.emit("project-lifecycle-changed", snapshot);
+    Ok(())
 }
 
 fn require_canvas_phase_batch(inputs: &[PreviewPhaseReceipt]) -> Result<(), String> {
@@ -878,6 +1068,41 @@ pub fn record_preview_runtime_event(
             "Evenimentul Previzualizare interactivă nu respectă protocolul bounded.".to_string(),
         );
     }
+    let stylesheet_event = input.kind == PreviewRuntimeEventKind::CanvasStylesheetsPromoted;
+    if stylesheet_event != input.stylesheet_metrics.is_some()
+        || input.stylesheet_metrics.as_ref().is_some_and(|metrics| {
+            metrics.reused > 4_096
+                || metrics.staged > 4_096
+                || metrics.retired > 4_096
+                || metrics.preloads_reused > 4_096
+                || metrics.preloads_staged > 4_096
+                || metrics.preloads_retired > 4_096
+                || metrics.head_nodes_reused > 16_384
+                || metrics.head_nodes_created > 16_384
+                || metrics.head_nodes_retired > 16_384
+                || metrics.head_nodes_reordered > 16_384
+                || metrics.stylesheet_attribute_mutations > 65_536
+                || metrics.preload_attribute_mutations > 65_536
+                || metrics.font_invalidation_count > 4_096
+                || metrics.font_fallback_frames > 65_536
+                || metrics.font_activation_error_count > 4_096
+                || metrics
+                    .font_activation_diagnostic
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty() || value.len() > 4_096)
+                || (metrics.font_activation_error_count == 0)
+                    != metrics.font_activation_diagnostic.is_none()
+                || metrics.font_activation_diagnostic.as_deref() != input.diagnostic.as_deref()
+                || !metrics.max_text_metric_delta.is_finite()
+                || metrics.max_text_metric_delta < 0.0
+                || metrics.max_text_metric_delta > 1_000_000.0
+                || metrics.fonts_ready_ms > 600_000
+                || metrics.activation_to_styled_ms > 600_000
+                || metrics.activation_to_styled_ms != input.duration_ms
+        })
+    {
+        return Err("Evenimentul de promovare CSS nu respectă protocolul bounded.".to_string());
+    }
     let engine = state.preview_engine.lock().map_err(|_| {
         "Nu am putut valida motorul pentru evenimentul Previzualizare interactivă.".to_string()
     })?;
@@ -911,15 +1136,35 @@ pub fn record_preview_runtime_event(
             KernelEventKind::PreviewCanvasPatchRolledBack,
             KernelLogLevel::Warn,
         ),
+        PreviewRuntimeEventKind::CanvasPatchApplied => (
+            KernelEventKind::PreviewCanvasPatchApplied,
+            KernelLogLevel::Info,
+        ),
+        PreviewRuntimeEventKind::CanvasPatchRefused => (
+            KernelEventKind::PreviewCanvasPatchRefused,
+            KernelLogLevel::Warn,
+        ),
+        PreviewRuntimeEventKind::CanvasDragPreviewApplied => (
+            KernelEventKind::PreviewCanvasDragPreviewApplied,
+            KernelLogLevel::Info,
+        ),
+        PreviewRuntimeEventKind::CanvasDragPreviewSkipped => (
+            KernelEventKind::PreviewCanvasDragPreviewSkipped,
+            KernelLogLevel::Info,
+        ),
         PreviewRuntimeEventKind::CanvasFallback => {
             (KernelEventKind::PreviewCanvasFallback, KernelLogLevel::Info)
         }
+        PreviewRuntimeEventKind::CanvasStylesheetsPromoted => (
+            KernelEventKind::PreviewCanvasStylesheetsPromoted,
+            KernelLogLevel::Info,
+        ),
         PreviewRuntimeEventKind::CanvasAckTimeout => (
             KernelEventKind::PreviewCanvasAckTimeout,
             KernelLogLevel::Error,
         ),
     };
-    let event = KernelLogEvent::new(
+    let mut event = KernelLogEvent::new(
         level,
         event_kind,
         if interactive_event {
@@ -943,6 +1188,44 @@ pub fn record_preview_runtime_event(
     .with_attribute("canvasTransactionId", &input.identity.transaction_id)
     .with_attribute("previewRevision", &input.identity.preview_revision)
     .with_attribute("durationMs", input.duration_ms);
+    if let Some(metrics) = input.stylesheet_metrics {
+        event = event
+            .with_attribute("projectionMode", "in_place")
+            .with_attribute("stylesheetsReused", metrics.reused)
+            .with_attribute("stylesheetsStaged", metrics.staged)
+            .with_attribute("stylesheetsRetired", metrics.retired)
+            .with_attribute("preloadsReused", metrics.preloads_reused)
+            .with_attribute("preloadsStaged", metrics.preloads_staged)
+            .with_attribute("preloadsRetired", metrics.preloads_retired)
+            .with_attribute("headNodesReused", metrics.head_nodes_reused)
+            .with_attribute("headNodesCreated", metrics.head_nodes_created)
+            .with_attribute("headNodesRetired", metrics.head_nodes_retired)
+            .with_attribute("headNodesReordered", metrics.head_nodes_reordered)
+            .with_attribute(
+                "stylesheetAttributeMutations",
+                metrics.stylesheet_attribute_mutations,
+            )
+            .with_attribute(
+                "preloadAttributeMutations",
+                metrics.preload_attribute_mutations,
+            )
+            .with_attribute("fontInvalidationCount", metrics.font_invalidation_count)
+            .with_attribute("fontFallbackFrames", metrics.font_fallback_frames)
+            .with_attribute("maxTextMetricDelta", metrics.max_text_metric_delta)
+            .with_attribute(
+                "fontActivationErrorCount",
+                metrics.font_activation_error_count,
+            )
+            .with_attribute(
+                "fontActivationDiagnostic",
+                metrics.font_activation_diagnostic.as_deref().unwrap_or(""),
+            )
+            .with_attribute("fontsReadyMs", metrics.fonts_ready_ms)
+            .with_attribute(
+                "stylesheetActivationToStyledMs",
+                metrics.activation_to_styled_ms,
+            );
+    }
     append_event(&app, event)?;
     Ok(PreviewRuntimeEventReceipt {
         schema_version: PREVIEW_RUNTIME_EVENT_SCHEMA_VERSION,
@@ -979,7 +1262,7 @@ fn stage_candidate_if_current<R: tauri::Runtime>(
     app: &AppHandle<R>,
     state: &AppState,
     identity: &ProjectPreviewRequestIdentity,
-    lease: &crate::kernel::project_workspace::WorkspaceProjectionLease,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
     engine: &mut PersistentZolaPreviewEngine,
     candidate: PersistentPreviewCandidate,
 ) -> Result<CanvasProjectionPlan, String> {
@@ -1002,9 +1285,9 @@ fn stage_candidate_if_current<R: tauri::Runtime>(
         let workspace = workspace.as_mut().ok_or_else(|| {
             "Staging-ul Canvas a fost anulat: ProjectWorkspace lipsește.".to_string()
         })?;
-        workspace.require_current_projection(lease)?;
+        workspace.require_current_projection(projection)?;
         workspace.publish_project_model(
-            lease,
+            projection,
             candidate
                 .as_ref()
                 .expect("candidate exists before staging")
@@ -1058,7 +1341,7 @@ fn capture_workspace_projection_with_model(
     expected_revision: Option<u64>,
 ) -> Result<
     (
-        crate::kernel::project_workspace::WorkspaceProjectionLease,
+        crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
         Option<crate::project_model::model::ProjectModel>,
     ),
     String,
@@ -1078,7 +1361,7 @@ fn capture_workspace_projection_with_model(
             ));
         }
     }
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let project_model = if workspace.project_model_source_revision == Some(projection.revision) {
         workspace.project_model.clone()
     } else {

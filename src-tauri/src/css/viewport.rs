@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use super::background::CssBackground;
+use super::grid::CssGrid;
 use super::rules::{
     get_class_rules as parse_class_rules, get_class_rules_in_media, has_class_rule,
     has_class_rule_in_media, has_media_block, upsert_css_rule_desktop,
@@ -23,6 +25,8 @@ pub struct CssRuleContext {
     pub viewport_rules: Vec<CssProperty>,
     pub has_base_rule: bool,
     pub has_viewport_rule: bool,
+    pub background: CssBackground,
+    pub grid: CssGrid,
 }
 
 pub fn get_rule_context(
@@ -43,6 +47,23 @@ pub fn get_rule_context(
         _ => (None, base_rules.clone(), has_base_rule),
     };
 
+    // Background layers form a coordinated value across several longhands. A
+    // viewport rule commonly overrides only one of them (for example size), so
+    // the canonical projection must include the desktop declarations it
+    // cascades over. Keeping viewport_rules unchanged preserves the write
+    // target while this combined list represents the effective background.
+    let effective_background_rules = if has_viewport_rule {
+        base_rules
+            .iter()
+            .chain(viewport_rules.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+    } else {
+        base_rules.clone()
+    };
+    let background = CssBackground::from_rules(&effective_background_rules);
+    let grid = CssGrid::from_rules(&effective_background_rules);
+
     CssRuleContext {
         file: relative_path,
         selector,
@@ -52,6 +73,8 @@ pub fn get_rule_context(
         viewport_rules,
         has_base_rule,
         has_viewport_rule,
+        background,
+        grid,
     }
 }
 
@@ -141,4 +164,132 @@ fn parse_breakpoint_px(value: &str) -> Option<u32> {
     let trimmed = value.trim();
     let num_end = trimmed.find(|c: char| !c.is_ascii_digit())?;
     trimmed[..num_end].parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{get_rule_context, write_rule_at_viewport, CssBreakpointValues};
+
+    #[test]
+    fn background_projection_cascades_partial_viewport_longhands() {
+        let source = r#"
+.hero {
+  background-image: url('/hero.webp'), linear-gradient(red, blue);
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+@media (max-width: $bp-mobil) {
+  .hero { background-size: contain, 100% 100%; }
+}
+"#;
+        let context = get_rule_context(
+            &CssBreakpointValues::default(),
+            "sass/pagini/index.scss".to_string(),
+            source,
+            ".hero".to_string(),
+            "mobile".to_string(),
+        );
+
+        assert!(context.has_viewport_rule);
+        assert_eq!(context.viewport_rules.len(), 1);
+        assert_eq!(context.background.layers.len(), 2);
+        assert_eq!(context.background.layers[0].size, "contain");
+        assert_eq!(context.background.layers[1].size, "100% 100%");
+        assert_eq!(context.background.layers[0].repeat, "no-repeat");
+        assert_eq!(context.background.layers[1].repeat, "no-repeat");
+    }
+
+    #[test]
+    fn a_background_property_set_is_written_as_one_rule_mutation() {
+        let properties = HashMap::from([
+            (
+                "background-image".to_string(),
+                "linear-gradient(red, blue), url('/grain.png')".to_string(),
+            ),
+            (
+                "background-position".to_string(),
+                "center, top left".to_string(),
+            ),
+            ("background-size".to_string(), "cover, auto".to_string()),
+        ]);
+        let updated = write_rule_at_viewport(
+            &CssBreakpointValues::default(),
+            ".hero { color: white; }",
+            ".hero",
+            &properties,
+            "desktop",
+        );
+        let context = get_rule_context(
+            &CssBreakpointValues::default(),
+            "sass/pagini/index.scss".to_string(),
+            &updated,
+            ".hero".to_string(),
+            "desktop".to_string(),
+        );
+
+        assert_eq!(context.background.layers.len(), 2);
+        assert_eq!(context.background.layers[0].position, "center");
+        assert_eq!(context.background.layers[1].position, "top left");
+        assert_eq!(context.background.layers[0].size, "cover");
+        assert_eq!(context.background.layers[1].size, "auto");
+        assert!(context
+            .base_rules
+            .iter()
+            .any(|rule| rule.property == "color"));
+    }
+
+    #[test]
+    fn grid_transaction_round_trips_and_cascades_at_a_breakpoint() {
+        let breakpoints = CssBreakpointValues {
+            tablet: None,
+            mobile: Some("720px".to_string()),
+        };
+        let base = HashMap::from([
+            ("display".to_string(), "grid".to_string()),
+            (
+                "grid-template-columns".to_string(),
+                "repeat(auto-fit, minmax(14rem, 1fr))".to_string(),
+            ),
+            ("row-gap".to_string(), "1rem".to_string()),
+            ("column-gap".to_string(), "2rem".to_string()),
+            (
+                "grid-template-areas".to_string(),
+                "\"main side\"".to_string(),
+            ),
+        ]);
+        let desktop = write_rule_at_viewport(&breakpoints, "", ".atelier", &base, "desktop");
+        let mobile = write_rule_at_viewport(
+            &breakpoints,
+            &desktop,
+            ".atelier",
+            &HashMap::from([
+                ("grid-template-columns".to_string(), "1fr".to_string()),
+                (
+                    "grid-template-areas".to_string(),
+                    "\"main\" \"side\"".to_string(),
+                ),
+            ]),
+            "mobile",
+        );
+        let reopened = get_rule_context(
+            &breakpoints,
+            "sass/pagini/index.scss".to_string(),
+            &mobile,
+            ".atelier".to_string(),
+            "mobile".to_string(),
+        );
+
+        assert!(reopened.has_base_rule);
+        assert!(reopened.has_viewport_rule);
+        assert_eq!(reopened.grid.display.as_deref(), Some("grid"));
+        assert_eq!(
+            reopened.grid.template_columns.to_css().as_deref(),
+            Some("1fr")
+        );
+        assert_eq!(reopened.grid.template_areas.rows.len(), 2);
+        assert_eq!(reopened.grid.row_gap.as_deref(), Some("1rem"));
+        assert_eq!(reopened.grid.column_gap.as_deref(), Some("2rem"));
+    }
 }

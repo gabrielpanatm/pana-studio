@@ -94,7 +94,7 @@ export class WorkbenchProjectionController {
         kind: "configure_synchronized_split",
         split: snapshot.split,
         relativePath: file.relativePath,
-        secondarySurface: /\.md$/i.test(file.relativePath) ? "markdown" : "code",
+        secondarySurface: "code",
       });
     }
     return this.apply({
@@ -128,7 +128,6 @@ export class WorkbenchProjectionController {
 }
 
 function workbenchSurface(centerView: CenterView): WorkbenchSurface {
-  if (centerView === "markdown") return "markdown";
   if (centerView === "code") return "code";
   return "visual";
 }

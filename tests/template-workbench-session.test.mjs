@@ -30,7 +30,11 @@ function templateFile(relativePath) {
 }
 
 function pageFile(relativePath) {
-  return { relativePath, role: "page" };
+  return { relativePath, role: "page", kind: "MD", previewPath: "/" };
+}
+
+function styleFile(relativePath) {
+  return { relativePath, role: "style", kind: "SCSS", previewPath: null };
 }
 
 function consumer(pageFile, pageTitle, pageUrl) {
@@ -182,6 +186,38 @@ test("Template Workbench binds activation to the exact ProjectWorkspace revision
   assert.equal(host.templateWorkbenchReturnPreviewPath, "content/_index.md");
   assert.match(host.previewSrc, /__pana_workbench\/template-active/);
   assert.match(statuses.at(-1).text, /Active template context/);
+});
+
+test("a superseded Template Workbench revision never requests a generation that is not materialized", async () => {
+  let previewRequests = 0;
+  mockIPC((command) => {
+    if (command === "read_project_workspace_state") {
+      return {
+        projectRoot: "/project-a",
+        runtimeSessionId: "session-a:runtime-1",
+        revision: 13,
+      };
+    }
+    if (command === "project_template_workbench_preview") previewRequests += 1;
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+  const { host, statuses, template } = workbenchHost();
+
+  const selected = await updateTemplateWorkbenchContext(
+    host,
+    host.scannedProject,
+    template,
+    null,
+    {
+      expectedWorkspaceRevision: 12,
+      minimumWorkspaceRevision: 12,
+      strict: true,
+    },
+  );
+
+  assert.equal(selected, null);
+  assert.equal(previewRequests, 0);
+  assert.deepEqual(statuses, []);
 });
 
 test("Template Workbench binds Canvas interaction to the mounted Workbench graph route", async () => {
@@ -350,6 +386,55 @@ test("reopening the active template preserves its confirmed context", async () =
   assert.equal(calls[0][3].preferredRoute, "/contact/");
 });
 
+test("opening a style source preserves the mounted Template Workbench preview", async () => {
+  const { host } = workbenchHost("templates/index.html");
+  const style = styleFile("sass/css-framework/_baza.scss");
+  const initialPreview = host.previewSrc;
+  let exitCalls = 0;
+  host.templateWorkbenchActive = true;
+  host.source = "";
+  host.sourceCache = {};
+  host.exitTemplateWorkbench = async () => {
+    exitCalls += 1;
+    throw new Error("Preview navigation must not run for source-only files");
+  };
+  mockIPC((command, payload) => {
+    assert.equal(command, "read_project_file");
+    assert.equal(payload.relativePath, style.relativePath);
+    return "$culoare: red;\n";
+  });
+
+  await loadScannedProjectFile(host, style, { skipDraftFlush: true, strict: true });
+
+  assert.equal(host.source, "$culoare: red;\n");
+  assert.equal(host.activeScannedPath, style.relativePath);
+  assert.equal(host.previewSrc, initialPreview);
+  assert.equal(host.templateWorkbenchActive, true);
+  assert.equal(exitCalls, 0);
+});
+
+test("page source is committed before a failing Preview transition", async () => {
+  const { host, page } = workbenchHost("templates/index.html");
+  host.templateWorkbenchActive = true;
+  host.source = "";
+  host.sourceCache = {};
+  host.exitTemplateWorkbench = async () => {
+    throw new Error("Canvas route unavailable");
+  };
+  mockIPC((command) => {
+    assert.equal(command, "read_project_file");
+    return "+++\ntitle = 'Acasă'\n+++\n";
+  });
+
+  await assert.rejects(
+    loadScannedProjectFile(host, page, { skipDraftFlush: true, strict: true }),
+    /Canvas route unavailable/,
+  );
+
+  assert.equal(host.source, "+++\ntitle = 'Acasă'\n+++\n");
+  assert.equal(host.activeScannedPath, page.relativePath);
+});
+
 test("Template Workbench opens a taxonomy resource only with the exact Rust-confirmed route", async () => {
   let workbenchRequest = null;
   const { host, statuses } = workbenchHost("templates/tags/list.html");
@@ -515,7 +600,8 @@ test("exiting Workbench returns to the real page preview without a second server
   assert.equal(host.templateWorkbenchActive, false);
   assert.equal(host.templateWorkbenchPlan, null);
   assert.equal(host.activePreviewPath, page.relativePath);
-  assert.equal(host.previewSrc, `http://127.0.0.1:41000/${page.relativePath}`);
+  assert.equal(host.previewSrc, "http://127.0.0.1:41000/");
+  assert.equal(host.browserPreviewRoute, "/");
   assert.deepEqual(refreshes, [host.previewSrc]);
 });
 

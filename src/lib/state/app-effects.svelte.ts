@@ -12,6 +12,7 @@ import {
   scheduleProjectWorkspaceDerivedPreviewProjection,
 } from "$lib/kernel/project-workspace-preview-coordinator";
 import { t } from "$lib/i18n/runtime.svelte";
+import { SOURCE_LOADING_SENTINEL } from "$lib/editor-runtime/source-state";
 
 const TERMINAL_SESSION_VERSION = 6;
 
@@ -186,14 +187,11 @@ export function registerAppEffects(app: AppState) {
 
   // Auto-switch to code view if preview is not available.
   $effect(() => {
-    if (!app.canPreviewCurrentSource && app.centerView === "preview") {
-      app.centerView = "code";
-    }
-  });
-
-  // Markdown view is only valid for Markdown sources; Code remains available for raw editing.
-  $effect(() => {
-    if (app.centerView === "markdown" && app.sourceLanguage !== "markdown") {
+    if (
+      app.activeScannedPath
+      && !app.canPreviewCurrentSource
+      && app.centerView === "preview"
+    ) {
       app.centerView = "code";
     }
   });
@@ -227,11 +225,6 @@ export function registerAppEffects(app: AppState) {
     // CodeMirror instance remains bound to the same ProjectSession host and is
     // destroyed above only when Svelte replaces/removes that host.
     if (activeActivity !== "editor" || app.centerView === "kernel") {
-      return;
-    }
-    if (app.centerView === "markdown" || splitSourceSurface === "markdown") {
-      app.codeEditorController?.destroy();
-      app.codeEditorController = null;
       return;
     }
     const codeSurfaceVisible = app.centerView === "code" || splitSourceSurface === "code";
@@ -292,10 +285,25 @@ export function registerAppEffects(app: AppState) {
 
   // Sync source text to code editor.
   $effect(() => {
-    if (!app.codeEditorController || app.codeEditorController.getDoc() === app.source) return;
+    if (
+      !app.codeEditorController
+      || app.source === SOURCE_LOADING_SENTINEL
+      || app.codeEditorController.getDoc() === app.source
+    ) return;
     app.syncingSourceFromEditor = true;
     app.codeEditorController.setDoc(app.source);
     app.syncingSourceFromEditor = false;
+  });
+
+  // A degraded Rust bootstrap can identify the exact source coordinate which
+  // prevented Zola from rendering. Apply it only after CodeMirror owns the
+  // authoritative source text; opening the file alone is not a repair flow.
+  $effect(() => {
+    app.pendingBootstrapDiagnosticReveal;
+    app.activeScannedPath;
+    app.source;
+    app.codeEditorController;
+    app.applyPendingBootstrapDiagnosticReveal();
   });
 
   // Sync code selection highlight.

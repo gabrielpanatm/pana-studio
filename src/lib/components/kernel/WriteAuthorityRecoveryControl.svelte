@@ -11,11 +11,13 @@
 
   let {
     refreshToken = 0,
+    onScanUpdate = undefined as ((scan: WriteAuthorityRecoveryScan | null) => void) | undefined,
     onStatusUpdate = undefined as
       | ((text: string, kind: "restored" | "saving" | "error") => void)
       | undefined,
   }: {
     refreshToken?: number;
+    onScanUpdate?: (scan: WriteAuthorityRecoveryScan | null) => void;
     onStatusUpdate?: (text: string, kind: "restored" | "saving" | "error") => void;
   } = $props();
 
@@ -36,7 +38,10 @@
     loadError = "";
     try {
       scan = await readWriteAuthorityRecoveryScan();
+      onScanUpdate?.(scan);
     } catch (error) {
+      scan = null;
+      onScanUpdate?.(null);
       loadError = errorMessage(error);
       onStatusUpdate?.(t("wal-scan-failed", { error: loadError }), "error");
     } finally {
@@ -65,6 +70,7 @@
 
   function resolutionLabel(action: WriteAuthorityRecoveryResolutionAction): string {
     const labels: Record<WriteAuthorityRecoveryResolutionAction, string> = {
+      discard_staged_write: t("wal-resolution-discard-staged"),
       restore_original: t("wal-resolution-restore-original"),
       accept_restored_state: t("wal-resolution-accept-restored"),
       accept_current_state: t("wal-resolution-accept-current"),
@@ -80,10 +86,13 @@
   ) {
     if (!item.operationId || !item.phase || !item.evidenceHash) return;
     if (
-      (action === "accept_current_state" ||
+      (action === "discard_staged_write" ||
+        action === "accept_current_state" ||
         action === "continue_tree_removal") &&
       !window.confirm(
-        action === "accept_current_state"
+        action === "discard_staged_write"
+          ? t("wal-confirm-discard-staged")
+          : action === "accept_current_state"
           ? t("wal-confirm-current")
           : action === "continue_tree_removal"
             ? t("wal-confirm-removal")
@@ -102,6 +111,7 @@
         action,
       });
       scan = receipt.recoveryScan;
+      onScanUpdate?.(scan);
       onStatusUpdate?.(t("wal-resolution-completed"), "restored");
     } catch (error) {
       loadError = errorMessage(error);
@@ -165,7 +175,7 @@
               <strong>{item.operationId ?? item.fileName}</strong>
               <span>{classificationLabel(item.classification)}</span>
             </div>
-            <p>{t("wal-item-diagnostic")}</p>
+            <p>{item.diagnostic || t("wal-item-diagnostic")}</p>
             <small>
               {t("wal-phase", { phase: phaseLabel(item.phase) })} ·
               {item.automaticRecoveryAvailable ? t("wal-auto-recovery") : t("wal-manual-review")}
@@ -180,7 +190,7 @@
                     disabled={resolvingOperationId !== null}
                     onclick={() => void resolveItem(item, action)}
                   >
-                    {#if action === "restore_original" || action === "restore_remaining_tree"}
+                    {#if action === "restore_original" || action === "restore_remaining_tree" || action === "discard_staged_write"}
                       <IconRestore size={14} stroke={1.9} />
                     {:else if action === "continue_tree_removal"}
                       <IconAlertTriangle size={14} stroke={1.9} />

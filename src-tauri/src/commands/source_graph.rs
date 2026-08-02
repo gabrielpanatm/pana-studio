@@ -173,29 +173,29 @@ pub fn read_template_catalog(
     state: State<AppState>,
 ) -> Result<TemplateCatalogProjectionReceipt, String> {
     use crate::project_model::cache::{
-        capture_project_model_build_lease, publish_project_model_if_current,
+        capture_project_model_build_context, publish_project_model_if_current,
     };
 
-    let (root, session, lease) = capture_project_model_build_lease(&state)?;
+    let (root, session, context) = capture_project_model_build_context(&state)?;
     require_preview_command_identity(&session, &identity)?;
     let model = crate::project_model::build_project_model_from_workspace_projection(
         &root,
-        lease.projection(),
+        context.projection(),
     )?;
     let graph = model.source_graph.clone();
     let taxonomy_catalog = ["zola.toml", "config.toml"].iter().find_map(|path| {
-        lease
+        context
             .projection()
             .source_texts
             .get(*path)
             .map(|source| build_taxonomy_catalog(&graph, path, source))
     });
     let catalog = build_template_catalog_with_taxonomies(&graph, taxonomy_catalog.as_ref());
-    publish_project_model_if_current(&state, &lease, model)?;
+    publish_project_model_if_current(&state, &context, model)?;
     Ok(TemplateCatalogProjectionReceipt {
-        project_root: lease.projection().project_root.clone(),
-        runtime_session_id: lease.projection().runtime_session_id.clone(),
-        workspace_revision: lease.projection().revision,
+        project_root: context.projection().project_root.clone(),
+        runtime_session_id: context.projection().runtime_session_id.clone(),
+        workspace_revision: context.projection().revision,
         catalog,
     })
 }
@@ -206,20 +206,20 @@ pub fn read_taxonomy_catalog(
     state: State<AppState>,
 ) -> Result<TaxonomyCatalogProjectionReceipt, String> {
     use crate::project_model::cache::{
-        capture_project_model_build_lease, publish_project_model_if_current,
+        capture_project_model_build_context, publish_project_model_if_current,
     };
 
-    let (root, session, lease) = capture_project_model_build_lease(&state)?;
+    let (root, session, context) = capture_project_model_build_context(&state)?;
     require_preview_command_identity(&session, &identity)?;
     let model = crate::project_model::build_project_model_from_workspace_projection(
         &root,
-        lease.projection(),
+        context.projection(),
     )?;
     let graph = model.source_graph.clone();
     let (config_path, config_source) = ["zola.toml", "config.toml"]
         .iter()
         .find_map(|path| {
-            lease
+            context
                 .projection()
                 .source_texts
                 .get(*path)
@@ -230,11 +230,11 @@ pub fn read_taxonomy_catalog(
                 .to_string()
         })?;
     let catalog = build_taxonomy_catalog(&graph, &config_path, config_source);
-    publish_project_model_if_current(&state, &lease, model)?;
+    publish_project_model_if_current(&state, &context, model)?;
     Ok(TaxonomyCatalogProjectionReceipt {
-        project_root: lease.projection().project_root.clone(),
-        runtime_session_id: lease.projection().runtime_session_id.clone(),
-        workspace_revision: lease.projection().revision,
+        project_root: context.projection().project_root.clone(),
+        runtime_session_id: context.projection().runtime_session_id.clone(),
+        workspace_revision: context.projection().revision,
         catalog,
     })
 }
@@ -243,11 +243,9 @@ pub(crate) fn read_source_graph_from_accepted_project(
     identity: &PreviewStructuralCommandIdentity,
     state: &State<AppState>,
 ) -> Result<SourceGraphProjectionReceipt, String> {
-    use crate::project_model::cache::{
-        capture_project_model_build_lease, publish_project_model_if_current,
-    };
+    use crate::project_model::cache::capture_project_model_build_context;
 
-    let (root, session, lease) = capture_project_model_build_lease(state)?;
+    let (_root, session, context) = capture_project_model_build_context(state)?;
     require_preview_command_identity(&session, identity)?;
     let cached_model = {
         let workspace = state.project_workspace.lock().map_err(|_| {
@@ -256,28 +254,23 @@ pub(crate) fn read_source_graph_from_accepted_project(
         let workspace = workspace
             .as_ref()
             .ok_or_else(|| "ProjectWorkspace lipsește pentru SourceGraph.".to_string())?;
-        if workspace.project_model_source_revision == Some(lease.projection().revision) {
+        if workspace.project_model_source_revision == Some(context.projection().revision) {
             workspace.project_model.clone()
         } else {
             None
         }
     };
-    let built_model = cached_model.is_none();
-    let model = match cached_model {
-        Some(model) => model,
-        None => crate::project_model::build_project_model_from_workspace_projection(
-            &root,
-            lease.projection(),
-        )?,
-    };
+    let model = cached_model.ok_or_else(|| {
+        format!(
+            "SourceGraph așteaptă ProjectModel-ul publicat de Preview pentru workspace revision {}.",
+            context.projection().revision
+        )
+    })?;
     let graph = model.source_graph.clone();
-    if built_model {
-        publish_project_model_if_current(state, &lease, model)?;
-    }
     Ok(SourceGraphProjectionReceipt {
-        project_root: lease.projection().project_root.clone(),
-        runtime_session_id: lease.projection().runtime_session_id.clone(),
-        workspace_revision: lease.projection().revision,
+        project_root: context.projection().project_root.clone(),
+        runtime_session_id: context.projection().runtime_session_id.clone(),
+        workspace_revision: context.projection().revision,
         graph,
     })
 }
@@ -569,7 +562,7 @@ where
         create_only_paths,
     )?;
     let create_only = create_only_paths.iter().cloned().collect::<HashSet<_>>();
-    let mut candidate = workspace.capture_projection_lease()?;
+    let mut candidate = workspace.capture_projection_snapshot()?;
     for change in &changes {
         candidate.deleted_sources.remove(&change.relative_path);
         candidate.changed_paths.insert(change.relative_path.clone());

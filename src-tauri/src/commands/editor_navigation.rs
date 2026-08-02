@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
@@ -6,26 +6,30 @@ use tauri::{AppHandle, Manager, State};
 use crate::{
     css::rules::{selector_source_target, selector_source_target_at_offset},
     kernel::canvas_interaction::{
-        CanvasInteractionBindingReceipt, CanvasInteractionIdentity, CanvasInteractionReceipt,
-        CanvasInteractionRequest, CANVAS_INTERACTION_SCHEMA_VERSION,
+        CanvasDragPosition, CanvasInteractionBindingReceipt, CanvasInteractionGesture,
+        CanvasInteractionIdentity, CanvasInteractionReceipt, CanvasInteractionRequest,
+        CANVAS_INTERACTION_SCHEMA_VERSION,
     },
     kernel::editor_navigation::{
         build_editor_navigation_snapshot, editor_navigation_node,
         plan_editor_move as build_editor_move_plan, EditScopeGrant, EditScopeOperation,
-        EditorMoveExecutionReceipt, EditorMoveExecutionStatus, EditorMovePlan,
+        EditorMoveExecutionReceipt, EditorMoveExecutionStatus, EditorMovePlan, EditorMoveTimings,
         EditorNavigationSnapshot,
     },
+    kernel::observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel},
     kernel::preview_projection::{execute_editor_move, PreviewStructuralCommandIdentity},
     kernel::project_path::normalize_project_relative_path,
+    kernel::project_workspace::SourceIdentityAliasTransition,
     kernel::selection_coordinator::{
         HoverSnapshot, SelectionCoordinatorSnapshot, SelectionIntent, SelectionObservationInput,
         SelectionObservationReceipt, SELECTION_COORDINATOR_SCHEMA_VERSION,
     },
     preview::{CanvasGraph, CanvasProjectionIdentity},
+    project::ActiveProjectReadiness,
     project_model::{
         cache::{
-            capture_project_model_build_lease, publish_project_model_if_current,
-            ProjectModelBuildLease,
+            capture_project_model_build_context, publish_project_model_if_current,
+            ProjectModelBuildContext,
         },
         model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
         move_engine::ProjectMovePosition,
@@ -83,6 +87,8 @@ pub struct EditorMoveCommitRequest {
     pub preview_context_render_instance_id: Option<String>,
     pub plan_token: String,
     #[serde(default)]
+    pub input_emitted_at_ms: u64,
+    #[serde(default)]
     pub edit_scope_grant: Option<EditScopeGrant>,
 }
 
@@ -103,6 +109,35 @@ pub struct CanvasInteractionResolveRequest {
     pub request: CanvasInteractionRequest,
     #[serde(default)]
     pub edit_scope_grant: Option<EditScopeGrant>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasDragOverResolveRequest {
+    pub request: CanvasInteractionRequest,
+    pub source_node_id: String,
+    #[serde(default)]
+    pub edit_scope_grant: Option<EditScopeGrant>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasDragOverTimings {
+    pub emitted_at_ms: u64,
+    pub rust_received_at_ms: u64,
+    pub rust_completed_at_ms: u64,
+    pub input_to_plan_duration_ms: u64,
+    pub input_to_first_allowed_plan_ms: Option<u64>,
+    pub rust_duration_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanvasDragOverReceipt {
+    pub schema_version: u32,
+    pub interaction: CanvasInteractionReceipt,
+    pub plan: Option<EditorMovePlan>,
+    pub timings: CanvasDragOverTimings,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -146,10 +181,11 @@ pub struct SelectionCoordinatorReadRequest {
 }
 
 struct EditorNavigationContext {
-    lease: ProjectModelBuildLease,
+    build_context: ProjectModelBuildContext,
     model: ProjectModel,
     snapshot: EditorNavigationSnapshot,
     active_document_path: Option<String>,
+    source_identity_alias_transition: Option<SourceIdentityAliasTransition>,
 }
 
 #[tauri::command]
@@ -171,15 +207,16 @@ pub async fn bind_canvas_interaction_agent(
             preview_context_render_instance_id: input.preview_context_render_instance_id,
         };
         let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
-        let receipt = state.canvas_interaction.bind_agent(
+        let receipt = state.canvas_interaction.bind_agent_with_model(
             &context.snapshot,
+            &context.model,
             context.active_document_path.as_deref(),
             input.identity,
         )?;
         state
             .selection_coordinator
             .bind_inspector_document(receipt.identity.clone())?;
-        publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+        publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
         Ok(receipt)
     })
     .await
@@ -193,20 +230,23 @@ pub fn resolve_canvas_interaction_intent(
     input: CanvasInteractionResolveRequest,
     state: State<AppState>,
 ) -> Result<CanvasInteractionReceipt, String> {
-    let authorized_scope_id = authorize_canvas_edit_scope(&input, state.inner())?;
+    let authorized_scope_id = authorize_canvas_edit_scope(
+        &input.request,
+        input.edit_scope_grant.as_ref(),
+        state.inner(),
+    )?;
     state
         .canvas_interaction
         .resolve(authorized_scope_id.as_deref(), &input.request)
 }
 
 fn authorize_canvas_edit_scope(
-    input: &CanvasInteractionResolveRequest,
+    request: &CanvasInteractionRequest,
+    edit_scope_grant: Option<&EditScopeGrant>,
     state: &AppState,
 ) -> Result<Option<String>, String> {
-    if let Some(grant) = input.edit_scope_grant.as_ref() {
-        let scope_context = state
-            .canvas_interaction
-            .scope_context(&input.request.identity)?;
+    if let Some(grant) = edit_scope_grant {
+        let scope_context = state.canvas_interaction.scope_context(&request.identity)?;
         let active_document_path =
             scope_context
                 .active_document_path
@@ -230,11 +270,87 @@ fn authorize_canvas_edit_scope(
 }
 
 #[tauri::command]
+pub fn resolve_canvas_drag_over_intent(
+    input: CanvasDragOverResolveRequest,
+    state: State<AppState>,
+) -> Result<CanvasDragOverReceipt, String> {
+    require_editor_node_id(&input.source_node_id)?;
+    if input.request.gesture != CanvasInteractionGesture::DragOver {
+        return Err("Canvas DragOver a refuzat alt tip de gest.".to_string());
+    }
+    let rust_started = Instant::now();
+    let rust_received_at_ms = wall_clock_ms();
+    let authorized_scope_id = authorize_canvas_edit_scope(
+        &input.request,
+        input.edit_scope_grant.as_ref(),
+        state.inner(),
+    )?;
+    let (interaction, plan) = state.canvas_interaction.resolve_drag_over(
+        authorized_scope_id.as_deref(),
+        &input.request,
+        |snapshot, model, _active_document_path, receipt| {
+            let (Some(target), Some(drag_position)) =
+                (receipt.target.as_ref(), receipt.drag_position)
+            else {
+                return Ok(None);
+            };
+            let position = match drag_position {
+                CanvasDragPosition::Before => ProjectMovePosition::Before,
+                CanvasDragPosition::After => ProjectMovePosition::After,
+                CanvasDragPosition::Inside => ProjectMovePosition::Inside,
+            };
+            let decision = build_editor_move_plan(
+                &state.editor_navigation,
+                snapshot,
+                model,
+                &input.source_node_id,
+                &target.editor_node_id,
+                position,
+                input.edit_scope_grant.as_ref(),
+            );
+            state
+                .editor_navigation
+                .issue_editor_move_decision(decision)
+                .map(Some)
+        },
+    )?;
+    let rust_completed_at_ms = wall_clock_ms();
+    let emitted_at_ms = input.request.emitted_at_ms;
+    let input_to_plan_duration_ms = if emitted_at_ms == 0 {
+        0
+    } else {
+        rust_completed_at_ms.saturating_sub(emitted_at_ms)
+    };
+    let input_to_first_allowed_plan_ms = plan
+        .as_ref()
+        .and_then(|plan| plan.as_ref())
+        .filter(|plan| plan.allowed)
+        .map(|_| input_to_plan_duration_ms);
+    Ok(CanvasDragOverReceipt {
+        schema_version: CANVAS_INTERACTION_SCHEMA_VERSION,
+        interaction,
+        plan: plan.flatten(),
+        timings: CanvasDragOverTimings {
+            emitted_at_ms,
+            rust_received_at_ms,
+            rust_completed_at_ms,
+            input_to_plan_duration_ms,
+            input_to_first_allowed_plan_ms,
+            rust_duration_ms: rust_started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        },
+    })
+}
+
+#[tauri::command]
 pub fn resolve_canvas_hover_intent(
     input: CanvasInteractionResolveRequest,
     state: State<AppState>,
 ) -> Result<CanvasHoverReceipt, String> {
-    let authorized_scope_id = authorize_canvas_edit_scope(&input, state.inner())?;
+    let authorized_scope_id = authorize_canvas_edit_scope(
+        &input.request,
+        input.edit_scope_grant.as_ref(),
+        state.inner(),
+    )?;
     let document_epoch = input.request.identity.document_epoch;
     let (interaction, projection) = state.canvas_interaction.resolve_pointer_hover(
         authorized_scope_id.as_deref(),
@@ -258,6 +374,13 @@ pub fn resolve_canvas_hover_intent(
         interaction,
         projection,
     })
+}
+
+fn wall_clock_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
 }
 
 #[tauri::command]
@@ -292,13 +415,16 @@ pub fn apply_selection_intent(
     };
     let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
     let intent = selection_intent_from_project_model(&context.model, input.intent)?;
-    let receipt = state.selection_coordinator.apply(
-        &context.snapshot,
-        context.active_document_path.as_deref(),
-        Some(&context.model.source_graph),
-        intent,
-    )?;
-    publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+    let receipt = state
+        .selection_coordinator
+        .apply_with_source_alias_transition(
+            &context.snapshot,
+            context.active_document_path.as_deref(),
+            Some(&context.model.source_graph),
+            context.source_identity_alias_transition.as_ref(),
+            intent,
+        )?;
+    publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(receipt)
 }
 
@@ -315,13 +441,16 @@ pub fn read_selection_snapshot(
         preview_context_render_instance_id: input.preview_context_render_instance_id,
     };
     let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
-    let receipt = state.selection_coordinator.apply(
-        &context.snapshot,
-        context.active_document_path.as_deref(),
-        Some(&context.model.source_graph),
-        SelectionIntent::Rebase,
-    )?;
-    publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+    let receipt = state
+        .selection_coordinator
+        .apply_with_source_alias_transition(
+            &context.snapshot,
+            context.active_document_path.as_deref(),
+            Some(&context.model.source_graph),
+            context.source_identity_alias_transition.as_ref(),
+            SelectionIntent::Rebase,
+        )?;
+    publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(receipt)
 }
 
@@ -336,11 +465,82 @@ pub fn accept_selection_observation(
 #[tauri::command]
 pub fn read_editor_navigation_snapshot(
     input: EditorNavigationSnapshotRequest,
+    app: AppHandle,
     state: State<AppState>,
 ) -> Result<EditorNavigationSnapshot, String> {
     let context = resolve_editor_navigation_context(&input, state.inner())?;
-    publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+    publish_project_model_if_current(state.inner(), &context.build_context, context.model.clone())?;
+    finalize_initial_frontend_surface(&app, state.inner(), &input, &context)?;
     Ok(context.snapshot)
+}
+
+fn finalize_initial_frontend_surface(
+    app: &AppHandle,
+    state: &AppState,
+    input: &EditorNavigationSnapshotRequest,
+    context: &EditorNavigationContext,
+) -> Result<(), String> {
+    let lifecycle = state.project_lifecycle.snapshot()?;
+    let Some(active) = lifecycle.active_session else {
+        return Ok(());
+    };
+    if !matches!(active.readiness, ActiveProjectReadiness::FinalizingFrontend) {
+        return Ok(());
+    }
+    if active.project_root != input.identity.project_root
+        || active.runtime_session_id != input.identity.runtime_session_id
+    {
+        return Err(
+            "Suprafața frontend inițială aparține altei sesiuni ProjectLifecycle.".to_string(),
+        );
+    }
+    if let Some(active_document_path) = context.active_document_path.as_deref() {
+        if !context.snapshot.route.starts_with("/__pana_workbench/") {
+            return Err(
+                "Suprafața frontend inițială a unui template cere ruta finală Workbench."
+                    .to_string(),
+            );
+        }
+        let focused_document = context
+            .snapshot
+            .focused_view
+            .as_ref()
+            .map(|view| view.active_document_path.as_str());
+        if !focused_document.is_some_and(|focused| same_project_path(focused, active_document_path))
+        {
+            return Err(
+                "Suprafața frontend inițială nu a confirmat documentul activ din Workbench."
+                    .to_string(),
+            );
+        }
+    }
+    state.project_lifecycle.set_readiness(
+        &active.project_root,
+        &active.runtime_session_id,
+        ActiveProjectReadiness::Ready,
+        "initial_frontend_surface_ready",
+    )?;
+    let _ = append_event(
+        app,
+        KernelLogEvent::new(
+            KernelLogLevel::Info,
+            KernelEventKind::ProjectLifecycleTransition,
+            "project_lifecycle",
+            "project_transition",
+            "initial_frontend_surface_ready",
+            Some(input.identity.transaction_id.clone()),
+            "ProjectLifecycle a confirmat documentul, ruta Canvas și navigatorul semantic inițial.",
+            None,
+        )
+        .with_attribute("projectRoot", &active.project_root)
+        .with_attribute("sessionId", &active.runtime_session_id)
+        .with_attribute("route", &context.snapshot.route)
+        .with_attribute(
+            "activeDocumentPath",
+            context.active_document_path.as_deref().unwrap_or("-"),
+        ),
+    );
+    Ok(())
 }
 
 fn require_selection_schema(schema_version: u32) -> Result<(), String> {
@@ -491,7 +691,7 @@ pub fn request_editor_edit_scope(
         active_document_path,
         node,
     )?;
-    publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+    publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(grant)
 }
 
@@ -520,8 +720,8 @@ pub fn plan_editor_move(
     );
     let plan = state
         .editor_navigation
-        .issue_editor_move_plan(decision.plan)?;
-    publish_project_model_if_current(state.inner(), &context.lease, context.model)?;
+        .issue_editor_move_decision(decision)?;
+    publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(plan)
 }
 
@@ -531,48 +731,51 @@ pub fn commit_editor_move(
     input: EditorMoveCommitRequest,
     state: State<'_, AppState>,
 ) -> Result<EditorMoveExecutionReceipt, String> {
+    let rust_started = Instant::now();
+    let rust_received_at_ms = wall_clock_ms();
     if input.plan_token.trim().is_empty() || input.plan_token.len() > 256 {
         return Err("PlanEditorMove a refuzat un token invalid.".to_string());
     }
-    let snapshot_request = EditorNavigationSnapshotRequest {
-        identity: input.identity.clone(),
-        route: input.route,
-        active_document_path: input.active_document_path,
-        preview_context_render_instance_id: input.preview_context_render_instance_id,
-    };
-    let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
+    let context = state
+        .canvas_interaction
+        .planning_context(&input.identity, &input.route)?;
     let active_document_path = context
         .active_document_path
         .as_deref()
         .ok_or_else(|| "PlanEditorMove cere un template activ în Workbench.".to_string())?;
-    let stored_plan = state.editor_navigation.consume_editor_move_plan(
+    if input.active_document_path.as_deref() != Some(active_document_path) {
+        return Err("PlanEditorMove a refuzat alt document activ la commit.".to_string());
+    }
+    if input.preview_context_render_instance_id.as_deref()
+        != context
+            .snapshot
+            .focused_view
+            .as_ref()
+            .and_then(|view| view.preview_context_render_instance_id.as_deref())
+    {
+        return Err("PlanEditorMove a refuzat alt context randat la commit.".to_string());
+    }
+    let plan_revalidation_started = Instant::now();
+    let stored_decision = state.editor_navigation.consume_editor_move_decision(
         &input.plan_token,
         &context.snapshot.identity,
         &context.snapshot.model_revision,
         &context.snapshot.route,
         active_document_path,
     )?;
-    let mut decision = build_editor_move_plan(
-        &state.editor_navigation,
-        &context.snapshot,
-        &context.model,
-        &stored_plan.source_node_id,
-        &stored_plan.target_node_id,
-        stored_plan.position,
-        input.edit_scope_grant.as_ref(),
-    );
-    if !decision.plan.allowed || decision.plan.operation != stored_plan.operation {
-        return Err(decision
-            .plan
-            .reason
-            .unwrap_or_else(|| "PlanEditorMove nu mai este valid la commit.".to_string()));
+    let plan_revalidation_ms = plan_revalidation_started
+        .elapsed()
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    let stored_plan = stored_decision.plan;
+    if !stored_plan.allowed {
+        return Err("PlanEditorMove permis a devenit blocat înainte de commit.".to_string());
     }
     let operation = stored_plan
         .operation
         .ok_or_else(|| "PlanEditorMove permis nu conține operația Rust.".to_string())?;
-    let execution = decision
+    let execution = stored_decision
         .execution
-        .take()
         .ok_or_else(|| "PlanEditorMove permis nu conține execuția Rust.".to_string())?;
     let command_identity = PreviewStructuralCommandIdentity {
         expected_project_root: input.identity.project_root.clone(),
@@ -582,59 +785,207 @@ pub fn commit_editor_move(
     let expected_workspace_revision = input.identity.workspace_revision;
     let expected_model_revision = context.snapshot.model_revision.clone();
     let plan_token = input.plan_token;
-    let receipt = super::kernel_preview_pipeline::run_preview_structural_write_command(
-        &app,
-        &state,
-        &command_identity,
-        "Editor semantic move",
-        |write_context, workspace| {
-            if write_context.workspace_revision != expected_workspace_revision {
-                return Err(format!(
-                    "PlanEditorMove a expirat: workspace revision {} a devenit {}.",
-                    expected_workspace_revision, write_context.workspace_revision
-                ));
-            }
-            let lease = workspace.capture_projection_lease()?;
-            let current_model =
-                crate::project_model::build_project_model_from_workspace_projection(
+    let (mut receipt, commit_timings) =
+        super::kernel_preview_pipeline::run_preview_structural_write_command_measured(
+            &app,
+            &state,
+            &command_identity,
+            "Editor semantic move",
+            |write_context, workspace| {
+                if write_context.workspace_revision != expected_workspace_revision {
+                    return Err(format!(
+                        "PlanEditorMove a expirat: workspace revision {} a devenit {}.",
+                        expected_workspace_revision, write_context.workspace_revision
+                    ));
+                }
+                if context.model.revision != expected_model_revision {
+                    return Err(
+                        "PlanEditorMove a expirat deoarece ProjectModel s-a schimbat.".to_string(),
+                    );
+                }
+                if let Some(scope_id) = stored_plan.impact.edit_scope_id.as_deref() {
+                    let grant = input.edit_scope_grant.as_ref().ok_or_else(|| {
+                        "PlanEditorMove cere EditScopeGrant la commit.".to_string()
+                    })?;
+                    state.editor_navigation.require_edit_scope_grant(
+                        grant,
+                        &input.identity,
+                        &expected_model_revision,
+                        &context.snapshot.route,
+                        active_document_path,
+                        scope_id,
+                        crate::kernel::editor_navigation::EditScopeOperation::MoveHtmlInside,
+                    )?;
+                }
+                execute_editor_move(
+                    &write_context.session,
                     &write_context.root,
-                    &lease,
-                )?;
-            if current_model.revision != expected_model_revision {
-                return Err(
-                    "PlanEditorMove a expirat deoarece ProjectModel s-a schimbat.".to_string(),
-                );
-            }
-            if let Some(scope_id) = stored_plan.impact.edit_scope_id.as_deref() {
-                let grant = input
-                    .edit_scope_grant
-                    .as_ref()
-                    .ok_or_else(|| "PlanEditorMove cere EditScopeGrant la commit.".to_string())?;
-                state.editor_navigation.require_edit_scope_grant(
-                    grant,
-                    &input.identity,
-                    &expected_model_revision,
-                    &context.snapshot.route,
-                    active_document_path,
-                    scope_id,
-                    crate::kernel::editor_navigation::EditScopeOperation::MoveHtmlInside,
-                )?;
-            }
-            execute_editor_move(
-                &write_context.session,
-                &write_context.root,
-                workspace,
-                &plan_token,
-                operation,
-                execution,
-            )
+                    workspace,
+                    &plan_token,
+                    operation,
+                    execution,
+                    context.model.clone(),
+                )
+            },
+        )?;
+    let rust_completed_at_ms = wall_clock_ms();
+    let plan_issued_at_ms = stored_plan.issued_at_ms.min(u64::MAX as u128) as u64;
+    let patch_issued_to_receipt_ms = receipt
+        .canvas_patch
+        .as_ref()
+        .map(|patch| rust_completed_at_ms.saturating_sub(patch.issued_at_ms));
+    receipt.timings = Some(EditorMoveTimings {
+        input_emitted_at_ms: input.input_emitted_at_ms,
+        plan_issued_at_ms,
+        rust_received_at_ms,
+        rust_completed_at_ms,
+        input_to_receipt_ms: if input.input_emitted_at_ms == 0 {
+            0
+        } else {
+            rust_completed_at_ms.saturating_sub(input.input_emitted_at_ms)
         },
-    )?;
+        pointer_up_to_commit_receipt_ms: if input.input_emitted_at_ms == 0 {
+            0
+        } else {
+            rust_completed_at_ms.saturating_sub(input.input_emitted_at_ms)
+        },
+        plan_to_receipt_ms: rust_completed_at_ms.saturating_sub(plan_issued_at_ms),
+        rust_command_ms: rust_started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        patch_issued_to_receipt_ms,
+        candidate_clone_ms: commit_timings.candidate_clone_ms,
+        mutation_ms: commit_timings.mutation_ms,
+        recovery_persist_ms: commit_timings.recovery_persist_ms,
+        authority_publish_ms: commit_timings.authority_publish_ms,
+        authority_transaction_ms: commit_timings.total_ms,
+        plan_revalidation_ms,
+        native_block_contract_ms: receipt.internal_timings.native_block_contract_ms,
+        workspace_stage_ms: receipt.internal_timings.workspace_stage_ms,
+        after_project_model_build_ms: receipt.internal_timings.after_project_model_build_ms,
+        project_model_build_mode: receipt.internal_timings.project_model_build_mode.clone(),
+        project_model_fallback_reason: receipt
+            .internal_timings
+            .project_model_fallback_reason
+            .clone(),
+        project_model_changed_path_count: receipt.internal_timings.project_model_changed_path_count,
+        project_model_invalidated_template_count: receipt
+            .internal_timings
+            .project_model_invalidated_template_count,
+        project_model_invalidated_page_count: receipt
+            .internal_timings
+            .project_model_invalidated_page_count,
+        project_model_replaced_nodes: receipt.internal_timings.project_model_replaced_nodes,
+        project_model_reused_nodes: receipt.internal_timings.project_model_reused_nodes,
+        project_model_reused_relations: receipt.internal_timings.project_model_reused_relations,
+        project_model_clone_ms: receipt.internal_timings.project_model_clone_ms,
+        project_model_template_parse_ms: receipt.internal_timings.project_model_template_parse_ms,
+        project_model_component_graph_ms: receipt.internal_timings.project_model_component_graph_ms,
+        project_model_block_graph_ms: receipt.internal_timings.project_model_block_graph_ms,
+        project_model_tera_graph_ms: receipt.internal_timings.project_model_tera_graph_ms,
+        alias_calculation_ms: receipt.internal_timings.alias_calculation_ms,
+    });
+    append_editor_move_timing_event(&app, &receipt);
     if receipt.status == EditorMoveExecutionStatus::Committed {
         state.canvas_interaction.revoke_all();
         state.editor_navigation.revoke_all();
     }
     Ok(receipt)
+}
+
+fn append_editor_move_timing_event(app: &AppHandle, receipt: &EditorMoveExecutionReceipt) {
+    if receipt.status != EditorMoveExecutionStatus::Committed {
+        return;
+    }
+    let Some(timings) = receipt.timings.as_ref() else {
+        return;
+    };
+    let event = KernelLogEvent::new(
+        KernelLogLevel::Info,
+        KernelEventKind::PreviewEditorMoveCommitted,
+        "preview_projection",
+        "editor_move",
+        "editor_move.commit",
+        receipt
+            .workspace_mutation
+            .as_ref()
+            .and_then(|mutation| mutation.transaction_id.clone()),
+        "Editor move committed by Rust authority.",
+        None,
+    )
+    .with_attribute("projectRoot", &receipt.project_root)
+    .with_attribute("runtimeSessionId", &receipt.runtime_session_id)
+    .with_attribute("operation", format!("{:?}", receipt.operation))
+    .with_attribute("inputToReceiptMs", timings.input_to_receipt_ms)
+    .with_attribute(
+        "pointerUpToCommitReceiptMs",
+        timings.pointer_up_to_commit_receipt_ms,
+    )
+    .with_attribute("planToReceiptMs", timings.plan_to_receipt_ms)
+    .with_attribute("rustCommandMs", timings.rust_command_ms)
+    .with_attribute("candidateCloneMs", timings.candidate_clone_ms)
+    .with_attribute("mutationMs", timings.mutation_ms)
+    .with_attribute("recoveryPersistMs", timings.recovery_persist_ms)
+    .with_attribute("authorityPublishMs", timings.authority_publish_ms)
+    .with_attribute("authorityTransactionMs", timings.authority_transaction_ms)
+    .with_attribute("planRevalidationMs", timings.plan_revalidation_ms)
+    .with_attribute("nativeBlockContractMs", timings.native_block_contract_ms)
+    .with_attribute("workspaceStageMs", timings.workspace_stage_ms)
+    .with_attribute(
+        "afterProjectModelBuildMs",
+        timings.after_project_model_build_ms,
+    )
+    .with_attribute("projectModelBuildMode", &timings.project_model_build_mode)
+    .with_attribute(
+        "projectModelFallbackReason",
+        timings.project_model_fallback_reason.clone(),
+    )
+    .with_attribute(
+        "projectModelChangedPathCount",
+        timings.project_model_changed_path_count,
+    )
+    .with_attribute(
+        "projectModelInvalidatedTemplateCount",
+        timings.project_model_invalidated_template_count,
+    )
+    .with_attribute(
+        "projectModelInvalidatedPageCount",
+        timings.project_model_invalidated_page_count,
+    )
+    .with_attribute(
+        "projectModelReplacedNodes",
+        timings.project_model_replaced_nodes,
+    )
+    .with_attribute(
+        "projectModelReusedNodes",
+        timings.project_model_reused_nodes,
+    )
+    .with_attribute(
+        "projectModelReusedRelations",
+        timings.project_model_reused_relations,
+    )
+    .with_attribute("projectModelCloneMs", timings.project_model_clone_ms)
+    .with_attribute(
+        "projectModelTemplateParseMs",
+        timings.project_model_template_parse_ms,
+    )
+    .with_attribute(
+        "projectModelComponentGraphMs",
+        timings.project_model_component_graph_ms,
+    )
+    .with_attribute(
+        "projectModelBlockGraphMs",
+        timings.project_model_block_graph_ms,
+    )
+    .with_attribute(
+        "projectModelTeraGraphMs",
+        timings.project_model_tera_graph_ms,
+    )
+    .with_attribute("aliasCalculationMs", timings.alias_calculation_ms)
+    .with_attribute("patchIssuedToReceiptMs", timings.patch_issued_to_receipt_ms)
+    .with_attribute("canvasPatchIssued", receipt.canvas_patch.is_some());
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = append_event(&app, event);
+    });
 }
 
 fn resolve_editor_navigation_context(
@@ -643,36 +994,42 @@ fn resolve_editor_navigation_context(
 ) -> Result<EditorNavigationContext, String> {
     let started = Instant::now();
     let route = require_navigation_route(&input.route)?;
-    let (root, session, lease) = capture_project_model_build_lease(state)?;
+    let (root, session, build_context) = capture_project_model_build_context(state)?;
     if session.project_root != input.identity.project_root
         || session.runtime_instance_id() != input.identity.runtime_session_id
-        || lease.projection().revision != input.identity.workspace_revision
+        || build_context.projection().revision != input.identity.workspace_revision
     {
         return Err(format!(
             "EditorNavigationSnapshot a refuzat identitatea stale pentru workspace revision {}.",
             input.identity.workspace_revision
         ));
     }
-    let cached_model = {
+    let (cached_model, source_identity_alias_transition) = {
         let workspace = state.project_workspace.lock().map_err(|_| {
             "Nu am putut citi cache-ul ProjectModel pentru EditorNavigationSnapshot.".to_string()
         })?;
         let workspace = workspace.as_ref().ok_or_else(|| {
             "ProjectWorkspace lipsește pentru EditorNavigationSnapshot.".to_string()
         })?;
-        workspace.require_current_projection(lease.projection())?;
-        if workspace.project_model_source_revision == Some(lease.projection().revision) {
+        workspace.require_current_projection(build_context.projection())?;
+        let cached_model = if workspace.project_model_source_revision
+            == Some(build_context.projection().revision)
+        {
             workspace.project_model.clone()
         } else {
             None
-        }
+        };
+        (
+            cached_model,
+            workspace.source_identity_alias_transition.clone(),
+        )
     };
     let model_cache_hit = cached_model.is_some();
     let model = match cached_model {
         Some(model) => model,
         None => crate::project_model::build_project_model_from_workspace_projection(
             &root,
-            lease.projection(),
+            build_context.projection(),
         )?,
     };
     let active_workbench_document =
@@ -750,10 +1107,11 @@ fn resolve_editor_navigation_context(
         active_document_path.as_deref().unwrap_or("-")
     );
     Ok(EditorNavigationContext {
-        lease,
+        build_context,
         model,
         snapshot,
         active_document_path,
+        source_identity_alias_transition,
     })
 }
 

@@ -1,6 +1,7 @@
 import type {
   ProjectOpenRecoveryAssessment,
   ProjectOpenRecoveryDecisionInput,
+  ProjectOpenInspectionReceipt,
 } from "$lib/types";
 import { t } from "$lib/i18n/runtime.svelte";
 
@@ -10,6 +11,9 @@ export type ProjectOpenRecoveryDecisionRequest = {
   id: string;
   targetRoot: string;
   assessment: ProjectOpenRecoveryAssessment;
+  operationId: string | null;
+  candidateToken: string | null;
+  inspection: ProjectOpenInspectionReceipt | null;
   operatorDecisionId: string | null;
   requestedAt: number;
 };
@@ -18,6 +22,9 @@ export function createProjectOpenRecoveryDecisionRequest(
   targetRoot: string,
   assessment: ProjectOpenRecoveryAssessment,
   operatorDecisionId: string | null,
+  operationId: string | null = null,
+  candidateToken: string | null = null,
+  inspection: ProjectOpenInspectionReceipt | null = null,
 ): ProjectOpenRecoveryDecisionRequest {
   if (assessment.status !== "decision_required" || !assessment.assessmentToken) {
     throw new Error(t("project-recovery-decision-not-required"));
@@ -30,6 +37,9 @@ export function createProjectOpenRecoveryDecisionRequest(
     ].join(":"),
     targetRoot,
     assessment,
+    operationId,
+    candidateToken,
+    inspection,
     operatorDecisionId,
     requestedAt: Date.now(),
   };

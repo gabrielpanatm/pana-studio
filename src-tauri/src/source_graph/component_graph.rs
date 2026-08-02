@@ -1700,7 +1700,7 @@ mod tests {
     };
 
     use crate::{
-        kernel::project_workspace::WorkspaceProjectionLease,
+        kernel::project_workspace::WorkspaceProjectionSnapshot,
         project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
         source_graph::build_source_graph_from_workspace_projection,
     };
@@ -1710,7 +1710,7 @@ mod tests {
         let root = test_project_root("semantic-components");
         let canonical = root.canonicalize().unwrap().to_string_lossy().to_string();
         let session = "component-graph-test".to_string();
-        let lease = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: canonical.clone(),
             runtime_session_id: session.clone(),
             revision: 1,
@@ -1774,7 +1774,7 @@ mod tests {
             )
             .unwrap(),
         };
-        let graph = build_source_graph_from_workspace_projection(&root, &lease).unwrap();
+        let graph = build_source_graph_from_workspace_projection(&root, &projection).unwrap();
         let components = &graph.component_graph;
 
         let local_partial = components

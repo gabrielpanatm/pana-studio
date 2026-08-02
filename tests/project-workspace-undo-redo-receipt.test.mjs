@@ -33,13 +33,17 @@ function receipt(overrides = {}) {
       },
       documents: [],
       history: {},
+      applicationTransactionId: "history-application-8",
     },
     workspace: {
       schemaVersion: PROJECT_WORKSPACE_SCHEMA_VERSION,
       projectRoot: "/project-a",
       runtimeSessionId: "session-a:runtime-1",
       revision: 8,
+      lastProjectionTransactionId: "history-application-8",
     },
+    workbench: null,
+    canvasPatch: null,
     ...overrides,
   };
 }
@@ -52,7 +56,7 @@ const expected = {
   transactionId: "tx-undo-1",
 };
 
-test("receipt-ul comenzii v3 acceptă snapshot-ul ProjectWorkspace curent", () => {
+test("receipt-ul comenzii v4 acceptă snapshot-ul ProjectWorkspace curent", () => {
   const value = receipt();
   assert.equal(
     requireProjectWorkspaceUndoRedoCommandReceipt(value, expected),
@@ -129,20 +133,21 @@ test("numai istoricul structural rescanează catalogul înainte de Preview", asy
   const calls = [];
   const host = {
     activeScannedPath: "content/despre.md",
-    async rescanCurrentProjectWithinKernelUndoRedoLease(...args) {
+    async rescanCurrentProjectForCommittedHistory(...args) {
       calls.push(args);
     },
   };
-  const lease = {
-    expectedProjectRoot: "/project-a",
-    expectedSessionId: "session-a:runtime-1",
-    expectedSessionEpoch: 4,
+  const context = {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    projectSessionEpoch: 4,
+    workspaceRevision: 8,
   };
 
   const contentOnly = receipt();
   assert.equal(projectWorkspaceHistoryChangesTopology(contentOnly), false);
   assert.equal(
-    await reconcileProjectWorkspaceTopologyAfterHistory(host, contentOnly, lease),
+    await reconcileProjectWorkspaceTopologyAfterHistory(host, contentOnly, context),
     false,
   );
   assert.deepEqual(calls, []);
@@ -155,11 +160,11 @@ test("numai istoricul structural rescanează catalogul înainte de Preview", asy
   };
   assert.equal(projectWorkspaceHistoryChangesTopology(structural), true);
   assert.equal(
-    await reconcileProjectWorkspaceTopologyAfterHistory(host, structural, lease),
+    await reconcileProjectWorkspaceTopologyAfterHistory(host, structural, context),
     true,
   );
   assert.deepEqual(calls, [[
-    lease,
+    context,
     "content/despre.md",
     { strict: true, deferPreviewRefresh: true },
   ]]);
@@ -167,7 +172,7 @@ test("numai istoricul structural rescanează catalogul înainte de Preview", asy
 
 test("reconcilierea topologiei precedă publicarea generației Preview", () => {
   const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
-  const syncStart = route.indexOf("async function syncAfterKernelUndoRedo");
+  const syncStart = route.indexOf("async function settleKernelUndoRedoCanonicalProjection");
   const topology = route.indexOf(
     "await reconcileProjectWorkspaceTopologyAfterHistory",
     syncStart,
@@ -178,45 +183,34 @@ test("reconcilierea topologiei precedă publicarea generației Preview", () => {
 
 test("proiecția canonică UI a Undo/Redo nu depinde de succesul Preview", () => {
   const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
-  const syncStart = route.indexOf("async function syncAfterKernelUndoRedo");
-  const refresh = route.indexOf("app.refreshToken += 1", syncStart);
+  const localStart = route.indexOf("function applyKernelUndoRedoLocalProjection");
+  const syncStart = route.indexOf("async function settleKernelUndoRedoCanonicalProjection");
+  const refresh = route.indexOf("app.refreshToken += 1", localStart);
   const preview = route.indexOf("await projectLatestProjectWorkspacePreview", syncStart);
-  const previewCatch = route.indexOf("return errorMessage(error)", preview);
-  const cssRefresh = route.indexOf("app.notifyCssSourceChanged()", syncStart);
+  const previewCatch = route.indexOf("let warning = errorMessage(error)", preview);
+  const rollback = route.indexOf("await app.rollbackCanvasPatchInPreview", previewCatch);
+  const cssRefresh = route.indexOf("app.notifyCssSourceChanged()", localStart);
 
-  assert.ok(syncStart >= 0);
-  assert.ok(cssRefresh > syncStart && cssRefresh < preview);
-  assert.ok(refresh > syncStart && refresh < preview);
+  assert.ok(localStart >= 0 && syncStart > localStart);
+  assert.ok(cssRefresh > localStart && cssRefresh < syncStart);
+  assert.ok(refresh > localStart && refresh < syncStart);
   assert.ok(previewCatch > preview);
+  assert.ok(rollback > previewCatch);
 });
 
-test("bariera Undo închide drafturile interactive înainte să blocheze structural lane", () => {
-  const app = readFileSync(
-    resolve(process.cwd(), "src/lib/state/app.svelte.ts"),
-    "utf8",
-  );
-  const start = app.indexOf("async beginKernelUndoRedoFrontendLease()");
-  const end = app.indexOf("endKernelUndoRedoFrontendLease()", start);
-  const boundary = app.slice(start, end);
-  const quiesce = boundary.indexOf(
-    "this.kernelUndoRedoFrontendQuiesceActive = true",
-  );
-  const flush = boundary.indexOf(
-    'await this.flushInteractiveEditorDrafts("history")',
-  );
-  const exclusiveLease = boundary.indexOf(
-    "this.kernelUndoRedoFrontendLeaseActive = true",
-  );
-  const drain = boundary.indexOf("await drainPreviewStructuralLanes()");
-
+test("Undo/Redo aplică patch-ul înaintea reconcilierii canonice și nu rezervă frontend-ul", () => {
+  const route = readFileSync(resolve(process.cwd(), "src/routes/+page.svelte"), "utf8");
+  const start = route.indexOf("async function runKernelUndoRedo");
+  const end = route.indexOf("function kernelUndoRedoContextIsCurrent", start);
+  const operation = route.slice(start, end);
+  const patch = operation.indexOf("await app.applyCanvasPatchToPreview");
+  const settle = operation.indexOf("void settleKernelUndoRedoCanonicalProjection");
   assert.ok(start >= 0 && end > start);
-  assert.ok(quiesce >= 0);
-  assert.ok(flush > quiesce);
-  assert.ok(exclusiveLease > flush);
-  assert.ok(drain > exclusiveLease);
+  assert.ok(patch >= 0 && settle > patch);
+  assert.doesNotMatch(operation, /beginKernelUndoRedoFrontendLease|drainPreviewStructuralLanes/);
 });
 
-test("mutarea semantică finalizează editarea HTML înainte să intre în structural lane", () => {
+test("mutarea semantică finalizează editarea HTML și comite direct prin autoritatea Rust", () => {
   const controller = readFileSync(
     resolve(process.cwd(), "src/lib/state/editor-navigation-controller.ts"),
     "utf8",
@@ -229,14 +223,16 @@ test("mutarea semantică finalizează editarea HTML înainte să intre în struc
   );
   const capture = operation.indexOf("captureEditorMoveNodeAnchor");
   const rebase = operation.indexOf("resolveEditorMoveNodeAnchor");
-  const lane = operation.indexOf("runInPreviewStructuralLane");
+  const commit = operation.indexOf("await commitEditorMove");
+  const projection = operation.indexOf("await projectCommittedEditorMoveMutation");
 
   assert.ok(start >= 0 && end > start);
   assert.ok(capture >= 0 && capture < flush);
   assert.ok(flush >= 0);
   assert.ok(rebase > flush);
-  assert.ok(lane > flush);
-  assert.ok(lane > rebase);
+  assert.ok(commit > rebase);
+  assert.ok(projection > commit);
+  assert.doesNotMatch(operation, /runInPreviewStructuralLane/);
 });
 
 test("receipt-ul Workbench este validat și proiectat înaintea topologiei", () => {

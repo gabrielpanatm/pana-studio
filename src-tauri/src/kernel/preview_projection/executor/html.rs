@@ -8,10 +8,12 @@ use tauri::AppHandle;
 use crate::{
     kernel::{
         project_session::ProjectSessionSnapshot,
-        project_workspace::{ProjectWorkspace, ProjectWorkspaceMutationReceipt},
+        project_workspace::{
+            ProjectWorkspace, ProjectWorkspaceMutationReceipt, WorkspaceCanvasHistoryDelta,
+        },
     },
     project_model::{
-        attribute_engine::plan_html_attributes,
+        attribute_engine::{plan_html_attributes, raw_tag_attributes},
         delete_engine::plan_html_delete,
         duplicate_engine::plan_html_duplicate,
         html_editor_schema::is_live_projectable_attribute,
@@ -19,7 +21,7 @@ use crate::{
         model::ProjectModel,
         move_engine::{
             html_identity_aliases, html_node_id_at_line, html_node_id_at_location,
-            ProjectSourceEditLocation,
+            parse_html_tag_at, ProjectMovePosition, ProjectSourceEditLocation,
         },
         tag_engine::plan_html_tag,
         text_engine::plan_html_text,
@@ -146,20 +148,33 @@ pub fn execute_preview_html_insert_drop(
         commit,
     } = committed;
     let alias_updates = html_identity_aliases(&before_model, &commit.after_model);
+    let inserted_anchor =
+        html_node_id_at_location(&commit.after_model, &patch.inserted_location, &patch.tag)
+            .map(|source_id| CanvasPatchAnchor::source(source_id, None, Some(&patch.tag)));
+    let forward_operation = CanvasPatchOperation::Insert {
+        target: CanvasPatchAnchor::source(
+            &patch.resolved_target_id,
+            input.insert_intent.target_selector.as_deref(),
+            input.insert_intent.target_tag.as_deref(),
+        ),
+        position: input.insert_intent.position,
+        html: patch.html.clone(),
+        inserted: inserted_anchor.clone(),
+    };
     let canvas_patch = issue_canvas_patch(
         session,
         &commit.workspace_mutation,
         &patch.before_revision,
         &patch.after_revision,
-        CanvasPatchOperation::Insert {
-            target: CanvasPatchAnchor::source(
-                &patch.resolved_target_id,
-                input.insert_intent.target_selector.as_deref(),
-                input.insert_intent.target_tag.as_deref(),
-            ),
-            position: input.insert_intent.position,
-            html: patch.html.clone(),
-        },
+        forward_operation.clone(),
+    )?;
+    attach_canvas_history_delta(
+        workspace,
+        &commit.workspace_mutation,
+        &patch.before_revision,
+        &patch.after_revision,
+        forward_operation,
+        inserted_anchor.map(|target| CanvasPatchOperation::Delete { target }),
     )?;
     let receipt = committed_html_insert_drop_receipt(
         intent_receipt,
@@ -275,8 +290,23 @@ pub fn execute_preview_html_attributes(
             attributes: patch.attributes.clone(),
         })
     });
+    let inverse_operation = canvas_operation.as_ref().and_then(|_| {
+        let attributes = previous_attribute_values(
+            &before_model,
+            &patch.resolved_target_id,
+            patch.attributes.keys(),
+        )?;
+        let target = projected_history_anchor(
+            &commit.after_model,
+            &patch.resolved_target_id,
+            &alias_updates,
+            Some(&patch.tag),
+        )?;
+        Some(CanvasPatchOperation::SetAttributes { target, attributes })
+    });
     let canvas_patch = if commit.workspace_mutation.changed {
         canvas_operation
+            .clone()
             .map(|operation| {
                 issue_canvas_patch(
                     session,
@@ -290,6 +320,16 @@ pub fn execute_preview_html_attributes(
     } else {
         None
     };
+    if let Some(forward_operation) = canvas_operation {
+        attach_canvas_history_delta(
+            workspace,
+            &commit.workspace_mutation,
+            &patch.before_revision,
+            &patch.after_revision,
+            forward_operation,
+            inverse_operation,
+        )?;
+    }
     let receipt = committed_html_attributes_receipt(
         intent_receipt,
         commit.after_model.revision.clone(),
@@ -364,24 +404,45 @@ pub fn execute_preview_html_text(
         &patch.target_location,
         &patch.tag,
     );
+    let forward_operation = CanvasPatchOperation::SetText {
+        target: CanvasPatchAnchor::source(
+            &patch.resolved_target_id,
+            input.text_intent.target_selector.as_deref(),
+            input.text_intent.target_tag.as_deref(),
+        ),
+        text: patch.text.clone(),
+    };
+    let inverse_operation = projected_history_anchor(
+        &commit.after_model,
+        &patch.resolved_target_id,
+        &alias_updates,
+        Some(&patch.tag),
+    )
+    .map(|target| CanvasPatchOperation::SetTextHtml {
+        target,
+        escaped_text: patch.previous_escaped_text.clone(),
+    });
     let canvas_patch = if commit.workspace_mutation.changed {
         Some(issue_canvas_patch(
             session,
             &commit.workspace_mutation,
             &patch.before_revision,
             &patch.after_revision,
-            CanvasPatchOperation::SetText {
-                target: CanvasPatchAnchor::source(
-                    &patch.resolved_target_id,
-                    input.text_intent.target_selector.as_deref(),
-                    input.text_intent.target_tag.as_deref(),
-                ),
-                text: patch.text.clone(),
-            },
+            forward_operation.clone(),
         )?)
     } else {
         None
     };
+    if commit.workspace_mutation.changed {
+        attach_canvas_history_delta(
+            workspace,
+            &commit.workspace_mutation,
+            &patch.before_revision,
+            &patch.after_revision,
+            forward_operation,
+            inverse_operation,
+        )?;
+    }
     let receipt = committed_html_text_receipt(
         intent_receipt,
         commit.after_model.revision.clone(),
@@ -453,19 +514,38 @@ pub fn execute_preview_html_tag(
         &patch.target_location,
         &patch.new_tag,
     );
+    let forward_operation = CanvasPatchOperation::ReplaceTag {
+        target: CanvasPatchAnchor::source(
+            &patch.resolved_target_id,
+            input.tag_intent.target_selector.as_deref(),
+            input.tag_intent.target_tag.as_deref(),
+        ),
+        new_tag: patch.new_tag.clone(),
+    };
+    let inverse_operation = projected_history_anchor(
+        &commit.after_model,
+        &patch.resolved_target_id,
+        &alias_updates,
+        Some(&patch.new_tag),
+    )
+    .map(|target| CanvasPatchOperation::ReplaceTag {
+        target,
+        new_tag: patch.old_tag.clone(),
+    });
     let canvas_patch = issue_canvas_patch(
         session,
         &commit.workspace_mutation,
         &patch.before_revision,
         &patch.after_revision,
-        CanvasPatchOperation::ReplaceTag {
-            target: CanvasPatchAnchor::source(
-                &patch.resolved_target_id,
-                input.tag_intent.target_selector.as_deref(),
-                input.tag_intent.target_tag.as_deref(),
-            ),
-            new_tag: patch.new_tag.clone(),
-        },
+        forward_operation.clone(),
+    )?;
+    attach_canvas_history_delta(
+        workspace,
+        &commit.workspace_mutation,
+        &patch.before_revision,
+        &patch.after_revision,
+        forward_operation,
+        inverse_operation,
     )?;
     let receipt = committed_html_tag_receipt(
         intent_receipt,
@@ -538,6 +618,18 @@ pub fn execute_preview_html_duplicate(
         commit,
     } = committed;
     let alias_updates = html_identity_aliases(&before_model, &commit.after_model);
+    let inserted_anchor =
+        html_node_id_at_location(&commit.after_model, &patch.inserted_location, &patch.tag)
+            .map(|source_id| CanvasPatchAnchor::source(source_id, None, Some(&patch.tag)));
+    let forward_operation = CanvasPatchOperation::Duplicate {
+        source: CanvasPatchAnchor::source(
+            &patch.resolved_source_id,
+            input.duplicate_intent.source_selector.as_deref(),
+            input.duplicate_intent.source_tag.as_deref(),
+        ),
+        html: patch.html.clone(),
+        inserted: inserted_anchor.clone(),
+    };
     let canvas_patch = if patch.zola_image_contract {
         None
     } else {
@@ -546,16 +638,19 @@ pub fn execute_preview_html_duplicate(
             &commit.workspace_mutation,
             &patch.before_revision,
             &patch.after_revision,
-            CanvasPatchOperation::Duplicate {
-                source: CanvasPatchAnchor::source(
-                    &patch.resolved_source_id,
-                    input.duplicate_intent.source_selector.as_deref(),
-                    input.duplicate_intent.source_tag.as_deref(),
-                ),
-                html: patch.html.clone(),
-            },
+            forward_operation.clone(),
         )?)
     };
+    if !patch.zola_image_contract {
+        attach_canvas_history_delta(
+            workspace,
+            &commit.workspace_mutation,
+            &patch.before_revision,
+            &patch.after_revision,
+            forward_operation,
+            inserted_anchor.map(|target| CanvasPatchOperation::Delete { target }),
+        )?;
+    }
     let receipt = committed_html_duplicate_receipt(
         intent_receipt,
         commit.after_model.revision.clone(),
@@ -623,18 +718,34 @@ pub fn execute_preview_html_delete(
         commit,
     } = committed;
     let alias_updates = html_identity_aliases(&before_model, &commit.after_model);
+    let forward_operation = CanvasPatchOperation::Delete {
+        target: CanvasPatchAnchor::source(
+            &patch.resolved_target_id,
+            input.delete_intent.target_selector.as_deref(),
+            input.delete_intent.target_tag.as_deref(),
+        ),
+    };
+    let inverse_operation = inverse_delete_operation(
+        &before_model,
+        &commit.after_model,
+        &patch.resolved_target_id,
+        input.delete_intent.target_tag.as_deref(),
+        &alias_updates,
+    );
     let canvas_patch = issue_canvas_patch(
         session,
         &commit.workspace_mutation,
         &patch.before_revision,
         &patch.after_revision,
-        CanvasPatchOperation::Delete {
-            target: CanvasPatchAnchor::source(
-                &patch.resolved_target_id,
-                input.delete_intent.target_selector.as_deref(),
-                input.delete_intent.target_tag.as_deref(),
-            ),
-        },
+        forward_operation.clone(),
+    )?;
+    attach_canvas_history_delta(
+        workspace,
+        &commit.workspace_mutation,
+        &patch.before_revision,
+        &patch.after_revision,
+        forward_operation,
+        inverse_operation,
     )?;
     let receipt = committed_html_delete_receipt(
         intent_receipt,
@@ -649,6 +760,142 @@ pub fn execute_preview_html_delete(
         receipt,
         after_model: Some(commit.after_model),
         alias_updates,
+    })
+}
+
+fn attach_canvas_history_delta(
+    workspace: &mut ProjectWorkspace,
+    mutation: &ProjectWorkspaceMutationReceipt,
+    before_model_revision: &str,
+    after_model_revision: &str,
+    forward: CanvasPatchOperation,
+    inverse: Option<CanvasPatchOperation>,
+) -> Result<(), String> {
+    let Some(inverse) = inverse else {
+        return Ok(());
+    };
+    let transaction_id = mutation
+        .transaction_id
+        .as_deref()
+        .ok_or_else(|| "Canvas History cere transactionId-ul mutației.".to_string())?;
+    let current_history_entry = mutation.history.next_undo.as_ref();
+    let direct_match =
+        current_history_entry.is_some_and(|entry| entry.transaction_id == transaction_id);
+    let coalesced_group_match = mutation
+        .entry
+        .as_ref()
+        .and_then(|entry| entry.coalesce_key.as_deref())
+        .zip(current_history_entry.and_then(|entry| entry.coalesce_key.as_deref()))
+        .is_some_and(|(mutation_key, current_key)| mutation_key == current_key);
+    if !direct_match && !coalesced_group_match {
+        // A coalesced edit can return exactly to its original source. In that
+        // case History intentionally removes the net-noop entry; the forward
+        // DOM patch remains valid, but there is no Undo delta to retain.
+        return Ok(());
+    }
+    workspace.attach_latest_canvas_history_delta(
+        transaction_id,
+        WorkspaceCanvasHistoryDelta {
+            before_model_revision: before_model_revision.to_string(),
+            after_model_revision: after_model_revision.to_string(),
+            forward,
+            inverse,
+        },
+    )
+}
+
+fn projected_history_anchor(
+    after_model: &ProjectModel,
+    before_source_id: &str,
+    aliases: &HashMap<String, String>,
+    expected_tag: Option<&str>,
+) -> Option<CanvasPatchAnchor> {
+    let after_source_id = aliases.get(before_source_id).cloned().or_else(|| {
+        after_model
+            .source_graph
+            .nodes
+            .iter()
+            .any(|node| node.id == before_source_id)
+            .then(|| before_source_id.to_string())
+    })?;
+    Some(
+        CanvasPatchAnchor::source(after_source_id, None, expected_tag)
+            .with_alternate_source_ids([before_source_id.to_string()]),
+    )
+}
+
+fn previous_attribute_values<'a>(
+    before_model: &ProjectModel,
+    target_source_id: &str,
+    names: impl Iterator<Item = &'a String>,
+) -> Option<BTreeMap<String, Option<String>>> {
+    let target = before_model
+        .source_graph
+        .nodes
+        .iter()
+        .find(|node| node.id == target_source_id)?;
+    let range = target.range.as_ref()?;
+    let file = before_model
+        .files
+        .iter()
+        .find(|file| file.relative_path == target.file)?;
+    let tag = parse_html_tag_at(&file.contents, range.start)?;
+    let opening = file.contents.get(tag.start..tag.end)?;
+    let current = raw_tag_attributes(opening)
+        .into_iter()
+        .map(|attribute| (attribute.name, Some(attribute.value.unwrap_or_default())))
+        .collect::<HashMap<_, _>>();
+    Some(
+        names
+            .map(|name| (name.clone(), current.get(name).cloned().unwrap_or(None)))
+            .collect(),
+    )
+}
+
+fn inverse_delete_operation(
+    before_model: &ProjectModel,
+    after_model: &ProjectModel,
+    deleted_source_id: &str,
+    expected_tag: Option<&str>,
+    aliases: &HashMap<String, String>,
+) -> Option<CanvasPatchOperation> {
+    let deleted = before_model
+        .source_graph
+        .nodes
+        .iter()
+        .find(|node| node.id == deleted_source_id)?;
+    let range = deleted.range.as_ref()?;
+    let file = before_model
+        .files
+        .iter()
+        .find(|file| file.relative_path == deleted.file)?;
+    let html = file.contents.get(range.start..range.end)?.to_string();
+    let parent_id = deleted.parent.as_deref()?;
+    let parent = before_model
+        .source_graph
+        .nodes
+        .iter()
+        .find(|node| node.id == parent_id)?;
+    let deleted_index = parent
+        .children
+        .iter()
+        .position(|child| child == deleted_source_id)?;
+    let (target_before_id, position) =
+        if let Some(next_sibling) = parent.children.get(deleted_index.saturating_add(1)) {
+            (next_sibling.as_str(), ProjectMovePosition::Before)
+        } else {
+            (parent_id, ProjectMovePosition::Inside)
+        };
+    let target = projected_history_anchor(after_model, target_before_id, aliases, None)?;
+    Some(CanvasPatchOperation::Insert {
+        target,
+        position,
+        html,
+        inserted: Some(CanvasPatchAnchor::source(
+            deleted_source_id,
+            None,
+            expected_tag,
+        )),
     })
 }
 

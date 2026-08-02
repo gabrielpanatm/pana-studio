@@ -36,6 +36,15 @@
       "[" + SOURCE_ID_ATTR + '=\"' + canvasCssEscape(anchor.sourceId) + '\"]'
     ));
     if (sourceMatches.length > 0) return sourceMatches;
+    var alternateSourceIds = Array.isArray(anchor.alternateSourceIds)
+      ? anchor.alternateSourceIds.slice(0, 4)
+      : [];
+    for (var alternateIndex = 0; alternateIndex < alternateSourceIds.length; alternateIndex += 1) {
+      sourceMatches = Array.prototype.slice.call(document.querySelectorAll(
+        "[" + SOURCE_ID_ATTR + '=\"' + canvasCssEscape(alternateSourceIds[alternateIndex]) + '\"]'
+      ));
+      if (sourceMatches.length > 0) return sourceMatches;
+    }
     if (!anchor.selectorFallback) return [];
     try {
       var fallback = document.querySelector(anchor.selectorFallback);
@@ -66,6 +75,16 @@
       throw new Error("CanvasPatch insert cere exact un element HTML sigur.");
     }
     return template.content.firstElementChild;
+  }
+
+  function applyCanvasPatchInsertedIdentity(element, anchor) {
+    if (!element || !anchor) return;
+    if (typeof anchor.sourceId === "string" && anchor.sourceId) {
+      element.setAttribute(SOURCE_ID_ATTR, anchor.sourceId);
+    }
+    if (typeof anchor.renderInstanceId === "string" && anchor.renderInstanceId) {
+      element.setAttribute(CANVAS_RENDER_INSTANCE_ATTR, anchor.renderInstanceId);
+    }
   }
 
   var activeLiveTextDraft = null;
@@ -345,6 +364,11 @@
 
   function applyCanvasPatch(patch) {
     var patchStartedAt = performance.now();
+    // CanvasPatch trebuie să-și înregistreze rollback-ul față de DOM-ul
+    // canonic de bază, nu față de repoziționarea vizuală din timpul dragului.
+    // Restaurarea și reaplicarea patch-ului sunt sincrone, deci browserul nu
+    // publică un frame intermediar.
+    restoreCanvasAgentDragPreview(true);
     if (!canvasPatchIdentityMatches(patch)) {
       throw new Error("CanvasPatch nu corespunde documentului Canvas montat.");
     }
@@ -422,6 +446,16 @@
           originalChildren.forEach(function (child) { selected.appendChild(child); });
         });
         selected.textContent = String(operation.text || "");
+      } else if (operation.kind === "setTextHtml") {
+        selected = requireCanvasPatchElement(operation.target, "target");
+        var originalEscapedTextChildren = Array.prototype.slice.call(selected.childNodes);
+        rollbacks.push(function () {
+          while (selected.firstChild) selected.removeChild(selected.firstChild);
+          originalEscapedTextChildren.forEach(function (child) { selected.appendChild(child); });
+        });
+        var textDecoder = document.createElement("textarea");
+        textDecoder.innerHTML = String(operation.escapedText || "");
+        selected.textContent = textDecoder.value;
       } else if (operation.kind === "replaceTag") {
         var originalTagElement = requireCanvasPatchElement(operation.target, "target");
         var replacementTagElement = null;
@@ -441,11 +475,13 @@
       } else if (operation.kind === "insert") {
         var insertTarget = requireCanvasPatchElement(operation.target, "target");
         selected = canvasPatchElementFromHtml(operation.html);
+        applyCanvasPatchInsertedIdentity(selected, operation.inserted);
         rollbacks.push(function () { if (selected && selected.parentNode) selected.remove(); });
         canvasPatchInsertAt(insertTarget, selected, operation.position);
       } else if (operation.kind === "duplicate") {
         var duplicateSource = requireCanvasPatchElement(operation.source, "source");
         selected = canvasPatchElementFromHtml(operation.html);
+        applyCanvasPatchInsertedIdentity(selected, operation.inserted);
         rollbacks.push(function () { if (selected && selected.parentNode) selected.remove(); });
         duplicateSource.after(selected);
       } else if (operation.kind === "move") {

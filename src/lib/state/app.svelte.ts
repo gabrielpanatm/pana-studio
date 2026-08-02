@@ -1,4 +1,5 @@
 import type { CodeEditorContextMenuRequest, CodeEditorController } from "$lib/editor/controller";
+import { SOURCE_LOADING_SENTINEL } from "$lib/editor-runtime/source-state";
 import { tick } from "svelte";
 import { contextMenu } from "$lib/context-menu/store.svelte";
 import {
@@ -158,7 +159,9 @@ import type {
   ProjectDiskManifest,
   ProjectAuditSnapshot,
   ProjectFile,
+  ProjectBootstrapSourceLocation,
   ProjectMovePosition,
+  ProjectLifecycleSnapshot,
   ProjectScan,
   StartupCreationCatalog,
   StartupCreationPlan,
@@ -314,11 +317,12 @@ import {
   loadScannedProjectFile as loadScannedProjectFileFromController,
   openCurrentProjectInBrowser as openCurrentProjectInBrowserFromController,
   openProjectFolder as openProjectFolderFromController,
+  retryStartupProjectOpen as retryStartupProjectOpenFromController,
   planStartupProject as planStartupProjectFromController,
   reattachCurrentProjectSession as reattachCurrentProjectSessionFromController,
   reconcileWorkspaceDerivedState as reconcileWorkspaceDerivedStateFromController,
   rescanCurrentProject as rescanCurrentProjectFromController,
-  rescanCurrentProjectWithinKernelUndoRedoLease as rescanCurrentProjectWithinKernelUndoRedoLeaseFromController,
+  rescanCurrentProjectForCommittedHistory as rescanCurrentProjectForCommittedHistoryFromController,
   resetProjectScopedState as resetProjectScopedStateFromController,
   selectStartupCreationOption as selectStartupCreationOptionFromController,
   exitTemplateWorkbench as exitTemplateWorkbenchFromController,
@@ -326,7 +330,6 @@ import {
   type ProjectControllerHost,
 } from "$lib/state/project-controller";
 import type { ProjectOpenRecoveryDecisionRequest } from "$lib/project/open-recovery";
-import type { KernelUndoRedoProjectionLease } from "$lib/kernel/undo-redo-projection-lease";
 import {
   PROJECT_TRANSITION_CONFIRM_NOTIFICATION_ID,
   type ProjectTransitionDecisionRequest,
@@ -408,6 +411,7 @@ import {
   renameDesignClass as renameDesignClassCommand,
   setScssVariable,
   type PreviewRuntimeEventKind,
+  type PreviewStylesheetPromotionMetrics,
 } from "$lib/project/io";
 import { scannedCacheKey, zolaRelativePath } from "$lib/project/files";
 import {
@@ -431,6 +435,7 @@ import { registerAppEffects } from "$lib/state/app-effects.svelte";
 import {
   applySelectionState as applySelectionStateFromAppSelectionController,
   clearPreviewSelection as clearPreviewSelectionFromController,
+  openSelectedMarkdownContent as openSelectedMarkdownContentFromController,
   openSelectedTeraSource as openSelectedTeraSourceFromController,
   selectTeraLayerSource as selectTeraLayerSourceFromController,
   setPreviewTeraSelection as setPreviewTeraSelectionFromController,
@@ -728,8 +733,19 @@ export class AppState {
   fileExplorerLoading = $state(false);
   fileExplorerError = $state("");
   private fileExplorerRequestSerial = 0;
+  private fileExplorerSelectionSerial = 0;
+  private fileExplorerSelectionTail: Promise<void> = Promise.resolve();
   jsRefreshToken = $state(0);
   scannedProject = $state<ProjectScan | null>(null);
+  projectLifecycle = $state<ProjectLifecycleSnapshot>({
+    schemaVersion: 1,
+    revision: 1,
+    activeSession: null,
+    transition: "idle",
+    operationId: null,
+    transitionStartedAtMs: null,
+    reason: "frontend_initialized",
+  });
   startupFlow = $state<StartupFlowSnapshot>({
     schemaVersion: 1,
     revision: 1,
@@ -774,6 +790,8 @@ export class AppState {
   private selectionCoordinatorRequestSerial = 0;
   private hoverCoordinatorRequestSerial = 0;
   activeCanvasUrl = $state("about:blank");
+  previewNavigationGuardActive = $state(false);
+  previewNavigationRecoveryUrl = $state<string | null>(null);
   interactivePreviewEnabled = $state(false);
   interactivePreviewDomNodes = $state<InteractivePreviewDomNode[]>([]);
   canvasProjectionConfirmation: CanvasProjectionConfirmation | null = null;
@@ -800,12 +818,16 @@ export class AppState {
   cssSourceRevision = $state(0);
   codeSelectionRevealRequestId = $state(0);
   codeSelectionRevealConsumedId = 0;
+  pendingBootstrapDiagnosticReveal = $state<({
+    relativePath: string;
+  } & ProjectBootstrapSourceLocation) | null>(null);
   previewDevice = $state<"desktop" | "tablet" | "mobile">("desktop");
   previewZoom = $state(DEFAULT_PREVIEW_ZOOM);
   previewCanvasMode = $state<WorkbenchCanvasMode>("fit");
   previewCanvasPreset = $state<WorkbenchCanvasPreset>("desktop");
   previewWidthPx = $state(1_440);
   previewRulers = $state(true);
+  gridOverlayEnabled = $state(false);
   uiTheme = $state<"dark" | "light">(initialUiTheme());
   uiLocale = $state("en-US");
   uiDirection = $state<"ltr" | "rtl">("ltr");
@@ -996,9 +1018,26 @@ export class AppState {
       || bounded.markerKind !== physical.markerKind
       || bounded.rootTag !== physical.rootTag
     ) return null;
+    const navigationSnapshot = this.editorNavigationSnapshot;
+    const navigationNode = this.selectedEditorNavigationNode;
+    const navigationOwnsSelection = Boolean(
+      navigationSnapshot
+        && canvasIdentityEquals(
+          navigationSnapshot.identity,
+          coordinated.snapshot.canvasIdentity,
+        )
+        && navigationNode?.renderInstanceId === coordinated.renderInstanceId,
+    );
+    const sourceInstanceIds = navigationOwnsSelection
+      && Array.isArray(navigationNode?.blockSourceInstanceIds)
+      ? [...navigationNode.blockSourceInstanceIds]
+      : [];
     return {
       ...physical,
-      rootSourceId: null,
+      sourceInstanceIds,
+      rootSourceId: navigationOwnsSelection
+        ? navigationNode?.sourceNodeId ?? null
+        : null,
       rootTemplateSourceId: null,
       rootSessionId: coordinated.snapshot.runtimeSessionId,
     };
@@ -1117,7 +1156,17 @@ export class AppState {
     }
   }
 
-  async selectFileExplorerEntry(entryId: string) {
+  selectFileExplorerEntry(entryId: string) {
+    const serial = ++this.fileExplorerSelectionSerial;
+    const selection = this.fileExplorerSelectionTail.then(async () => {
+      if (serial !== this.fileExplorerSelectionSerial) return;
+      await this.commitFileExplorerSelection(entryId, serial);
+    });
+    this.fileExplorerSelectionTail = selection.catch(() => {});
+    return selection;
+  }
+
+  private async commitFileExplorerSelection(entryId: string, serial: number) {
     const explorer = this.fileExplorerSnapshot;
     const workspace = this.projectWorkspaceSnapshot;
     if (
@@ -1148,6 +1197,7 @@ export class AppState {
       this.fileExplorerSnapshot = receipt.snapshot;
       this.workbenchSnapshot = receipt.workbench.snapshot;
       this.fileExplorerError = "";
+      if (serial !== this.fileExplorerSelectionSerial) return;
       const selection = receipt.snapshot.selectedEntry;
       if (!selection || selection.kind !== "text") return;
       const file = this.scannedProject?.files.find(
@@ -1157,6 +1207,7 @@ export class AppState {
         await this.loadScannedProjectFile(file, { syncWorkbench: false });
       }
     } catch (error) {
+      if (serial !== this.fileExplorerSelectionSerial) return;
       this.fileExplorerError = errorMessage(error);
       this.setGlobalStatus(this.fileExplorerError, "error");
     }
@@ -1298,11 +1349,7 @@ export class AppState {
         this.sessionProjectRoot !== projectRoot
         || this.kernelProjectSessionId !== runtimeSessionId
       ) return this.workbenchSnapshot;
-      this.centerView = document?.surface === "code"
-        ? "code"
-        : document?.surface === "markdown"
-          ? "markdown"
-          : "preview";
+      this.centerView = document?.surface === "code" ? "code" : "preview";
       this.clearNotification("workbench.restore.missing-document");
     }
 
@@ -1329,6 +1376,27 @@ export class AppState {
       }
     }
     return snapshot;
+  }
+
+  hydrateWorkbenchBootstrap(snapshot: WorkbenchSnapshot) {
+    if (
+      snapshot.projectRoot !== this.sessionProjectRoot
+      || snapshot.runtimeSessionId !== this.kernelProjectSessionId
+    ) {
+      throw new Error("Snapshot-ul Workbench din bootstrap aparține altei sesiuni.");
+    }
+    this.workbenchSnapshot = snapshot;
+    this.projectWorkbenchCanvas(snapshot.canvasViewport);
+    const group = snapshot.groups.find(
+      (candidate) => candidate.groupId === snapshot.activeGroupId,
+    );
+    const document = group?.documents.find(
+      (candidate) => candidate.documentId === group.activeDocumentId,
+    );
+    this.workbenchHydratedRuntimeSessionId = snapshot.runtimeSessionId;
+    this.terminalPaneOpen = snapshot.bottomPanel.open
+      && snapshot.bottomPanel.activeView === "terminal";
+    this.projectWorkbenchActivity(snapshot.activeActivity, document?.surface ?? "visual");
   }
 
   applyWorkbenchIntent(intent: WorkbenchIntent) {
@@ -1409,9 +1477,7 @@ export class AppState {
       if (!this.activeScannedPath) {
         throw new Error(t("workbench-split-document-required"));
       }
-      const secondarySurface: WorkbenchSurface = this.sourceLanguage === "markdown"
-        ? "markdown"
-        : "code";
+      const secondarySurface: WorkbenchSurface = "code";
       const receipt = await this.workbenchController.apply({
         kind: "configure_synchronized_split",
         split,
@@ -1480,6 +1546,7 @@ export class AppState {
   }
 
   async setWorkbenchActivity(activity: WorkbenchActivity) {
+    await this.flushInteractiveEditorDrafts("template-switch");
     const receipt = await this.workbenchController.apply({
       kind: "set_activity",
       activity,
@@ -1505,6 +1572,16 @@ export class AppState {
     return receipt;
   }
 
+  async openContentPageEditor(relativePath: string) {
+    await this.flushInteractiveEditorDrafts("template-switch");
+    const receipt = await this.workbenchController.apply({
+      kind: "open_content_page",
+      relativePath,
+    });
+    this.projectWorkbenchActivity("content", "code");
+    return receipt;
+  }
+
   async openAuditWorkspace(
     view: "overview" | "runtime",
     focusObservability = false,
@@ -1519,14 +1596,10 @@ export class AppState {
 
   private projectWorkbenchActivity(
     activity: WorkbenchActivity,
-    surface: "visual" | "code" | "markdown",
+    surface: "visual" | "code",
   ) {
     if (activity === "editor") {
-      this.centerView = surface === "code"
-        ? "code"
-        : surface === "markdown"
-          ? "markdown"
-          : "preview";
+      this.centerView = surface === "code" ? "code" : "preview";
     } else if (activity === "audit") {
       this.centerView = "kernel";
     }
@@ -1910,6 +1983,10 @@ export class AppState {
     await openProjectFolderFromController(this.projectControllerHost());
   }
 
+  async retryStartupProjectOpen() {
+    await retryStartupProjectOpenFromController(this.projectControllerHost());
+  }
+
   async refreshStartupFlow() {
     this.startupFlow = await readStartupFlow();
     return this.startupFlow;
@@ -1931,8 +2008,8 @@ export class AppState {
     await applyStartupProjectFromController(this.projectControllerHost());
   }
 
-  cancelProjectOpenRecoveryDecision(requestId: string) {
-    cancelProjectOpenRecoveryDecisionFromController(this.projectControllerHost(), requestId);
+  async cancelProjectOpenRecoveryDecision(requestId: string) {
+    await cancelProjectOpenRecoveryDecisionFromController(this.projectControllerHost(), requestId);
   }
 
   async confirmProjectOpenRecoveryAbandonment(requestId: string) {
@@ -2025,14 +2102,14 @@ export class AppState {
     );
   }
 
-  async rescanCurrentProjectWithinKernelUndoRedoLease(
-    lease: KernelUndoRedoProjectionLease,
+  async rescanCurrentProjectForCommittedHistory(
+    context: import("$lib/state/project-controller").CommittedHistoryProjectionContext,
     preferredRelativePath: string | null = this.activeScannedPath,
     options: { strict?: boolean; deferPreviewRefresh?: boolean } = {},
   ) {
-    await rescanCurrentProjectWithinKernelUndoRedoLeaseFromController(
+    await rescanCurrentProjectForCommittedHistoryFromController(
       this.projectControllerHost(),
-      lease,
+      context,
       preferredRelativePath,
       options,
     );
@@ -2105,6 +2182,7 @@ export class AppState {
     preferredPagePath: string | null = null,
     options: {
       deferPreviewRefresh?: boolean;
+      expectedWorkspaceRevision?: number;
       minimumWorkspaceRevision?: number;
       preferredRoute?: string | null;
       strict?: boolean;
@@ -2121,6 +2199,13 @@ export class AppState {
 
   async reprojectActiveTemplateWorkbench(minimumWorkspaceRevision: number) {
     if (!this.templateWorkbenchActive) return false;
+    // A newer Rust workspace revision makes this queued canonical candidate
+    // obsolete. Let the preview coordinator project that newer revision
+    // instead of requesting a Template Workbench generation that cannot exist
+    // yet for it.
+    if (this.projectWorkspaceSnapshot?.revision !== minimumWorkspaceRevision) {
+      return false;
+    }
     const project = this.scannedProject;
     const target = this.templateWorkbenchTarget;
     const templateFile = project && target
@@ -2138,6 +2223,7 @@ export class AppState {
       templateFile,
       this.templateWorkbenchPreferredPagePath,
       {
+        expectedWorkspaceRevision: minimumWorkspaceRevision,
         minimumWorkspaceRevision,
         preferredRoute: this.templateWorkbenchPreferredRoute,
         strict: true,
@@ -2149,7 +2235,10 @@ export class AppState {
       && this.activeCanvasIdentity?.workspaceRevision === minimumWorkspaceRevision;
   }
 
-  async exitTemplateWorkbench(options: { deferPreviewRefresh?: boolean } = {}) {
+  async exitTemplateWorkbench(options: {
+    deferPreviewRefresh?: boolean;
+    returnPath?: string | null;
+  } = {}) {
     await exitTemplateWorkbenchFromController(this.projectControllerHost(), options);
   }
 
@@ -2179,14 +2268,51 @@ export class AppState {
     postPreviewMessageFromController(this.previewControllerHost(), payload);
   }
 
+  setGridOverlayEnabled(enabled: boolean) {
+    this.gridOverlayEnabled = enabled;
+    this.postPreviewMessage({ type: "set-canvas-grid-overlay", enabled });
+  }
+
   sendPreviewOperation(payload: Record<string, unknown> & { type: string }) {
     return sendPreviewOperationFromController(this.previewControllerHost(), payload);
   }
 
   async applyCanvasPatchToPreview(patch: CanvasPatch) {
-    const receipt = await this.previewRuntime.applyCanvasPatch(patch);
-    this.canvasPatchPerformance = this.previewRuntime.canvasPatchPerformance();
-    return receipt;
+    const identity = this.activeCanvasIdentity;
+    const startedAt = performance.now();
+    try {
+      const receipt = await this.previewRuntime.applyCanvasPatch(patch);
+      this.canvasPatchPerformance = this.previewRuntime.canvasPatchPerformance();
+      if (
+        identity
+        && identity.projectRoot === patch.projectRoot
+        && identity.runtimeSessionId === patch.runtimeSessionId
+        && identity.workspaceRevision === patch.baseWorkspaceRevision
+      ) {
+        void this.recordCanvasProjectionRuntimeEvent(
+          "canvas_patch_applied",
+          identity,
+          Math.max(0, performance.now() - startedAt),
+          patch.patchId,
+        );
+      }
+      return receipt;
+    } catch (error) {
+      if (
+        identity
+        && identity.projectRoot === patch.projectRoot
+        && identity.runtimeSessionId === patch.runtimeSessionId
+        && identity.workspaceRevision === patch.baseWorkspaceRevision
+      ) {
+        void this.recordCanvasProjectionRuntimeEvent(
+          "canvas_patch_refused",
+          identity,
+          Math.max(0, performance.now() - startedAt),
+          errorMessage(error),
+        );
+      }
+      throw error;
+    }
   }
 
   async rollbackCanvasPatchInPreview(patch: CanvasPatch) {
@@ -2375,6 +2501,8 @@ export class AppState {
     this.canvasSurfaceResumePromise = null;
     this.pendingCanvasProjection = null;
     this.activeCanvasIdentity = null;
+    this.previewNavigationGuardActive = false;
+    this.previewNavigationRecoveryUrl = null;
     this.acceptedSelectionObservation = null;
     this.inspectorSelectionSummary = null;
     this.hoverSnapshot = null;
@@ -2460,6 +2588,7 @@ export class AppState {
     identity: CanvasProjectionIdentity,
     durationMs: number,
     diagnostic: string | null,
+    stylesheetMetrics: PreviewStylesheetPromotionMetrics | null = null,
   ) {
     try {
       const receipt = await recordPreviewRuntimeEvent({
@@ -2468,6 +2597,7 @@ export class AppState {
         kind,
         durationMs: Math.min(600_000, Math.round(durationMs)),
         diagnostic,
+        stylesheetMetrics,
       });
       if (
         !receipt.accepted
@@ -2524,6 +2654,7 @@ export class AppState {
   async refreshEditorNavigationSnapshot(
     identity = this.activeCanvasIdentity ?? undefined,
     previewUrl = this.activeCanvasUrl || this.previewSrc,
+    options: { strict?: boolean } = {},
   ) {
     if (!identity) {
       this.editorNavigationRequestSerial += 1;
@@ -2535,6 +2666,13 @@ export class AppState {
       this.editorEditScopeGrant = null;
       this.editorEditScopeId = null;
       this.hoverSnapshot = null;
+      return;
+    }
+    // During rapid edits ProjectWorkspace becomes authoritative before the
+    // matching Canvas candidate. The previous Canvas remains visible, but its
+    // semantic snapshot is intentionally stale and must not be queried as an
+    // application error while the canonical projection catches up.
+    if (this.projectWorkspaceSnapshot?.revision !== identity.workspaceRevision) {
       return;
     }
     const route = editorNavigationRoute(previewUrl, this.browserPreviewRoute);
@@ -2550,6 +2688,9 @@ export class AppState {
     if (this.editorNavigationRefreshKey === refreshKey) {
       if (this.editorNavigationRefreshPromise) {
         await this.editorNavigationRefreshPromise;
+        if (options.strict && this.editorNavigationError) {
+          throw new Error(this.editorNavigationError);
+        }
         return;
       }
       if (this.editorNavigationSnapshot && !this.editorNavigationError) return;
@@ -2597,10 +2738,14 @@ export class AppState {
         serial !== this.editorNavigationRequestSerial
         || !canvasIdentityEquals(this.activeCanvasIdentity, identity)
       ) return;
+      if (this.projectWorkspaceSnapshot?.revision !== identity.workspaceRevision) {
+        return;
+      }
       this.editorNavigationSnapshot = null;
       this.editorNavigationError = errorMessage(error);
       this.editorEditScopeGrant = null;
       this.editorEditScopeId = null;
+      if (options.strict) throw error;
     } finally {
       if (serial === this.editorNavigationRequestSerial) {
         this.editorNavigationLoading = false;
@@ -2762,7 +2907,10 @@ export class AppState {
       return;
     }
 
-    if (selection.subject.kind === "teraBoundary") {
+    if (
+      selection.subject.kind === "teraBoundary"
+      || selection.subject.kind === "markdownBoundary"
+    ) {
       this.acceptedSelectionObservation = null;
     } else {
       const accepted = this.acceptedSelectionObservation;
@@ -2942,19 +3090,73 @@ export class AppState {
       throw new Error(t("workbench-css-staged-mutation-missing"));
     }
 
-    let boundIdentity: InspectorLiveCssIdentity | null = null;
+    let workspace: ProjectWorkspaceSnapshot;
     try {
-      const workspace = await readProjectWorkspaceState();
+      const currentWorkspace = await readProjectWorkspaceState();
       if (
-        !workspace
-        || workspace.projectRoot !== projectRoot
-        || workspace.runtimeSessionId !== sessionId
-        || workspace.revision !== authority.revisionAfter
+        !currentWorkspace
+        || currentWorkspace.projectRoot !== projectRoot
+        || currentWorkspace.runtimeSessionId !== sessionId
+        || currentWorkspace.revision !== authority.revisionAfter
       ) {
         throw new Error(
           t("workbench-css-revision-unconfirmed"),
         );
       }
+      workspace = currentWorkspace;
+      // Commitul Rust este autoritatea și trebuie să deblocheze imediat coada
+      // inspectorului. Preview-ul și inventarele derivate se pot confirma în
+      // fundal; o revizie ulterioară le va marca drept superseded.
+      this.projectWorkspaceSnapshot = currentWorkspace;
+    } catch (error) {
+      if (
+        this.sessionProjectRoot === projectRoot
+        && this.kernelProjectSessionId === sessionId
+      ) {
+        this.setGlobalStatus(
+          t("workbench-css-resync", { message: errorMessage(error) }),
+          "unsaved",
+        );
+      }
+      if (draftIdentity) {
+        clearInspectorLivePropertiesFromController(
+          this.previewLiveControllerHost(),
+          draftIdentity,
+        );
+      }
+      return;
+    }
+    if (
+      localProjectionWarning
+      && this.sessionProjectRoot === projectRoot
+      && this.kernelProjectSessionId === sessionId
+    ) {
+      this.setGlobalStatus(
+        t("workbench-css-editor-resync", { message: localProjectionWarning }),
+        "unsaved",
+      );
+    }
+    void this.settleCommittedInspectorCssProjection(
+      projectRoot,
+      sessionId,
+      transactionId,
+      mutation,
+      workspace,
+      draftIdentity,
+    );
+  }
+
+  async settleCommittedInspectorCssProjection(
+    projectRoot: string,
+    sessionId: string,
+    transactionId: string,
+    mutation: NonNullable<CssMutationAuthorityReceipt["workspaceMutation"]>,
+    workspace: ProjectWorkspaceSnapshot,
+    draftIdentity: InspectorLiveCssIdentity | null,
+  ) {
+    let boundIdentity: InspectorLiveCssIdentity | null = null;
+    const topologyChanged = (mutation.entry?.topologyPaths.length ?? 0) > 0;
+    try {
       await settleProjectWorkspaceMutation(this, {
         projectRoot,
         runtimeSessionId: sessionId,
@@ -2962,6 +3164,8 @@ export class AppState {
         workspace,
       }, {
         warningLabel: "Modificarea CSS",
+        refreshSourceGraph: topologyChanged,
+        refreshScss: topologyChanged,
         onCanvasPlanPrepared: (plan) => {
           if (plan.workspaceTransactionId !== transactionId) {
             throw new Error(t("workbench-css-canvas-plan-mismatch"));
@@ -2991,20 +3195,9 @@ export class AppState {
       }
     }
     if (
-      localProjectionWarning
-      && this.sessionProjectRoot === projectRoot
-      && this.kernelProjectSessionId === sessionId
-    ) {
-      this.setGlobalStatus(
-        t("workbench-css-editor-resync", { message: localProjectionWarning }),
-        "unsaved",
-      );
-    }
-    if (
       this.sessionProjectRoot !== projectRoot
       || this.kernelProjectSessionId !== sessionId
     ) return;
-
     const exactIdentity = boundIdentity ?? draftIdentity;
     if (exactIdentity) {
       clearInspectorLivePropertiesFromController(
@@ -3240,7 +3433,7 @@ export class AppState {
     this.centerView = view;
     if (
       this.activeScannedPath
-      && (view === "preview" || view === "code" || view === "markdown")
+      && (view === "preview" || view === "code")
       && this.workbenchSnapshot?.split === "none"
     ) {
       try {
@@ -3483,6 +3676,39 @@ export class AppState {
 
   async createCodeEditor() {
     await createSourceEditorFromController(this.sourceEditorControllerHost());
+    this.applyPendingBootstrapDiagnosticReveal();
+  }
+
+  revealBootstrapDiagnosticLocation(
+    relativePath: string,
+    location: ProjectBootstrapSourceLocation,
+  ) {
+    if (
+      !relativePath
+      || !Number.isSafeInteger(location.line)
+      || location.line < 1
+      || !Number.isSafeInteger(location.column)
+      || location.column < 1
+    ) return;
+    this.pendingBootstrapDiagnosticReveal = { relativePath, ...location };
+    this.applyPendingBootstrapDiagnosticReveal();
+  }
+
+  applyPendingBootstrapDiagnosticReveal() {
+    const target = this.pendingBootstrapDiagnosticReveal;
+    if (!target) return false;
+    if (this.activeScannedPath !== target.relativePath) {
+      this.pendingBootstrapDiagnosticReveal = null;
+      return false;
+    }
+    if (
+      !this.codeEditorController
+      || this.source === SOURCE_LOADING_SENTINEL
+      || this.codeEditorController.getDoc() !== this.source
+    ) return false;
+    this.codeEditorController.revealLineColumn(target.line, target.column);
+    this.pendingBootstrapDiagnosticReveal = null;
+    return true;
   }
 
   handleCodeCursorSelection(position: number, sourceText: string) {
@@ -3609,6 +3835,10 @@ export class AppState {
 
   async openSelectedTeraSource() {
     await openSelectedTeraSourceFromController(this);
+  }
+
+  async openSelectedMarkdownContent() {
+    await openSelectedMarkdownContentFromController(this);
   }
 
   selectTeraLayerSource(section: PageSection, sourceId: string) {
@@ -4123,7 +4353,10 @@ export class AppState {
   }
 
   async insertPaletteElementAtTarget(request: PreviewInsertDropRequest) {
-    await insertPaletteElementAtTargetFromController(this.htmlActionsControllerHost(), request);
+    return await insertPaletteElementAtTargetFromController(
+      this.htmlActionsControllerHost(),
+      request,
+    );
   }
 
   async insertTeraPaletteItemAtTarget(request: TeraDropRequest) {
@@ -4166,12 +4399,16 @@ export class AppState {
     sourceNodeId: string,
     targetNodeId: string,
     position: ProjectMovePosition,
+    preplanned: EditorMovePlan | null = null,
+    inputEmittedAtMs = 0,
   ) {
     return await moveEditorNavigationNodeFromController(
       this.editorNavigationControllerHost(),
       sourceNodeId,
       targetNodeId,
       position,
+      preplanned,
+      inputEmittedAtMs,
     );
   }
 
@@ -4469,76 +4706,6 @@ export class AppState {
       return await operation;
     } finally {
       if (this.saveOperationPromise === operation) this.saveOperationPromise = null;
-    }
-  }
-
-  /**
-   * Reserves the complete project-wide write boundary used by kernel history.
-   * The reservation is raised before either drain so a new structural write
-   * or monitor tick cannot enter behind the barrier and race the Undo/Redo
-   * disk commit.
-   */
-  async beginKernelUndoRedoFrontendLease() {
-    if (this.aiEditLeaseFrontendLockActive) {
-      throw new Error(t("workbench-history-ai-blocked"));
-    }
-    if (this.projectTransitionFrontendLeaseActive) {
-      throw new Error(
-        t("workbench-history-transition-blocked"),
-      );
-    }
-    if (
-      this.kernelUndoRedoFrontendQuiesceActive
-      || this.kernelUndoRedoFrontendLeaseActive
-    ) {
-      throw new Error(t("workbench-history-busy"));
-    }
-
-    // Freeze new UI ingress first, while still allowing the already captured
-    // interactive HTML draft to use the structural lane for its final commit.
-    // The exclusive history lease is raised only after that draft is closed.
-    this.kernelUndoRedoFrontendQuiesceActive = true;
-    contextMenu.close();
-    this.quiesceExternalReconcileInteractions();
-    try {
-      await tick();
-      if (this.saveOperationPromise) await this.saveOperationPromise;
-      await this.flushInteractiveEditorDrafts("history");
-      this.kernelUndoRedoFrontendLeaseActive = true;
-      await tick();
-      await drainPreviewStructuralLanes();
-      await suspendAndDrainExternalDiskMonitoringFromController(
-        this.externalDiskControllerHost(),
-      );
-      if (
-        this.externalDiskState.checking
-        || this.externalDiskState.reconciling
-        || this.externalDiskState.changed
-        || this.externalDiskState.blockedByDirtySession
-        || this.externalDiskState.workspaceProjectionRecoveryRequired
-      ) {
-        throw new Error(
-          t("workbench-history-disk-not-clean"),
-        );
-      }
-    } catch (error) {
-      this.endKernelUndoRedoFrontendLease();
-      throw error;
-    }
-  }
-
-  endKernelUndoRedoFrontendLease() {
-    if (
-      !this.kernelUndoRedoFrontendQuiesceActive
-      && !this.kernelUndoRedoFrontendLeaseActive
-    ) return;
-    const resumeMonitoring = this.kernelUndoRedoFrontendLeaseActive;
-    this.kernelUndoRedoFrontendQuiesceActive = false;
-    this.kernelUndoRedoFrontendLeaseActive = false;
-    if (resumeMonitoring) {
-      resumeExternalDiskMonitoringAfterSaveFromController(
-        this.externalDiskControllerHost(),
-      );
     }
   }
 

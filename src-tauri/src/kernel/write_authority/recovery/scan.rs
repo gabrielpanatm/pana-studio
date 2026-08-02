@@ -285,6 +285,12 @@ pub(super) fn scan_wal(
         } else {
             match (&record.body.operation_evidence, classification) {
                 (
+                    WalOperationEvidence::AtomicFile(_),
+                    WriteAuthorityRecoveryClassification::StagedOnly,
+                ) if !automatic_recovery_available => {
+                    vec![WriteAuthorityRecoveryResolutionAction::DiscardStagedWrite]
+                }
+                (
                     WalOperationEvidence::Copy(_),
                     WriteAuthorityRecoveryClassification::RollbackCompleted,
                 ) if !automatic_recovery_available => {

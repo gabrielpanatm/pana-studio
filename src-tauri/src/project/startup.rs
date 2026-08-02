@@ -30,7 +30,6 @@ pub const STARTUP_CREATION_PLAN_SCHEMA_VERSION: u32 = 1;
 pub const STARTUP_CREATION_RECEIPT_SCHEMA_VERSION: u32 = 1;
 
 const MINIMAL_OPTION_ID: &str = "minimal";
-const MAX_INSPECTION_ENTRIES: usize = 2_000;
 const BASE_ZOLA_CONFIG: &str = r#"base_url = "http://127.0.0.1:1111"
 title = "Proiect Pană Studio"
 description = "Un proiect Zola inițializat cu Pană Studio."
@@ -248,6 +247,8 @@ pub struct StartupCreationReceipt {
 struct StartupFlowState {
     snapshot: StartupFlowSnapshot,
     plan: Option<StartupCreationPlan>,
+    inspection_manifest: Option<super::ProjectDiskManifest>,
+    lifecycle_operation_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -261,6 +262,8 @@ impl Default for StartupFlowRuntime {
             state: Arc::new(Mutex::new(StartupFlowState {
                 snapshot: StartupFlowSnapshot::idle(1),
                 plan: None,
+                inspection_manifest: None,
+                lifecycle_operation_id: None,
             })),
         }
     }
@@ -282,10 +285,21 @@ impl StartupFlowRuntime {
         let revision = state.snapshot.revision.saturating_add(1);
         state.snapshot = StartupFlowSnapshot::idle(revision);
         state.plan = None;
+        state.inspection_manifest = None;
+        state.lifecycle_operation_id = None;
         Ok(state.snapshot.clone())
     }
 
+    #[allow(dead_code)]
     pub fn inspect(&self, requested_root: &Path) -> Result<StartupFlowSnapshot, String> {
+        self.inspect_for_operation(requested_root, None)
+    }
+
+    pub(crate) fn inspect_for_operation(
+        &self,
+        requested_root: &Path,
+        lifecycle_operation_id: Option<String>,
+    ) -> Result<StartupFlowSnapshot, String> {
         let revision = {
             let mut state = self
                 .state
@@ -300,25 +314,34 @@ impl StartupFlowRuntime {
                 diagnostics: Vec::new(),
             };
             state.plan = None;
+            state.inspection_manifest = None;
+            state.lifecycle_operation_id = lifecycle_operation_id.clone();
             revision
         };
 
-        let snapshot = match inspect_candidate_root(requested_root) {
-            Ok(candidate) => StartupFlowSnapshot {
-                schema_version: STARTUP_FLOW_SCHEMA_VERSION,
-                revision,
-                stage: StartupStage::Ready,
-                diagnostics: candidate.diagnostics.clone(),
-                candidate: Some(candidate),
-            },
-            Err(diagnostic) => StartupFlowSnapshot {
-                schema_version: STARTUP_FLOW_SCHEMA_VERSION,
-                revision,
-                stage: StartupStage::Error,
-                candidate: Some(inaccessible_candidate(requested_root, &diagnostic)),
-                diagnostics: vec![diagnostic],
-            },
-        };
+        let (snapshot, inspection_manifest) =
+            match inspect_candidate_root_with_manifest(requested_root) {
+                Ok((candidate, manifest)) => (
+                    StartupFlowSnapshot {
+                        schema_version: STARTUP_FLOW_SCHEMA_VERSION,
+                        revision,
+                        stage: StartupStage::Ready,
+                        diagnostics: candidate.diagnostics.clone(),
+                        candidate: Some(candidate),
+                    },
+                    Some(manifest),
+                ),
+                Err(diagnostic) => (
+                    StartupFlowSnapshot {
+                        schema_version: STARTUP_FLOW_SCHEMA_VERSION,
+                        revision,
+                        stage: StartupStage::Error,
+                        candidate: Some(inaccessible_candidate(requested_root, &diagnostic)),
+                        diagnostics: vec![diagnostic],
+                    },
+                    None,
+                ),
+            };
 
         let mut state = self
             .state
@@ -328,7 +351,54 @@ impl StartupFlowRuntime {
             return Ok(state.snapshot.clone());
         }
         state.snapshot = snapshot.clone();
+        state.inspection_manifest = inspection_manifest;
         Ok(snapshot)
+    }
+
+    pub fn require_valid_candidate(
+        &self,
+        expected_root: &Path,
+        expected_snapshot_token: &str,
+    ) -> Result<
+        (
+            StartupCandidateSnapshot,
+            super::ProjectDiskManifest,
+            Option<String>,
+        ),
+        String,
+    > {
+        let expected_root = expected_root
+            .canonicalize()
+            .map_err(|error| format!("Dosarul candidat nu mai poate fi rezolvat: {error}"))?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "Starea Startup Flow este indisponibilă.".to_string())?;
+        let candidate = state
+            .snapshot
+            .candidate
+            .as_ref()
+            .ok_or_else(|| "Startup Flow nu are un dosar candidat inspectat.".to_string())?;
+        if candidate.kind != StartupCandidateKind::ValidProject {
+            return Err("Candidatul Startup nu este un proiect Zola valid.".to_string());
+        }
+        if candidate.snapshot_token != expected_snapshot_token {
+            return Err("Tokenul inspecției Startup este stale.".to_string());
+        }
+        if Path::new(&candidate.root) != expected_root {
+            return Err("Candidatul Startup aparține altui root canonic.".to_string());
+        }
+        let manifest = state.inspection_manifest.as_ref().ok_or_else(|| {
+            "Startup Flow nu mai are manifestul inspecției candidate.".to_string()
+        })?;
+        if manifest.root != candidate.root {
+            return Err("Manifestul Startup aparține altui root canonic.".to_string());
+        }
+        Ok((
+            candidate.clone(),
+            manifest.clone(),
+            state.lifecycle_operation_id.clone(),
+        ))
     }
 
     fn require_empty_candidate(
@@ -400,6 +470,7 @@ impl StartupFlowRuntime {
     fn publish_after_creation(
         &self,
         candidate: StartupCandidateSnapshot,
+        manifest: super::ProjectDiskManifest,
     ) -> Result<StartupFlowSnapshot, String> {
         let mut state = self
             .state
@@ -414,6 +485,8 @@ impl StartupFlowRuntime {
             candidate: Some(candidate),
         };
         state.plan = None;
+        state.inspection_manifest = Some(manifest);
+        state.lifecycle_operation_id = None;
         Ok(state.snapshot.clone())
     }
 }
@@ -562,8 +635,8 @@ pub fn apply_creation<R: Runtime>(
         return Err(fail_creation(runtime, error, rollback));
     }
 
-    let candidate = match inspect_candidate_root(&root) {
-        Ok(candidate) => candidate,
+    let (candidate, inspection_manifest) = match inspect_candidate_root_with_manifest(&root) {
+        Ok(inspection) => inspection,
         Err(diagnostic) => {
             let rollback = rollback_publication(app, &authority, &root, &journal);
             return Err(fail_creation(runtime, diagnostic.message, rollback));
@@ -583,7 +656,7 @@ pub fn apply_creation<R: Runtime>(
         .iter()
         .map(|entry| entry.relative_path.clone())
         .collect::<Vec<_>>();
-    let startup = runtime.publish_after_creation(candidate)?;
+    let startup = runtime.publish_after_creation(candidate, inspection_manifest)?;
     Ok(StartupCreationReceipt {
         schema_version: STARTUP_CREATION_RECEIPT_SCHEMA_VERSION,
         project_root: plan.project_root,
@@ -595,31 +668,13 @@ pub fn apply_creation<R: Runtime>(
     })
 }
 
-pub fn require_valid_zola_candidate(root: &Path) -> Result<StartupCandidateSnapshot, String> {
-    let candidate = inspect_candidate_root(root).map_err(|diagnostic| diagnostic.message)?;
-    if candidate.kind != StartupCandidateKind::ValidProject {
-        return Err(match candidate.kind {
-            StartupCandidateKind::EmptyDirectory => {
-                "Dosarul este gol și trebuie inițializat din Startup View.".to_string()
-            }
-            StartupCandidateKind::UnrecognizedDirectory => {
-                "Dosarul nu este un proiect Zola recunoscut; alege alt dosar.".to_string()
-            }
-            StartupCandidateKind::InvalidZolaProject => candidate
-                .diagnostics
-                .first()
-                .map(|diagnostic| diagnostic.message.clone())
-                .unwrap_or_else(|| "Proiectul Zola este incomplet sau invalid.".to_string()),
-            StartupCandidateKind::Inaccessible => {
-                "Dosarul nu poate fi accesat în siguranță.".to_string()
-            }
-            StartupCandidateKind::ValidProject => unreachable!(),
-        });
-    }
-    Ok(candidate)
+fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, StartupDiagnostic> {
+    inspect_candidate_root_with_manifest(root).map(|(candidate, _)| candidate)
 }
 
-fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, StartupDiagnostic> {
+fn inspect_candidate_root_with_manifest(
+    root: &Path,
+) -> Result<(StartupCandidateSnapshot, super::ProjectDiskManifest), StartupDiagnostic> {
     let root = root.canonicalize().map_err(|error| {
         StartupDiagnostic::error(
             "startup_root_unavailable",
@@ -642,7 +697,13 @@ fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, Start
         ));
     }
     let root_version = project_disk_metadata_version_token(&metadata);
-    let inventory = inspect_inventory(&root)?;
+    let inspection = super::manifest::inspect_project_disk(&root).map_err(|error| {
+        StartupDiagnostic::error(
+            "startup_directory_read_failed",
+            "Dosarul selectat nu poate fi citit complet.",
+            Some(error),
+        )
+    })?;
     let display_name = root
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -650,25 +711,28 @@ fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, Start
         .unwrap_or_else(|| root.to_string_lossy().into_owned());
     let root_text = root.to_string_lossy().into_owned();
 
-    if inventory.entry_count == 0 {
+    if inspection.entry_count == 0 {
         let kind = StartupCandidateKind::EmptyDirectory;
-        return Ok(StartupCandidateSnapshot {
-            root: root_text.clone(),
-            display_name,
-            kind,
-            snapshot_token: candidate_token(
-                &root_text,
-                &root_version,
+        return Ok((
+            StartupCandidateSnapshot {
+                root: root_text.clone(),
+                display_name,
                 kind,
-                &inventory.fingerprint,
-            ),
-            entry_count: 0,
-            truncated: false,
-            diagnostics: vec![StartupDiagnostic::info(
-                "startup_empty_directory",
-                "Dosarul este gol și poate primi un proiect nou.",
-            )],
-        });
+                snapshot_token: candidate_token(
+                    &root_text,
+                    &root_version,
+                    kind,
+                    &inspection.inventory_fingerprint,
+                ),
+                entry_count: 0,
+                truncated: false,
+                diagnostics: vec![StartupDiagnostic::info(
+                    "startup_empty_directory",
+                    "Dosarul este gol și poate primi un proiect nou.",
+                )],
+            },
+            inspection.manifest,
+        ));
     }
 
     let zola_root = zola_project_root(&root);
@@ -682,7 +746,16 @@ fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, Start
             .iter()
             .any(|name| regular_directory(&zola_root.join(name)));
 
-    let (kind, diagnostics) = if !has_zola_markers {
+    let (kind, diagnostics) = if inspection.inventory_truncated || inspection.manifest.truncated {
+        (
+            StartupCandidateKind::InvalidZolaProject,
+            vec![StartupDiagnostic::error(
+                "startup_project_inventory_truncated",
+                "Proiectul depășește limita inventarului autoritar și nu poate fi deschis în siguranță.",
+                None,
+            )],
+        )
+    } else if !has_zola_markers {
         (
             StartupCandidateKind::UnrecognizedDirectory,
             vec![StartupDiagnostic::warning(
@@ -712,128 +785,63 @@ fn inspect_candidate_root(root: &Path) -> Result<StartupCandidateSnapshot, Start
                 None,
             )],
         )
+    } else if let Err(error) = validate_zola_config_syntax(&zola_root, zola_config) {
+        (
+            StartupCandidateKind::InvalidZolaProject,
+            vec![StartupDiagnostic::error(
+                "startup_zola_config_invalid",
+                "Configurația Zola nu este TOML valid.",
+                Some(error),
+            )],
+        )
     } else {
-        match run_zola_editor_check(&root, &zola_root) {
-            Ok(_) => (
-                StartupCandidateKind::ValidProject,
-                vec![StartupDiagnostic::info(
-                    "startup_zola_valid",
-                    format!(
-                        "Proiect Zola valid pentru motorul embedded {}.",
-                        EMBEDDED_ZOLA_VERSION
-                    ),
-                )],
-            ),
-            Err(error) => (
-                StartupCandidateKind::InvalidZolaProject,
-                vec![StartupDiagnostic::error(
-                    "startup_zola_validation_failed",
-                    "Motorul Zola embedded a respins proiectul.",
-                    Some(error),
-                )],
-            ),
-        }
+        (
+            StartupCandidateKind::ValidProject,
+            vec![StartupDiagnostic::info(
+                "startup_zola_candidate_ready",
+                format!(
+                    "Structură Zola recunoscută; validarea canonică va folosi o singură construcție Preview cu motorul embedded {}.",
+                    EMBEDDED_ZOLA_VERSION
+                ),
+            )],
+        )
     };
 
-    Ok(StartupCandidateSnapshot {
-        root: root_text.clone(),
-        display_name,
-        kind,
-        snapshot_token: candidate_token(&root_text, &root_version, kind, &inventory.fingerprint),
-        entry_count: inventory.entry_count,
-        truncated: inventory.truncated,
-        diagnostics,
-    })
+    Ok((
+        StartupCandidateSnapshot {
+            root: root_text.clone(),
+            display_name,
+            kind,
+            snapshot_token: candidate_token(
+                &root_text,
+                &root_version,
+                kind,
+                &inspection.inventory_fingerprint,
+            ),
+            entry_count: inspection.entry_count,
+            truncated: inspection.inventory_truncated || inspection.manifest.truncated,
+            diagnostics,
+        },
+        inspection.manifest,
+    ))
 }
 
-struct CandidateInventory {
-    entry_count: usize,
-    truncated: bool,
-    fingerprint: String,
-}
-
-fn inspect_inventory(root: &Path) -> Result<CandidateInventory, StartupDiagnostic> {
-    let mut records = Vec::new();
-    let mut truncated = false;
-    collect_inventory(root, root, &mut records, &mut truncated)?;
-    records.sort();
-    let mut hasher = Sha256::new();
-    for record in &records {
-        hasher.update(record.as_bytes());
-        hasher.update([0]);
-    }
-    Ok(CandidateInventory {
-        entry_count: records.len(),
-        truncated,
-        fingerprint: format!("{:x}", hasher.finalize()),
-    })
-}
-
-fn collect_inventory(
-    root: &Path,
-    current: &Path,
-    records: &mut Vec<String>,
-    truncated: &mut bool,
-) -> Result<(), StartupDiagnostic> {
-    let mut entries = fs::read_dir(current)
-        .map_err(|error| {
-            StartupDiagnostic::error(
-                "startup_directory_read_failed",
-                "Dosarul selectat nu poate fi citit complet.",
-                Some(error.to_string()),
-            )
-        })?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            StartupDiagnostic::error(
-                "startup_directory_entry_failed",
-                "O intrare din dosar nu poate fi inspectată.",
-                Some(error.to_string()),
-            )
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        if records.len() >= MAX_INSPECTION_ENTRIES {
-            *truncated = true;
-            break;
-        }
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            StartupDiagnostic::error(
-                "startup_entry_metadata_failed",
-                "O intrare din dosar nu poate fi inspectată în siguranță.",
-                Some(error.to_string()),
-            )
-        })?;
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|error| {
-                StartupDiagnostic::error(
-                    "startup_relative_path_failed",
-                    "Inventarul dosarului nu poate fi normalizat.",
-                    Some(error.to_string()),
-                )
-            })?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let kind = if metadata.file_type().is_symlink() {
-            "symlink"
-        } else if metadata.is_dir() {
-            "directory"
-        } else if metadata.is_file() {
-            "file"
-        } else {
-            "other"
-        };
-        records.push(format!(
-            "{relative}\0{kind}\0{}",
-            project_disk_metadata_version_token(&metadata)
-        ));
-        if metadata.is_dir() && !metadata.file_type().is_symlink() {
-            collect_inventory(root, &path, records, truncated)?;
-        }
-    }
-    Ok(())
+fn validate_zola_config_syntax(zola_root: &Path, uses_zola_toml: bool) -> Result<(), String> {
+    let path = zola_root.join(if uses_zola_toml {
+        "zola.toml"
+    } else {
+        "config.toml"
+    });
+    let source = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "Configurația {} nu poate fi citită: {error}",
+            path.display()
+        )
+    })?;
+    source
+        .parse::<toml_edit::DocumentMut>()
+        .map(|_| ())
+        .map_err(|error| format!("Configurația {} este invalidă: {error}", path.display()))
 }
 
 fn inaccessible_candidate(root: &Path, diagnostic: &StartupDiagnostic) -> StartupCandidateSnapshot {

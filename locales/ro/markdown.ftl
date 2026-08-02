@@ -1,4 +1,11 @@
 markdown-tools = Instrumente Markdown
+markdown-boundary = Conținut Markdown
+markdown-boundary-source = Sursă
+markdown-boundary-unresolved = Sursa Markdown exactă nu a putut fi rezolvată.
+markdown-boundary-edit-only-content = Conținutul pur se editează numai în activitatea Conținut.
+markdown-boundary-readonly = Randarea rămâne atomică și read-only până la rezolvarea sursei exacte.
+markdown-boundary-edit-content = Editează conținutul
+markdown-boundary-open-source = Deschide sursa
 markdown-current-block = Bloc curent: { $block }
 markdown-code = Cod
 markdown-quote = Citat

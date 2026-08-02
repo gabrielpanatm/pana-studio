@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::atomic::Ordering,
 };
@@ -15,6 +16,10 @@ pub(crate) struct PreviewProjectionPublicationStats {
     pub durability_operations: u32,
     pub materialized_entries: usize,
     pub materialized_bytes: u64,
+    pub reused_entries: usize,
+    pub reused_bytes: u64,
+    pub reflinked_files: usize,
+    pub copied_fallback_files: usize,
 }
 
 pub(crate) struct PreviewProjectionGeneration {
@@ -25,6 +30,10 @@ pub(crate) struct PreviewProjectionGeneration {
     operation_id: String,
     materialized_entries: usize,
     materialized_bytes: u64,
+    reused_entries: usize,
+    reused_bytes: u64,
+    reflinked_files: usize,
+    copied_fallback_files: usize,
 }
 
 pub(crate) struct PreviewProjectionPublication {
@@ -124,6 +133,10 @@ impl PreviewProjectionGeneration {
             operation_id,
             materialized_entries: 0,
             materialized_bytes: 0,
+            reused_entries: 0,
+            reused_bytes: 0,
+            reflinked_files: 0,
+            copied_fallback_files: 0,
         })
     }
 
@@ -168,6 +181,38 @@ impl PreviewProjectionGeneration {
             .checked_add(contents.len() as u64)
             .ok_or_else(|| "Generația Preview a depășit contorul de bytes.".to_string())?;
         Ok(())
+    }
+
+    pub(crate) fn seed_from_published(
+        &mut self,
+        excluded: &BTreeSet<PathBuf>,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> Result<(usize, u64), String> {
+        let source_authority = capability::capture_descendant_authority(
+            &self.parent_authority,
+            &self.publication_root,
+            "preview/projection/published-source",
+            DirectoryAuthorityScope::ApplicationPreviewCache,
+        )?;
+        let stats = capability::clone_rebuildable_generation_tree(
+            &source_authority,
+            self.staging_authority()?,
+            excluded,
+            max_entries,
+            max_bytes,
+            "preview/projection/reuse",
+        )?;
+        self.reused_entries = self.reused_entries.saturating_add(stats.entries);
+        self.reused_bytes = self
+            .reused_bytes
+            .checked_add(stats.bytes)
+            .ok_or_else(|| "Generația Preview a depășit contorul bytes reutilizați.".to_string())?;
+        self.reflinked_files = self.reflinked_files.saturating_add(stats.reflinked_files);
+        self.copied_fallback_files = self
+            .copied_fallback_files
+            .saturating_add(stats.copied_files);
+        Ok((stats.entries, stats.bytes))
     }
 
     pub(crate) fn discard(mut self) -> Result<(), String> {
@@ -231,6 +276,10 @@ impl PreviewProjectionGeneration {
                 durability_operations: 2,
                 materialized_entries: self.materialized_entries,
                 materialized_bytes: self.materialized_bytes,
+                reused_entries: self.reused_entries,
+                reused_bytes: self.reused_bytes,
+                reflinked_files: self.reflinked_files,
+                copied_fallback_files: self.copied_fallback_files,
             },
             retirement,
         })
@@ -308,6 +357,35 @@ mod tests {
 
         assert_eq!(publication.retire_previous().unwrap(), 2);
         assert_eq!(private_generation_count(&session_root), 0);
+
+        let mut next =
+            PreviewProjectionGeneration::begin(&runtime, &session_root, &publication_root).unwrap();
+        let excluded = BTreeSet::from([PathBuf::from("templates/index.html")]);
+        let (reused_entries, reused_bytes) = next
+            .seed_from_published(&excluded, 128, 1024 * 1024)
+            .unwrap();
+        assert!(reused_entries >= 2);
+        assert_eq!(reused_bytes, b"binary".len() as u64);
+        next.write_text(
+            Path::new("templates/index.html"),
+            "<main data-pana-source>revision two</main>",
+        )
+        .unwrap();
+        let next_publication = next.publish().unwrap();
+        assert!(next_publication.stats.reused_entries >= 2);
+        assert_eq!(
+            next_publication.stats.reflinked_files + next_publication.stats.copied_fallback_files,
+            1
+        );
+        assert_eq!(
+            fs::read(publication_root.join("static/logo.bin")).unwrap(),
+            b"binary"
+        );
+        assert_eq!(
+            fs::read_to_string(publication_root.join("templates/index.html")).unwrap(),
+            "<main data-pana-source>revision two</main>"
+        );
+        assert_eq!(next_publication.retire_previous().unwrap(), 2);
         fs::remove_dir_all(fixture).unwrap();
     }
 

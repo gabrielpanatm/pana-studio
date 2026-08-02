@@ -41,6 +41,29 @@ export type PreviewOperationAck = {
     workspaceRevision: number;
     workspaceTransactionId: string;
   } | null;
+  stylesheetPromotion?: {
+    schemaVersion: 1;
+    mode: "in_place";
+    reused: number;
+    staged: number;
+    retired: number;
+    preloadsReused?: number;
+    preloadsStaged?: number;
+    preloadsRetired?: number;
+    headNodesReused?: number;
+    headNodesCreated?: number;
+    headNodesRetired?: number;
+    headNodesReordered?: number;
+    stylesheetAttributeMutations?: number;
+    preloadAttributeMutations?: number;
+    fontInvalidationCount?: number;
+    fontFallbackFrames?: number;
+    maxTextMetricDelta?: number;
+    fontActivationErrorCount?: number;
+    fontActivationDiagnostic?: string | null;
+    fontsReadyMs?: number;
+    activationToStyledMs: number;
+  } | null;
 };
 
 export type PreviewRuntimeHost = {
@@ -287,6 +310,9 @@ export class PreviewRuntime {
         : null,
       canvasPatchRollbackReceipt: data.canvasPatchRollbackReceipt && typeof data.canvasPatchRollbackReceipt === "object"
         ? data.canvasPatchRollbackReceipt as PreviewOperationAck["canvasPatchRollbackReceipt"]
+        : null,
+      stylesheetPromotion: data.stylesheetPromotion && typeof data.stylesheetPromotion === "object"
+        ? data.stylesheetPromotion as PreviewOperationAck["stylesheetPromotion"]
         : null,
     };
     this.lastAck = ack;

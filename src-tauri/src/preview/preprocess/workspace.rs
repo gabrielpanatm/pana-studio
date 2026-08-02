@@ -8,7 +8,6 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager, Runtime};
-use walkdir::WalkDir;
 
 use super::{
     annotate::{is_template_relative_path, preprocess_template_with_revision, SourceIdIndex},
@@ -16,11 +15,12 @@ use super::{
 };
 use crate::{
     kernel::{
-        project_workspace::WorkspaceProjectionLease,
+        project_workspace::WorkspaceProjectionSnapshot,
         write_authority::{
-            ActiveProjectReadLease, PreviewProjectionGeneration, PreviewProjectionPublication,
-            PreviewProjectionPublicationStats, WriteAuthority, WriteAuthorityRuntime,
-            WriteCategory, WriteIntent, WriteOperationKind, WriteOwner, WritePolicy, WriteTarget,
+            ActiveProjectReadLease, PendingProjectAuthority, PreviewProjectionGeneration,
+            PreviewProjectionPublication, PreviewProjectionPublicationStats, WriteAuthority,
+            WriteAuthorityRuntime, WriteCategory, WriteIntent, WriteOperationKind, WriteOwner,
+            WritePolicy, WriteTarget,
         },
     },
     zola_theme::active_theme_from_source,
@@ -28,8 +28,6 @@ use crate::{
 
 const MAX_WORKSPACE_PREVIEW_ENTRIES: usize = 16_384;
 const MAX_WORKSPACE_PREVIEW_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_SEEDED_ARTIFACT_FILES: usize = 16_384;
-const MAX_SEEDED_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const SKIPPED_SOURCE_DIRECTORIES: &[&str] = &[
     ".git",
     ".svelte-kit",
@@ -205,7 +203,7 @@ pub(crate) fn materialize_version_source_tree<R: Runtime>(
     Ok(source_root)
 }
 
-/// Synchronizes one exact ProjectWorkspace lease into a stable derived source
+/// Synchronizes one exact ProjectWorkspace projection into a stable derived source
 /// tree. The complete disk baseline is copied only for a new session or after
 /// AcceptedDisk advances; ordinary edits touch only changed overlay paths.
 pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
@@ -213,20 +211,28 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
     zola_root: &Path,
     session_root: &Path,
     previous: Option<&PersistentProjectionManifest>,
-    lease: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
+    pending_project_authority: Option<&PendingProjectAuthority>,
 ) -> Result<(PersistentProjectionUpdate, PreviewProjectionPublication), String> {
-    require_projection_root(zola_root, lease)?;
-    require_disjoint_projection(lease)?;
-    require_accepted_disk_baseline(lease)?;
+    let require_live_disk = pending_project_authority.is_none();
+    require_projection_root(zola_root, projection)?;
+    require_disjoint_projection(projection)?;
+    require_accepted_disk_baseline(projection, require_live_disk)?;
 
     let projection_root = session_root.join("source");
-    let active_theme = projected_active_theme(lease);
+    let active_theme = projected_active_theme(projection);
     let needs_baseline = previous.is_none()
         || previous.is_some_and(|manifest| {
-            manifest.accepted_disk_generation != lease.accepted_disk.generation
+            manifest.accepted_disk_generation != projection.accepted_disk.generation
                 || manifest.active_theme != active_theme
         })
         || !projection_root.is_dir();
+    let manifest = projection_manifest(projection);
+    let mut projected_paths = previous
+        .map(|previous| projection_changed_paths(previous, &manifest))
+        .unwrap_or_else(|| projected_overlay_paths(projection));
+    projected_paths.sort();
+    projected_paths.dedup();
 
     let container = preview_project_dir(app, zola_root)?;
     create_directory(app, &container, &container, "preview/root")?;
@@ -234,13 +240,44 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
     create_directory(app, &container, session_root, "preview/editor-session")?;
 
     let authority = app.state::<WriteAuthorityRuntime>();
-    let project_read = authority
-        .acquire_active_project_read_lease_for_session(zola_root, &lease.runtime_session_id)?;
+    let project_read = if let Some(pending) = pending_project_authority {
+        pending.require_project_binding(zola_root, &projection.runtime_session_id)?;
+        ProjectReadAccess::Pending(pending)
+    } else {
+        ProjectReadAccess::Active(authority.acquire_active_project_read_lease_for_session(
+            zola_root,
+            &projection.runtime_session_id,
+        )?)
+    };
     let mut generation =
         PreviewProjectionGeneration::begin(authority.inner(), session_root, &projection_root)?;
-    if let Err(error) =
-        materialize_generation_contents(zola_root, &mut generation, lease, &project_read)
-    {
+    let materialization = if needs_baseline {
+        materialize_generation_contents(zola_root, &mut generation, projection, &project_read)
+    } else {
+        (|| {
+            let excluded = projected_paths
+                .iter()
+                .map(|path| zola_relative_projection_path(path))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .flatten()
+                .collect::<BTreeSet<_>>();
+            let (reused_entries, reused_bytes) = generation.seed_from_published(
+                &excluded,
+                MAX_WORKSPACE_PREVIEW_ENTRIES,
+                MAX_WORKSPACE_PREVIEW_BYTES,
+            )?;
+            materialize_generation_delta(
+                &mut generation,
+                projection,
+                &project_read,
+                &projected_paths,
+                reused_entries,
+                reused_bytes,
+            )
+        })()
+    };
+    if let Err(error) = materialization {
         let cleanup = generation.discard();
         return Err(match cleanup {
             Ok(()) => error,
@@ -249,17 +286,11 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
             }
         });
     }
-    require_accepted_disk_baseline(lease)?;
+    require_accepted_disk_baseline(projection, require_live_disk)?;
     let publication = generation.publish()?;
     let publication_stats = publication.stats;
 
-    let manifest = projection_manifest(lease);
-    let mut projected_paths = previous
-        .map(|previous| projection_changed_paths(previous, &manifest))
-        .unwrap_or_else(|| projected_overlay_paths(lease));
-    require_accepted_disk_baseline(lease)?;
-    projected_paths.sort();
-    projected_paths.dedup();
+    require_accepted_disk_baseline(projection, require_live_disk)?;
 
     Ok((
         PersistentProjectionUpdate {
@@ -271,6 +302,36 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
         },
         publication,
     ))
+}
+
+struct ProjectReadSnapshot {
+    bytes: Vec<u8>,
+}
+
+enum ProjectReadAccess<'a> {
+    Active(ActiveProjectReadLease<'a>),
+    Pending(&'a PendingProjectAuthority),
+}
+
+impl ProjectReadAccess<'_> {
+    fn read_bounded_regular_file(
+        &self,
+        relative_path: &Path,
+        max_bytes: u64,
+        public_label: &str,
+    ) -> Result<Option<ProjectReadSnapshot>, String> {
+        let snapshot = match self {
+            Self::Active(active) => {
+                active.read_bounded_regular_file(relative_path, max_bytes, public_label)?
+            }
+            Self::Pending(pending) => {
+                pending.read_bounded_regular_file(relative_path, max_bytes, public_label)?
+            }
+        };
+        Ok(snapshot.map(|snapshot| ProjectReadSnapshot {
+            bytes: snapshot.bytes,
+        }))
+    }
 }
 
 pub(crate) fn create_persistent_preview_artifact_root<R: Runtime>(
@@ -332,124 +393,6 @@ pub(crate) fn create_source_browser_artifact_root<R: Runtime>(
         &format!("preview/source-browser-session/artifacts/{source_revision}"),
     )?;
     Ok(artifact_root)
-}
-
-/// Reuses the immutable assets of the last canonical generation without
-/// escaping the Preview WriteAuthority. Planning is completed before the
-/// first effect so a symlink or budget violation cannot leave a partial seed.
-pub(crate) fn seed_persistent_preview_artifacts<R: Runtime>(
-    app: &AppHandle<R>,
-    session_root: &Path,
-    source_root: &Path,
-    target_root: &Path,
-) -> Result<(), String> {
-    if !target_root.starts_with(session_root.join("artifacts")) {
-        return Err(format!(
-            "Canvas Runtime a refuzat seed-ul în afara sesiunii: {}.",
-            target_root.display()
-        ));
-    }
-    let plan = plan_persistent_preview_artifact_seed(source_root, target_root)?;
-    for target in plan.directories {
-        create_directory(
-            app,
-            session_root,
-            &target,
-            &preview_label(session_root, &target),
-        )?;
-    }
-    for (source, target) in plan.files {
-        create_parent_directories(app, session_root, &target)?;
-        copy_file(app, session_root, &source, &target)?;
-    }
-    Ok(())
-}
-
-#[derive(Debug, Default, Eq, PartialEq)]
-struct PersistentPreviewArtifactSeedPlan {
-    directories: Vec<PathBuf>,
-    files: Vec<(PathBuf, PathBuf)>,
-}
-
-fn plan_persistent_preview_artifact_seed(
-    source_root: &Path,
-    target_root: &Path,
-) -> Result<PersistentPreviewArtifactSeedPlan, String> {
-    if source_root == target_root {
-        return Ok(PersistentPreviewArtifactSeedPlan::default());
-    }
-    for (label, root) in [("precedent", source_root), ("candidat", target_root)] {
-        let metadata = fs::symlink_metadata(root).map_err(|error| {
-            format!(
-                "Canvas Runtime nu a putut inspecta root-ul {label} {}: {error}",
-                root.display()
-            )
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(format!(
-                "Canvas Runtime cere un root {label} real: {}.",
-                root.display()
-            ));
-        }
-    }
-
-    let mut plan = PersistentPreviewArtifactSeedPlan::default();
-    let mut total_bytes = 0u64;
-    for entry in WalkDir::new(source_root)
-        .follow_links(false)
-        .sort_by_file_name()
-    {
-        let entry = entry.map_err(|error| {
-            format!("Canvas Runtime nu a putut parcurge artifactele precedente: {error}")
-        })?;
-        if entry.file_type().is_symlink() {
-            return Err(format!(
-                "Canvas Runtime a refuzat symlink-ul din artifactele precedente: {}.",
-                entry.path().display()
-            ));
-        }
-        let relative = entry.path().strip_prefix(source_root).map_err(|_| {
-            "Canvas Runtime a găsit un artifact precedent în afara root-ului.".to_string()
-        })?;
-        if relative.as_os_str().is_empty() {
-            continue;
-        }
-        let target = target_root.join(relative);
-        if entry.file_type().is_dir() {
-            plan.directories.push(target);
-            continue;
-        }
-        if !entry.file_type().is_file() {
-            return Err(format!(
-                "Canvas Runtime a refuzat artifactul precedent non-regular: {}.",
-                entry.path().display()
-            ));
-        }
-        if plan.files.len() >= MAX_SEEDED_ARTIFACT_FILES {
-            return Err(format!(
-                "Canvas Runtime refuză peste {MAX_SEEDED_ARTIFACT_FILES} artifacte precedente."
-            ));
-        }
-        let size = entry
-            .metadata()
-            .map_err(|error| {
-                format!(
-                    "Canvas Runtime nu a putut măsura {}: {error}",
-                    entry.path().display()
-                )
-            })?
-            .len();
-        total_bytes = total_bytes.checked_add(size).ok_or_else(|| {
-            "Canvas Runtime a depășit contorul artifactelor precedente.".to_string()
-        })?;
-        if total_bytes > MAX_SEEDED_ARTIFACT_BYTES {
-            return Err(format!(
-                "Canvas Runtime refuză peste {MAX_SEEDED_ARTIFACT_BYTES} bytes de artifacte precedente."
-            ));
-        }
-        plan.files.push((entry.path().to_path_buf(), target));
-    }
-    Ok(plan)
 }
 
 pub(crate) fn remove_persistent_preview_artifact_root<R: Runtime>(
@@ -545,32 +488,24 @@ pub(crate) fn prepare_source_browser_session<R: Runtime>(
     )
 }
 
-pub(crate) fn reset_persistent_preview_editor_cache<R: Runtime>(
-    app: &AppHandle<R>,
-    zola_root: &Path,
-) -> Result<(), String> {
-    let container = preview_project_dir(app, zola_root)?;
-    remove_entry(app, &container, &container.join("editor"))
-}
-
 fn materialize_generation_contents(
     zola_root: &Path,
     generation: &mut PreviewProjectionGeneration,
-    lease: &WorkspaceProjectionLease,
-    project_read: &ActiveProjectReadLease<'_>,
+    projection: &WorkspaceProjectionSnapshot,
+    project_read: &ProjectReadAccess<'_>,
 ) -> Result<(), String> {
-    let active_theme = projected_active_theme(lease);
+    let active_theme = projected_active_theme(projection);
     let mut budget = MaterializationBudget::default();
     copy_zola_sources(
         zola_root,
         generation,
         active_theme.as_deref(),
-        lease,
+        projection,
         project_read,
         &mut budget,
     )?;
 
-    let mut deleted = lease.deleted_sources.iter().collect::<Vec<_>>();
+    let mut deleted = projection.deleted_sources.iter().collect::<Vec<_>>();
     deleted.sort();
     for project_relative in deleted {
         let Some(zola_relative) = zola_relative_projection_path(project_relative)? else {
@@ -583,12 +518,12 @@ fn materialize_generation_contents(
     }
 
     let source_ids = SourceIdIndex::for_template_sources(
-        lease
+        projection
             .source_texts
             .iter()
             .map(|(path, source)| (path.as_str(), source.as_str())),
     );
-    let mut source_texts = lease.source_texts.iter().collect::<Vec<_>>();
+    let mut source_texts = projection.source_texts.iter().collect::<Vec<_>>();
     source_texts.sort_by(|left, right| left.0.cmp(right.0));
     for (project_relative, source) in source_texts {
         let Some(zola_relative) = zola_relative_projection_path(project_relative)? else {
@@ -608,7 +543,7 @@ fn materialize_generation_contents(
         generation.write_text(&zola_relative, &projected)?;
     }
 
-    let mut resource_bytes = lease.resource_bytes.iter().collect::<Vec<_>>();
+    let mut resource_bytes = projection.resource_bytes.iter().collect::<Vec<_>>();
     resource_bytes.sort_by(|left, right| left.0.cmp(right.0));
     for (project_relative, bytes) in resource_bytes {
         let Some(zola_relative) = zola_relative_projection_path(project_relative)? else {
@@ -621,29 +556,97 @@ fn materialize_generation_contents(
     Ok(())
 }
 
-fn projection_manifest(lease: &WorkspaceProjectionLease) -> PersistentProjectionManifest {
+fn materialize_generation_delta(
+    generation: &mut PreviewProjectionGeneration,
+    projection: &WorkspaceProjectionSnapshot,
+    project_read: &ProjectReadAccess<'_>,
+    changed_paths: &[String],
+    reused_entries: usize,
+    reused_bytes: u64,
+) -> Result<(), String> {
+    let mut budget = MaterializationBudget {
+        entries: reused_entries,
+        bytes: reused_bytes,
+    };
+    let source_ids = SourceIdIndex::for_template_sources(
+        projection
+            .source_texts
+            .iter()
+            .map(|(path, source)| (path.as_str(), source.as_str())),
+    );
+    for project_relative in changed_paths {
+        let Some(zola_relative) = zola_relative_projection_path(project_relative)? else {
+            continue;
+        };
+        if projection.deleted_sources.contains(project_relative) {
+            continue;
+        }
+        if let Some(source) = projection.source_texts.get(project_relative) {
+            budget.reserve(&zola_relative, source.len() as u64)?;
+            let projected = if is_annotated_template_path(&zola_relative) {
+                preprocess_template_with_revision(
+                    source,
+                    &zola_relative.to_string_lossy().replace('\\', "/"),
+                    Some(&source_ids),
+                    None,
+                )
+            } else {
+                source.clone()
+            };
+            generation.write_text(&zola_relative, &projected)?;
+            continue;
+        }
+        if let Some(bytes) = projection.resource_bytes.get(project_relative) {
+            budget.reserve(&zola_relative, bytes.len() as u64)?;
+            generation.write_bytes(&zola_relative, bytes)?;
+            continue;
+        }
+
+        let accepted = project_read.read_bounded_regular_file(
+            Path::new(project_relative),
+            budget.remaining_bytes(),
+            "preview/projection/reverted-accepted-file",
+        )?;
+        let Some(accepted) = accepted else {
+            // Undo of a session-created file: the old derived file was
+            // excluded from the clone and no accepted source replaces it.
+            continue;
+        };
+        if is_annotated_template_path(&zola_relative) {
+            return Err(format!(
+                "ProjectWorkspace nu a furnizat sursa text autoritativă pentru template-ul {}.",
+                project_relative
+            ));
+        }
+        budget.reserve(&zola_relative, accepted.bytes.len() as u64)?;
+        generation.write_bytes(&zola_relative, &accepted.bytes)?;
+    }
+    Ok(())
+}
+
+fn projection_manifest(projection: &WorkspaceProjectionSnapshot) -> PersistentProjectionManifest {
     PersistentProjectionManifest {
-        accepted_disk_generation: lease.accepted_disk.generation,
-        active_theme: projected_active_theme(lease),
-        text_hashes: lease
+        accepted_disk_generation: projection.accepted_disk.generation,
+        active_theme: projected_active_theme(projection),
+        text_hashes: projection
             .source_texts
             .iter()
             .map(|(path, source)| (path.clone(), hash_bytes(source.as_bytes())))
             .collect(),
-        resource_hashes: lease
+        resource_hashes: projection
             .resource_bytes
             .iter()
             .map(|(path, bytes)| (path.clone(), hash_bytes(bytes)))
             .collect(),
-        deleted_sources: lease.deleted_sources.iter().cloned().collect(),
+        deleted_sources: projection.deleted_sources.iter().cloned().collect(),
     }
 }
 
-fn projected_overlay_paths(lease: &WorkspaceProjectionLease) -> Vec<String> {
-    lease
+fn projected_overlay_paths(projection: &WorkspaceProjectionSnapshot) -> Vec<String> {
+    projection
         .changed_paths
         .iter()
-        .chain(lease.deleted_sources.iter())
+        .chain(projection.deleted_sources.iter())
         .cloned()
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -680,16 +683,16 @@ fn hash_bytes(bytes: &[u8]) -> String {
 
 fn require_projection_root(
     zola_root: &Path,
-    lease: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<(), String> {
-    let expected = Path::new(&lease.project_root).to_path_buf();
+    let expected = Path::new(&projection.project_root).to_path_buf();
     let expected = expected.canonicalize().unwrap_or(expected);
     let actual = zola_root
         .canonicalize()
         .unwrap_or_else(|_| zola_root.to_path_buf());
     if expected != actual {
         return Err(format!(
-            "Proiecția Preview a refuzat un lease ProjectWorkspace pentru alt root: așteptat {}, primit {}.",
+            "Proiecția Preview a refuzat un projection ProjectWorkspace pentru alt root: așteptat {}, primit {}.",
             expected.display(),
             actual.display()
         ));
@@ -706,18 +709,18 @@ fn require_projection_root(
     Ok(())
 }
 
-fn require_disjoint_projection(lease: &WorkspaceProjectionLease) -> Result<(), String> {
-    if let Some(path) = lease
+fn require_disjoint_projection(projection: &WorkspaceProjectionSnapshot) -> Result<(), String> {
+    if let Some(path) = projection
         .source_texts
         .keys()
-        .find(|path| lease.deleted_sources.contains(*path))
+        .find(|path| projection.deleted_sources.contains(*path))
     {
         return Err(format!(
             "ProjectWorkspace a produs o proiecție ambiguă pentru {path}: draft și delete simultan."
         ));
     }
-    if let Some(path) = lease.resource_bytes.keys().find(|path| {
-        lease.deleted_sources.contains(*path) || lease.source_texts.contains_key(*path)
+    if let Some(path) = projection.resource_bytes.keys().find(|path| {
+        projection.deleted_sources.contains(*path) || projection.source_texts.contains_key(*path)
     }) {
         return Err(format!(
             "ProjectWorkspace a produs o proiecție ambiguă pentru {path}: resursă binară suprapusă peste text sau delete."
@@ -726,22 +729,35 @@ fn require_disjoint_projection(lease: &WorkspaceProjectionLease) -> Result<(), S
     Ok(())
 }
 
-fn require_accepted_disk_baseline(lease: &WorkspaceProjectionLease) -> Result<(), String> {
-    lease.accepted_disk.require_live_complete(
-        &lease.runtime_session_id,
-        &lease.project_root,
-        Path::new(&lease.project_root),
-    )
+fn require_accepted_disk_baseline(
+    projection: &WorkspaceProjectionSnapshot,
+    require_live_disk: bool,
+) -> Result<(), String> {
+    if require_live_disk {
+        return projection.accepted_disk.require_live_complete(
+            &projection.runtime_session_id,
+            &projection.project_root,
+            Path::new(&projection.project_root),
+        );
+    }
+    projection
+        .accepted_disk
+        .require_identity(&projection.runtime_session_id, &projection.project_root)?;
+    projection.accepted_disk.require_complete()?;
+    if projection.accepted_disk.manifest.root != projection.project_root {
+        return Err("AcceptedDisk provizoriu aparține altui root canonic.".to_string());
+    }
+    Ok(())
 }
 
-fn projected_active_theme(lease: &WorkspaceProjectionLease) -> Option<String> {
+fn projected_active_theme(projection: &WorkspaceProjectionSnapshot) -> Option<String> {
     ["zola.toml", "config.toml"]
         .iter()
         .find_map(|relative| {
-            if lease.deleted_sources.contains(*relative) {
+            if projection.deleted_sources.contains(*relative) {
                 return None;
             }
-            lease.source_texts.get(*relative).cloned()
+            projection.source_texts.get(*relative).cloned()
         })
         .and_then(|source| active_theme_from_source(&source))
 }
@@ -750,8 +766,8 @@ fn copy_zola_sources(
     zola_root: &Path,
     generation: &mut PreviewProjectionGeneration,
     active_theme: Option<&str>,
-    lease: &WorkspaceProjectionLease,
-    project_read: &ActiveProjectReadLease<'_>,
+    projection: &WorkspaceProjectionSnapshot,
+    project_read: &ProjectReadAccess<'_>,
     budget: &mut MaterializationBudget,
 ) -> Result<(), String> {
     let output_root = crate::deploy::resolve_artifact_root(zola_root, zola_root).ok();
@@ -800,7 +816,7 @@ fn copy_zola_sources(
                         &theme_source,
                         &target.join(theme),
                         generation,
-                        lease,
+                        projection,
                         project_read,
                         budget,
                         output_root.as_deref(),
@@ -822,7 +838,7 @@ fn copy_zola_sources(
             &source,
             &target,
             generation,
-            lease,
+            projection,
             project_read,
             budget,
             output_root.as_deref(),
@@ -836,8 +852,8 @@ fn copy_entry_recursive(
     source: &Path,
     relative_target: &Path,
     generation: &mut PreviewProjectionGeneration,
-    lease: &WorkspaceProjectionLease,
-    project_read: &ActiveProjectReadLease<'_>,
+    projection: &WorkspaceProjectionSnapshot,
+    project_read: &ProjectReadAccess<'_>,
     budget: &mut MaterializationBudget,
     output_root: Option<&Path>,
 ) -> Result<(), String> {
@@ -869,7 +885,7 @@ fn copy_entry_recursive(
                 &entry.path(),
                 &relative_target.join(name),
                 generation,
-                lease,
+                projection,
                 project_read,
                 budget,
                 output_root,
@@ -883,7 +899,7 @@ fn copy_entry_recursive(
             source.display()
         ));
     }
-    if workspace_owns_source_file(zola_root, source, lease)? {
+    if workspace_owns_source_file(zola_root, source, projection)? {
         budget.reserve(source, metadata.len())?;
         return Ok(());
     }
@@ -918,7 +934,7 @@ fn copy_entry_recursive(
 fn workspace_owns_source_file(
     zola_root: &Path,
     source: &Path,
-    lease: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<bool, String> {
     let relative = source.strip_prefix(zola_root).map_err(|_| {
         format!(
@@ -927,9 +943,9 @@ fn workspace_owns_source_file(
         )
     })?;
     let project_relative = relative.to_string_lossy().replace('\\', "/");
-    Ok(lease.source_texts.contains_key(&project_relative)
-        || lease.resource_bytes.contains_key(&project_relative)
-        || lease.deleted_sources.contains(&project_relative))
+    Ok(projection.source_texts.contains_key(&project_relative)
+        || projection.resource_bytes.contains_key(&project_relative)
+        || projection.deleted_sources.contains(&project_relative))
 }
 
 fn is_annotated_template_path(relative: &Path) -> bool {
@@ -1100,30 +1116,6 @@ fn write_bytes<R: Runtime>(
     Ok(())
 }
 
-fn copy_file<R: Runtime>(
-    app: &AppHandle<R>,
-    boundary: &Path,
-    source: &Path,
-    target: &Path,
-) -> Result<(), String> {
-    let intent = WriteIntent::new(
-        WriteCategory::PreviewWorkspaceWrite,
-        WriteOwner::Preview,
-        WriteOperationKind::Copy,
-        WriteTarget::new(
-            target.to_path_buf(),
-            boundary.to_path_buf(),
-            preview_label(boundary, target),
-        ),
-        WritePolicy::preview_workspace_lifecycle(),
-        "ProjectWorkspace Preview source copy",
-    );
-    WriteAuthority::new(app)
-        .copy_file(intent, source)
-        .map_err(|error| error.into_terminal_diagnostic())?;
-    Ok(())
-}
-
 fn remove_file<R: Runtime>(
     app: &AppHandle<R>,
     boundary: &Path,
@@ -1183,18 +1175,6 @@ fn preview_label(boundary: &Path, target: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn artifact_seed_fixture(label: &str) -> PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "pana-preview-artifact-seed-{label}-{}-{nonce}",
-            std::process::id()
-        ))
-    }
 
     #[test]
     fn projection_paths_accept_safe_zola_root_files_and_descendants() {
@@ -1224,7 +1204,7 @@ mod tests {
             },
         )
         .unwrap();
-        let lease = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: "/tmp/project".to_string(),
             runtime_session_id: "session".to_string(),
             revision: 1,
@@ -1235,7 +1215,7 @@ mod tests {
             changed_paths: std::collections::HashSet::new(),
             accepted_disk,
         };
-        assert!(require_disjoint_projection(&lease).is_err());
+        assert!(require_disjoint_projection(&projection).is_err());
     }
 
     #[test]
@@ -1270,50 +1250,5 @@ mod tests {
                 "templates/removed.html".to_string(),
             ]
         );
-    }
-
-    #[test]
-    fn artifact_seed_is_fully_planned_before_write_authority_effects() {
-        let fixture = artifact_seed_fixture("plan");
-        let source = fixture.join("active");
-        let target = fixture.join("staged");
-        fs::create_dir_all(source.join("nested")).unwrap();
-        fs::create_dir_all(&target).unwrap();
-        fs::write(source.join("site.css"), b"body{color:#123}").unwrap();
-        fs::write(source.join("nested/font.woff2"), b"font-bytes").unwrap();
-
-        let plan = plan_persistent_preview_artifact_seed(&source, &target).unwrap();
-        assert_eq!(plan.directories, vec![target.join("nested")]);
-        assert_eq!(
-            plan.files,
-            vec![
-                (
-                    source.join("nested/font.woff2"),
-                    target.join("nested/font.woff2")
-                ),
-                (source.join("site.css"), target.join("site.css")),
-            ]
-        );
-        assert!(!target.join("site.css").exists());
-        fs::remove_dir_all(fixture).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn artifact_seed_plan_refuses_symlink_before_any_effect() {
-        use std::os::unix::fs::symlink;
-
-        let fixture = artifact_seed_fixture("symlink");
-        let source = fixture.join("active");
-        let target = fixture.join("staged");
-        fs::create_dir_all(&source).unwrap();
-        fs::create_dir_all(&target).unwrap();
-        fs::write(fixture.join("outside.css"), b"outside").unwrap();
-        symlink(fixture.join("outside.css"), source.join("site.css")).unwrap();
-
-        let error = plan_persistent_preview_artifact_seed(&source, &target).unwrap_err();
-        assert!(error.contains("symlink"));
-        assert!(!target.join("site.css").exists());
-        fs::remove_dir_all(fixture).unwrap();
     }
 }

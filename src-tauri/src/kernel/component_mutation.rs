@@ -160,7 +160,7 @@ pub fn plan_component_mutation(
 ) -> Result<ComponentMutationPlan, String> {
     require_no_duplicate_companions(&input.companions)?;
     let companion_drafts = input.companions.clone();
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
     require_graph_without_errors(&graph, "starea curentă")?;
 
@@ -647,7 +647,7 @@ pub(crate) fn validate_semantic_workspace_candidate(
     candidate: &ProjectWorkspace,
     mutation_label: &str,
 ) -> Result<SourceGraph, String> {
-    let projection = candidate.capture_projection_lease()?;
+    let projection = candidate.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
     require_graph_without_errors_for(&graph, "candidatul mutației", mutation_label)?;
     validate_candidate_with_embedded_zola(project_root, candidate, &projection, mutation_label)?;
@@ -657,7 +657,7 @@ pub(crate) fn validate_semantic_workspace_candidate(
 fn validate_candidate_with_embedded_zola(
     project_root: &Path,
     candidate: &ProjectWorkspace,
-    projection: &crate::kernel::project_workspace::WorkspaceProjectionLease,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
     mutation_label: &str,
 ) -> Result<(), String> {
     candidate.accepted_disk.require_live_complete(
@@ -710,7 +710,7 @@ fn validate_candidate_with_embedded_zola(
 fn materialize_component_validation_projection(
     project_root: &Path,
     sandbox: &ComponentValidationSandboxLease,
-    projection: &crate::kernel::project_workspace::WorkspaceProjectionLease,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
 ) -> Result<(), String> {
     for entry in &projection.accepted_disk.manifest.files {
         let relative_path = normalize_project_relative_path(&entry.relative_path)?;
@@ -1909,7 +1909,7 @@ mod tests {
         let end = start + expected.len();
         let graph = build_source_graph_from_workspace_projection(
             &root,
-            &workspace.capture_projection_lease().unwrap(),
+            &workspace.capture_projection_snapshot().unwrap(),
         )
         .unwrap();
         assert!(graph.nodes.iter().any(|node| {
@@ -2113,7 +2113,7 @@ mod tests {
         workspace: &ProjectWorkspace,
         relative_path: &str,
     ) -> String {
-        let projection = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
         build_source_graph_from_workspace_projection(root, &projection)
             .unwrap()
             .component_graph

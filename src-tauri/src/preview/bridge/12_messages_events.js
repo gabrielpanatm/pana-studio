@@ -36,6 +36,9 @@
     if (details && details.canvasPatchRollbackReceipt) {
       payload.canvasPatchRollbackReceipt = details.canvasPatchRollbackReceipt;
     }
+    if (details && details.stylesheetPromotion) {
+      payload.stylesheetPromotion = details.stylesheetPromotion;
+    }
     post("preview-operation-complete", payload);
   }
 
@@ -101,6 +104,16 @@
       return;
     }
 
+    if (data.type === "project-canvas-drag-preview") {
+      projectCanvasAgentDragPreview(data);
+      return;
+    }
+
+    if (data.type === "cancel-canvas-drag-preview") {
+      cancelCanvasAgentDragPreview(data);
+      return;
+    }
+
     if (data.type === "inspect-canvas-interaction-target") {
       inspectCanvasAgentTarget(data);
       return;
@@ -108,6 +121,11 @@
 
     if (data.type === "clear-canvas-interaction-overlays") {
       clearCanvasAgentOverlays();
+      return;
+    }
+
+    if (data.type === "set-canvas-grid-overlay") {
+      setCanvasAgentGridOverlay(data);
       return;
     }
 
@@ -150,11 +168,13 @@
 
     if (data.type === "set-live-overrides-css") {
       setLiveOverridesCss(data.css || "");
+      updateCanvasAgentGridOverlay();
       return;
     }
 
     if (data.type === "set-live-style-css") {
       setLiveStyleCss(data.id || LIVE_OVERRIDES_ID, data.css || "");
+      updateCanvasAgentGridOverlay();
       return;
     }
 

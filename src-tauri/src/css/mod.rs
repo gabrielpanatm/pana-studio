@@ -1,3 +1,5 @@
+pub mod background;
+pub mod grid;
 pub mod page;
 pub mod rules;
 pub mod validation;

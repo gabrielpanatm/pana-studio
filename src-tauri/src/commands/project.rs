@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::{
     commands::{
         ai_coordination::publish_ai_coordination_state,
+        config::{read_project_app_config_for_bootstrap, ProjectAppConfig},
         kernel::current_kernel_project_state_snapshot,
     },
     js::PageJsDraftStore,
@@ -20,8 +24,9 @@ use crate::{
             FileBufferStoreSnapshot, FileBufferTextSnapshot,
         },
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
+        preview_projection::{CanvasPatch, CanvasPatchAnchor, CanvasPatchOperation},
         project_session::{
-            fingerprint_project_root, persist_project_session_open, prepare_project_session,
+            persist_project_session_open, prepare_project_session_with_fingerprint,
             record_project_session_opened, ProjectSessionSnapshot,
         },
         project_state::{
@@ -47,32 +52,389 @@ use crate::{
             persist_project_workspace_recovery,
             recover_project_workspace_save_hot_journal as apply_project_workspace_save_recovery,
             require_project_open_recovery_assessment_unchanged, resolve_project_open_recovery,
-            restore_project_workspace_recovery, ProjectOpenRecoveryAssessment,
-            ProjectOpenRecoveryDecisionInput, ProjectOpenRecoveryResolution, ProjectWorkspace,
-            ProjectWorkspaceHistoryIdentity, ProjectWorkspaceIdentity, ProjectWorkspaceSaveError,
-            ProjectWorkspaceSaveReceipt, ProjectWorkspaceSaveRecoveryAction,
-            ProjectWorkspaceSaveRecoveryReceipt, ProjectWorkspaceSnapshot,
-            WorkspaceDocumentMutation, WorkspaceHistoryDirection, WorkspaceHistorySnapshot,
-            WorkspaceMutationMetadata, WorkspaceUndoRedoReceipt,
+            restore_project_workspace_recovery, ProjectOpenRecoveryDecisionInput,
+            ProjectOpenRecoveryResolution, ProjectWorkspace, ProjectWorkspaceHistoryIdentity,
+            ProjectWorkspaceIdentity, ProjectWorkspaceSaveError, ProjectWorkspaceSaveReceipt,
+            ProjectWorkspaceSaveRecoveryAction, ProjectWorkspaceSaveRecoveryReceipt,
+            ProjectWorkspaceSnapshot, WorkspaceCanvasHistoryDelta, WorkspaceDocumentMutation,
+            WorkspaceHistoryDirection, WorkspaceHistorySnapshot, WorkspaceMutationMetadata,
+            WorkspaceUndoRedoReceipt,
         },
         recovery_coordinator::{
             scan_recovery_coordinator, RecoveryCoordinatorScan, RecoveryCoordinatorStatus,
         },
         workbench::{
-            persist_workbench, WorkbenchCommandReceipt, WorkbenchIntent, WorkbenchProjectEntryRemap,
+            persist_workbench, read_persisted_workbench, WorkbenchActivity,
+            WorkbenchBottomPanelView, WorkbenchCommandReceipt, WorkbenchGroupId, WorkbenchIdentity,
+            WorkbenchIntent, WorkbenchProjectEntryRemap, WorkbenchRuntime, WorkbenchSnapshot,
+            WorkbenchSplit, WorkbenchSurface,
         },
         write_authority::WriteAuthorityRuntime,
     },
     preview::{
         schedule_source_browser_refresh, stop_project_preview, stop_source_browser,
-        BrowserPreviewRequestIdentity,
+        BrowserPreviewRequestIdentity, CanvasProjectionPlan, PersistentPreviewOwner,
+        PersistentZolaPreviewEngine,
     },
     project::{
-        read_project_disk_manifest, require_valid_zola_candidate, scan_project_root,
-        scan_project_workspace_projection, AcceptedProjectDiskManifest, ProjectDiskWatchHandle,
+        apply_project_model_preview_routes, read_project_disk_manifest, scan_project_disk_manifest,
+        scan_project_root, scan_project_workspace_projection, AcceptedProjectDiskManifest,
+        ProjectDiskWatchHandle, ProjectFile, ProjectFileKind, ProjectLifecycleRuntime, ProjectScan,
+        PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION,
     },
+    project_model::{
+        build_project_model_from_workspace_projection,
+        model::ProjectModel,
+        move_engine::html_identity_aliases,
+        rebuild_project_model_after_workspace_change,
+        template_workbench::{
+            resolve_template_workbench_plan, TemplateWorkbenchPlan, TemplateWorkbenchPlanInput,
+        },
+        ProjectModelIncrementalIntent,
+    },
+    source_graph::model::SourceNodeKind,
     state::AppState,
 };
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBootstrapDocument {
+    pub relative_path: String,
+    pub source: String,
+    pub preview_path: Option<String>,
+    pub diagnostic_location: Option<ProjectBootstrapSourceLocation>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBootstrapSourceLocation {
+    pub line: u32,
+    pub column: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOpenBootstrapReceipt {
+    pub schema_version: u32,
+    pub project: ProjectScan,
+    pub lifecycle: crate::project::ProjectLifecycleSnapshot,
+    pub file_buffers: FileBufferStoreSnapshot,
+    pub workspace: ProjectWorkspaceSnapshot,
+    pub project_config: ProjectAppConfig,
+    pub workbench: WorkbenchSnapshot,
+    pub active_document: Option<ProjectBootstrapDocument>,
+    pub target_css_file: Option<String>,
+    pub initial_surface: Option<ProjectBootstrapInitialSurface>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectBootstrapInitialSurface {
+    pub document_path: String,
+    pub route: String,
+    pub preview_url: String,
+    pub plan: TemplateWorkbenchPlan,
+    pub canvas_projection: CanvasProjectionPlan,
+}
+
+struct ProjectOpenLifecycleGuard {
+    app: AppHandle,
+    runtime: ProjectLifecycleRuntime,
+    operation_id: String,
+    committed: bool,
+}
+
+struct PreparedProjectPreview {
+    app: AppHandle,
+    engine: Option<PersistentZolaPreviewEngine>,
+}
+
+impl PreparedProjectPreview {
+    fn new(app: AppHandle, engine: PersistentZolaPreviewEngine) -> Self {
+        Self {
+            app,
+            engine: Some(engine),
+        }
+    }
+
+    fn take(&mut self) -> Result<PersistentZolaPreviewEngine, String> {
+        self.engine
+            .take()
+            .ok_or_else(|| "Preview-ul provizoriu a fost deja consumat.".to_string())
+    }
+}
+
+impl Drop for PreparedProjectPreview {
+    fn drop(&mut self) {
+        if let Some(engine) = self.engine.take() {
+            let _ = engine.stop(&self.app);
+        }
+    }
+}
+
+impl ProjectOpenLifecycleGuard {
+    fn new(app: AppHandle, runtime: ProjectLifecycleRuntime, operation_id: String) -> Self {
+        Self {
+            app,
+            runtime,
+            operation_id,
+            committed: false,
+        }
+    }
+
+    fn mark_committed(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for ProjectOpenLifecycleGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            match self
+                .runtime
+                .fail_before_commit(&self.operation_id, "open_project_returned_before_commit")
+            {
+                Ok(snapshot) => {
+                    let _ = append_event(
+                        &self.app,
+                        KernelLogEvent::new(
+                            KernelLogLevel::Error,
+                            KernelEventKind::ProjectLifecycleTransition,
+                            "project_lifecycle",
+                            "project_transition",
+                            "precommit_failed",
+                            Some(self.operation_id.clone()),
+                            "ProjectLifecycle a retras candidatul înainte de commit.",
+                            Some(snapshot.reason),
+                        )
+                        .with_attribute("operationId", &self.operation_id)
+                        .with_attribute("transition", snapshot.transition),
+                    );
+                }
+                Err(error) => {
+                    let _ = append_event(
+                        &self.app,
+                        KernelLogEvent::new(
+                            KernelLogLevel::Warn,
+                            KernelEventKind::ProjectLifecycleTransition,
+                            "project_lifecycle",
+                            "project_transition",
+                            "stale_operation_retired",
+                            Some(self.operation_id.clone()),
+                            "Candidatul provizoriu a fost retras după invalidarea operationId.",
+                            Some(error),
+                        )
+                        .with_attribute("operationId", &self.operation_id)
+                        .with_attribute("stale", true),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn active_workbench_relative_path(snapshot: &WorkbenchSnapshot) -> Option<String> {
+    let group = snapshot
+        .groups
+        .iter()
+        .find(|group| group.group_id == snapshot.active_group_id)?;
+    let active_id = group.active_document_id.as_deref()?;
+    group
+        .documents
+        .iter()
+        .find(|document| document.document_id == active_id)
+        .map(|document| document.relative_path.clone())
+}
+
+fn initial_project_file<'a>(
+    scan: &'a ProjectScan,
+    workbench: &WorkbenchSnapshot,
+) -> Option<&'a ProjectFile> {
+    active_workbench_relative_path(workbench)
+        .and_then(|path| scan.files.iter().find(|file| file.relative_path == path))
+        .or_else(|| project_index_file(scan))
+}
+
+fn project_index_file(scan: &ProjectScan) -> Option<&ProjectFile> {
+    scan.files
+        .iter()
+        .find(|file| file.relative_path == "templates/index.html")
+        .or_else(|| {
+            let active_theme = scan.active_theme.as_deref()?;
+            let themed_index = format!("themes/{active_theme}/templates/index.html");
+            scan.files
+                .iter()
+                .find(|file| file.relative_path == themed_index)
+        })
+        .or_else(|| {
+            scan.files.iter().find(|file| {
+                file.role == crate::project::ProjectFileRole::Page
+                    && file.preview_path.as_deref() == Some("/")
+            })
+        })
+        .or_else(|| {
+            scan.files
+                .iter()
+                .find(|file| file.role == crate::project::ProjectFileRole::Page)
+        })
+        .or_else(|| {
+            scan.files
+                .iter()
+                .find(|file| !matches!(file.kind, ProjectFileKind::Dir | ProjectFileKind::Image))
+        })
+}
+
+fn workbench_surface_for_file(file: &ProjectFile) -> WorkbenchSurface {
+    match file.kind {
+        ProjectFileKind::Md => WorkbenchSurface::Code,
+        ProjectFileKind::Html if file.role == crate::project::ProjectFileRole::Page => {
+            WorkbenchSurface::Visual
+        }
+        _ => WorkbenchSurface::Code,
+    }
+}
+
+fn prepare_bootstrap_workbench(
+    session: &ProjectSessionSnapshot,
+    scan: &ProjectScan,
+) -> Result<WorkbenchSnapshot, String> {
+    let file = project_index_file(scan);
+    prepare_bootstrap_workbench_for_file(session, file, None)
+}
+
+fn prepare_bootstrap_workbench_for_file(
+    session: &ProjectSessionSnapshot,
+    file: Option<&ProjectFile>,
+    surface_override: Option<WorkbenchSurface>,
+) -> Result<WorkbenchSnapshot, String> {
+    let runtime = WorkbenchRuntime::default();
+    let mut snapshot = runtime.read_or_restore(session, || read_persisted_workbench(session))?;
+    let Some(file) = file else {
+        return Ok(snapshot);
+    };
+    for intent in [
+        WorkbenchIntent::SetSplit {
+            split: WorkbenchSplit::None,
+        },
+        WorkbenchIntent::SetActivity {
+            activity: WorkbenchActivity::Editor,
+        },
+        WorkbenchIntent::SetBottomPanel {
+            open: false,
+            active_view: WorkbenchBottomPanelView::Problems,
+        },
+        WorkbenchIntent::OpenDocument {
+            relative_path: file.relative_path.clone(),
+            group_id: WorkbenchGroupId::Primary,
+            surface: surface_override.unwrap_or_else(|| {
+                if file.role == crate::project::ProjectFileRole::Template {
+                    WorkbenchSurface::Visual
+                } else {
+                    workbench_surface_for_file(file)
+                }
+            }),
+            pinned: false,
+        },
+    ] {
+        let identity = WorkbenchIdentity {
+            expected_project_root: snapshot.project_root.clone(),
+            expected_runtime_session_id: snapshot.runtime_session_id.clone(),
+            expected_revision: snapshot.revision,
+        };
+        snapshot = runtime.apply(session, &identity, intent)?.snapshot;
+    }
+    Ok(snapshot)
+}
+
+fn project_file_from_preview_diagnostic<'a>(
+    scan: &'a ProjectScan,
+    diagnostic: &str,
+) -> Option<&'a ProjectFile> {
+    // Zola reports the private projected path (for example
+    // `.../source/sass/pagini/index.scss:1170:23`), never the original root.
+    // Match against the authoritative workspace namespace so the bootstrap
+    // remains independent from the private cache location and its session id.
+    scan.files
+        .iter()
+        .filter(|file| !matches!(file.kind, ProjectFileKind::Dir | ProjectFileKind::Image))
+        .filter(|file| diagnostic.contains(&file.relative_path))
+        .max_by_key(|file| file.relative_path.len())
+}
+
+fn project_source_location_from_preview_diagnostic(
+    diagnostic: &str,
+    relative_path: &str,
+) -> Option<ProjectBootstrapSourceLocation> {
+    let path_end = diagnostic.rfind(relative_path)? + relative_path.len();
+    let location = diagnostic.get(path_end..)?.strip_prefix(':')?;
+    let (line, remainder) = parse_diagnostic_coordinate(location)?;
+    let column = remainder
+        .strip_prefix(':')
+        .and_then(parse_diagnostic_coordinate)
+        .map(|(column, _)| column)
+        .unwrap_or(1);
+    Some(ProjectBootstrapSourceLocation { line, column })
+}
+
+fn parse_diagnostic_coordinate(value: &str) -> Option<(u32, &str)> {
+    let digits = value
+        .char_indices()
+        .take_while(|(_, character)| character.is_ascii_digit())
+        .map(|(index, character)| index + character.len_utf8())
+        .last()?;
+    let coordinate = value.get(..digits)?.parse::<u32>().ok()?;
+    (coordinate > 0).then(|| (coordinate, &value[digits..]))
+}
+
+#[cfg(test)]
+mod bootstrap_preview_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn resolves_the_workspace_file_from_a_private_zola_projection_path() {
+        let scan = ProjectScan {
+            root: "/project".to_string(),
+            preview_base_url: None,
+            preview_warning: None,
+            active_theme: None,
+            files: vec![
+                ProjectFile {
+                    name: "index.scss".to_string(),
+                    relative_path: "sass/pagini/index.scss".to_string(),
+                    absolute_path: "/project/sass/pagini/index.scss".to_string(),
+                    kind: ProjectFileKind::Scss,
+                    role: crate::project::ProjectFileRole::Style,
+                    preview_path: None,
+                },
+                ProjectFile {
+                    name: "index.html".to_string(),
+                    relative_path: "templates/index.html".to_string(),
+                    absolute_path: "/project/templates/index.html".to_string(),
+                    kind: ProjectFileKind::Html,
+                    role: crate::project::ProjectFileRole::Template,
+                    preview_path: None,
+                },
+            ],
+            kernel_session_id: None,
+            workspace_revision: None,
+            accepted_disk_manifest: None,
+            accepted_disk_generation: None,
+        };
+        let diagnostic = concat!(
+            "Zola nu a putut randa: Expected expression. | 1170 | ",
+            "//cache/preview/session/source/sass/pagini/index.scss:1170:23",
+        );
+
+        let file = project_file_from_preview_diagnostic(&scan, diagnostic)
+            .expect("diagnostic source file");
+        assert_eq!(file.relative_path, "sass/pagini/index.scss");
+        assert_eq!(
+            project_source_location_from_preview_diagnostic(diagnostic, &file.relative_path)
+                .map(|location| (location.line, location.column)),
+            Some((1170, 23)),
+        );
+    }
+}
 
 pub fn current_project_root(state: &State<AppState>) -> Option<PathBuf> {
     state.current_root.lock().ok()?.clone()
@@ -302,7 +664,7 @@ fn reattach_project_session_impl(
                 "ProjectWorkspace s-a schimbat înainte de proiecția reatașării.".to_string(),
             );
         }
-        workspace.capture_projection_lease()?
+        workspace.capture_projection_snapshot()?
     };
     let scan = scan_project_workspace_projection(&projection)?;
 
@@ -338,9 +700,130 @@ fn reattach_project_session_impl(
 /// FileBufferStore, reset Undo/Redo, or touch the disk.
 #[tauri::command]
 pub fn reattach_project_session(
+    app: AppHandle,
     state: State<AppState>,
-) -> Result<Option<crate::project::ProjectScan>, String> {
-    reattach_project_session_impl(state.inner())
+) -> Result<Option<ProjectOpenBootstrapReceipt>, String> {
+    let scan = reattach_project_session_impl(state.inner())?;
+    let Some(mut scan) = scan else {
+        return Ok(None);
+    };
+    let session = current_project_session(&state)?
+        .ok_or_else(|| "Sesiunea reatașată a dispărut înainte de bootstrap.".to_string())?;
+    let lifecycle = state.project_lifecycle.attach_existing_session(&session)?;
+    let workbench = state
+        .workbench
+        .read_or_restore(&session, || read_persisted_workbench(&session))?;
+    let project_config =
+        read_project_app_config_for_bootstrap(&app, Path::new(&session.project_root))?;
+    let (file_buffers, workspace_snapshot, mut active_document, projection, project_model) = {
+        let workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "ProjectWorkspace este indisponibil la reatașare.".to_string())?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace lipsește la reatașare.".to_string())?;
+        let active_document = initial_project_file(&scan, &workbench).and_then(|file| {
+            workspace
+                .documents
+                .text_for(&file.relative_path)
+                .map(|source| ProjectBootstrapDocument {
+                    relative_path: file.relative_path.clone(),
+                    source,
+                    preview_path: file.preview_path.clone(),
+                    diagnostic_location: None,
+                })
+        });
+        let projection = workspace.capture_projection_snapshot()?;
+        let project_model = (workspace.project_model_source_revision == Some(projection.revision))
+            .then(|| workspace.project_model.clone())
+            .flatten();
+        (
+            workspace.documents.snapshot(),
+            workspace.snapshot(),
+            active_document,
+            projection,
+            project_model,
+        )
+    };
+    if let Some(model) = project_model.as_ref() {
+        apply_project_model_preview_routes(
+            &mut scan,
+            model
+                .source_graph
+                .pages
+                .iter()
+                .map(|page| (page.file.as_str(), page.url.as_str())),
+        );
+        if let Some(document) = active_document.as_mut() {
+            document.preview_path = scan
+                .files
+                .iter()
+                .find(|file| file.relative_path == document.relative_path)
+                .and_then(|file| file.preview_path.clone());
+        }
+    }
+    let target_css_file = scan
+        .files
+        .iter()
+        .find(|file| {
+            matches!(file.kind, ProjectFileKind::Css | ProjectFileKind::Scss)
+                && file.role == crate::project::ProjectFileRole::Style
+        })
+        .map(|file| file.relative_path.clone());
+    let initial_surface = match (
+        initial_project_file(&scan, &workbench)
+            .filter(|file| file.role == crate::project::ProjectFileRole::Template),
+        project_model,
+    ) {
+        (Some(file), Some(model)) => {
+            let plan = resolve_template_workbench_plan(
+                &model,
+                &TemplateWorkbenchPlanInput {
+                    template_path: file.relative_path.clone(),
+                    preferred_page_path: None,
+                    preferred_route: None,
+                },
+            )?;
+            let _preview_operation = state.preview_workspace_operation.lock().map_err(|_| {
+                "Nu am putut serializa suprafața inițială la reatașare.".to_string()
+            })?;
+            let mut preview_slot = state.preview_engine.lock().map_err(|_| {
+                "Nu am putut bloca Preview-ul pentru suprafața inițială.".to_string()
+            })?;
+            match preview_slot.as_mut() {
+                Some(engine)
+                    if engine
+                        .generation_for_workspace_revision(projection.revision)?
+                        .is_some() =>
+                {
+                    let publication =
+                        engine.publish_template_workbench_view(&projection, &model, &plan)?;
+                    Some(ProjectBootstrapInitialSurface {
+                        document_path: file.relative_path.clone(),
+                        route: publication.route,
+                        preview_url: publication.preview_url,
+                        plan,
+                        canvas_projection: publication.canvas_plan,
+                    })
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    Ok(Some(ProjectOpenBootstrapReceipt {
+        schema_version: PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION,
+        project: scan,
+        lifecycle,
+        file_buffers,
+        workspace: workspace_snapshot,
+        project_config,
+        workbench,
+        active_document,
+        target_css_file,
+        initial_surface,
+    }))
 }
 
 #[tauri::command]
@@ -445,7 +928,7 @@ pub fn save_project_workspace(
     Ok(receipt)
 }
 
-pub const PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION: u32 = 3;
+pub const PROJECT_WORKSPACE_UNDO_REDO_COMMAND_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -456,6 +939,7 @@ pub struct ProjectWorkspaceUndoRedoCommandReceipt {
     pub result: WorkspaceUndoRedoReceipt,
     pub workspace: ProjectWorkspaceSnapshot,
     pub workbench: Option<WorkbenchCommandReceipt>,
+    pub canvas_patch: Option<CanvasPatch>,
 }
 
 #[tauri::command]
@@ -494,17 +978,78 @@ fn apply_project_workspace_history(
         expected_session_id: identity.expected_session_id.clone(),
         expected_revision: identity.expected_revision,
     };
-    let result = commit_project_workspace_session_mutation(&app, workspace, |candidate| {
-        candidate.require_history_target(direction, &identity.expected_transaction_id)?;
-        match direction {
-            WorkspaceHistoryDirection::Undo => {
-                candidate.undo(&workspace_identity, file_buffer_now_ms())
-            }
-            WorkspaceHistoryDirection::Redo => {
-                candidate.redo(&workspace_identity, file_buffer_now_ms())
-            }
-        }
-    })?;
+    let (result, project_model_build) =
+        commit_project_workspace_session_mutation(&app, workspace, |candidate| {
+            let previous_model = candidate.project_model.clone();
+            let previous_model_source_revision = candidate.project_model_source_revision;
+            candidate.require_history_target(direction, &identity.expected_transaction_id)?;
+            let result = match direction {
+                WorkspaceHistoryDirection::Undo => {
+                    candidate.undo(&workspace_identity, file_buffer_now_ms())
+                }
+                WorkspaceHistoryDirection::Redo => {
+                    candidate.redo(&workspace_identity, file_buffer_now_ms())
+                }
+            }?;
+            let projection = candidate.capture_projection_snapshot()?;
+            let incremental_intent = if result.canvas_delta.is_some() {
+                ProjectModelIncrementalIntent::HtmlStructural
+            } else {
+                ProjectModelIncrementalIntent::Unsupported
+            };
+            let build = rebuild_project_model_after_workspace_change(
+                Path::new(&candidate.session.project_root),
+                previous_model.as_ref(),
+                previous_model_source_revision,
+                &projection,
+                &result.entry.document_paths,
+                incremental_intent,
+            )?;
+            let alias_updates = previous_model
+                .as_ref()
+                .map(|before_model| {
+                    history_source_identity_aliases(
+                        before_model,
+                        &build.model,
+                        result.canvas_delta.as_ref(),
+                        direction,
+                    )
+                })
+                .unwrap_or_default();
+            candidate.publish_project_model(&projection, build.model)?;
+            candidate.publish_source_identity_alias_transition(
+                result.revision_before,
+                result.revision_after,
+                alias_updates,
+            )?;
+            Ok((result, build.report))
+        })?;
+    append_history_project_model_build_event(&app, direction, &project_model_build);
+    let canvas_patch = result.canvas_delta.as_ref().and_then(|delta| {
+        let (before_model_revision, after_model_revision, operation) = match direction {
+            WorkspaceHistoryDirection::Undo => (
+                delta.after_model_revision.as_str(),
+                delta.before_model_revision.as_str(),
+                delta.inverse.clone(),
+            ),
+            WorkspaceHistoryDirection::Redo => (
+                delta.before_model_revision.as_str(),
+                delta.after_model_revision.as_str(),
+                delta.forward.clone(),
+            ),
+        };
+        CanvasPatch::issued_for_history(
+            &workspace.session.project_root,
+            &workspace.runtime_session_id(),
+            result.revision_before,
+            result.revision_after,
+            &result.application_transaction_id,
+            before_model_revision,
+            after_model_revision,
+            operation,
+        )
+        .ok()
+    });
     let workspace_snapshot = workspace.snapshot();
     let session = workspace.session.clone();
     let runtime_session_id = workspace.runtime_session_id();
@@ -558,7 +1103,254 @@ fn apply_project_workspace_history(
         result,
         workspace: workspace_snapshot,
         workbench,
+        canvas_patch,
     })
+}
+
+fn history_source_identity_aliases(
+    before_model: &ProjectModel,
+    after_model: &ProjectModel,
+    canvas_delta: Option<&WorkspaceCanvasHistoryDelta>,
+    direction: WorkspaceHistoryDirection,
+) -> std::collections::HashMap<String, String> {
+    let mut aliases = html_identity_aliases(before_model, after_model);
+    let Some(canvas_delta) = canvas_delta else {
+        return aliases;
+    };
+    let (before_operation, after_operation) = match direction {
+        WorkspaceHistoryDirection::Undo => (&canvas_delta.inverse, &canvas_delta.forward),
+        WorkspaceHistoryDirection::Redo => (&canvas_delta.forward, &canvas_delta.inverse),
+    };
+    for (before_anchor, after_anchor) in
+        paired_history_canvas_anchors(before_operation, after_operation)
+    {
+        let Some(before_source_id) = live_history_anchor_source_id(before_model, before_anchor)
+        else {
+            continue;
+        };
+        let Some(after_source_id) = live_history_anchor_source_id(after_model, after_anchor) else {
+            continue;
+        };
+        if before_source_id != after_source_id {
+            aliases.insert(before_source_id, after_source_id);
+        }
+    }
+    aliases
+}
+
+fn paired_history_canvas_anchors<'a>(
+    before: &'a CanvasPatchOperation,
+    after: &'a CanvasPatchOperation,
+) -> Vec<(&'a CanvasPatchAnchor, &'a CanvasPatchAnchor)> {
+    match (before, after) {
+        (
+            CanvasPatchOperation::SetAttributes { target: before, .. },
+            CanvasPatchOperation::SetAttributes { target: after, .. },
+        )
+        | (
+            CanvasPatchOperation::SetBlockOption { target: before, .. },
+            CanvasPatchOperation::SetBlockOption { target: after, .. },
+        )
+        | (
+            CanvasPatchOperation::SetText { target: before, .. },
+            CanvasPatchOperation::SetText { target: after, .. },
+        )
+        | (
+            CanvasPatchOperation::SetTextHtml { target: before, .. },
+            CanvasPatchOperation::SetTextHtml { target: after, .. },
+        )
+        | (
+            CanvasPatchOperation::ReplaceTag { target: before, .. },
+            CanvasPatchOperation::ReplaceTag { target: after, .. },
+        ) => vec![(before, after)],
+        (
+            CanvasPatchOperation::Move {
+                source: before_source,
+                target: before_target,
+                ..
+            },
+            CanvasPatchOperation::Move {
+                source: after_source,
+                target: after_target,
+                ..
+            },
+        ) => vec![(before_source, after_source), (before_target, after_target)],
+        _ => Vec::new(),
+    }
+}
+
+fn live_history_anchor_source_id(
+    model: &ProjectModel,
+    anchor: &CanvasPatchAnchor,
+) -> Option<String> {
+    std::iter::once(anchor.source_id.as_str())
+        .chain(anchor.alternate_source_ids.iter().map(String::as_str))
+        .find(|source_id| {
+            model
+                .source_graph
+                .nodes
+                .iter()
+                .any(|node| node.kind == SourceNodeKind::Html && node.id == *source_id)
+        })
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod source_identity_history_tests {
+    use std::{
+        collections::{BTreeMap, HashMap},
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::project_model::build_project_model;
+
+    use super::*;
+
+    #[test]
+    fn undo_and_redo_publish_the_exact_attribute_target_identity_transition() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = \"http://example.test\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
+        )
+        .unwrap();
+        let before_source = concat!(
+            "<h1>\n",
+            "  <span>Construiește vizual.</span>\n",
+            "  <span>Păstrează controlul</span>\n",
+            "  <span>asupra codului.</span>\n",
+            "</h1>\n",
+        );
+        let after_source = concat!(
+            "<h1>\n",
+            "  <span>Construiește vizual.</span>\n",
+            "  <span class=\"ps-span-control-abc123\">Păstrează controlul</span>\n",
+            "  <span>asupra codului.</span>\n",
+            "</h1>\n",
+        );
+        fs::write(root.join("templates/index.html"), before_source).unwrap();
+        let before = build_project_model(&root, &HashMap::new()).unwrap();
+        let mut drafts = HashMap::new();
+        drafts.insert("templates/index.html".to_string(), after_source.to_string());
+        let after = build_project_model(&root, &drafts).unwrap();
+        let before_id = span_id_for_text(&before, before_source, "Păstrează controlul");
+        let after_id = span_id_for_text(&after, after_source, "Păstrează controlul");
+        assert_ne!(before_id, after_id);
+
+        let delta = WorkspaceCanvasHistoryDelta {
+            before_model_revision: before.revision.clone(),
+            after_model_revision: after.revision.clone(),
+            forward: CanvasPatchOperation::SetAttributes {
+                target: CanvasPatchAnchor::source(&before_id, None, Some("span")),
+                attributes: BTreeMap::from([(
+                    "class".to_string(),
+                    Some("ps-span-control-abc123".to_string()),
+                )]),
+            },
+            inverse: CanvasPatchOperation::SetAttributes {
+                target: CanvasPatchAnchor::source(&after_id, None, Some("span"))
+                    .with_alternate_source_ids([before_id.clone()]),
+                attributes: BTreeMap::from([("class".to_string(), None)]),
+            },
+        };
+
+        let undo_aliases = history_source_identity_aliases(
+            &after,
+            &before,
+            Some(&delta),
+            WorkspaceHistoryDirection::Undo,
+        );
+        assert_eq!(undo_aliases.get(&after_id), Some(&before_id));
+
+        let redo_aliases = history_source_identity_aliases(
+            &before,
+            &after,
+            Some(&delta),
+            WorkspaceHistoryDirection::Redo,
+        );
+        assert_eq!(redo_aliases.get(&before_id), Some(&after_id));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn span_id_for_text(model: &ProjectModel, source: &str, text: &str) -> String {
+        model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Html
+                    && node.label.starts_with("<span")
+                    && node.range.as_ref().is_some_and(|range| {
+                        source
+                            .get(range.start..range.end)
+                            .is_some_and(|fragment| fragment.contains(text))
+                    })
+            })
+            .expect("span semantic")
+            .id
+            .clone()
+    }
+
+    fn unique_test_dir() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "pana-studio-selection-history-{}-{stamp}",
+            std::process::id()
+        ))
+    }
+}
+
+fn append_history_project_model_build_event(
+    app: &AppHandle,
+    direction: WorkspaceHistoryDirection,
+    report: &crate::project_model::ProjectModelIncrementalBuildReport,
+) {
+    let event = KernelLogEvent::new(
+        KernelLogLevel::Info,
+        match direction {
+            WorkspaceHistoryDirection::Undo => KernelEventKind::UndoApplied,
+            WorkspaceHistoryDirection::Redo => KernelEventKind::RedoApplied,
+        },
+        "project_workspace",
+        "history_project_model",
+        "project_workspace.history.project_model",
+        report.workspace_transaction_id.clone(),
+        "Undo/Redo rebuilt ProjectModel under Rust authority.",
+        None,
+    )
+    .with_attribute("projectModelBuildMode", report.mode.label())
+    .with_attribute("projectModelFallbackReason", report.fallback_reason.clone())
+    .with_attribute("projectModelBuildMs", report.duration_ms)
+    .with_attribute("changedPathCount", report.changed_paths.len())
+    .with_attribute(
+        "invalidatedTemplateCount",
+        report.invalidated_template_files.len(),
+    )
+    .with_attribute("invalidatedPageCount", report.invalidated_page_files.len())
+    .with_attribute("replacedNodes", report.replaced_nodes)
+    .with_attribute("reusedNodes", report.reused_nodes)
+    .with_attribute("reusedRelations", report.reused_relations)
+    .with_attribute("projectModelCloneMs", report.model_clone_ms)
+    .with_attribute("projectModelTemplateParseMs", report.template_parse_ms)
+    .with_attribute("projectModelComponentGraphMs", report.component_graph_ms)
+    .with_attribute("projectModelBlockGraphMs", report.block_graph_ms)
+    .with_attribute("projectModelTeraGraphMs", report.tera_graph_ms);
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = append_event(&app, event);
+    });
 }
 
 pub(crate) fn require_recovery_coordinator_clean_for_write(
@@ -1330,9 +2122,9 @@ pub fn scan_project(
         let workspace = workspace.as_ref().ok_or_else(|| {
             "ProjectWorkspace nu este inițializat pentru ProjectScan.".to_string()
         })?;
-        workspace.capture_projection_lease()?
+        workspace.capture_projection_snapshot()?
     };
-    let scan = scan_project_workspace_projection(&projection)?;
+    let mut scan = scan_project_workspace_projection(&projection)?;
     let current_root = state
         .current_root
         .lock()
@@ -1344,10 +2136,22 @@ pub fn scan_project(
     if current_root.as_ref() != Some(&requested_root) {
         return Err("ProjectScan a devenit stale în timpul construcției.".to_string());
     }
-    workspace
+    let workspace = workspace
         .as_ref()
-        .ok_or_else(|| "ProjectWorkspace a dispărut în timpul ProjectScan.".to_string())?
-        .require_current_projection(&projection)?;
+        .ok_or_else(|| "ProjectWorkspace a dispărut în timpul ProjectScan.".to_string())?;
+    workspace.require_current_projection(&projection)?;
+    if workspace.project_model_source_revision == Some(projection.revision) {
+        if let Some(model) = workspace.project_model.as_ref() {
+            apply_project_model_preview_routes(
+                &mut scan,
+                model
+                    .source_graph
+                    .pages
+                    .iter()
+                    .map(|page| (page.file.as_str(), page.url.as_str())),
+            );
+        }
+    }
     Ok(scan)
 }
 
@@ -1396,6 +2200,14 @@ pub fn start_project_disk_watch(
         .project_disk_watch_transition
         .lock()
         .map_err(|_| "Serializarea watcher-ului este compromisă.".to_string())?;
+    ensure_project_disk_watch(&app, state.inner(), &input)
+}
+
+fn ensure_project_disk_watch(
+    app: &AppHandle,
+    state: &AppState,
+    input: &ProjectDiskWatchRequest,
+) -> Result<ProjectDiskWatchReceipt, String> {
     let (project_root, runtime_session_id) = {
         let workspace = state
             .project_workspace
@@ -1416,19 +2228,26 @@ pub fn start_project_disk_watch(
         )
     };
 
-    let previous = {
-        let mut slot = state
-            .project_disk_watch
-            .lock()
-            .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?;
-        slot.take()
-    };
-    if let Some(previous) = previous {
-        previous.stop();
+    if let Some(receipt) = state
+        .project_disk_watch
+        .lock()
+        .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?
+        .as_ref()
+        .filter(|watcher| watcher.matches(&project_root, &runtime_session_id))
+        .map(|watcher| ProjectDiskWatchReceipt {
+            project_root: project_root.to_string_lossy().to_string(),
+            runtime_session_id: runtime_session_id.clone(),
+            watch_generation: watcher.watch_generation(),
+        })
+    {
+        return Ok(receipt);
     }
 
-    let watcher =
-        ProjectDiskWatchHandle::start(app, project_root.clone(), runtime_session_id.clone())?;
+    let watcher = ProjectDiskWatchHandle::start(
+        app.clone(),
+        project_root.clone(),
+        runtime_session_id.clone(),
+    )?;
     let receipt = ProjectDiskWatchReceipt {
         project_root: project_root.to_string_lossy().to_string(),
         runtime_session_id: runtime_session_id.clone(),
@@ -1447,11 +2266,16 @@ pub fn start_project_disk_watch(
         watcher.stop();
         return Err("ProjectSession s-a schimbat înainte de publicarea watcher-ului.".to_string());
     }
-    let mut slot = state
-        .project_disk_watch
-        .lock()
-        .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?;
-    *slot = Some(watcher);
+    let previous = {
+        let mut slot = state
+            .project_disk_watch
+            .lock()
+            .map_err(|_| "Slot-ul watcher-ului este compromis.".to_string())?;
+        slot.replace(watcher)
+    };
+    if let Some(previous) = previous {
+        previous.stop();
+    }
     Ok(receipt)
 }
 
@@ -1523,40 +2347,73 @@ pub fn close_project(
         record_project_session_closed(&app, &session);
     }
     state.startup_flow.reset()?;
+    state.project_lifecycle.clear_active("project_closed")?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn inspect_project_open_recovery(
-    path: String,
-    app: AppHandle,
-) -> Result<ProjectOpenRecoveryAssessment, String> {
-    let root = PathBuf::from(path)
-        .canonicalize()
-        .map_err(|error| format!("Nu am putut rezolva folderul: {error}"))?;
-    let manifest = read_project_disk_manifest(&root)?;
-    let root_fingerprint = fingerprint_project_root(&root)?;
-    inspect_project_workspace_recovery_for_open(&app, &root, &manifest, &root_fingerprint)
-}
-
-#[tauri::command]
 pub fn open_project(
     path: String,
+    operation_id: String,
+    candidate_token: String,
     operator_decision_id: Option<String>,
     recovery_decision: Option<ProjectOpenRecoveryDecisionInput>,
     app: AppHandle,
     state: State<AppState>,
-) -> Result<crate::project::ProjectScan, String> {
+) -> Result<ProjectOpenBootstrapReceipt, String> {
+    let lifecycle_started = Instant::now();
     println!("[Pană Studio] open_project invoked: {}", path);
     app.state::<WriteAuthorityRuntime>()
         .require_recovery_clean()?;
     let root = PathBuf::from(path)
         .canonicalize()
         .map_err(|error| format!("Nu am putut rezolva folderul: {}", error))?;
-    require_valid_zola_candidate(&root)?;
     let action = project_transition_action_for_open_target(&state, &root)?;
     let reset_session_history = action == KernelProjectTransitionAction::ReloadProject;
+    let recovery_decision_token = recovery_decision
+        .as_ref()
+        .map(|decision| decision.assessment_token.as_str());
+    let inspection = state.project_lifecycle.begin_preparing(
+        &operation_id,
+        &candidate_token,
+        !reset_session_history,
+        recovery_decision_token,
+    )?;
+    if inspection.operation_id != operation_id {
+        return Err("Contextul inspecției nu corespunde operației solicitate.".to_string());
+    }
+    let _ = append_event(
+        &app,
+        KernelLogEvent::new(
+            KernelLogLevel::Info,
+            KernelEventKind::ProjectLifecycleTransition,
+            "project_lifecycle",
+            "project_transition",
+            "prepare",
+            Some(operation_id.clone()),
+            "ProjectLifecycle a început pregătirea provizorie.",
+            None,
+        )
+        .with_attribute("operationId", &operation_id)
+        .with_attribute("projectRoot", &inspection.candidate.root)
+        .with_attribute(
+            "folderSelectedToPrepareMs",
+            now_ms()
+                .saturating_sub(inspection.operation_started_at_ms)
+                .min(u64::MAX as u128) as u64,
+        ),
+    );
+    let mut lifecycle_guard = ProjectOpenLifecycleGuard::new(
+        app.clone(),
+        state.project_lifecycle.clone(),
+        operation_id.clone(),
+    );
+    if root != PathBuf::from(&inspection.candidate.root) {
+        return Err(
+            "ProjectLifecycle a refuzat deschiderea altui root decât cel inspectat.".to_string(),
+        );
+    }
     require_project_transition_for_action(
         &app,
         &state,
@@ -1565,15 +2422,20 @@ pub fn open_project(
         operator_decision_id.as_deref(),
     )?;
     let transition_runtime_lease = capture_project_transition_runtime_lease(&state)?;
-    let bootstrap_manifest = read_project_disk_manifest(&root)?;
+    let bootstrap_manifest = inspection.manifest.clone();
 
-    let mut scan = scan_project_root(&root)?;
+    let mut scan = scan_project_disk_manifest(&root, &inspection.manifest)?;
     println!(
         "[Pană Studio] open_project scanned: {} files from validated Zola root",
         scan.files.len()
     );
 
-    let session = prepare_project_session(&app, &root, &scan)?;
+    let session = prepare_project_session_with_fingerprint(
+        &app,
+        &root,
+        &scan,
+        inspection.root_fingerprint.clone(),
+    )?;
     let (project_device, project_inode) = project_session_root_identity(&session)?;
     let authority_runtime = app
         .try_state::<WriteAuthorityRuntime>()
@@ -1587,26 +2449,12 @@ pub fn open_project(
     let page_js_draft_store = PageJsDraftStore::new(&session);
     let recovery_coordinator_scan = scan_recovery_coordinator(&app, &session)?;
     let file_buffer_store = bootstrap_file_buffer_store(&app, &session, &root, &scan)?;
-    let verified_manifest = read_project_disk_manifest(&root)?;
-    if verified_manifest != bootstrap_manifest {
-        return Err(
-            "Proiectul s-a modificat pe disk în timpul bootstrap-ului; sesiunea nu a fost publicată. Reîncearcă deschiderea."
-                .to_string(),
-        );
-    }
     scan.kernel_session_id = Some(session.runtime_instance_id());
-    scan.accepted_disk_manifest = Some(verified_manifest);
-    let commit_manifest = read_project_disk_manifest(&root)?;
-    if scan.accepted_disk_manifest.as_ref() != Some(&commit_manifest) {
-        return Err(
-            "Manifestul proiectului s-a schimbat înainte de publicarea sesiunii; tranziția a fost refuzată."
-            .to_string(),
-        );
-    }
+    scan.accepted_disk_manifest = Some(bootstrap_manifest.clone());
     let next_accepted_disk_manifest = AcceptedProjectDiskManifest::new(
         session.runtime_instance_id(),
         session.project_root.clone(),
-        commit_manifest.clone(),
+        bootstrap_manifest.clone(),
     )?;
     let mut next_project_workspace = ProjectWorkspace::new(
         session.clone(),
@@ -1624,12 +2472,7 @@ pub fn open_project(
         );
     }
     let recovery_assessment = if recovery_preflight_enabled {
-        Some(inspect_project_workspace_recovery_for_open(
-            &app,
-            &root,
-            &commit_manifest,
-            &session.root_fingerprint,
-        )?)
+        Some(inspection.recovery.clone())
     } else {
         None
     };
@@ -1649,8 +2492,154 @@ pub fn open_project(
                 | crate::kernel::project_workspace::ProjectOpenRecoveryStatus::DecisionRequired
         ) && recovery_resolution != ProjectOpenRecoveryResolution::Restore
     });
-    let authoritative_scan =
-        scan_project_workspace_projection(&next_project_workspace.capture_projection_lease()?)?;
+    let bootstrap_projection = next_project_workspace.capture_projection_snapshot()?;
+    let mut authoritative_scan = scan_project_workspace_projection(&bootstrap_projection)?;
+    let file_buffers = next_project_workspace.documents.snapshot();
+    let workspace_snapshot = next_project_workspace.snapshot();
+    let project_config = read_project_app_config_for_bootstrap(&app, &root)?;
+    let mut workbench = prepare_bootstrap_workbench(&session, &authoritative_scan)?;
+    let target_css_file = authoritative_scan
+        .files
+        .iter()
+        .find(|file| {
+            matches!(file.kind, ProjectFileKind::Css | ProjectFileKind::Scss)
+                && file.role == crate::project::ProjectFileRole::Style
+        })
+        .map(|file| file.relative_path.clone());
+    let preview_owner =
+        PersistentPreviewOwner::new(session.project_root.clone(), session.runtime_instance_id());
+    let preview_prepare_started = Instant::now();
+    let mut preview_engine =
+        PersistentZolaPreviewEngine::start(&app, Path::new(&session.zola_root), preview_owner)?;
+    let preview_base_url = preview_engine.url()?;
+    authoritative_scan.preview_base_url = Some(preview_base_url.clone());
+    scan.preview_base_url = Some(preview_base_url);
+    let mut bootstrap_diagnostic_target: Option<(String, ProjectBootstrapSourceLocation)> = None;
+    let preview_candidate = match preview_engine.render_candidate_with_pending_project_authority(
+        &app,
+        &bootstrap_projection,
+        &pending_project_authority,
+    ) {
+        Ok(candidate) => Some(candidate),
+        Err(diagnostic) => {
+            // A broken Zola/Tera/SCSS render disables only Preview. The source
+            // workspace remains valid and must be committed so the user can
+            // repair it inside Pană Studio instead of being trapped on Startup.
+            authoritative_scan.preview_warning = Some(diagnostic.clone());
+            scan.preview_warning = Some(diagnostic.clone());
+            if let Some(file) =
+                project_file_from_preview_diagnostic(&authoritative_scan, &diagnostic)
+            {
+                if let Some(location) = project_source_location_from_preview_diagnostic(
+                    &diagnostic,
+                    &file.relative_path,
+                ) {
+                    bootstrap_diagnostic_target = Some((file.relative_path.clone(), location));
+                }
+                workbench = prepare_bootstrap_workbench_for_file(
+                    &session,
+                    Some(file),
+                    Some(WorkbenchSurface::Code),
+                )?;
+            }
+            let _ = append_event(
+                &app,
+                KernelLogEvent::new(
+                    KernelLogLevel::Warn,
+                    KernelEventKind::ProjectLifecycleTransition,
+                    "project_lifecycle",
+                    "project_open_preview",
+                    "degraded",
+                    Some(operation_id.clone()),
+                    "Proiectul va fi deschis pentru reparare, fără generația Preview inițială.",
+                    Some(diagnostic),
+                )
+                .with_attribute("operationId", &operation_id)
+                .with_attribute("projectRoot", &session.project_root),
+            );
+            None
+        }
+    };
+    let preview_timings = preview_candidate
+        .as_ref()
+        .map(|candidate| candidate.timings)
+        .unwrap_or_default();
+    let preview_plan = preview_candidate
+        .as_ref()
+        .map(|candidate| candidate.canvas_plan());
+    let preview_prepare_ms = preview_prepare_started
+        .elapsed()
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    let preview_model = match preview_candidate.as_ref() {
+        Some(candidate) => candidate.project_model().clone(),
+        None => build_project_model_from_workspace_projection(&root, &bootstrap_projection)?,
+    };
+    apply_project_model_preview_routes(
+        &mut authoritative_scan,
+        preview_model
+            .source_graph
+            .pages
+            .iter()
+            .map(|page| (page.file.as_str(), page.url.as_str())),
+    );
+    let mut active_document =
+        initial_project_file(&authoritative_scan, &workbench).and_then(|file| {
+            next_project_workspace
+                .documents
+                .text_for(&file.relative_path)
+                .map(|source| ProjectBootstrapDocument {
+                    relative_path: file.relative_path.clone(),
+                    source,
+                    preview_path: file.preview_path.clone(),
+                    diagnostic_location: bootstrap_diagnostic_target
+                        .as_ref()
+                        .filter(|(relative_path, _)| relative_path == &file.relative_path)
+                        .map(|(_, location)| *location),
+                })
+        });
+    if let Some(document) = active_document.as_mut() {
+        document.preview_path = authoritative_scan
+            .files
+            .iter()
+            .find(|file| file.relative_path == document.relative_path)
+            .and_then(|file| file.preview_path.clone());
+    }
+    next_project_workspace.publish_project_model(&bootstrap_projection, preview_model.clone())?;
+    let preview_generation_available = preview_candidate.is_some();
+    if let Some(candidate) = preview_candidate {
+        preview_engine.stage_candidate(&app, candidate)?;
+    }
+    let initial_surface = if preview_generation_available {
+        initial_project_file(&authoritative_scan, &workbench)
+            .filter(|file| file.role == crate::project::ProjectFileRole::Template)
+            .map(|file| {
+                let plan = resolve_template_workbench_plan(
+                    &preview_model,
+                    &TemplateWorkbenchPlanInput {
+                        template_path: file.relative_path.clone(),
+                        preferred_page_path: None,
+                        preferred_route: None,
+                    },
+                )?;
+                let publication = preview_engine.publish_template_workbench_view(
+                    &bootstrap_projection,
+                    &preview_model,
+                    &plan,
+                )?;
+                Ok::<_, String>(ProjectBootstrapInitialSurface {
+                    document_path: file.relative_path.clone(),
+                    route: publication.route,
+                    preview_url: publication.preview_url,
+                    plan,
+                    canvas_projection: publication.canvas_plan,
+                })
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let mut prepared_preview = PreparedProjectPreview::new(app.clone(), preview_engine);
     require_project_transition_for_action(
         &app,
         &state,
@@ -1658,9 +2647,22 @@ pub fn open_project(
         action,
         operator_decision_id.as_deref(),
     )?;
+    let lifecycle_commit_transition = state
+        .project_lifecycle_transition
+        .lock()
+        .map_err(|_| "Serializarea commit-ului ProjectLifecycle este compromisă.".to_string())?;
+    state.project_lifecycle.begin_commit(&operation_id)?;
     let opened_session_for_event = session.clone();
 
-    {
+    let previous_preview = {
+        let _preview_operation = state
+            .preview_workspace_operation
+            .lock()
+            .map_err(|_| "Nu am putut serializa commit-ul Preview inițial.".to_string())?;
+        let mut preview_slot = state
+            .preview_engine
+            .lock()
+            .map_err(|_| "Nu am putut bloca motorul Preview la commit.".to_string())?;
         let mut current_root = state
             .current_root
             .lock()
@@ -1724,6 +2726,9 @@ pub fn open_project(
         pending_project_authority.verify_path_binding()?;
         let mut authority_publication = authority_runtime.project_publication()?;
         authority_publication.publish(pending_project_authority)?;
+        state
+            .workbench
+            .publish_prepared(&session, workbench.clone())?;
         *current_root = Some(root.clone());
         *project_workspace = Some(next_project_workspace);
         *recovery_scan = Some(recovery_coordinator_scan);
@@ -1734,7 +2739,8 @@ pub fn open_project(
                 crate::kernel::observability::now_ms(),
             )
             .map_err(|error| error.to_string())?;
-    }
+        preview_slot.replace(prepared_preview.take()?)
+    };
     let _ = publish_ai_coordination_state(&app);
     if retire_abandoned_recovery {
         match clear_project_workspace_recovery(&app, &session.project_root) {
@@ -1760,13 +2766,91 @@ pub fn open_project(
     state.selection_coordinator.revoke_all();
     record_project_session_opened(&app, &opened_session_for_event);
     stop_source_browser(&app, state.inner());
-    stop_project_preview(&app, state.inner());
+    if let Some(previous_preview) = previous_preview {
+        if let Err(error) = previous_preview.stop(&app) {
+            eprintln!("[Pană Studio] Preview-ul sesiunii vechi nu s-a retras curat: {error}");
+        }
+    }
     println!(
         "[Pană Studio] open_project current_root set: {}",
         root.display()
     );
+    let lifecycle = state
+        .project_lifecycle
+        .commit_session(&operation_id, &opened_session_for_event)?;
+    lifecycle_guard.mark_committed();
+    drop(lifecycle_commit_transition);
+    let mut commit_event = KernelLogEvent::new(
+        KernelLogLevel::Info,
+        KernelEventKind::ProjectLifecycleTransition,
+        "project_lifecycle",
+        "project_transition",
+        "commit",
+        Some(operation_id.clone()),
+        "ProjectLifecycle a publicat atomic noua sesiune.",
+        None,
+    )
+    .with_attribute("operationId", &operation_id)
+    .with_attribute("sessionId", opened_session_for_event.runtime_instance_id())
+    .with_attribute("projectRoot", &opened_session_for_event.project_root)
+    .with_attribute(
+        "folderSelectedToCommitMs",
+        now_ms()
+            .saturating_sub(inspection.operation_started_at_ms)
+            .min(u64::MAX as u128) as u64,
+    )
+    .with_attribute(
+        "prepareToCommitMs",
+        lifecycle_started
+            .elapsed()
+            .as_millis()
+            .min(u64::MAX as u128) as u64,
+    )
+    .with_attribute("previewPrepareMs", preview_prepare_ms)
+    .with_attribute("zolaValidationBuildCount", 1_u64)
+    .with_attribute("zolaRenderMs", preview_timings.zola_render_ms)
+    .with_attribute(
+        "projectModelBuildMs",
+        preview_timings.project_model_build_ms,
+    )
+    .with_attribute("previewGenerationAvailable", preview_plan.is_some());
+    if let Some(preview_plan) = preview_plan.as_ref() {
+        commit_event = commit_event
+            .with_attribute(
+                "workspaceRevision",
+                preview_plan.identity.workspace_revision,
+            )
+            .with_attribute("previewRevision", &preview_plan.identity.preview_revision)
+            .with_attribute("canvasTransactionId", &preview_plan.identity.transaction_id);
+    } else {
+        commit_event =
+            commit_event.with_attribute("workspaceRevision", bootstrap_projection.revision);
+    }
+    let _ = append_event(&app, commit_event);
+    let watch_input = ProjectDiskWatchRequest {
+        expected_project_root: opened_session_for_event.project_root.clone(),
+        expected_session_id: opened_session_for_event.runtime_instance_id(),
+    };
+    if let Ok(_transition) = state.project_disk_watch_transition.lock() {
+        if let Err(error) = ensure_project_disk_watch(&app, state.inner(), &watch_input) {
+            eprintln!(
+                "[Pană Studio] watcher-ul disk nu a pornit la commit-ul ProjectLifecycle: {error}"
+            );
+        }
+    }
 
-    Ok(authoritative_scan)
+    Ok(ProjectOpenBootstrapReceipt {
+        schema_version: PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION,
+        project: authoritative_scan,
+        lifecycle,
+        file_buffers,
+        workspace: workspace_snapshot,
+        project_config,
+        workbench,
+        active_document,
+        target_css_file,
+        initial_surface,
+    })
 }
 
 #[tauri::command]

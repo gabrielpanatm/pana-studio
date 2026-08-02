@@ -42,6 +42,8 @@ const reasonMessageIds: Record<SourceCapabilityReason, MessageId> = {
   dataOutputReadOnly: "source-capability-reason-data-output-read-only",
   dataThemeReadOnly: "source-capability-reason-data-theme-read-only",
   dataFormatVisualUnsupported: "source-capability-reason-data-format-visual-unsupported",
+  markdownRenderedBoundary: "source-capability-reason-markdown-rendered-boundary",
+  markdownSourceUnresolved: "source-capability-reason-markdown-source-unresolved",
 };
 
 export function sourceCapabilityReason(

@@ -20,15 +20,16 @@ use crate::{
 use super::{
     history::{
         new_history_entry, transition_is_no_op, WorkspaceBinaryResourceTransition,
-        WorkspaceDocumentTransition, WorkspaceHistory, WorkspaceHistoryEntry,
-        WorkspacePageJsTransition, WorkspaceResourceTransition,
+        WorkspaceCanvasHistoryDelta, WorkspaceDocumentTransition, WorkspaceHistory,
+        WorkspaceHistoryEntry, WorkspacePageJsTransition, WorkspaceResourceTransition,
     },
     model::{
         ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
-        WorkspaceBinaryResource, WorkspaceBinaryRestoreChange, WorkspaceDocumentMutation,
-        WorkspaceDocumentProjection, WorkspaceHistoryDirection, WorkspaceMutationMetadata,
-        WorkspaceProjectionLease, WorkspaceResourceDelete, WorkspaceResourceMutation,
-        WorkspaceUndoRedoReceipt, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
+        SourceIdentityAliasTransition, WorkspaceBinaryResource, WorkspaceBinaryRestoreChange,
+        WorkspaceDocumentMutation, WorkspaceDocumentProjection, WorkspaceHistoryDirection,
+        WorkspaceMutationMetadata, WorkspaceProjectionSnapshot, WorkspaceResourceDelete,
+        WorkspaceResourceMutation, WorkspaceUndoRedoReceipt,
+        PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
         PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES, PROJECT_WORKSPACE_SCHEMA_VERSION,
     },
 };
@@ -53,6 +54,8 @@ pub struct ProjectWorkspace {
     pub project_model: Option<ProjectModel>,
     pub project_model_source_revision: Option<u64>,
     pub source_identity_aliases: HashMap<String, String>,
+    pub(crate) source_identity_alias_transition: Option<SourceIdentityAliasTransition>,
+    pub(super) last_projection_transaction_id: Option<String>,
     pub(super) history: WorkspaceHistory,
 }
 
@@ -91,6 +94,8 @@ impl ProjectWorkspace {
             project_model: None,
             project_model_source_revision: None,
             source_identity_aliases: HashMap::new(),
+            source_identity_alias_transition: None,
+            last_projection_transaction_id: None,
             history: WorkspaceHistory::default(),
         })
     }
@@ -171,6 +176,7 @@ impl ProjectWorkspace {
                 .as_ref()
                 .map(|model| model.revision.clone()),
             project_model_source_revision: self.project_model_source_revision,
+            last_projection_transaction_id: self.last_projection_transaction_id.clone(),
             documents,
             page_js,
             history: self.history.snapshot(),
@@ -234,17 +240,18 @@ impl ProjectWorkspace {
         self.project_model = None;
         self.project_model_source_revision = None;
         self.source_identity_aliases.clear();
+        self.source_identity_alias_transition = None;
+        self.last_projection_transaction_id = Some(authority_revision_transaction_id(
+            "reconcile",
+            self.revision,
+        ));
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
 
-    pub fn capture_projection_lease(&self) -> Result<WorkspaceProjectionLease, String> {
+    pub fn capture_projection_snapshot(&self) -> Result<WorkspaceProjectionSnapshot, String> {
         let materialized = super::save::materialize_workspace_for_projection(self)?;
-        let workspace_transaction_id = self
-            .history
-            .snapshot()
-            .next_undo
-            .map(|entry| entry.transaction_id);
+        let workspace_transaction_id = self.last_projection_transaction_id.clone();
         let changed_paths = materialized
             .documents
             .files
@@ -255,7 +262,7 @@ impl ProjectWorkspace {
             })
             .chain(self.binary_resources.keys().cloned())
             .collect();
-        Ok(WorkspaceProjectionLease {
+        Ok(WorkspaceProjectionSnapshot {
             project_root: self.session.project_root.clone(),
             runtime_session_id: self.runtime_session_id(),
             revision: self.revision,
@@ -283,12 +290,60 @@ impl ProjectWorkspace {
 
     pub fn publish_project_model(
         &mut self,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
         model: ProjectModel,
     ) -> Result<(), String> {
-        self.require_current_projection(lease)?;
+        self.require_current_projection(projection)?;
         self.project_model = Some(model);
         self.project_model_source_revision = Some(self.revision);
+        Ok(())
+    }
+
+    pub fn publish_project_model_for_transaction(
+        &mut self,
+        project_root: &str,
+        runtime_session_id: &str,
+        revision: u64,
+        workspace_transaction_id: &str,
+        model: ProjectModel,
+    ) -> Result<(), String> {
+        if project_root != self.session.project_root
+            || runtime_session_id != self.runtime_session_id()
+            || revision != self.revision
+            || self.last_projection_transaction_id.as_deref() != Some(workspace_transaction_id)
+        {
+            return Err(
+                "ProjectWorkspace a refuzat ProjectModel-ul altei identități, revizii sau tranzacții."
+                    .to_string(),
+            );
+        }
+        self.project_model = Some(model);
+        self.project_model_source_revision = Some(revision);
+        Ok(())
+    }
+
+    pub(crate) fn publish_source_identity_alias_transition(
+        &mut self,
+        revision_before: u64,
+        revision_after: u64,
+        aliases: HashMap<String, String>,
+    ) -> Result<(), String> {
+        if revision_after <= revision_before || revision_after != self.revision {
+            return Err(
+                "ProjectWorkspace a refuzat aliasurile Source Identity pentru altă tranziție."
+                    .to_string(),
+            );
+        }
+        let aliases = aliases
+            .into_iter()
+            .filter(|(from, to)| !from.trim().is_empty() && !to.trim().is_empty() && from != to)
+            .collect::<HashMap<_, _>>();
+        self.source_identity_aliases.extend(aliases.clone());
+        self.source_identity_alias_transition = Some(SourceIdentityAliasTransition {
+            revision_before,
+            revision_after,
+            aliases,
+        });
         Ok(())
     }
 
@@ -607,13 +662,15 @@ impl ProjectWorkspace {
         let revision_before = self.revision;
         let history_start = self.history.undo_len();
         let transaction_id = transaction_id(&metadata, revision_before);
-        let label = normalized_label(&metadata.label);
-        let source = normalized_source(&metadata.source);
+        let mut transaction_metadata = metadata;
+        transaction_metadata.transaction_id = Some(transaction_id.clone());
+        let label = normalized_label(&transaction_metadata.label);
+        let source = normalized_source(&transaction_metadata.source);
         let mut candidate = self.clone();
 
         candidate.stage_resource_changes(
             identity,
-            metadata.clone(),
+            transaction_metadata.clone(),
             text_changes,
             text_deletes,
             now_ms,
@@ -625,7 +682,7 @@ impl ProjectWorkspace {
         };
         candidate.stage_binary_restore_changes(
             &binary_identity,
-            metadata,
+            transaction_metadata,
             binary_changes,
             now_ms,
         )?;
@@ -641,6 +698,7 @@ impl ProjectWorkspace {
         candidate.revision = revision_before
             .checked_add(1)
             .ok_or_else(|| "ProjectWorkspace Restore a atins limita reviziei u64.".to_string())?;
+        candidate.last_projection_transaction_id = Some(entry.transaction_id.clone());
         candidate.invalidate_derived_state();
         let entry_snapshot = entry.snapshot();
         *self = candidate;
@@ -817,13 +875,15 @@ impl ProjectWorkspace {
         let revision_before = self.revision;
         let history_start = self.history.undo_len();
         let transaction_id = transaction_id(&metadata, revision_before);
-        let label = normalized_label(&metadata.label);
-        let source = normalized_source(&metadata.source);
+        let mut transaction_metadata = metadata;
+        transaction_metadata.transaction_id = Some(transaction_id.clone());
+        let label = normalized_label(&transaction_metadata.label);
+        let source = normalized_source(&transaction_metadata.source);
         let mut candidate = self.clone();
 
         let resource_receipt = candidate.stage_resource_changes(
             identity,
-            metadata.clone(),
+            transaction_metadata.clone(),
             mutations,
             deletes,
             now_ms,
@@ -835,7 +895,7 @@ impl ProjectWorkspace {
                 expected_revision: candidate.revision,
             };
             candidate
-                .stage_page_js(&candidate_identity, metadata, input, now_ms)?
+                .stage_page_js(&candidate_identity, transaction_metadata, input, now_ms)?
                 .page_js
         } else {
             None
@@ -860,6 +920,7 @@ impl ProjectWorkspace {
         candidate.revision = revision_before.checked_add(1).ok_or_else(|| {
             "ProjectWorkspace a atins limita reviziei u64 în mutația compusă.".to_string()
         })?;
+        candidate.last_projection_transaction_id = Some(entry.transaction_id.clone());
         candidate.invalidate_derived_state();
         let entry_snapshot = entry.snapshot();
         *self = candidate;
@@ -1081,6 +1142,8 @@ impl ProjectWorkspace {
         let mut next_page_js = self.page_js.clone();
         let mut next_history = self.history.clone();
         let entry = next_history.pop_undo()?;
+        let application_transaction_id =
+            history_application_transaction_id(WorkspaceHistoryDirection::Undo, self.revision);
         apply_history_entry(
             &mut next_documents,
             &self.accepted_documents,
@@ -1101,8 +1164,14 @@ impl ProjectWorkspace {
         self.page_js = next_page_js;
         self.history = next_history;
         self.advance_revision()?;
+        self.last_projection_transaction_id = Some(application_transaction_id.clone());
         self.invalidate_derived_state();
-        Ok(self.undo_redo_receipt(WorkspaceHistoryDirection::Undo, revision_before, entry))
+        Ok(self.undo_redo_receipt(
+            WorkspaceHistoryDirection::Undo,
+            revision_before,
+            entry,
+            application_transaction_id,
+        ))
     }
 
     pub fn require_history_target(
@@ -1148,6 +1217,8 @@ impl ProjectWorkspace {
         let mut next_page_js = self.page_js.clone();
         let mut next_history = self.history.clone();
         let entry = next_history.pop_redo()?;
+        let application_transaction_id =
+            history_application_transaction_id(WorkspaceHistoryDirection::Redo, self.revision);
         apply_history_entry(
             &mut next_documents,
             &self.accepted_documents,
@@ -1168,8 +1239,14 @@ impl ProjectWorkspace {
         self.page_js = next_page_js;
         self.history = next_history;
         self.advance_revision()?;
+        self.last_projection_transaction_id = Some(application_transaction_id.clone());
         self.invalidate_derived_state();
-        Ok(self.undo_redo_receipt(WorkspaceHistoryDirection::Redo, revision_before, entry))
+        Ok(self.undo_redo_receipt(
+            WorkspaceHistoryDirection::Redo,
+            revision_before,
+            entry,
+            application_transaction_id,
+        ))
     }
 
     pub fn created_document_paths(&self) -> Vec<String> {
@@ -1231,12 +1308,15 @@ impl ProjectWorkspace {
         self.page_js = PageJsDraftStore::new(&self.session);
         self.accepted_disk = accepted_disk;
         self.history.break_coalescing_group();
+        self.last_projection_transaction_id =
+            Some(authority_revision_transaction_id("save", self.revision));
         self.advance_revision()?;
         self.invalidate_derived_state();
         Ok(())
     }
 
     fn commit_mutation(&mut self, entry: WorkspaceHistoryEntry) -> Result<(), String> {
+        self.last_projection_transaction_id = Some(entry.transaction_id.clone());
         self.advance_revision()?;
         self.history.record(entry);
         self.invalidate_derived_state();
@@ -1299,14 +1379,15 @@ impl ProjectWorkspace {
 
     pub(crate) fn require_current_projection(
         &self,
-        lease: &WorkspaceProjectionLease,
+        projection: &WorkspaceProjectionSnapshot,
     ) -> Result<(), String> {
-        if lease.project_root != self.session.project_root
-            || lease.runtime_session_id != self.runtime_session_id()
-            || lease.revision != self.revision
+        if projection.project_root != self.session.project_root
+            || projection.runtime_session_id != self.runtime_session_id()
+            || projection.revision != self.revision
+            || projection.workspace_transaction_id != self.last_projection_transaction_id
         {
             return Err(
-                "ProjectWorkspace a refuzat publicarea unei proiecții construite dintr-o revizie stale."
+                "ProjectWorkspace a refuzat publicarea unei proiecții construite dintr-o revizie sau tranzacție stale."
                     .to_string(),
             );
         }
@@ -1353,6 +1434,7 @@ impl ProjectWorkspace {
         direction: WorkspaceHistoryDirection,
         revision_before: u64,
         entry: WorkspaceHistoryEntry,
+        application_transaction_id: String,
     ) -> WorkspaceUndoRedoReceipt {
         let mut document_paths = entry
             .documents
@@ -1383,7 +1465,18 @@ impl ProjectWorkspace {
             entry: entry.snapshot(),
             documents,
             history: self.history.snapshot(),
+            application_transaction_id,
+            canvas_delta: entry.canvas_delta,
         }
+    }
+
+    pub(crate) fn attach_latest_canvas_history_delta(
+        &mut self,
+        mutation_transaction_id: &str,
+        delta: WorkspaceCanvasHistoryDelta,
+    ) -> Result<(), String> {
+        self.history
+            .attach_latest_canvas_delta(mutation_transaction_id, delta)
     }
 }
 
@@ -1657,6 +1750,29 @@ fn transaction_id(metadata: &WorkspaceMutationMetadata, revision_before: u64) ->
     })
 }
 
+fn history_application_transaction_id(
+    direction: WorkspaceHistoryDirection,
+    revision_before: u64,
+) -> String {
+    let direction = match direction {
+        WorkspaceHistoryDirection::Undo => "undo",
+        WorkspaceHistoryDirection::Redo => "redo",
+    };
+    format!(
+        "workspace-history-{direction}-{}-{}",
+        revision_before.saturating_add(1),
+        crate::kernel::observability::now_ms()
+    )
+}
+
+fn authority_revision_transaction_id(operation: &str, revision_before: u64) -> String {
+    format!(
+        "workspace-{operation}-{}-{}",
+        revision_before.saturating_add(1),
+        crate::kernel::observability::now_ms()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1672,6 +1788,7 @@ mod tests {
                 hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStoreLimits,
                 TextBufferLanguage, TextBufferRole,
             },
+            preview_projection::{CanvasPatchAnchor, CanvasPatchOperation},
             project_session::{ProjectRootFingerprint, ProjectSessionScanSummary},
         },
         project::ProjectDiskManifest,
@@ -1712,6 +1829,24 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "<h1>Disk</h1>");
         let target_transaction_id = receipt.entry.unwrap().transaction_id;
+        let canvas_target = CanvasPatchAnchor::source("source-title", None, Some("h1"));
+        workspace
+            .attach_latest_canvas_history_delta(
+                &target_transaction_id,
+                WorkspaceCanvasHistoryDelta {
+                    before_model_revision: "model-before".to_string(),
+                    after_model_revision: "model-after".to_string(),
+                    forward: CanvasPatchOperation::SetText {
+                        target: canvas_target.clone(),
+                        text: "Draft".to_string(),
+                    },
+                    inverse: CanvasPatchOperation::SetText {
+                        target: canvas_target,
+                        text: "Disk".to_string(),
+                    },
+                },
+            )
+            .unwrap();
         assert!(workspace
             .require_history_target(WorkspaceHistoryDirection::Undo, "wrong-transaction")
             .is_err());
@@ -1720,6 +1855,12 @@ mod tests {
             .unwrap();
         let undo = workspace.undo(&identity(&workspace), 11).unwrap();
         assert_eq!(undo.entry.transaction_id, target_transaction_id);
+        assert!(undo.canvas_delta.is_some());
+        assert_ne!(undo.application_transaction_id, target_transaction_id);
+        assert_eq!(
+            workspace.last_projection_transaction_id.as_deref(),
+            Some(undo.application_transaction_id.as_str())
+        );
         assert_eq!(undo.documents.len(), 1);
         assert_eq!(
             undo.documents[0]
@@ -1736,6 +1877,11 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "<h1>Disk</h1>");
         let redo = workspace.redo(&identity(&workspace), 12).unwrap();
         assert_eq!(redo.entry.transaction_id, target_transaction_id);
+        assert!(redo.canvas_delta.is_some());
+        assert_eq!(
+            workspace.last_projection_transaction_id.as_deref(),
+            Some(redo.application_transaction_id.as_str())
+        );
         assert_eq!(redo.documents.len(), 1);
         assert_eq!(
             redo.documents[0]
@@ -1863,7 +2009,19 @@ mod tests {
         fs::write(root.join("zola.toml"), "base_url = 'http://example.test'\n").unwrap();
         fs::write(root.join("templates/index.html"), "<main></main>").unwrap();
         let mut workspace = workspace(&root, &[("templates/index.html", "<main></main>")]);
-        let lease = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
+        let mut wrong_transaction = projection.clone();
+        wrong_transaction.workspace_transaction_id = Some("stale-transaction".to_string());
+        let wrong_transaction_model =
+            crate::project_model::build_project_model_from_workspace_projection(
+                &root,
+                &wrong_transaction,
+            )
+            .unwrap();
+        assert!(workspace
+            .publish_project_model(&wrong_transaction, wrong_transaction_model)
+            .is_err());
+        assert!(workspace.project_model.is_none());
         workspace
             .stage_document_texts(
                 &identity(&workspace),
@@ -1876,15 +2034,15 @@ mod tests {
             )
             .unwrap();
         let model =
-            crate::project_model::build_project_model_from_workspace_projection(&root, &lease)
+            crate::project_model::build_project_model_from_workspace_projection(&root, &projection)
                 .unwrap();
-        assert!(workspace.publish_project_model(&lease, model).is_err());
+        assert!(workspace.publish_project_model(&projection, model).is_err());
         assert!(workspace.project_model.is_none());
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn projection_lease_contains_the_complete_text_revision_and_exact_change_set() {
+    fn projection_snapshot_contains_the_complete_text_revision_and_exact_change_set() {
         let root = unique_test_dir();
         let mut workspace = workspace(
             &root,
@@ -1905,25 +2063,25 @@ mod tests {
             )
             .unwrap();
 
-        let lease = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
         assert_eq!(
-            lease.workspace_transaction_id.as_deref(),
+            projection.workspace_transaction_id.as_deref(),
             receipt.transaction_id.as_deref()
         );
-        assert_eq!(lease.source_texts.len(), 2);
+        assert_eq!(projection.source_texts.len(), 2);
         assert_eq!(
-            lease.source_texts.get("zola.toml").map(String::as_str),
+            projection.source_texts.get("zola.toml").map(String::as_str),
             Some("base_url = '/'\n")
         );
         assert_eq!(
-            lease
+            projection
                 .source_texts
                 .get("templates/index.html")
                 .map(String::as_str),
             Some("<main>Draft</main>")
         );
         assert_eq!(
-            lease.changed_paths,
+            projection.changed_paths,
             std::collections::HashSet::from(["templates/index.html".to_string()])
         );
         fs::remove_dir_all(root).ok();
@@ -1959,7 +2117,7 @@ mod tests {
             vec!["templates/index.html"]
         );
         assert!(workspace
-            .capture_projection_lease()
+            .capture_projection_snapshot()
             .unwrap()
             .deleted_sources
             .contains("templates/index.html"));
@@ -2006,7 +2164,7 @@ mod tests {
         assert_eq!(snapshot.staged_binary_resource_count, 1);
         assert_eq!(snapshot.staged_binary_resource_bytes, bytes.len() as u64);
         assert_eq!(snapshot.staged_binary_resources, vec![relative_path]);
-        let projection = workspace.capture_projection_lease().unwrap();
+        let projection = workspace.capture_projection_snapshot().unwrap();
         assert_eq!(projection.resource_bytes.get(relative_path), Some(&bytes));
         assert!(projection.changed_paths.contains(relative_path));
 

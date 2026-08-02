@@ -41,10 +41,23 @@ pub fn prepare_project_session<R: Runtime>(
     root: &Path,
     scan: &ProjectScan,
 ) -> Result<ProjectSessionSnapshot, String> {
+    let root_fingerprint = fingerprint_project_root(root)?;
+    prepare_project_session_with_fingerprint(app, root, scan, root_fingerprint)
+}
+
+pub fn prepare_project_session_with_fingerprint<R: Runtime>(
+    app: &AppHandle<R>,
+    root: &Path,
+    scan: &ProjectScan,
+    root_fingerprint: super::ProjectRootFingerprint,
+) -> Result<ProjectSessionSnapshot, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("Nu am putut rezolva rădăcina ProjectSession: {}", error))?;
     let project_root = root.to_string_lossy().to_string();
+    if root_fingerprint.canonical_path != project_root {
+        return Err("Fingerprint-ul ProjectSession aparține altui root canonic.".to_string());
+    }
     let id = project_session_id(&project_root);
     let opened_at_ms = next_session_opened_at_ms();
     let session = ProjectSessionSnapshot {
@@ -60,7 +73,7 @@ pub fn prepare_project_session<R: Runtime>(
             .to_string(),
         opened_at_ms,
         last_seen_at_ms: opened_at_ms,
-        root_fingerprint: fingerprint_project_root(&root)?,
+        root_fingerprint,
         scan_summary: ProjectSessionScanSummary {
             active_theme: scan.active_theme.clone(),
             file_count: scan

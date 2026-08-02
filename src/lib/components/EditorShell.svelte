@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import MarkdownEditor from "$lib/components/markdown/MarkdownEditor.svelte";
   import InteractivePreviewSurface from "$lib/components/preview/InteractivePreviewSurface.svelte";
   import DocumentBar from "$lib/components/workbench/DocumentBar.svelte";
   import ResponsiveCanvasToolbar from "$lib/components/workbench/ResponsiveCanvasToolbar.svelte";
@@ -31,7 +30,7 @@
     MotionPreviewStatus,
   } from "$lib/state/motion-workspace.svelte";
 
-  type CenterView = "preview" | "code" | "markdown" | "kernel";
+  type CenterView = "preview" | "code" | "kernel";
 
   export let surfaceActive = true;
   export let centerView: CenterView = "preview";
@@ -43,16 +42,15 @@
   export let responsiveBreakpoints: Array<{ id: string; label: string; widthPx: number }> = [];
   export let previewDocumentMarkup: string | null = null;
   export let previewSrc = "";
+  export let previewNavigationGuardActive = false;
   export let interactivePreviewEnabled = false;
   export let interactivePreviewUrl = "";
   export let motionPreviewMode: MotionPreviewMode = "design";
   export let motionPreviewRequest: MotionPreviewRequest | null = null;
-  export let refreshToken = 0;
   export let currentSourcePath = "";
   export let source = "";
   export let sourceLanguage: SourceLanguage = "plain";
   export let sourceLength = 0;
-  export let editorReadOnly = false;
   export let workbenchSnapshot: WorkbenchSnapshot | null = null;
   export let dirtyWorkbenchPaths: string[] = [];
   export let activateWorkbenchDocument: (
@@ -72,7 +70,6 @@
   export let setPreviewZoom: (value: number) => void = () => {};
   export let commitPreviewZoom: (value: number) => void | Promise<void> = () => {};
   export let resetPreviewZoom: () => void = () => {};
-  export let onMarkdownChange: (nextSource: string, path: string) => void = () => {};
   export let attachPreviewInspector: () => void;
   export let mountPreviewSurface: (frame: HTMLIFrameElement) => void = () => {};
   export let unmountPreviewSurface: (frame: HTMLIFrameElement) => void = () => {};
@@ -94,13 +91,8 @@
   $: secondaryDocument = secondaryGroup?.documents.find(
     (document) => document.documentId === secondaryGroup?.activeDocumentId,
   );
-  $: sourceSurface = splitActive
-    ? secondaryDocument?.surface ?? (sourceLanguage === "markdown" ? "markdown" : "code")
-    : centerView === "markdown"
-      ? "markdown"
-      : "code";
   $: showPreview = splitActive || centerView === "preview";
-  $: showSource = splitActive || centerView === "code" || centerView === "markdown";
+  $: showSource = splitActive || centerView === "code";
   $: canvasViewport = {
     mode: previewCanvasMode,
     preset: previewCanvasPreset,
@@ -263,8 +255,14 @@
           src={previewDocumentMarkup ? undefined : previewSrc}
           srcdoc={previewDocumentMarkup ?? undefined}
           sandbox={previewDocumentMarkup ? "" : "allow-scripts"}
+          aria-busy={previewNavigationGuardActive}
           onload={handlePreviewLoad}
         ></iframe>
+        {#if previewNavigationGuardActive}
+          <div class="preview-navigation-guard" aria-hidden="true">
+            <span></span>
+          </div>
+        {/if}
         {#if interactivePreviewEnabled}
           <InteractivePreviewSurface
             desiredUrl={executionPreviewUrl}
@@ -309,32 +307,23 @@
     id="source"
     aria-label={t("workbench-source-code")}
   >
-    {#if sourceSurface === "markdown" && sourceLanguage === "markdown" && !sourceIsLoading}
-      {#key currentSourcePath}
-        <MarkdownEditor
-          {source}
-          path={currentSourcePath}
-          {refreshToken}
-          readOnly={editorReadOnly}
-          onChange={onMarkdownChange}
-        />
-      {/key}
-    {:else if sourceSurface === "markdown" && sourceLanguage === "markdown"}
-      <div class="markdown-loading-stage" aria-label={t("workbench-markdown-loading")}></div>
-    {:else}
-      <div class="code-source-layout">
-        <div class="source-header">
-          <h2 title={currentSourcePath}>
-            <strong>{t("workbench-code")}</strong>
-            <span>{currentSourcePath || t("workbench-no-file-open")}</span>
-          </h2>
+    <div class="code-source-layout" aria-busy={sourceIsLoading}>
+      <div class="source-header">
+        <h2 title={currentSourcePath}>
+          <strong>{t("workbench-code")}</strong>
+          <span>{currentSourcePath || t("workbench-no-file-open")}</span>
+        </h2>
+        {#if !sourceIsLoading}
           <span class="source-meta">{sourceLanguage.toUpperCase()} • {t("workbench-character-count", {
             count: sourceLength,
           })}</span>
-        </div>
-        <div bind:this={codeEditorHost} class="code-editor-host" data-language={sourceLanguage}></div>
+        {/if}
       </div>
-    {/if}
+      <div bind:this={codeEditorHost} class="code-editor-host" data-language={sourceLanguage}></div>
+      {#if sourceIsLoading}
+        <div class="code-loading-stage" aria-label={t("workbench-code-loading")}></div>
+      {/if}
+    </div>
   </section>
   </div>
 </section>
@@ -480,6 +469,39 @@
     transform-origin: top left;
   }
 
+  .preview-navigation-guard {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    pointer-events: all;
+    background:
+      radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--accent-9) 12%, transparent), transparent 38%),
+      linear-gradient(135deg, var(--surface-2), var(--surface-1));
+  }
+
+  .preview-navigation-guard span {
+    width: 32px;
+    height: 32px;
+    border: 3px solid color-mix(in srgb, var(--accent-9) 22%, transparent);
+    border-top-color: var(--accent-9);
+    border-radius: 999px;
+    animation: preview-navigation-spin 700ms linear infinite;
+  }
+
+  @keyframes preview-navigation-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .preview-navigation-guard span {
+      animation: none;
+      border-color: var(--accent-9);
+    }
+  }
+
   .canvas-fixed .preview-page {
     width: var(--canvas-width-px);
     height: calc(100% / var(--preview-zoom-scale));
@@ -574,12 +596,6 @@
     background: var(--surface-6);
   }
 
-  .markdown-loading-stage {
-    height: 100%;
-    min-height: 0;
-    background: var(--surface);
-  }
-
   .source-stage {
     display: block;
     border-top: 0;
@@ -652,8 +668,16 @@
   }
 
   .code-editor-host {
+    grid-area: 2 / 1;
     min-height: 0;
     height: 100%;
     overflow: hidden;
+  }
+
+  .code-loading-stage {
+    grid-area: 2 / 1;
+    z-index: 1;
+    min-height: 0;
+    background: var(--surface);
   }
 </style>

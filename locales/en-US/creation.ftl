@@ -88,6 +88,7 @@ blocks-after-target = After { $tag } element
 blocks-no-target = No selected target
 blocks-select-target-help = Select an editable element in Editor.
 blocks-inserting = Inserting…
+blocks-insert-failed = The block could not be inserted.
 blocks-add-after-selection = Add after selection
 blocks-provider = Provider
 blocks-family = Family

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-acknowledge-project-frontend-hydrated"
+description = "Enables the acknowledge_project_frontend_hydrated command without any pre-configured scope."
+commands.allow = ["acknowledge_project_frontend_hydrated"]
+
+[[permission]]
+identifier = "deny-acknowledge-project-frontend-hydrated"
+description = "Denies the acknowledge_project_frontend_hydrated command without any pre-configured scope."
+commands.deny = ["acknowledge_project_frontend_hydrated"]

@@ -22,6 +22,7 @@
   } from "@tabler/icons-svelte";
   import InspectorSection from "../InspectorSection.svelte";
   import PropInput from "../controls/PropInput.svelte";
+  import ColorInput from "../controls/ColorInput.svelte";
   import SegmentedControl from "../controls/SegmentedControl.svelte";
 
   let {
@@ -45,6 +46,7 @@
   }
 
   const PROPS = [
+    "color",
     "font-family", "font-size", "font-weight", "line-height",
     "letter-spacing", "text-align", "text-transform", "text-decoration", "font-style",
     "font-variation-settings", "font-optical-sizing",
@@ -125,6 +127,14 @@
 
 <InspectorSection title={t("inspector-typography-title")} {hasValues}>
   {#snippet icon()}<IconTypography size={13} stroke={1.7} />{/snippet}
+
+  <div class="row-label">{t("inspector-typography-color")}</div>
+  <ColorInput
+    property="color"
+    value={getValue("color")}
+    suggestions={variablesForProperty("color", scssVariables)}
+    {...edit.continuous("color")}
+  />
 
   <div class="row-label">{t("inspector-typography-font-family")}</div>
   <PropInput

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use super::grid::normalize_grid_properties;
+
 const MAX_SELECTOR_BYTES: usize = 4 * 1024;
 const MAX_PROPERTY_BYTES: usize = 256;
 const MAX_VALUE_BYTES: usize = 64 * 1024;
@@ -9,6 +11,14 @@ pub fn validate_panel_rule_input(
     properties: &HashMap<String, String>,
     viewport: &str,
 ) -> Result<(), String> {
+    normalize_panel_rule_input(selector, properties, viewport).map(|_| ())
+}
+
+pub fn normalize_panel_rule_input(
+    selector: &str,
+    properties: &HashMap<String, String>,
+    viewport: &str,
+) -> Result<HashMap<String, String>, String> {
     validate_panel_selector(selector)?;
     if !matches!(viewport, "desktop" | "tablet" | "mobile") {
         return Err(format!(
@@ -19,7 +29,7 @@ pub fn validate_panel_rule_input(
         validate_panel_property(property)?;
         validate_panel_value(value, true)?;
     }
-    Ok(())
+    normalize_grid_properties(properties)
 }
 
 pub fn validate_panel_variable_value(value: &str) -> Result<(), String> {

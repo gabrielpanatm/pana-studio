@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     js::PageJsConfig,
-    kernel::file_buffer_store::{hash_text, FileBufferEntry},
+    kernel::{
+        file_buffer_store::{hash_text, FileBufferEntry},
+        preview_projection::CanvasPatchOperation,
+    },
 };
 
 use super::model::{
@@ -13,14 +16,14 @@ const DEFAULT_HISTORY_ENTRY_LIMIT: usize = 200;
 const DEFAULT_HISTORY_BYTES_LIMIT: u64 = 64 * 1024 * 1024;
 const COALESCE_WINDOW_MS: u128 = 1_200;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspaceDocumentTransition {
     pub relative_path: String,
     pub before: String,
     pub after: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspacePageJsTransition {
     pub template_path: String,
     pub before: PageJsConfig,
@@ -29,21 +32,21 @@ pub(crate) struct WorkspacePageJsTransition {
     pub after_cachebust_assets: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspaceResourceTransition {
     pub relative_path: String,
     pub before: Option<FileBufferEntry>,
     pub after: Option<FileBufferEntry>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspaceBinaryResourceTransition {
     pub relative_path: String,
     pub before: Option<WorkspaceBinaryResource>,
     pub after: Option<WorkspaceBinaryResource>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkspaceHistoryEntry {
     pub transaction_id: String,
     pub label: String,
@@ -56,6 +59,16 @@ pub(crate) struct WorkspaceHistoryEntry {
     pub resources: Vec<WorkspaceResourceTransition>,
     pub binary_resources: Vec<WorkspaceBinaryResourceTransition>,
     pub page_js: Vec<WorkspacePageJsTransition>,
+    #[serde(default)]
+    pub canvas_delta: Option<WorkspaceCanvasHistoryDelta>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct WorkspaceCanvasHistoryDelta {
+    pub before_model_revision: String,
+    pub after_model_revision: String,
+    pub forward: CanvasPatchOperation,
+    pub inverse: CanvasPatchOperation,
 }
 
 impl WorkspaceHistoryEntry {
@@ -222,6 +235,24 @@ pub(crate) struct WorkspaceHistory {
     coalesce_barrier: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct WorkspaceHistoryRecoveryStackPatch {
+    base_len: usize,
+    retained_base_start: usize,
+    retained_len: usize,
+    new_prefix: Vec<WorkspaceHistoryEntry>,
+    new_suffix: Vec<WorkspaceHistoryEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct WorkspaceHistoryRecoveryPatch {
+    undo: WorkspaceHistoryRecoveryStackPatch,
+    redo: WorkspaceHistoryRecoveryStackPatch,
+    entry_limit: usize,
+    retained_bytes_limit: u64,
+    coalesce_barrier: bool,
+}
+
 impl Default for WorkspaceHistory {
     fn default() -> Self {
         Self {
@@ -235,6 +266,31 @@ impl Default for WorkspaceHistory {
 }
 
 impl WorkspaceHistory {
+    pub(crate) fn recovery_patch_from(
+        &self,
+        base: &WorkspaceHistory,
+    ) -> WorkspaceHistoryRecoveryPatch {
+        WorkspaceHistoryRecoveryPatch {
+            undo: history_stack_recovery_patch(&base.undo, &self.undo),
+            redo: history_stack_recovery_patch(&base.redo, &self.redo),
+            entry_limit: self.entry_limit,
+            retained_bytes_limit: self.retained_bytes_limit,
+            coalesce_barrier: self.coalesce_barrier,
+        }
+    }
+
+    pub(crate) fn apply_recovery_patch(
+        &mut self,
+        patch: WorkspaceHistoryRecoveryPatch,
+    ) -> Result<(), String> {
+        self.undo = apply_history_stack_recovery_patch(&self.undo, patch.undo, "Undo")?;
+        self.redo = apply_history_stack_recovery_patch(&self.redo, patch.redo, "Redo")?;
+        self.entry_limit = patch.entry_limit;
+        self.retained_bytes_limit = patch.retained_bytes_limit;
+        self.coalesce_barrier = patch.coalesce_barrier;
+        self.validate_recovery_limits()
+    }
+
     pub fn recovery_paths(&self) -> Vec<&str> {
         self.undo
             .iter()
@@ -340,6 +396,7 @@ impl WorkspaceHistory {
             resources,
             binary_resources,
             page_js,
+            canvas_delta: None,
         };
         self.undo.push(entry.clone());
         self.trim();
@@ -392,6 +449,33 @@ impl WorkspaceHistory {
         self.coalesce_barrier = true;
     }
 
+    pub fn attach_latest_canvas_delta(
+        &mut self,
+        mutation_transaction_id: &str,
+        delta: WorkspaceCanvasHistoryDelta,
+    ) -> Result<(), String> {
+        let entry = self.undo.last_mut().ok_or_else(|| {
+            "ProjectWorkspace History nu are o intrare pentru Canvas delta.".to_string()
+        })?;
+        let direct_match = entry.transaction_id == mutation_transaction_id;
+        let coalesced_preview_match = entry.source == "preview.structural"
+            && entry.coalesce_key.is_some()
+            && entry.mutation_count > 1;
+        if !direct_match && !coalesced_preview_match {
+            return Err(
+                "ProjectWorkspace History a refuzat Canvas delta pentru altă tranzacție."
+                    .to_string(),
+            );
+        }
+        if let Some(current) = entry.canvas_delta.as_mut() {
+            current.after_model_revision = delta.after_model_revision;
+            current.forward = delta.forward;
+        } else {
+            entry.canvas_delta = Some(delta);
+        }
+        Ok(())
+    }
+
     pub fn snapshot(&self) -> WorkspaceHistorySnapshot {
         WorkspaceHistorySnapshot {
             undo_count: self.undo.len(),
@@ -436,6 +520,85 @@ impl WorkspaceHistory {
     }
 }
 
+fn history_stack_recovery_patch(
+    base: &[WorkspaceHistoryEntry],
+    current: &[WorkspaceHistoryEntry],
+) -> WorkspaceHistoryRecoveryStackPatch {
+    let mut best_base_start = 0;
+    let mut best_current_start = 0;
+    let mut best_len = 0;
+    for base_start in 0..base.len() {
+        for current_start in 0..current.len() {
+            let mut len = 0;
+            while base_start + len < base.len()
+                && current_start + len < current.len()
+                && history_entry_recovery_equivalent(
+                    &base[base_start + len],
+                    &current[current_start + len],
+                )
+            {
+                len += 1;
+            }
+            if len > best_len {
+                best_base_start = base_start;
+                best_current_start = current_start;
+                best_len = len;
+            }
+        }
+    }
+    WorkspaceHistoryRecoveryStackPatch {
+        base_len: base.len(),
+        retained_base_start: best_base_start,
+        retained_len: best_len,
+        new_prefix: current[..best_current_start].to_vec(),
+        new_suffix: current[best_current_start + best_len..].to_vec(),
+    }
+}
+
+fn apply_history_stack_recovery_patch(
+    base: &[WorkspaceHistoryEntry],
+    patch: WorkspaceHistoryRecoveryStackPatch,
+    label: &str,
+) -> Result<Vec<WorkspaceHistoryEntry>, String> {
+    let retained_end = patch
+        .retained_base_start
+        .checked_add(patch.retained_len)
+        .ok_or_else(|| format!("Recovery History {label} are un interval invalid."))?;
+    if patch.base_len != base.len() || retained_end > base.len() {
+        return Err(format!(
+            "Recovery History {label} nu continuă stiva checkpoint-ului."
+        ));
+    }
+    let mut restored =
+        Vec::with_capacity(patch.new_prefix.len() + patch.retained_len + patch.new_suffix.len());
+    restored.extend(patch.new_prefix);
+    restored.extend_from_slice(&base[patch.retained_base_start..retained_end]);
+    restored.extend(patch.new_suffix);
+    Ok(restored)
+}
+
+fn history_entry_recovery_equivalent(
+    left: &WorkspaceHistoryEntry,
+    right: &WorkspaceHistoryEntry,
+) -> bool {
+    // History mutates an existing entry only through coalescing (which changes
+    // transaction/timestamps/count) or Canvas delta attachment. Comparing
+    // those identities keeps the hot diff O(entries), without walking up to
+    // 64 MiB of immutable transition payload on every source mutation.
+    left.transaction_id == right.transaction_id
+        && left.label == right.label
+        && left.source == right.source
+        && left.coalesce_key == right.coalesce_key
+        && left.created_at_ms == right.created_at_ms
+        && left.updated_at_ms == right.updated_at_ms
+        && left.mutation_count == right.mutation_count
+        && left.documents.len() == right.documents.len()
+        && left.resources.len() == right.resources.len()
+        && left.binary_resources.len() == right.binary_resources.len()
+        && left.page_js.len() == right.page_js.len()
+        && left.canvas_delta == right.canvas_delta
+}
+
 pub(crate) fn new_history_entry(
     transaction_id: String,
     label: String,
@@ -459,6 +622,7 @@ pub(crate) fn new_history_entry(
         resources,
         binary_resources,
         page_js,
+        canvas_delta: None,
     }
 }
 
@@ -490,6 +654,7 @@ pub(crate) fn transition_is_no_op(transition: &WorkspaceDocumentTransition) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::preview_projection::{CanvasPatchAnchor, CanvasPatchOperation};
 
     fn entry_with_text(key: &str, at_ms: u128, before: &str, after: &str) -> WorkspaceHistoryEntry {
         new_history_entry(
@@ -513,6 +678,22 @@ mod tests {
         entry_with_text(key, at_ms, "before", &format!("after-{at_ms}"))
     }
 
+    fn text_delta(before: &str, after: &str) -> WorkspaceCanvasHistoryDelta {
+        let target = CanvasPatchAnchor::source("source-title", None, Some("h1"));
+        WorkspaceCanvasHistoryDelta {
+            before_model_revision: format!("model-{before}"),
+            after_model_revision: format!("model-{after}"),
+            forward: CanvasPatchOperation::SetText {
+                target: target.clone(),
+                text: after.to_string(),
+            },
+            inverse: CanvasPatchOperation::SetText {
+                target,
+                text: before.to_string(),
+            },
+        }
+    }
+
     #[test]
     fn explicit_text_edit_group_coalesces_beyond_the_generic_time_window() {
         let key = "preview.html.text.group:text_session_1:preview.html.text:index:title";
@@ -522,6 +703,32 @@ mod tests {
 
         assert_eq!(history.undo.len(), 1);
         assert_eq!(history.undo[0].mutation_count, 2);
+    }
+
+    #[test]
+    fn coalesced_canvas_delta_keeps_first_inverse_and_latest_forward() {
+        let key = "preview.html.text.group:text_session_1:preview.html.text:index:title";
+        let mut history = WorkspaceHistory::default();
+        history.record(entry_with_text(key, 100, "zero", "one"));
+        history
+            .attach_latest_canvas_delta("transaction-100", text_delta("zero", "one"))
+            .unwrap();
+        history.record(entry_with_text(key, 101, "one", "two"));
+        history
+            .attach_latest_canvas_delta("transaction-101", text_delta("one", "two"))
+            .unwrap();
+
+        let delta = history.undo[0].canvas_delta.as_ref().unwrap();
+        assert_eq!(delta.before_model_revision, "model-zero");
+        assert_eq!(delta.after_model_revision, "model-two");
+        assert!(matches!(
+            &delta.inverse,
+            CanvasPatchOperation::SetText { text, .. } if text == "zero"
+        ));
+        assert!(matches!(
+            &delta.forward,
+            CanvasPatchOperation::SetText { text, .. } if text == "two"
+        ));
     }
 
     #[test]

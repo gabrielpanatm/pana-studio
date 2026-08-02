@@ -1,10 +1,10 @@
-import type { KernelUndoRedoProjectionLease } from "$lib/kernel/undo-redo-projection-lease";
+import type { CommittedHistoryProjectionContext } from "$lib/state/project-controller";
 import type { ProjectWorkspaceUndoRedoCommandReceipt } from "$lib/types";
 
 export type ProjectWorkspaceHistoryTopologyHost = {
   activeScannedPath: string | null;
-  rescanCurrentProjectWithinKernelUndoRedoLease: (
-    lease: KernelUndoRedoProjectionLease,
+  rescanCurrentProjectForCommittedHistory: (
+    context: CommittedHistoryProjectionContext,
     preferredRelativePath: string | null,
     options: { strict?: boolean; deferPreviewRefresh?: boolean },
   ) => Promise<void>;
@@ -25,11 +25,11 @@ export function projectWorkspaceHistoryChangesTopology(
 export async function reconcileProjectWorkspaceTopologyAfterHistory(
   host: ProjectWorkspaceHistoryTopologyHost,
   receipt: ProjectWorkspaceUndoRedoCommandReceipt,
-  lease: KernelUndoRedoProjectionLease,
+  context: CommittedHistoryProjectionContext,
 ) {
   if (!projectWorkspaceHistoryChangesTopology(receipt)) return false;
-  await host.rescanCurrentProjectWithinKernelUndoRedoLease(
-    lease,
+  await host.rescanCurrentProjectForCommittedHistory(
+    context,
     host.activeScannedPath,
     { strict: true, deferPreviewRefresh: true },
   );

@@ -1,10 +1,10 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::kernel::project_workspace::WorkspaceProjectionLease;
+use crate::kernel::project_workspace::WorkspaceProjectionSnapshot;
 use crate::project::{
     model::{ProjectFile, ProjectFileKind, ProjectFileRole, ProjectScan},
     strip_zola_root_prefix, zola_project_root,
@@ -57,16 +57,117 @@ pub fn scan_project_root(root: &Path) -> Result<ProjectScan, String> {
     })
 }
 
+/// Builds the bootstrap file projection from the manifest captured by Startup,
+/// without enumerating the project tree a second time.
+pub(crate) fn scan_project_disk_manifest(
+    root: &Path,
+    manifest: &super::ProjectDiskManifest,
+) -> Result<ProjectScan, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("Nu am putut rezolva folderul: {error}"))?;
+    let root_text = root.to_string_lossy().to_string();
+    if manifest.root != root_text {
+        return Err("ProjectScan a refuzat un manifest din alt root canonic.".to_string());
+    }
+    if manifest.truncated {
+        return Err("ProjectScan a refuzat un manifest autoritar trunchiat.".to_string());
+    }
+    let zola_mode = is_zola_project(&root);
+    let active_theme = zola_mode.then(|| read_active_theme(&root)).flatten();
+    let mut files = Vec::new();
+    let mut directories = BTreeSet::new();
+
+    for entry in &manifest.files {
+        let relative_path = entry.relative_path.as_str();
+        let path = root.join(relative_path);
+        let Some(kind) = project_file_kind(&path) else {
+            continue;
+        };
+        let Some(role) = project_file_role_for_path(relative_path, &kind, zola_mode) else {
+            continue;
+        };
+        let Some(name) = Path::new(relative_path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        let mut parent = Path::new(relative_path).parent();
+        while let Some(directory) = parent {
+            let relative_directory = directory.to_string_lossy().replace('\\', "/");
+            if relative_directory.is_empty() {
+                break;
+            }
+            directories.insert(relative_directory);
+            parent = directory.parent();
+        }
+        files.push(ProjectFile {
+            name,
+            relative_path: relative_path.to_string(),
+            absolute_path: path.to_string_lossy().into_owned(),
+            preview_path: project_preview_path(relative_path, &kind, &role, zola_mode),
+            role,
+            kind,
+        });
+    }
+    for relative_path in directories {
+        let Some(name) = Path::new(&relative_path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+        files.push(ProjectFile {
+            name,
+            absolute_path: root.join(&relative_path).to_string_lossy().into_owned(),
+            relative_path,
+            role: ProjectFileRole::Asset,
+            kind: ProjectFileKind::Dir,
+            preview_path: None,
+        });
+    }
+    files.sort_by(compare_project_files);
+    files.truncate(MAX_SCAN_FILES);
+    Ok(ProjectScan {
+        root: root_text,
+        preview_base_url: None,
+        preview_warning: None,
+        active_theme,
+        files,
+        kernel_session_id: None,
+        workspace_revision: None,
+        accepted_disk_manifest: None,
+        accepted_disk_generation: None,
+    })
+}
+
 /// Builds the Files-panel projection from exactly one immutable
 /// ProjectWorkspace revision. Accepted disk membership supplies non-text
 /// resources; the complete workspace text namespace replaces disk text
 /// membership. Live disk enumeration is deliberately forbidden here.
 pub fn scan_project_workspace_projection(
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<ProjectScan, String> {
     let mut scan = scan_project_workspace_projection_full(projection)?;
     scan.files.truncate(MAX_SCAN_FILES);
     Ok(scan)
+}
+
+/// Replaces provisional filename-derived page routes with the canonical
+/// routes already resolved by the Rust ProjectModel/Zola projection.
+pub(crate) fn apply_project_model_preview_routes<'a>(
+    scan: &mut ProjectScan,
+    routes: impl IntoIterator<Item = (&'a str, &'a str)>,
+) {
+    let routes = routes.into_iter().collect::<BTreeMap<_, _>>();
+    for file in &mut scan.files {
+        if file.role == ProjectFileRole::Page {
+            if let Some(route) = routes.get(file.relative_path.as_str()) {
+                file.preview_path = Some((*route).to_string());
+            }
+        }
+    }
 }
 
 /// Builds the complete logical Files namespace for one immutable workspace
@@ -74,7 +175,7 @@ pub fn scan_project_workspace_projection(
 /// scan: FileExplorer owns its own explicit truncation contract and must see
 /// the complete candidate set before choosing a hierarchy-safe prefix.
 pub(crate) fn scan_project_workspace_projection_full(
-    projection: &WorkspaceProjectionLease,
+    projection: &WorkspaceProjectionSnapshot,
 ) -> Result<ProjectScan, String> {
     projection
         .accepted_disk
@@ -496,6 +597,26 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn project_model_routes_replace_provisional_multilingual_paths() {
+        let root = temp_project_root("canonical-routes");
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::write(root.join("zola.toml"), "default_language = 'ro'\n").unwrap();
+        fs::write(root.join("content/_index.en.md"), "+++\n+++\n").unwrap();
+        let mut scan = scan_project_root(&root).unwrap();
+
+        apply_project_model_preview_routes(&mut scan, [("content/_index.en.md", "/en/")]);
+
+        assert_eq!(
+            scan.files
+                .iter()
+                .find(|file| file.relative_path == "content/_index.en.md")
+                .and_then(|file| file.preview_path.as_deref()),
+            Some("/en/"),
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn scan_does_not_follow_symlink_files_or_directories() {
@@ -559,6 +680,27 @@ mod tests {
             file.relative_path == "static/CNAME" && matches!(file.kind, ProjectFileKind::Other)
         }));
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_scan_reuses_the_inspected_manifest_membership() {
+        let root = temp_project_root("bootstrap-manifest");
+        fs::create_dir_all(root.join("content/nested")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(root.join("content/nested/page.md"), "+++\n+++\n").unwrap();
+        let manifest = read_project_disk_manifest(&root).unwrap();
+
+        let scan = scan_project_disk_manifest(&root, &manifest).unwrap();
+
+        assert!(scan
+            .files
+            .iter()
+            .any(|file| file.relative_path == "content/nested/page.md"));
+        assert!(scan
+            .files
+            .iter()
+            .any(|file| file.relative_path == "content/nested"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -628,7 +770,7 @@ mod tests {
             read_project_disk_manifest(&root).unwrap(),
         )
         .unwrap();
-        let projection = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: project_root.clone(),
             runtime_session_id: runtime_session_id.clone(),
             revision: 7,

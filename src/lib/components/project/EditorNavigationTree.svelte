@@ -26,6 +26,7 @@
     IconListDetails,
     IconListNumbers,
     IconLogin2,
+    IconMarkdown,
     IconNavigation,
     IconPhoto,
     IconPilcrow,
@@ -339,6 +340,7 @@
   }
 
   function navigationNodeIcon(node: EditorNavigationViewNode) {
+    if (isMarkdownBoundary(node)) return IconMarkdown;
     switch (node.kind) {
       case "htmlElement": return htmlElementIcon(node.tag);
       case "boundary": return teraBoundaryIcon(node);
@@ -346,6 +348,10 @@
       case "slot": return IconLayout;
       case "source": return IconFileCode;
     }
+  }
+
+  function isMarkdownBoundary(node: EditorNavigationViewNode) {
+    return editorNode(node)?.kind === "markdownBoundary";
   }
 
   function canDelete(node: EditorNavigationViewNode) {
@@ -601,6 +607,7 @@
           data-ui-selected={isSelected(row.node) ? "true" : undefined}
           data-ui-hovered={isCoordinatorHovered(row.node) ? "true" : undefined}
           class:boundary={row.node.kind === "boundary"}
+          class:markdown={isMarkdownBoundary(row.node)}
           class:relation={row.node.kind === "relation"}
           class:slot={row.node.kind === "slot"}
           class:scope-open={isScopeOpen(row.node)}
@@ -870,6 +877,15 @@
     content: "";
   }
 
+  .navigation-row.markdown {
+    color: color-mix(in srgb, var(--text) 76%, var(--markdown));
+    background: var(--markdown-soft);
+  }
+
+  .navigation-row.markdown:not(.scope-open)::before {
+    background: color-mix(in srgb, var(--markdown) 76%, var(--border));
+  }
+
   .navigation-row.scope-open {
     background: color-mix(in srgb, var(--brand-soft) 60%, var(--surface-panel));
   }
@@ -964,6 +980,11 @@
   .slot .node-icon,
   .selected .node-icon {
     color: var(--brand);
+  }
+
+  .markdown .node-icon,
+  .markdown.selected .node-icon {
+    color: var(--markdown);
   }
 
   .node-copy {

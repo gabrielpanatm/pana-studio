@@ -9,6 +9,7 @@ function source(relativePath) {
 test("EditorShell rămâne un owner unic și stabil pentru ProjectSession", () => {
   const center = source("../src/lib/components/workspace/WorkspaceCenterArea.svelte");
   const shell = source("../src/lib/components/EditorShell.svelte");
+  const effects = source("../src/lib/state/app-effects.svelte.ts");
   const workspaceCss = source("../src/routes/workspace-shell.css");
 
   assert.equal(center.match(/<EditorShell\b/g)?.length, 1);
@@ -30,6 +31,11 @@ test("EditorShell rămâne un owner unic și stabil pentru ProjectSession", () =
     /function registerPreviewSurface[\s\S]*mountPreviewSurface\(frame\)[\s\S]*destroy\(\)[\s\S]*unmountPreviewSurface\(frame\)/,
   );
   assert.match(shell, /<DocumentBar[\s\S]*active=\{surfaceActive\}/);
+  assert.match(shell, /sourceIsLoading[\s\S]*class="code-loading-stage"/);
+  assert.match(
+    effects,
+    /app\.source === SOURCE_LOADING_SENTINEL[\s\S]*app\.codeEditorController\.setDoc\(app\.source\)/,
+  );
   assert.match(
     workspaceCss,
     /\.stable-editor-surface\s*\{[\s\S]*position:\s*absolute[\s\S]*inset:\s*0/,

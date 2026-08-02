@@ -11,12 +11,17 @@
     IconShieldCheck as ShieldCheck,
     IconSparkles as Sparkles,
   } from "@tabler/icons-svelte";
+  import WriteAuthorityRecoveryControl from "$lib/components/kernel/WriteAuthorityRecoveryControl.svelte";
   import type { AppState } from "$lib/state/app.svelte";
-  import type { StartupCreationKind } from "$lib/types";
+  import type { StartupCreationKind, WriteAuthorityRecoveryScan } from "$lib/types";
 
   let { app }: { app: AppState } = $props();
 
   const candidate = $derived(app.startupFlow.candidate);
+  const writeAuthorityRecoveryRequired = $derived(
+    app.startupError.includes("WRITE_AUTHORITY_RECOVERY_BLOCKED"),
+  );
+  let startupRecoveryScan = $state<WriteAuthorityRecoveryScan | null>(null);
   const planning = $derived(Boolean(app.startupCreationPlan));
   const busyLabel = $derived(
     app.startupCreationPlan
@@ -208,7 +213,11 @@
         </footer>
       </section>
     {:else if candidate?.kind === "valid_project"}
-      <section class="startup-state-card startup-result" aria-live="polite">
+      <section
+        class="startup-state-card startup-result"
+        class:has-recovery={writeAuthorityRecoveryRequired}
+        aria-live="polite"
+      >
         <div class="startup-state-icon">
           <ShieldCheck size={26} stroke={1.8} />
         </div>
@@ -216,20 +225,51 @@
         <h1>Proiectul este pregătit pentru deschidere</h1>
         <p class="startup-path">{candidate.root}</p>
         <p>
-          Rust a validat structura. Dacă există o sesiune recuperabilă, alege acțiunea din dialogul
-          de recuperare; editorul nu este montat înaintea deciziei.
+          Rust a validat structura proiectului. Deschiderea continuă în Workbench; dacă Preview-ul
+          găsește o eroare Zola, fișierul diagnostic va fi deschis direct în Cod pentru reparare.
         </p>
-        {#if app.startupError}
+        {#if app.startupError && !writeAuthorityRecoveryRequired}
           <p class="startup-inline-error">{app.startupError}</p>
         {/if}
-        <button
-          type="button"
-          class="startup-primary ui-button"
-          onclick={() => app.openProjectFolder()}
-        >
-          <FolderOpen size={16} />
-          Alege alt dosar
-        </button>
+        {#if writeAuthorityRecoveryRequired}
+          <div class="startup-recovery-intro" role="alert">
+            <AlertTriangle size={18} stroke={1.9} />
+            <div>
+              <strong>Proiectul nu este pierdut</strong>
+              <span>O scriere întreruptă trebuie reconciliată înainte ca editorul să primească din nou drept de modificare. Alege acțiunea oferită de Rust pentru fiecare operație.</span>
+            </div>
+          </div>
+          <div class="startup-recovery-control">
+            <WriteAuthorityRecoveryControl
+              onScanUpdate={(scan) => { startupRecoveryScan = scan; }}
+              onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
+            />
+          </div>
+          <div class="startup-recovery-actions">
+            <button type="button" class="ui-button" onclick={() => app.openProjectFolder()}>
+              <FolderOpen size={16} />
+              Alege alt dosar
+            </button>
+            <button
+              type="button"
+              class="ui-button ui-button-accent"
+              disabled={startupRecoveryScan?.blocked !== false || app.startupPending}
+              onclick={() => app.retryStartupProjectOpen()}
+            >
+              <Check size={16} stroke={2} />
+              Redeschide proiectul după recuperare
+            </button>
+          </div>
+        {:else}
+          <button
+            type="button"
+            class="startup-primary ui-button"
+            onclick={() => app.openProjectFolder()}
+          >
+            <FolderOpen size={16} />
+            Alege alt dosar
+          </button>
+        {/if}
       </section>
     {:else if candidate}
       <section class="startup-state-card startup-result" aria-live="polite">
@@ -521,6 +561,58 @@
 
   .startup-state-card > p:not(.startup-eyebrow, .startup-path) {
     margin-inline: auto;
+  }
+
+  .startup-state-card.has-recovery {
+    width: min(900px, 100%);
+    margin-top: 18px;
+    padding: clamp(22px, 3vw, 34px);
+  }
+
+  .startup-recovery-intro {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 22px;
+    padding: 11px 12px;
+    color: var(--warning);
+    text-align: left;
+    border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border-subtle));
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--warning) 8%, var(--surface-panel));
+  }
+
+  .startup-recovery-intro > div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .startup-recovery-intro strong {
+    color: var(--text-strong);
+    font-size: 13px;
+  }
+
+  .startup-recovery-intro span {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .startup-recovery-control {
+    margin-top: 12px;
+    padding: 14px;
+    text-align: left;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-panel);
+    background: var(--surface-inset);
+    box-shadow: var(--shadow-inset);
+  }
+
+  .startup-recovery-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 14px;
   }
 
   .startup-state-icon {

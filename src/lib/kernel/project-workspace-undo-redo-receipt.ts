@@ -87,6 +87,32 @@ export function requireProjectWorkspaceUndoRedoCommandReceipt(
       }),
     );
   }
+  const applicationTransactionId = receipt.result.applicationTransactionId?.trim() ?? "";
+  if (
+    !applicationTransactionId
+    || receipt.workspace.lastProjectionTransactionId !== applicationTransactionId
+  ) {
+    throw new Error(t("history-receipt-transaction-mismatch", {
+      actual: receipt.workspace.lastProjectionTransactionId ?? "",
+      expected: applicationTransactionId,
+    }));
+  }
+  if (
+    receipt.canvasPatch
+    && (
+      receipt.canvasPatch.schemaVersion !== 1
+      || receipt.canvasPatch.projectRoot !== expected.projectRoot
+      || receipt.canvasPatch.runtimeSessionId !== expected.runtimeSessionId
+      || receipt.canvasPatch.baseWorkspaceRevision !== receipt.result.revisionBefore
+      || receipt.canvasPatch.workspaceRevision !== receipt.result.revisionAfter
+      || receipt.canvasPatch.workspaceTransactionId !== applicationTransactionId
+    )
+  ) {
+    throw new Error(t("history-receipt-transaction-mismatch", {
+      actual: receipt.canvasPatch.workspaceTransactionId,
+      expected: applicationTransactionId,
+    }));
+  }
   const entry = receipt.result.entry;
   if (entry.transactionId !== expected.transactionId) {
     throw new Error(

@@ -64,7 +64,6 @@
   let pendingCreate: PendingCreate | null = null;
   let createInputEl: HTMLInputElement | undefined;
   let createError = "";
-  let hoveredPath = "";
   let dragCandidate: {
     path: string;
     pointerId: number;
@@ -378,12 +377,13 @@
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      handleEntryClick(node.entry);
       if (node.type === "dir" && node.hasChildren) {
         const next = new Set(collapsedDirs);
         if (node.expanded) next.add(node.path);
         else next.delete(node.path);
         collapsedDirs = next;
+      } else if (node.type !== "dir") {
+        handleEntryClick(node.entry);
       }
     }
   }
@@ -565,7 +565,6 @@
   function handleDirRowClick(node: ExplorerRowNode) {
     return (event: MouseEvent) => {
       if (!isRenaming(node)) {
-        handleEntryClick(node.entry);
         toggleDirCollapse(node, event);
       }
     };
@@ -740,7 +739,7 @@
       </div>
     {/if}
 
-    {#each flatTree as node}
+    {#each flatTree as node (node.entry?.id ?? node.path)}
       <div
         class="file-row ui-entity-selectable"
         data-ui-selected={node.entry?.id === snapshot?.selectedEntry?.entryId ? "true" : undefined}
@@ -760,8 +759,6 @@
         aria-current={node.path === snapshot?.activeDocumentPath ? "page" : undefined}
         aria-expanded={node.type === "dir" && node.hasChildren ? node.expanded : undefined}
         style="--depth: {node.depth};"
-        onmouseenter={() => { hoveredPath = node.path; }}
-        onmouseleave={() => { if (hoveredPath === node.path) hoveredPath = ""; }}
         onpointerdown={(event) => handlePointerDown(node, event)}
         onkeydown={(event) => handleTreeRowKeydown(node, event)}
       >
@@ -817,7 +814,7 @@
             {/if}
           </svelte:element>
 
-          {#if (hoveredPath === node.path || node.entry?.id === snapshot?.selectedEntry?.entryId) && scannedProject}
+          {#if scannedProject}
             <div class="row-actions">
               <button
                 type="button"
@@ -902,7 +899,7 @@
               <span class="file-drop-label invalid">{dragDropLabel || t("project-files-drop-forbidden")}</span>
             {/if}
           </svelte:element>
-          {#if (hoveredPath === node.path || node.entry?.id === snapshot?.selectedEntry?.entryId) && scannedProject}
+          {#if scannedProject}
             <div class="row-actions">
               <button
                 type="button"
@@ -1254,6 +1251,17 @@
     padding: 1px;
     border-radius: 4px;
     background: var(--surface-4);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .file-row:hover .row-actions,
+  .file-row:focus-within .row-actions,
+  .file-row[data-ui-selected="true"] .row-actions {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
   }
 
   .create-row {

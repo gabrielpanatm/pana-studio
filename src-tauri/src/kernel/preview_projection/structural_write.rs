@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 use crate::{
     blocks::{plan_native_block_contract, NativeBlockContractRequest},
@@ -13,7 +13,10 @@ use crate::{
         },
     },
     project::{strip_zola_root_prefix, zola_project_root},
-    project_model::model::ProjectModel,
+    project_model::{
+        model::ProjectModel, rebuild_project_model_after_workspace_change,
+        ProjectModelIncrementalBuildReport, ProjectModelIncrementalIntent,
+    },
 };
 
 pub(crate) struct PreviewStructuralWrite {
@@ -21,6 +24,7 @@ pub(crate) struct PreviewStructuralWrite {
     pub(crate) file: String,
     pub(crate) contents: String,
     pub(crate) coalesce_key: Option<String>,
+    pub(crate) project_model_incremental_intent: ProjectModelIncrementalIntent,
 }
 
 impl PreviewStructuralWrite {
@@ -34,11 +38,20 @@ impl PreviewStructuralWrite {
             file: file.into(),
             contents: contents.into(),
             coalesce_key: None,
+            project_model_incremental_intent: ProjectModelIncrementalIntent::Unsupported,
         }
     }
 
     pub(crate) fn with_coalesce_key(mut self, coalesce_key: Option<String>) -> Self {
         self.coalesce_key = coalesce_key;
+        self
+    }
+
+    pub(crate) fn with_project_model_incremental_intent(
+        mut self,
+        intent: ProjectModelIncrementalIntent,
+    ) -> Self {
+        self.project_model_incremental_intent = intent;
         self
     }
 }
@@ -47,6 +60,21 @@ pub(crate) struct PreviewStructuralWriteCommit {
     pub(crate) workspace_mutation: ProjectWorkspaceMutationReceipt,
     pub(crate) after_model: ProjectModel,
     pub(crate) primary_contents: String,
+    pub(crate) timings: PreviewStructuralWriteTimings,
+    pub(crate) project_model_build: ProjectModelIncrementalBuildReport,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PreviewStructuralWriteTimings {
+    pub(crate) native_block_contract_ms: u64,
+    pub(crate) workspace_stage_ms: u64,
+    pub(crate) after_project_model_build_ms: u64,
+}
+
+struct TimedWorkspaceStage {
+    mutation: ProjectWorkspaceMutationReceipt,
+    native_block_contract_ms: u64,
+    workspace_stage_ms: u64,
 }
 
 /// Applies one structural preview edit to the in-memory workspace.
@@ -54,11 +82,30 @@ pub(crate) struct PreviewStructuralWriteCommit {
 /// The candidate ProjectModel is built before the authoritative mutation is
 /// published. Therefore a malformed candidate cannot partially advance the
 /// workspace. No project file is written here; Save is the only disk boundary.
+#[cfg(test)]
 pub(crate) fn stage_preview_structural_write(
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
     write: PreviewStructuralWrite,
 ) -> Result<PreviewStructuralWriteCommit, String> {
+    let mut candidate = workspace.clone();
+    let commit =
+        stage_preview_structural_write_in_transaction(project_root, &mut candidate, write)?;
+    *workspace = candidate;
+    Ok(commit)
+}
+
+/// Applies a structural write directly to a detached transaction candidate.
+/// The caller must discard that candidate on error; this avoids cloning the
+/// complete ProjectWorkspace a second time inside the outer durable commit.
+pub(crate) fn stage_preview_structural_write_in_transaction(
+    project_root: &Path,
+    workspace: &mut ProjectWorkspace,
+    write: PreviewStructuralWrite,
+) -> Result<PreviewStructuralWriteCommit, String> {
+    let previous_model = workspace.project_model.clone();
+    let previous_model_source_revision = workspace.project_model_source_revision;
+    let project_model_incremental_intent = write.project_model_incremental_intent;
     let identity = ProjectWorkspaceIdentity {
         expected_project_root: workspace.session.project_root.clone(),
         expected_session_id: workspace.runtime_session_id(),
@@ -70,18 +117,18 @@ pub(crate) fn stage_preview_structural_write(
         coalesce_key: write.coalesce_key,
         transaction_id: None,
     };
-    let mut candidate = workspace.clone();
-    let workspace_mutation = if is_template_source(&write.file) {
+    let stage = if is_template_source(&write.file) {
         stage_structural_write_with_native_block_contract(
             project_root,
-            &mut candidate,
+            workspace,
             &identity,
             metadata,
             &write.file,
             &write.contents,
         )?
     } else {
-        candidate.stage_document_texts(
+        let workspace_stage_started = Instant::now();
+        let mutation = workspace.stage_document_texts(
             &identity,
             metadata,
             vec![WorkspaceDocumentMutation {
@@ -89,26 +136,51 @@ pub(crate) fn stage_preview_structural_write(
                 contents: write.contents,
             }],
             now_ms(),
-        )?
+        )?;
+        TimedWorkspaceStage {
+            mutation,
+            native_block_contract_ms: 0,
+            workspace_stage_ms: elapsed_ms(workspace_stage_started),
+        }
     };
-    let projection = candidate.capture_projection_lease()?;
-    let after_model = crate::project_model::build_project_model_from_workspace_projection(
+    let TimedWorkspaceStage {
+        mutation: workspace_mutation,
+        native_block_contract_ms,
+        workspace_stage_ms,
+    } = stage;
+    let projection = workspace.capture_projection_snapshot()?;
+    let after_project_model_started = Instant::now();
+    let model_build = rebuild_project_model_after_workspace_change(
         project_root,
+        previous_model.as_ref(),
+        previous_model_source_revision,
         &projection,
+        &workspace_mutation.touched_files,
+        project_model_incremental_intent,
     )?;
-    let primary_contents = candidate.documents.text_for(&write.file).ok_or_else(|| {
+    let after_project_model_build_ms = elapsed_ms(after_project_model_started);
+    let after_model = model_build.model;
+    let primary_contents = workspace.documents.text_for(&write.file).ok_or_else(|| {
         format!(
             "Mutația structurală a pierdut sursa principală {}.",
             write.file
         )
     })?;
-    *workspace = candidate;
-
     Ok(PreviewStructuralWriteCommit {
         workspace_mutation,
         after_model,
         primary_contents,
+        timings: PreviewStructuralWriteTimings {
+            native_block_contract_ms,
+            workspace_stage_ms,
+            after_project_model_build_ms,
+        },
+        project_model_build: model_build.report,
     })
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
 fn is_template_source(relative_path: &str) -> bool {
@@ -126,7 +198,8 @@ fn stage_structural_write_with_native_block_contract(
     metadata: WorkspaceMutationMetadata,
     template_relative_path: &str,
     structural_contents: &str,
-) -> Result<ProjectWorkspaceMutationReceipt, String> {
+) -> Result<TimedWorkspaceStage, String> {
+    let native_block_contract_started = Instant::now();
     let template_path = strip_zola_root_prefix(template_relative_path)
         .trim()
         .trim_start_matches('/')
@@ -178,8 +251,10 @@ fn stage_structural_write_with_native_block_contract(
     let requires_composite = plan.stylesheet.changed
         || plan.page_js_changed
         || plan.template.contents != structural_contents;
-    if !requires_composite {
-        return workspace.stage_document_texts(
+    let native_block_contract_ms = elapsed_ms(native_block_contract_started);
+    let workspace_stage_started = Instant::now();
+    let mutation = if !requires_composite {
+        workspace.stage_document_texts(
             identity,
             metadata,
             vec![WorkspaceDocumentMutation {
@@ -187,40 +262,52 @@ fn stage_structural_write_with_native_block_contract(
                 contents: structural_contents.to_string(),
             }],
             now_ms(),
-        );
-    }
-
-    let mut mutations = vec![WorkspaceResourceMutation {
-        relative_path: template_relative_path.to_string(),
-        contents: plan.template.contents.clone(),
-        create_only: false,
-    }];
-    let mut deletes = Vec::new();
-    if plan.stylesheet.changed {
-        if plan.stylesheet.contents.trim().is_empty() && stylesheet_snapshot.is_some() {
-            deletes.push(WorkspaceResourceDelete {
-                relative_path: stylesheet_path.clone(),
-            });
-        } else {
-            mutations.push(WorkspaceResourceMutation {
-                relative_path: stylesheet_path,
-                contents: plan.stylesheet.contents,
-                create_only: stylesheet_snapshot.is_none(),
-            });
+        )?
+    } else {
+        let mut mutations = vec![WorkspaceResourceMutation {
+            relative_path: template_relative_path.to_string(),
+            contents: plan.template.contents.clone(),
+            create_only: false,
+        }];
+        let mut deletes = Vec::new();
+        if plan.stylesheet.changed {
+            if plan.stylesheet.contents.trim().is_empty() && stylesheet_snapshot.is_some() {
+                deletes.push(WorkspaceResourceDelete {
+                    relative_path: stylesheet_path.clone(),
+                });
+            } else {
+                mutations.push(WorkspaceResourceMutation {
+                    relative_path: stylesheet_path,
+                    contents: plan.stylesheet.contents,
+                    create_only: stylesheet_snapshot.is_none(),
+                });
+            }
         }
-    }
-    let page_js = plan.page_js_changed.then(|| PageJsDraftStageInput {
-        template_path,
-        expected_project_root: workspace.session.project_root.clone(),
-        expected_session_id: workspace.runtime_session_id(),
-        base_config: page_js_base_config,
-        current_config: plan.page_js_config,
-        cachebust_assets: false,
-        source: Some("blocks.contract".to_string()),
-        coalesce_key: None,
-        transaction_id: None,
-    });
-    workspace.stage_composite_changes(identity, metadata, mutations, deletes, page_js, now_ms())
+        let page_js = plan.page_js_changed.then(|| PageJsDraftStageInput {
+            template_path,
+            expected_project_root: workspace.session.project_root.clone(),
+            expected_session_id: workspace.runtime_session_id(),
+            base_config: page_js_base_config,
+            current_config: plan.page_js_config,
+            cachebust_assets: false,
+            source: Some("blocks.contract".to_string()),
+            coalesce_key: None,
+            transaction_id: None,
+        });
+        workspace.stage_composite_changes(
+            identity,
+            metadata,
+            mutations,
+            deletes,
+            page_js,
+            now_ms(),
+        )?
+    };
+    Ok(TimedWorkspaceStage {
+        mutation,
+        native_block_contract_ms,
+        workspace_stage_ms: elapsed_ms(workspace_stage_started),
+    })
 }
 
 #[cfg(test)]
@@ -311,19 +398,64 @@ mod tests {
                 revision: 0,
             },
         );
+        let config_source = "base_url = '/'\n";
+        documents.files.insert(
+            "zola.toml".to_string(),
+            FileBufferEntry {
+                relative_path: "zola.toml".to_string(),
+                absolute_path: root.join("zola.toml").to_string_lossy().into_owned(),
+                language: TextBufferLanguage::Toml,
+                role: TextBufferRole::Config,
+                baseline: FileBufferBaseline {
+                    hash: hash_text(config_source),
+                    modified_ms: 1,
+                    size: config_source.len() as u64,
+                    readonly: false,
+                },
+                baseline_text: config_source.to_string(),
+                draft: None,
+                revision: 0,
+            },
+        );
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
+        let before_projection = workspace.capture_projection_snapshot().unwrap();
+        let before_model = crate::project_model::build_project_model_from_workspace_projection(
+            &root,
+            &before_projection,
+        )
+        .unwrap();
+        workspace
+            .publish_project_model(&before_projection, before_model)
+            .unwrap();
 
         let receipt = stage_preview_structural_write(
             &root,
             &mut workspace,
             PreviewStructuralWrite::new("HTML text", relative_path, after)
-                .with_coalesce_key(Some("preview.html.text:index-title".to_string())),
+                .with_coalesce_key(Some("preview.html.text:index-title".to_string()))
+                .with_project_model_incremental_intent(
+                    ProjectModelIncrementalIntent::HtmlStructural,
+                ),
         )
         .unwrap();
 
         assert!(receipt.workspace_mutation.changed);
+        assert_eq!(
+            receipt.project_model_build.mode,
+            crate::project_model::incremental::ProjectModelRebuildMode::Incremental,
+        );
+        let after_projection = workspace.capture_projection_snapshot().unwrap();
+        let oracle = crate::project_model::build_project_model_from_workspace_projection(
+            &root,
+            &after_projection,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(receipt.after_model.snapshot()).unwrap(),
+            serde_json::to_value(oracle.snapshot()).unwrap(),
+        );
         assert_eq!(receipt.workspace_mutation.revision_after, 1);
         assert_eq!(
             workspace.documents.text_for(relative_path),
@@ -398,6 +530,27 @@ mod tests {
             .transaction_id
             .is_none());
         assert_eq!(unchanged_receipt.workspace_mutation.history.undo_count, 1);
+
+        let published_before_error = serde_json::to_value(workspace.snapshot()).unwrap();
+        let invalid = stage_preview_structural_write(
+            &root,
+            &mut workspace,
+            PreviewStructuralWrite::new(
+                "HTML invalid",
+                relative_path,
+                "{% if broken %}<main>{% endblock %}",
+            )
+            .with_project_model_incremental_intent(ProjectModelIncrementalIntent::HtmlStructural),
+        );
+        assert!(invalid.is_err());
+        assert_eq!(
+            serde_json::to_value(workspace.snapshot()).unwrap(),
+            published_before_error,
+        );
+        assert_eq!(
+            workspace.documents.text_for(relative_path),
+            Some(latest.to_string())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -783,6 +936,35 @@ mod tests {
                 .blocks[0]
                 .id,
             "counter"
+        );
+        let transaction_id = inserted
+            .workspace_mutation
+            .transaction_id
+            .as_deref()
+            .expect("composite transaction id")
+            .to_string();
+        assert_eq!(
+            workspace
+                .capture_projection_snapshot()
+                .unwrap()
+                .workspace_transaction_id
+                .as_deref(),
+            Some(transaction_id.as_str())
+        );
+        let project_root = workspace.session.project_root.clone();
+        let runtime_session_id = workspace.runtime_session_id();
+        workspace
+            .publish_project_model_for_transaction(
+                &project_root,
+                &runtime_session_id,
+                inserted.workspace_mutation.revision_after,
+                &transaction_id,
+                inserted.after_model,
+            )
+            .expect("composite ProjectModel publication");
+        assert_eq!(
+            workspace.project_model_source_revision,
+            Some(inserted.workspace_mutation.revision_after)
         );
 
         let undo_identity = ProjectWorkspaceIdentity {

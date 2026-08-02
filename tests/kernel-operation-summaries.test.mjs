@@ -89,7 +89,7 @@ test("HTML structural mutations publish one workspace revision and never write p
   const pipeline = source("src-tauri/src/commands/kernel_preview_pipeline.rs");
   const context = source("src-tauri/src/commands/kernel_preview_context.rs");
   assert.match(pipeline, /candidate\.publish_project_model/);
-  assert.match(pipeline, /commit_project_workspace_session_mutation_with_projection\(/);
+  assert.match(pipeline, /commit_project_workspace_session_mutation_with_projection_measured\(/);
   assert.match(context, /workspace_revision/);
   assert.match(context, /require_accepted_disk_unchanged/);
   assert.doesNotMatch(pipeline, /acceptedDiskGeneration|InternalWriteEvidence/);
@@ -103,8 +103,8 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
   const coordinator = source("src/lib/kernel/project-workspace-preview-coordinator.ts");
 
   assert.match(materializer, /sync_persistent_project_workspace/);
-  assert.match(materializer, /lease\.source_texts/);
-  assert.match(materializer, /lease\.deleted_sources/);
+  assert.match(materializer, /projection\.source_texts/);
+  assert.match(materializer, /projection\.deleted_sources/);
   assert.match(materializer, /require_accepted_disk_baseline/);
   assert.match(engine, /struct PersistentZolaPreviewEngine/);
   assert.match(engine, /site: Option<Site>/);
@@ -120,7 +120,7 @@ test("Preview stages exact ProjectWorkspace revisions and promotes only an exact
   assert.match(server, /active\.write\(\)/);
   assert.match(server, /fn acknowledge_phase\(/);
   assert.match(server, /requested_preview_revision/);
-  assert.match(commands, /workspace\.require_current_projection\(lease\)/);
+  assert.match(commands, /workspace\.require_current_projection\(projection\)/);
   assert.match(commands, /engine\.stage_candidate/);
   assert.match(commands, /pub fn acknowledge_canvas_projection_phase/);
   assert.match(commands, /pub fn acknowledge_canvas_projection_phases/);
@@ -234,6 +234,10 @@ test("Undo and Redo operate only on ProjectWorkspace history", () => {
   assert.match(frontend, /redoProjectWorkspace/);
   assert.match(frontend, /expectedTransactionId: target\.transactionId/);
   assert.match(frontend, /rebaseFileBufferDraftSyncProjection/);
+  assert.match(
+    frontend,
+    /canvasPatchApplied[\s\S]*settleKernelUndoRedoCanonicalProjection[\s\S]*rollbackCanvasPatchInPreview/,
+  );
   assert.doesNotMatch(frontend, /readFileBufferText/);
   assert.doesNotMatch(codeEditor, /historyKeymap|\bhistory\(\)/);
   assert.match(codeEditor, /Transaction\.addToHistory\.of\(false\)/);
@@ -318,6 +322,7 @@ test("Canvas observability covers cache, stale, fallback, rollback, FOUC and JS 
     "PreviewCanvasStaleDiscarded",
     "PreviewCanvasPatchRolledBack",
     "PreviewCanvasFallback",
+    "PreviewCanvasStylesheetsPromoted",
     "PreviewCanvasCacheHit",
     "PreviewCanvasCacheMiss",
     "PreviewCanvasFoucGuardSatisfied",
@@ -328,6 +333,10 @@ test("Canvas observability covers cache, stale, fallback, rollback, FOUC and JS 
     assert.match(previewCommands, new RegExp(event));
   }
   assert.match(previewController, /recordCanvasProjectionRuntimeEvent[\s\S]*canvas_fallback/);
+  assert.match(
+    previewController,
+    /canvas_stylesheets_promoted[\s\S]*activationToStyledMs/,
+  );
   assert.match(appState, /rollbackCanvasPatchInPreview[\s\S]*canvas_patch_rolled_back/);
 });
 

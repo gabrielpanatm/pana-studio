@@ -1,4 +1,11 @@
 markdown-tools = Markdown tools
+markdown-boundary = Markdown content
+markdown-boundary-source = Source
+markdown-boundary-unresolved = The exact Markdown source could not be resolved.
+markdown-boundary-edit-only-content = Pure content is edited only in the Content activity.
+markdown-boundary-readonly = The rendered boundary remains atomic and read-only until its exact source resolves.
+markdown-boundary-edit-content = Edit content
+markdown-boundary-open-source = Open source
 markdown-current-block = Current block: { $block }
 markdown-code = Code
 markdown-quote = Quote

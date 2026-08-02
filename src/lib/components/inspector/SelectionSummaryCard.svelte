@@ -58,6 +58,7 @@
 
   function subjectLabel(value: InspectorSelectionSummarySnapshot) {
     if (value.subjectKind === "teraBoundary") return t("inspector-summary-kind-tera");
+    if (value.subjectKind === "markdownBoundary") return t("markdown-boundary");
     if (value.subjectKind === "runtimeElement") return t("inspector-summary-kind-runtime");
     return t("inspector-summary-kind-html");
   }

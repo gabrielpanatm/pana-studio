@@ -42,6 +42,8 @@
     customSuffix = "",
     usingCustom = false,
     cssPropertyEdit,
+    gridOverlayEnabled = false,
+    onGridOverlayChange,
     selectCssVariant,
   }: {
     selectionSummary?: InspectorSelectionSummarySnapshot | null;
@@ -63,6 +65,8 @@
     customSuffix?: string;
     usingCustom?: boolean;
     cssPropertyEdit: CssPropertyEditController;
+    gridOverlayEnabled?: boolean;
+    onGridOverlayChange?: (enabled: boolean) => void;
     selectCssVariant: (suffix: string) => void;
   } = $props();
 
@@ -153,6 +157,13 @@
         {installedFontAxes}
         {scannedAssets}
         {cssPropertyEdit}
+        canonicalBackground={cssRuleContext?.background ?? null}
+        canonicalGrid={cssRuleContext?.grid ?? null}
+        gridViewport={cssRuleContext?.viewport ?? previewDevice}
+        gridHasBaseRule={cssRuleContext?.hasBaseRule ?? false}
+        gridHasViewportRule={cssRuleContext?.hasViewportRule ?? false}
+        {gridOverlayEnabled}
+        {onGridOverlayChange}
       />
     {:else}
       {#if previewDevice !== "desktop" && cssRuleContext?.hasBaseRule && !cssRuleContext?.hasViewportRule}
@@ -172,6 +183,13 @@
         {installedFontAxes}
         {scannedAssets}
         {cssPropertyEdit}
+        canonicalBackground={cssRuleContext?.background ?? null}
+        canonicalGrid={cssRuleContext?.grid ?? null}
+        gridViewport={cssRuleContext?.viewport ?? previewDevice}
+        gridHasBaseRule={cssRuleContext?.hasBaseRule ?? false}
+        gridHasViewportRule={cssRuleContext?.hasViewportRule ?? false}
+        {gridOverlayEnabled}
+        {onGridOverlayChange}
       />
     {/if}
   </section>

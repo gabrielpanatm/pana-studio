@@ -133,6 +133,7 @@
     loadError = "";
     const themeId = pendingPlan.themeId;
     const operation = pendingPlan.operation;
+    const repairing = operation === "install" && selectedTheme?.status !== "available";
     try {
       const receipt = await applyThemeChange(
         { themeId, operation, identity: currentIdentity },
@@ -150,6 +151,8 @@
       app.setGlobalStatus(
         settlement.warnings.length > 0
           ? t("themes-status-resync", { theme: themeId })
+          : repairing
+          ? t("themes-status-repaired", { theme: themeId })
           : operation === "install"
           ? t("themes-status-installed", { theme: themeId })
           : t("themes-status-activated", { theme: themeId }),
@@ -286,7 +289,10 @@
           <div class="detail-actions">
             {#if selectedTheme.status === "available" || !selectedTheme.installComplete}
               <button type="button" class="ui-button primary primary-action" onclick={() => prepare("install")}>
-                <IconDownload size={15} stroke={1.8} /> {t("themes-check-install")}
+                <IconDownload size={15} stroke={1.8} />
+                {selectedTheme.status === "available"
+                  ? t("themes-check-install")
+                  : t("themes-check-repair")}
               </button>
             {:else if selectedTheme.status !== "active"}
               <button type="button" class="ui-button primary primary-action" onclick={() => prepare("activate")}>

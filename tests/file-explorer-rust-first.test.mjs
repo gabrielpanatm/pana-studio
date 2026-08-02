@@ -73,8 +73,19 @@ test("Explorer selection, reveal, drag plan and accessibility stay frontend proj
   assert.match(frontend, /dragPlanSerial/);
   assert.match(frontend, /resolvedPlan\?\.allowed \|\| !resolvedPlan\.commitToken/);
   assert.match(app, /selectFileExplorerEntryInRust/);
+  assert.match(app, /fileExplorerSelectionTail/);
   assert.match(app, /this\.workbenchSnapshot = receipt\.workbench\.snapshot/);
   assert.match(app, /this\.fileExplorerSnapshot = receipt\.snapshot/);
+});
+
+test("a file selection reuses its immutable Explorer namespace after Workbench commit", () => {
+  const commands = source("../src-tauri/src/commands/file_explorer.rs");
+  const selection = commands.slice(
+    commands.indexOf("pub fn select_file_explorer_entry"),
+    commands.indexOf("pub fn plan_file_explorer_operation"),
+  );
+  assert.equal(selection.match(/\.file_explorer\.snapshot\(/g)?.length, 1);
+  assert.match(selection, /project_workbench_selection/);
 });
 
 test("hover and active rows share the requested outline-only visual contract", () => {
@@ -90,8 +101,20 @@ test("hover and active rows share the requested outline-only visual contract", (
   );
   assert.match(frontend, /class="file-row ui-entity-selectable"/);
   assert.match(frontend, /data-ui-selected=/);
-  assert.match(frontend, /hoveredPath === node\.path \|\| node\.entry\?\.id === snapshot\?\.selectedEntry\?\.entryId/);
+  assert.doesNotMatch(frontend, /hoveredPath|onmouseenter|onmouseleave/);
+  assert.match(frontend, /\.file-row:hover \.row-actions/);
+  assert.match(frontend, /\{#each flatTree as node \(node\.entry\?\.id \?\? node\.path\)\}/);
   assert.match(frontend, /<IconTrash/);
+});
+
+test("directory expansion is local presentation state and emits no Workbench selection", () => {
+  const frontend = source("../src/lib/components/project/ProjectFilesTab.svelte");
+  const handler = frontend.slice(
+    frontend.indexOf("function handleDirRowClick"),
+    frontend.indexOf("function handleFileRowClick"),
+  );
+  assert.match(handler, /toggleDirCollapse\(node, event\)/);
+  assert.doesNotMatch(handler, /handleEntryClick|selectEntry/);
 });
 
 test("empty-directory markers stay internal and external reconcile cannot leave stale selection", () => {

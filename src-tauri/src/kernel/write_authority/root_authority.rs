@@ -222,6 +222,48 @@ impl PendingProjectAuthority {
     pub(crate) fn verify_path_binding(&self) -> Result<(), String> {
         capability::verify_directory_authority_path(&self.project)
     }
+
+    pub(crate) fn require_project_binding(
+        &self,
+        expected_root: &Path,
+        expected_runtime_session_id: &str,
+    ) -> Result<(), String> {
+        if self.project_root != expected_root {
+            return Err(format!(
+                "WriteAuthority provisional read a refuzat project switch-ul: expected {}, pending {}.",
+                expected_root.display(),
+                self.project_root.display()
+            ));
+        }
+        if self.runtime_session_id != expected_runtime_session_id {
+            return Err(format!(
+                "WriteAuthority provisional read a refuzat runtime session-ul {} pentru autoritatea {}.",
+                expected_runtime_session_id, self.runtime_session_id
+            ));
+        }
+        self.verify_path_binding()
+    }
+
+    pub(crate) fn read_bounded_regular_file(
+        &self,
+        relative_path: &Path,
+        max_bytes: u64,
+        public_label: &str,
+    ) -> Result<Option<ActiveProjectFileReadSnapshot>, String> {
+        let path = self.project_root.join(relative_path);
+        capability::read_bounded_regular_file_from_authority(
+            &self.project,
+            &path,
+            public_label,
+            max_bytes,
+        )
+        .map(|snapshot| {
+            snapshot.map(|snapshot| ActiveProjectFileReadSnapshot {
+                bytes: snapshot.bytes,
+                version_token: snapshot.version_token,
+            })
+        })
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -1,13 +1,13 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, time::Instant};
 
 use crate::{
     kernel::{
         editor_navigation::{
             EditorMoveExecution, EditorMoveExecutionReceipt, EditorMoveExecutionStatus,
-            EditorMoveOperation, EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
+            EditorMoveInternalTimings, EditorMoveOperation, EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
         },
         project_session::ProjectSessionSnapshot,
-        project_workspace::ProjectWorkspace,
+        project_workspace::{ProjectWorkspace, WorkspaceCanvasHistoryDelta},
     },
     project_model::{
         model::ProjectModel,
@@ -18,7 +18,7 @@ use crate::{
 
 use super::{
     html::{html_move_alias_updates, html_move_projected_source_id, issue_canvas_patch},
-    runner::{run_preview_structural_plan, PreviewStructuralPlanCommitted},
+    runner::{run_preview_structural_plan_with_model, PreviewStructuralPlanCommitted},
     spec::EDITOR_MOVE_PLAN,
 };
 use crate::kernel::preview_projection::{CanvasPatchAnchor, CanvasPatchOperation};
@@ -36,16 +36,20 @@ pub(crate) fn execute_editor_move(
     plan_token: &str,
     operation: EditorMoveOperation,
     execution: EditorMoveExecution,
+    before_model: ProjectModel,
 ) -> Result<EditorMoveExecutionOutcome, String> {
     match execution {
         EditorMoveExecution::Html {
             intent,
             edit_scope_authorized,
+            source_render_instance_id,
+            target_render_instance_id,
         } => {
             let exact_snapshot_aliases = HashMap::new();
-            let committed = run_preview_structural_plan(
+            let committed = run_preview_structural_plan_with_model(
                 project_root,
                 workspace,
+                before_model,
                 EDITOR_MOVE_PLAN,
                 |before_model| {
                     if edit_scope_authorized {
@@ -71,10 +75,40 @@ pub(crate) fn execute_editor_move(
                     ))
                 }
             };
+            let alias_calculation_started = Instant::now();
             let alias_updates = html_move_alias_updates(&before_model, &commit.after_model, &patch);
+            let alias_calculation_ms = alias_calculation_started
+                .elapsed()
+                .as_millis()
+                .min(u64::MAX as u128) as u64;
+            let internal_timings = editor_move_internal_timings(&commit, alias_calculation_ms);
             let projected_source_id = html_move_projected_source_id(
                 &commit.after_model,
                 &patch.resolved_source_id,
+                &alias_updates,
+            );
+            let forward_operation = CanvasPatchOperation::Move {
+                source: CanvasPatchAnchor::source_instance(
+                    &patch.resolved_source_id,
+                    source_render_instance_id.as_deref(),
+                    None,
+                    intent.source_tag.as_deref(),
+                ),
+                target: CanvasPatchAnchor::source_instance(
+                    &patch.resolved_target_id,
+                    target_render_instance_id.as_deref(),
+                    None,
+                    intent.target_tag.as_deref(),
+                ),
+                position: intent.position,
+            };
+            let inverse_operation = inverse_html_move_operation(
+                &before_model,
+                &commit.after_model,
+                &patch.resolved_source_id,
+                &patch.resolved_target_id,
+                source_render_instance_id.as_deref(),
+                target_render_instance_id.as_deref(),
                 &alias_updates,
             );
             let canvas_patch = issue_canvas_patch(
@@ -82,20 +116,22 @@ pub(crate) fn execute_editor_move(
                 &commit.workspace_mutation,
                 &patch.before_revision,
                 &patch.after_revision,
-                CanvasPatchOperation::Move {
-                    source: CanvasPatchAnchor::source(
-                        &patch.resolved_source_id,
-                        None,
-                        intent.source_tag.as_deref(),
-                    ),
-                    target: CanvasPatchAnchor::source(
-                        &patch.resolved_target_id,
-                        None,
-                        intent.target_tag.as_deref(),
-                    ),
-                    position: intent.position,
-                },
+                forward_operation.clone(),
             )?;
+            if let (Some(inverse), Some(transaction_id)) = (
+                inverse_operation,
+                commit.workspace_mutation.transaction_id.as_deref(),
+            ) {
+                workspace.attach_latest_canvas_history_delta(
+                    transaction_id,
+                    WorkspaceCanvasHistoryDelta {
+                        before_model_revision: patch.before_revision.clone(),
+                        after_model_revision: patch.after_revision.clone(),
+                        forward: forward_operation,
+                        inverse,
+                    },
+                )?;
+            }
             let touched_files = vec![patch.file.clone()];
             Ok(EditorMoveExecutionOutcome {
                 receipt: EditorMoveExecutionReceipt {
@@ -111,15 +147,18 @@ pub(crate) fn execute_editor_move(
                     workspace_mutation: Some(commit.workspace_mutation),
                     touched_files,
                     diagnostic: None,
+                    timings: None,
+                    internal_timings,
                 },
                 after_model: Some(commit.after_model),
                 alias_updates,
             })
         }
         EditorMoveExecution::Tera { intent } => {
-            let committed = run_preview_structural_plan(
+            let committed = run_preview_structural_plan_with_model(
                 project_root,
                 workspace,
+                before_model,
                 EDITOR_MOVE_PLAN,
                 |before_model| plan_tera_move(before_model, &intent),
             )?;
@@ -136,6 +175,7 @@ pub(crate) fn execute_editor_move(
                 }
             };
             let touched_files = vec![patch.file.clone()];
+            let internal_timings = editor_move_internal_timings(&commit, 0);
             Ok(EditorMoveExecutionOutcome {
                 receipt: EditorMoveExecutionReceipt {
                     schema_version: EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
@@ -150,12 +190,115 @@ pub(crate) fn execute_editor_move(
                     workspace_mutation: Some(commit.workspace_mutation),
                     touched_files,
                     diagnostic: None,
+                    timings: None,
+                    internal_timings,
                 },
                 after_model: Some(commit.after_model),
                 alias_updates: HashMap::new(),
             })
         }
     }
+}
+
+fn editor_move_internal_timings(
+    commit: &super::super::structural_write::PreviewStructuralWriteCommit,
+    alias_calculation_ms: u64,
+) -> EditorMoveInternalTimings {
+    let build = &commit.project_model_build;
+    EditorMoveInternalTimings {
+        native_block_contract_ms: commit.timings.native_block_contract_ms,
+        workspace_stage_ms: commit.timings.workspace_stage_ms,
+        after_project_model_build_ms: commit.timings.after_project_model_build_ms,
+        project_model_build_mode: build.mode.label().to_string(),
+        project_model_fallback_reason: build.fallback_reason.clone(),
+        project_model_changed_path_count: build.changed_paths.len(),
+        project_model_invalidated_template_count: build.invalidated_template_files.len(),
+        project_model_invalidated_page_count: build.invalidated_page_files.len(),
+        project_model_replaced_nodes: build.replaced_nodes,
+        project_model_reused_nodes: build.reused_nodes,
+        project_model_reused_relations: build.reused_relations,
+        project_model_clone_ms: build.model_clone_ms,
+        project_model_template_parse_ms: build.template_parse_ms,
+        project_model_component_graph_ms: build.component_graph_ms,
+        project_model_block_graph_ms: build.block_graph_ms,
+        project_model_tera_graph_ms: build.tera_graph_ms,
+        alias_calculation_ms,
+    }
+}
+
+fn inverse_html_move_operation(
+    before_model: &ProjectModel,
+    after_model: &ProjectModel,
+    source_id: &str,
+    current_target_id: &str,
+    source_render_instance_id: Option<&str>,
+    current_target_render_instance_id: Option<&str>,
+    aliases: &HashMap<String, String>,
+) -> Option<CanvasPatchOperation> {
+    let source = before_model
+        .source_graph
+        .nodes
+        .iter()
+        .find(|node| node.id == source_id)?;
+    let parent_id = source.parent.as_deref()?;
+    let parent = before_model
+        .source_graph
+        .nodes
+        .iter()
+        .find(|node| node.id == parent_id)?;
+    let source_index = parent
+        .children
+        .iter()
+        .position(|child| child == source_id)?;
+    let (target_before_id, position) =
+        if let Some(next_sibling) = parent.children.get(source_index.saturating_add(1)) {
+            (
+                next_sibling.as_str(),
+                crate::project_model::move_engine::ProjectMovePosition::Before,
+            )
+        } else {
+            (
+                parent_id,
+                crate::project_model::move_engine::ProjectMovePosition::Inside,
+            )
+        };
+    let source_after_id = projected_node_id(after_model, source_id, aliases)?;
+    let target_after_id = projected_node_id(after_model, target_before_id, aliases)?;
+    let target_render_instance_id = (target_before_id == current_target_id)
+        .then_some(current_target_render_instance_id)
+        .flatten();
+    Some(CanvasPatchOperation::Move {
+        source: CanvasPatchAnchor::source_instance(
+            &source_after_id,
+            source_render_instance_id,
+            None,
+            None,
+        )
+        .with_alternate_source_ids([source_id.to_string()]),
+        target: CanvasPatchAnchor::source_instance(
+            &target_after_id,
+            target_render_instance_id,
+            None,
+            None,
+        )
+        .with_alternate_source_ids([target_before_id.to_string()]),
+        position,
+    })
+}
+
+fn projected_node_id(
+    after_model: &ProjectModel,
+    before_id: &str,
+    aliases: &HashMap<String, String>,
+) -> Option<String> {
+    aliases.get(before_id).cloned().or_else(|| {
+        after_model
+            .source_graph
+            .nodes
+            .iter()
+            .any(|node| node.id == before_id)
+            .then(|| before_id.to_string())
+    })
 }
 
 fn blocked_outcome(
@@ -179,6 +322,8 @@ fn blocked_outcome(
             workspace_mutation: None,
             touched_files: Vec::new(),
             diagnostic: Some(diagnostic),
+            timings: None,
+            internal_timings: EditorMoveInternalTimings::default(),
         },
         after_model: None,
         alias_updates: HashMap::new(),

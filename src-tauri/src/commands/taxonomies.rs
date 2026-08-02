@@ -85,7 +85,7 @@ fn plan_for_workspace(
     workspace: &ProjectWorkspace,
     input: &TaxonomyMutationInput,
 ) -> Result<PlannedTaxonomyMutation, String> {
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(root, &projection)?;
     let catalog = catalog_for_projection(&graph, &projection.source_texts)?;
     build_mutation_plan(&graph, &catalog, &projection.source_texts, input)
@@ -119,7 +119,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        kernel::project_workspace::WorkspaceProjectionLease,
+        kernel::project_workspace::WorkspaceProjectionSnapshot,
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
         source_graph::build_source_graph_from_workspace_projection,
     };
@@ -161,7 +161,7 @@ mod tests {
             })
             .collect::<HashMap<_, _>>();
         let disk = read_project_disk_manifest(&root).unwrap();
-        let projection = WorkspaceProjectionLease {
+        let projection = WorkspaceProjectionSnapshot {
             project_root: root.canonicalize().unwrap().to_string_lossy().into_owned(),
             runtime_session_id: "test".to_string(),
             revision: 0,

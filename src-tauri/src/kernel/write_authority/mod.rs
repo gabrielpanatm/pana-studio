@@ -37,7 +37,7 @@ pub use recovery::{
 };
 pub use registry::{known_write_declarations, WriteDeclaration};
 pub(crate) use root_authority::{
-    ActiveProjectReadLease, CodexConfigLease, ProjectCreationAuthority,
+    ActiveProjectReadLease, CodexConfigLease, PendingProjectAuthority, ProjectCreationAuthority,
 };
 pub use root_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
 

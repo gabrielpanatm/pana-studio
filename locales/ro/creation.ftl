@@ -88,6 +88,7 @@ blocks-after-target = După elementul { $tag }
 blocks-no-target = Nicio țintă selectată
 blocks-select-target-help = Selectează un element editabil în Editor.
 blocks-inserting = Se inserează…
+blocks-insert-failed = Blocul nu a putut fi inserat.
 blocks-add-after-selection = Adaugă după selecție
 blocks-provider = Furnizor
 blocks-family = Familie

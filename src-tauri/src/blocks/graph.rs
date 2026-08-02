@@ -106,6 +106,7 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            markdown_projections: Vec::new(),
             nodes: vec![SourceNode {
                 id: "marker-1".to_string(),
                 kind: SourceNodeKind::BlockMarker,

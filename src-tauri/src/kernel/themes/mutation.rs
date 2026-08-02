@@ -31,7 +31,7 @@ pub fn plan_theme_operation(
 ) -> Result<ThemePlan, String> {
     workspace.require_identity(&request.identity)?;
     let pack = registry.require(&request.theme_id)?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let prefix = zola_prefix(workspace)?;
     let paths = project_paths(workspace, &projection);
     let installed_files = pack.project_theme_files(&prefix);
@@ -58,19 +58,21 @@ pub fn plan_theme_operation(
                 ));
             } else {
                 for file in &installed_files {
-                    if paths.contains(&file.relative_path) {
-                        conflicts.push(impact(
-                            "theme_install_destination_exists",
-                            LocalizedDiagnostic::new("themes-impact-destination-exists")
-                                .with_argument("path", file.relative_path.clone()),
-                            Some(file.relative_path.clone()),
-                            true,
-                        ));
-                    } else {
+                    if !paths.contains(&file.relative_path) {
                         affected_files.push(file.relative_path.clone());
                     }
                 }
-                changed = conflicts.is_empty() && !affected_files.is_empty();
+                if installed_count > 0 {
+                    notices.push(impact(
+                        "theme_install_incomplete_repair",
+                        LocalizedDiagnostic::new("themes-impact-install-incomplete")
+                            .with_argument("installed", installed_count as u64)
+                            .with_argument("total", installed_files.len() as u64),
+                        None,
+                        false,
+                    ));
+                }
+                changed = !affected_files.is_empty();
             }
             append_missing_requirements(pack, &prefix, &paths, false, &mut missing_requirements);
         }
@@ -172,6 +174,14 @@ pub fn apply_theme_plan(
     };
     let metadata = WorkspaceMutationMetadata {
         label: match plan.operation {
+            ThemeOperation::Install
+                if plan
+                    .notices
+                    .iter()
+                    .any(|notice| notice.code == "theme_install_incomplete_repair") =>
+            {
+                format!("Repară tema {}", plan.theme_id)
+            }
             ThemeOperation::Install => format!("Instalează tema {}", plan.theme_id),
             ThemeOperation::Activate => format!("Activează tema {}", plan.theme_id),
         },
@@ -183,7 +193,8 @@ pub fn apply_theme_plan(
         ThemeOperation::Install => {
             let pack = registry.require(&plan.theme_id)?;
             let prefix = zola_prefix(&candidate)?;
-            let (text_changes, binary_changes) = theme_install_changes(pack, &prefix)?;
+            let (text_changes, binary_changes) =
+                theme_install_changes(pack, &prefix, &plan.affected_files)?;
             candidate.stage_project_bundle_changes(
                 &identity,
                 metadata,
@@ -194,7 +205,7 @@ pub fn apply_theme_plan(
             )?
         }
         ThemeOperation::Activate => {
-            let projection = candidate.capture_projection_lease()?;
+            let projection = candidate.capture_projection_snapshot()?;
             let prefix = zola_prefix(&candidate)?;
             let config_path =
                 find_config_path(&projection.source_texts, &prefix).ok_or_else(|| {
@@ -277,7 +288,7 @@ fn append_local_overrides(
 
 fn project_paths(
     workspace: &ProjectWorkspace,
-    projection: &crate::kernel::project_workspace::WorkspaceProjectionLease,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
 ) -> HashSet<String> {
     projection
         .accepted_disk
@@ -299,6 +310,7 @@ fn project_paths(
 fn theme_install_changes(
     pack: &ThemePack,
     prefix: &str,
+    affected_files: &[String],
 ) -> Result<
     (
         Vec<WorkspaceResourceMutation>,
@@ -308,7 +320,14 @@ fn theme_install_changes(
 > {
     let mut text = Vec::new();
     let mut binary = Vec::new();
+    let affected = affected_files
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
     for file in pack.project_theme_files(prefix) {
+        if !affected.contains(file.relative_path.as_str()) {
+            continue;
+        }
         normalize_project_relative_path(&file.relative_path)?;
         if is_text_theme_file(&file.relative_path) {
             let contents = String::from_utf8(file.bytes).map_err(|_| {
@@ -588,30 +607,65 @@ mod tests {
     }
 
     #[test]
-    fn install_plan_reports_existing_destination_without_overwrite() {
+    fn incomplete_install_repairs_only_missing_files_without_overwrite() {
         let root = valid_project("conflict");
-        fs::create_dir_all(root.join("themes/pana-studio")).unwrap();
+        fs::create_dir_all(root.join("themes/pana-studio/sass/css-framework")).unwrap();
         fs::write(
-            root.join("themes/pana-studio/theme.toml"),
-            "name = \"external\"\n",
+            root.join("themes/pana-studio/sass/css-framework/_baza.scss"),
+            "// modificare locală păstrată\n",
         )
         .unwrap();
         let registry = ThemeRegistry::load_from_root(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/theme-packs"),
         )
         .unwrap();
-        let workspace = workspace(&root);
+        let mut workspace = workspace(&root);
         let plan = plan_theme_operation(
             &registry,
             &workspace,
             &request(&workspace, ThemeOperation::Install),
         )
         .unwrap();
-        assert!(plan.blocking);
-        assert!(plan
-            .conflicts
+        assert!(!plan.blocking);
+        assert!(plan.changed);
+        assert!(!plan
+            .affected_files
             .iter()
-            .any(|item| item.code == "theme_install_destination_exists"));
+            .any(|path| path == "themes/pana-studio/sass/css-framework/_baza.scss"));
+        assert!(plan
+            .affected_files
+            .iter()
+            .any(|path| { path == "themes/pana-studio/static/fonturi/primary-regular.woff2" }));
+        assert!(plan
+            .notices
+            .iter()
+            .any(|item| item.code == "theme_install_incomplete_repair" && !item.blocking));
+
+        let install_request = request(&workspace, ThemeOperation::Install);
+        let (_, receipt) = apply_theme_plan(
+            &registry,
+            &root,
+            &mut workspace,
+            install_request,
+            &plan.plan_token,
+            10,
+        )
+        .unwrap();
+        assert!(receipt.changed);
+        assert!(!receipt
+            .touched_files
+            .iter()
+            .any(|path| path == "themes/pana-studio/sass/css-framework/_baza.scss"));
+        assert_eq!(
+            fs::read_to_string(root.join("themes/pana-studio/sass/css-framework/_baza.scss"))
+                .unwrap(),
+            "// modificare locală păstrată\n"
+        );
+        assert!(workspace
+            .snapshot()
+            .staged_binary_resources
+            .iter()
+            .any(|path| path == "themes/pana-studio/static/fonturi/primary-regular.woff2"));
         cleanup(root);
     }
 

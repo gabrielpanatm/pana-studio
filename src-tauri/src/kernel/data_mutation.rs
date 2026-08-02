@@ -98,7 +98,7 @@ pub fn read_data_node_editor_snapshot(
     node_id: &str,
 ) -> Result<DataNodeEditorSnapshot, String> {
     let file = normalize_data_file_path(project_root, workspace, file)?;
-    let projection = workspace.capture_projection_lease()?;
+    let projection = workspace.capture_projection_snapshot()?;
     let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
     let data_file = graph
         .data_files
@@ -161,7 +161,7 @@ pub fn stage_validated_data_mutation(
             (source.to_string(), true)
         }
         _ => {
-            let projection = workspace.capture_projection_lease()?;
+            let projection = workspace.capture_projection_snapshot()?;
             let graph = build_source_graph_from_workspace_projection(project_root, &projection)?;
             let data_file = graph
                 .data_files
@@ -881,7 +881,7 @@ mod tests {
         );
         let graph = build_source_graph_from_workspace_projection(
             &root,
-            &workspace.capture_projection_lease().unwrap(),
+            &workspace.capture_projection_snapshot().unwrap(),
         )
         .unwrap();
         let selected = graph
@@ -959,7 +959,7 @@ mod tests {
 
         let graph = build_source_graph_from_workspace_projection(
             &root,
-            &workspace.capture_projection_lease().unwrap(),
+            &workspace.capture_projection_snapshot().unwrap(),
         )
         .unwrap();
         let root_node = graph
@@ -1023,7 +1023,7 @@ mod tests {
         );
         let graph = build_source_graph_from_workspace_projection(
             &root,
-            &workspace.capture_projection_lease().unwrap(),
+            &workspace.capture_projection_snapshot().unwrap(),
         )
         .unwrap();
         let data_file = graph

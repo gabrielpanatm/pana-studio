@@ -46,6 +46,12 @@ const blockRuntime = await readFile(
   resolve(repoRoot, "src-tauri/src/blocks/runtime.js"),
   "utf8",
 );
+const fontFixture = await readFile(
+  resolve(
+    repoRoot,
+    "src-tauri/resources/theme-packs/radacini/theme/static/fonturi/inter-400-700-latin-ext.woff2",
+  ),
+);
 
 const identity = {
   projectRoot: "/project",
@@ -54,8 +60,9 @@ const identity = {
   transactionId: "canvas_next_browser_real",
   previewRevision: "preview-next-browser-real",
 };
-const oldCss = `data:text/css,${encodeURIComponent("#probe{color:rgb(220,20,60);text-align:center}")}`;
-const nextCss = `data:text/css,${encodeURIComponent("#probe{color:rgb(30,100,220);text-align:left}")}`;
+const oldCss = "/old.css";
+const nextCss = "/next.css";
+const fontCss = `@font-face{font-family:"Pana Runtime Probe";src:url("/font-probe.woff2") format("woff2");font-style:normal;font-weight:400 700;font-display:swap}`;
 
 function escapeInlineScript(source) {
   return source.replaceAll("</script", "<\\/script");
@@ -71,7 +78,7 @@ const initialDocument = `<!doctype html>
       data-pana-canvas-runtime-session-id="runtime-browser-real"
       data-pana-canvas-workspace-revision="1"
       data-pana-canvas-transaction-id="canvas_active_browser_real">
-  <head><link rel="stylesheet" href="${oldCss}"></head>
+  <head><meta name="description" content="Before"><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="${oldCss}"></head>
   <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/servicii">Servicii</a></main>
   <script>
     window.addEventListener("error", function (event) {
@@ -92,8 +99,39 @@ const canonicalDocument = `<!doctype html>
       data-pana-canvas-workspace-revision="${identity.workspaceRevision}"
       data-pana-canvas-workspace-transaction-id="workspace-browser-real-107"
       data-pana-canvas-transaction-id="${identity.transactionId}">
-  <head><link rel="stylesheet" href="${nextCss}"></head>
+  <head><!-- pana-template-source-start:sg_head_description --><meta name="description" content="After"><!-- pana-template-source-end:sg_head_description --><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="${nextCss}"></head>
   <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">After</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/despre">Servicii</a></main></body>
+</html>`;
+
+const reorderedResourceDocument = `<!doctype html>
+<html data-pana-preview-revision="${identity.previewRevision}"
+      data-pana-canvas-project-root="${identity.projectRoot}"
+      data-pana-canvas-runtime-session-id="${identity.runtimeSessionId}"
+      data-pana-canvas-workspace-revision="${identity.workspaceRevision}"
+      data-pana-canvas-workspace-transaction-id="workspace-browser-real-107"
+      data-pana-canvas-transaction-id="${identity.transactionId}">
+  <head><!-- pana-template-source-start:sg_head_description --><meta name="description" content="After"><!-- pana-template-source-end:sg_head_description --><link rel="stylesheet" href="${nextCss}"><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin></head>
+  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">After</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/despre">Servicii</a></main></body>
+</html>`;
+
+const brokenStylesheetDocument = `<!doctype html>
+<html data-pana-preview-revision="${identity.previewRevision}"
+      data-pana-canvas-project-root="${identity.projectRoot}"
+      data-pana-canvas-runtime-session-id="${identity.runtimeSessionId}"
+      data-pana-canvas-workspace-revision="${identity.workspaceRevision}"
+      data-pana-canvas-transaction-id="${identity.transactionId}">
+  <head><link rel="stylesheet" href="/broken.css"></head>
+  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Broken candidate</h1></main></body>
+</html>`;
+
+const missingFontDocument = `<!doctype html>
+<html data-pana-preview-revision="${identity.previewRevision}"
+      data-pana-canvas-project-root="${identity.projectRoot}"
+      data-pana-canvas-runtime-session-id="${identity.runtimeSessionId}"
+      data-pana-canvas-workspace-revision="${identity.workspaceRevision}"
+      data-pana-canvas-transaction-id="${identity.transactionId}">
+  <head><meta name="description" content="Font fallback"><link rel="stylesheet" href="/missing-font.css"></head>
+  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Fallback candidate</h1></main></body>
 </html>`;
 
 const interactiveDocument = `<!doctype html>
@@ -137,6 +175,9 @@ const harness = `<!doctype html>
   const result = document.getElementById("result");
   const initialDocument = ${htmlJson(initialDocument)};
   const canonicalDocument = ${htmlJson(canonicalDocument)};
+  const reorderedResourceDocument = ${htmlJson(reorderedResourceDocument)};
+  const brokenStylesheetDocument = ${htmlJson(brokenStylesheetDocument)};
+  const missingFontDocument = ${htmlJson(missingFontDocument)};
   const interactiveDocument = ${htmlJson(interactiveDocument)};
   const identity = ${JSON.stringify(identity)};
   const messages = [];
@@ -146,6 +187,8 @@ const harness = `<!doctype html>
   const colors = [];
   const patchRoundTrips = [];
   const patchBridgeDurations = [];
+  const historyPatchRoundTrips = [];
+  const historyPatchBridgeDurations = [];
   let sample = true;
 
   function finish(ok, details) {
@@ -493,6 +536,67 @@ const harness = `<!doctype html>
     ) {
       throw new Error("CanvasAgent did not project the allowed Rust move verdict");
     }
+    const projectDragPreview = (gestureSequence, position) => frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "project-canvas-drag-preview",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      dragSessionId: dragOver.drag.sessionId,
+      gestureSequence,
+      inputEmittedAtMs: Date.now(),
+      projection: {
+        schemaVersion: 1,
+        operation: "move",
+        scope: "selectedInstance",
+        planToken: "rust-plan-browser-real",
+        identity: {
+          projectRoot: "/project",
+          runtimeSessionId: "runtime-browser-real",
+          workspaceRevision: 1,
+          transactionId: "canvas-browser-real",
+          previewRevision: "preview-browser-real"
+        },
+        sourceRenderInstanceId: "render-title",
+        targetRenderInstanceId: "render-nav",
+        position,
+        rollback: {
+          sourceParentRenderInstanceId: null,
+          sourceNextSiblingRenderInstanceId: "render-nav"
+        }
+      }
+    }, "*");
+    const assertDragPreviewPosition = (position) => {
+      const source = frame.contentDocument.getElementById("probe");
+      const target = frame.contentDocument.getElementById("nav-probe");
+      if (!source || !target || source.style.pointerEvents !== "none") {
+        throw new Error("CanvasAgent did not install the reversible drag projection");
+      }
+      if (position === "inside" && source.parentElement !== target) {
+        throw new Error("inside drag projection did not move the source into the target");
+      }
+      if (
+        position === "before"
+        && source.nextElementSibling !== target
+      ) {
+        throw new Error("before drag projection has the wrong DOM order");
+      }
+      if (
+        position === "after"
+        && target.nextElementSibling !== source
+      ) {
+        throw new Error("after drag projection has the wrong DOM order");
+      }
+    };
+    projectDragPreview(dragOver.gestureSequence, dragOver.drag.position);
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+    const unchangedDuringDrag = frame.contentDocument.querySelector("main");
+    if (
+      unchangedDuringDrag?.children[0]?.id !== "probe"
+      || unchangedDuringDrag?.children[1]?.id !== "nav-probe"
+      || frame.contentDocument.getElementById("probe")?.style.pointerEvents
+    ) {
+      throw new Error("CanvasAgent moved the DOM before the trusted Drop");
+    }
     result.textContent = "canvas-agent-native-drop";
     document.title = "AGENT_DROP_WAIT";
     const drop = await waitForCanvasAgentMessage((data) =>
@@ -510,6 +614,46 @@ const harness = `<!doctype html>
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
     if (dragIndicator.style.display !== "none") {
       throw new Error("CanvasAgent drag indicator survived pointer release");
+    }
+    const unchangedAtDrop = frame.contentDocument.querySelector("main");
+    if (
+      unchangedAtDrop?.children[0]?.id !== "probe"
+      || unchangedAtDrop?.children[1]?.id !== "nav-probe"
+      || frame.contentDocument.getElementById("probe")?.style.pointerEvents
+    ) {
+      throw new Error("CanvasAgent moved the DOM before the Drop projection arrived");
+    }
+    const dragPreviewStartedAt = performance.now();
+    const dragPreviewAppliedPromise = waitForCanvasAgentMessage((data) =>
+      data?.type === "dragPreviewApplied"
+        && data.planToken === "rust-plan-browser-real"
+        && data.gestureSequence === drop.gestureSequence
+    );
+    projectDragPreview(drop.gestureSequence, drop.drag.position);
+    const dragPreviewApplied = await dragPreviewAppliedPromise;
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+    const dragPreviewRoundTripMs = Math.max(0, performance.now() - dragPreviewStartedAt);
+    assertDragPreviewPosition(drop.drag.position);
+    if (
+      !Number.isSafeInteger(dragPreviewApplied.dragPreviewAppliedMs)
+      || dragPreviewApplied.dragPreviewAppliedMs < 0
+      || dragPreviewApplied.dragPreviewAppliedMs > 50
+    ) {
+      throw new Error("typed Drop projection missed the 50 ms DOM budget");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "cancel-canvas-drag-preview",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      dragSessionId: dragOver.drag.sessionId
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+    if (
+      frame.contentDocument.querySelector("main")?.children[0]?.id !== "probe"
+      || frame.contentDocument.querySelector("main")?.children[1]?.id !== "nav-probe"
+    ) {
+      throw new Error("CanvasAgent did not rollback the failed Drop projection exactly");
     }
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
@@ -654,6 +798,93 @@ const harness = `<!doctype html>
       throw new Error(hrefPatchAck.error || "safe relative href CanvasPatch was refused");
     }
 
+    async function applyHistoryPatch(previewRevision, patch) {
+      const startedAt = performance.now();
+      frame.contentWindow.postMessage({
+        source: "pana-studio-app",
+        type: "apply-canvas-patch",
+        previewRevision,
+        patch
+      }, "*");
+      const ack = await waitForMessage((data) =>
+        data?.type === "preview-operation-complete"
+          && data.operation === "apply-canvas-patch"
+          && data.previewRevision === previewRevision
+      );
+      if (!ack.ok) throw new Error(ack.error || "History CanvasPatch was refused");
+      historyPatchRoundTrips.push(Math.max(0, performance.now() - startedAt));
+      historyPatchBridgeDurations.push(
+        ack.canvasPatchReceipt?.bridgeCommitDurationMs ?? Number.POSITIVE_INFINITY
+      );
+    }
+    const historyTarget = {
+      sourceId: "source-nav",
+      alternateSourceIds: [],
+      renderInstanceId: null,
+      selectorFallback: "#nav-probe",
+      expectedTag: "a"
+    };
+    const historyInserted = {
+      sourceId: "source-history-node",
+      alternateSourceIds: [],
+      renderInstanceId: null,
+      selectorFallback: null,
+      expectedTag: "span"
+    };
+    const historyPatchBase = {
+      schemaVersion: 1,
+      projectRoot: "/project",
+      runtimeSessionId: "runtime-browser-real",
+      issuedAtMs: Date.now(),
+      beforeModelRevision: "history-before",
+      afterModelRevision: "history-after"
+    };
+    await applyHistoryPatch(860, {
+      ...historyPatchBase,
+      patchId: "canvas_patch_" + "a".repeat(64),
+      baseWorkspaceRevision: 107,
+      workspaceRevision: 108,
+      workspaceTransactionId: "history-forward-108",
+      operation: {
+        kind: "insert",
+        target: historyTarget,
+        position: "after",
+        html: "<span>History</span>",
+        inserted: historyInserted
+      }
+    });
+    if (frame.contentDocument.querySelectorAll('[data-pana-source-id="source-history-node"]').length !== 1) {
+      throw new Error("forward History patch did not publish the inserted Rust identity");
+    }
+    await applyHistoryPatch(861, {
+      ...historyPatchBase,
+      patchId: "canvas_patch_" + "b".repeat(64),
+      baseWorkspaceRevision: 108,
+      workspaceRevision: 109,
+      workspaceTransactionId: "history-undo-109",
+      operation: { kind: "delete", target: historyInserted }
+    });
+    if (frame.contentDocument.querySelector('[data-pana-source-id="source-history-node"]')) {
+      throw new Error("inverse History patch did not remove the inserted node");
+    }
+    await applyHistoryPatch(862, {
+      ...historyPatchBase,
+      patchId: "canvas_patch_" + "c".repeat(64),
+      baseWorkspaceRevision: 109,
+      workspaceRevision: 110,
+      workspaceTransactionId: "history-redo-110",
+      operation: {
+        kind: "insert",
+        target: historyTarget,
+        position: "after",
+        html: "<span>History</span>",
+        inserted: historyInserted
+      }
+    });
+    if (frame.contentDocument.querySelectorAll('[data-pana-source-id="source-history-node"]').length !== 1) {
+      throw new Error("rapid History redo lost the inserted Rust identity");
+    }
+
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
       type: "apply-live-attribute-draft",
@@ -724,6 +955,8 @@ const harness = `<!doctype html>
       throw new Error(liveAttributeAck.error || "live attribute draft did not update the real DOM");
     }
 
+    const stablePreload = frame.contentDocument.querySelector("link[rel~='preload']");
+    const stableDescription = frame.contentDocument.querySelector("meta[name='description']");
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
       type: "replace-document",
@@ -738,9 +971,33 @@ const harness = `<!doctype html>
         && data.previewRevision === 1000
     );
     if (!canonicalAck.ok) throw new Error(canonicalAck.error || "canonical reconcile failed");
+    if (
+      !stablePreload
+      || frame.contentDocument.querySelector("link[rel~='preload']") !== stablePreload
+      || !stableDescription
+      || frame.contentDocument.querySelector("meta[name='description']") !== stableDescription
+      || stableDescription.getAttribute("content") !== "After"
+    ) {
+      throw new Error("semantic head reconciliation replaced a stable preload/meta node");
+    }
     const phases = canonicalAck.canvasPhaseReceipts?.map((entry) => entry.phase) ?? [];
     if (phases.join(",") !== "resourcesReady,committed,styledReady") {
       throw new Error("canonical phase sequence mismatch: " + phases.join(","));
+    }
+    if (
+      canonicalAck.stylesheetPromotion?.mode !== "in_place"
+      || canonicalAck.stylesheetPromotion.staged !== 1
+      || canonicalAck.stylesheetPromotion.retired !== 1
+      || canonicalAck.stylesheetPromotion.reused !== 0
+      || canonicalAck.stylesheetPromotion.preloadsReused !== 1
+      || canonicalAck.stylesheetPromotion.preloadsStaged !== 0
+      || canonicalAck.stylesheetPromotion.preloadAttributeMutations !== 0
+      || canonicalAck.stylesheetPromotion.fontFallbackFrames !== 0
+    ) {
+      throw new Error(
+        "changed stylesheet was not promoted atomically: "
+          + JSON.stringify(canonicalAck.stylesheetPromotion)
+      );
     }
     const reconciledRootStyle = frame.contentDocument.documentElement.style;
     if (
@@ -791,6 +1048,10 @@ const harness = `<!doctype html>
     if (frame.contentDocument.getElementById("probe")?.title !== "Draft title") {
       throw new Error("canonical reconcile clobbered the active live attribute draft");
     }
+    const fontResourceUrl = new URL("/font-probe.woff2", frame.contentDocument.baseURI).href;
+    const fontEntriesBeforeStableReconcile = frame.contentWindow.performance
+      .getEntriesByName(fontResourceUrl)
+      .length;
 
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
@@ -837,11 +1098,166 @@ const harness = `<!doctype html>
     if (!settledCanonicalAck.ok) {
       throw new Error(settledCanonicalAck.error || "settled canonical reconcile failed");
     }
+    if (
+      frame.contentDocument.querySelector("link[rel~='preload']") !== stablePreload
+      || frame.contentDocument.querySelector("meta[name='description']") !== stableDescription
+    ) {
+      throw new Error("stable head node identity changed on an identical reconcile");
+    }
+    if (
+      frame.contentWindow.performance.getEntriesByName(fontResourceUrl).length
+      !== fontEntriesBeforeStableReconcile
+    ) {
+      throw new Error("unchanged reconcile reloaded the custom font resource");
+    }
+    if (
+      settledCanonicalAck.stylesheetPromotion?.reused !== 1
+      || settledCanonicalAck.stylesheetPromotion.staged !== 0
+      || settledCanonicalAck.stylesheetPromotion.retired !== 0
+      || settledCanonicalAck.stylesheetPromotion.preloadsReused !== 1
+      || settledCanonicalAck.stylesheetPromotion.stylesheetAttributeMutations !== 0
+      || settledCanonicalAck.stylesheetPromotion.preloadAttributeMutations !== 0
+      || settledCanonicalAck.stylesheetPromotion.headNodesCreated !== 0
+      || settledCanonicalAck.stylesheetPromotion.headNodesRetired !== 0
+      || settledCanonicalAck.stylesheetPromotion.headNodesReordered !== 0
+      || settledCanonicalAck.stylesheetPromotion.fontInvalidationCount !== 0
+      || settledCanonicalAck.stylesheetPromotion.fontFallbackFrames !== 0
+      || settledCanonicalAck.stylesheetPromotion.maxTextMetricDelta !== 0
+    ) {
+      throw new Error(
+        "unchanged stylesheet was not reused: "
+          + JSON.stringify(settledCanonicalAck.stylesheetPromotion)
+      );
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "replace-document",
+      previewRevision: 10025,
+      html: reorderedResourceDocument,
+      liveCss: "",
+      canvasIdentity: identity
+    }, "*");
+    const reorderedResourceAck = await waitForMessage((data) =>
+      data?.type === "preview-operation-complete"
+        && data.operation === "replace-document"
+        && data.previewRevision === 10025
+    );
+    if (!reorderedResourceAck.ok) {
+      throw new Error(reorderedResourceAck.error || "semantic resource reorder failed");
+    }
+    const reorderedResources = [...frame.contentDocument.head.querySelectorAll(
+      "link[rel~='stylesheet'], link[rel~='preload']"
+    )];
+    if (
+      reorderedResources.length !== 2
+      || reorderedResources[0].rel !== "stylesheet"
+      || reorderedResources[1].rel !== "preload"
+      || reorderedResources[1] !== stablePreload
+      || reorderedResourceAck.stylesheetPromotion?.headNodesReordered < 1
+    ) {
+      throw new Error(
+        "a real canonical resource-order change was suppressed: "
+          + JSON.stringify(reorderedResourceAck.stylesheetPromotion)
+      );
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "replace-document",
+      previewRevision: 10026,
+      html: canonicalDocument,
+      liveCss: "",
+      canvasIdentity: identity
+    }, "*");
+    const restoredResourceOrderAck = await waitForMessage((data) =>
+      data?.type === "preview-operation-complete"
+        && data.operation === "replace-document"
+        && data.previewRevision === 10026
+    );
+    if (
+      !restoredResourceOrderAck.ok
+      || frame.contentDocument.head.querySelector("link[rel~='preload']") !== stablePreload
+      || frame.contentDocument.head.querySelector("link[rel~='stylesheet']")
+        ?.previousElementSibling !== stablePreload
+      || restoredResourceOrderAck.stylesheetPromotion?.headNodesReordered < 1
+    ) {
+      throw new Error(
+        "canonical resource order was not restored: "
+          + JSON.stringify(restoredResourceOrderAck.stylesheetPromotion)
+      );
+    }
     if (frame.contentDocument.getElementById("probe")?.textContent !== "After") {
       throw new Error("closed live text draft leaked into a later canonical reconcile");
     }
     if (frame.contentDocument.getElementById("probe")?.hasAttribute("title")) {
       throw new Error("closed live attribute draft leaked into a later canonical reconcile");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "replace-document",
+      previewRevision: 1003,
+      html: missingFontDocument,
+      liveCss: "",
+      canvasIdentity: identity
+    }, "*");
+    const missingFontAck = await waitForMessage((data) =>
+      data?.type === "preview-operation-complete"
+        && data.operation === "replace-document"
+        && data.previewRevision === 1003
+    );
+    const missingFontDiagnostic = missingFontAck.canvasPhaseReceipts?.at(-1)?.diagnostic || "";
+    if (
+      !missingFontAck.ok
+      || missingFontAck.canvasPhaseReceipts?.at(-1)?.phase !== "styledReady"
+      || missingFontAck.stylesheetPromotion?.fontActivationErrorCount < 1
+      || !missingFontDiagnostic.includes("Pana Missing Probe")
+      || frame.contentDocument.getElementById("probe")?.textContent !== "Fallback candidate"
+    ) {
+      throw new Error(
+        "missing font did not settle as a usable fallback: " + JSON.stringify(missingFontAck)
+      );
+    }
+
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "replace-document",
+      previewRevision: 1004,
+      html: canonicalDocument,
+      liveCss: "",
+      canvasIdentity: identity
+    }, "*");
+    const restoredAfterMissingFontAck = await waitForMessage((data) =>
+      data?.type === "preview-operation-complete"
+        && data.operation === "replace-document"
+        && data.previewRevision === 1004
+    );
+    if (!restoredAfterMissingFontAck.ok) {
+      throw new Error(restoredAfterMissingFontAck.error || "font fallback document did not restore");
+    }
+
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "replace-document",
+      previewRevision: 1005,
+      html: brokenStylesheetDocument,
+      liveCss: "",
+      canvasIdentity: identity
+    }, "*");
+    const brokenStylesheetAck = await waitForMessage((data) =>
+        data?.type === "preview-operation-complete"
+        && data.operation === "replace-document"
+        && data.previewRevision === 1005
+    );
+    if (brokenStylesheetAck.ok) {
+      throw new Error("broken stylesheet candidate was promoted");
+    }
+    if (frame.contentDocument.getElementById("probe")?.textContent !== "After") {
+      throw new Error("failed stylesheet candidate changed the mounted document");
+    }
+    if (
+      frame.contentDocument.querySelector("link[href*='broken.css']")
+      || frame.contentDocument.querySelectorAll("link[rel~='stylesheet']").length !== 1
+    ) {
+      throw new Error("failed staged stylesheet was not cleaned up");
     }
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
       frame.contentWindow.requestAnimationFrame(resolve)
@@ -857,11 +1273,22 @@ const harness = `<!doctype html>
     const p95Index = Math.max(0, Math.ceil(sortedPatchDurations.length * 0.95) - 1);
     const patchP95Ms = sortedPatchDurations[p95Index];
     const bridgeP95Ms = sortedBridgeDurations[p95Index];
+    const historyPatchMaxMs = Math.max(...historyPatchRoundTrips);
+    const historyBridgeMaxMs = Math.max(...historyPatchBridgeDurations);
     if (persistentDocument !== frame.contentDocument) throw new Error("same-route document navigated");
     if (finalColor !== "rgb(30, 100, 220)") throw new Error("final stylesheet mismatch: " + finalColor);
     if (unstyledFrames.length > 0) throw new Error("unstyled frame observed: " + unstyledFrames.join("|"));
+    if (frame.contentDocument.querySelectorAll("link[rel~='stylesheet']").length !== 1) {
+      throw new Error("obsolete stylesheet was not retired after styledReady");
+    }
     if (!Number.isFinite(patchP95Ms) || patchP95Ms >= 50) {
       throw new Error("warmed CanvasPatch p95 exceeded 50 ms: " + patchP95Ms);
+    }
+    if (!Number.isFinite(historyPatchMaxMs) || historyPatchMaxMs >= 100) {
+      throw new Error("History CanvasPatch exceeded 100 ms: " + historyPatchMaxMs);
+    }
+    if (!Number.isFinite(dragPreviewRoundTripMs) || dragPreviewRoundTripMs >= 50) {
+      throw new Error("Drop projection exceeded 50 ms: " + dragPreviewRoundTripMs);
     }
     if (frame.contentDocument.querySelectorAll("script").length !== 1) {
       throw new Error("privileged bridge was replaced or duplicated");
@@ -933,9 +1360,16 @@ const harness = `<!doctype html>
       samples: colors.length,
       colors: [...new Set(colors)],
       phases,
+      stylesheetPromotion: canonicalAck.stylesheetPromotion,
+      stylesheetReuse: settledCanonicalAck.stylesheetPromotion,
+      stylesheetRollback: "last-styled-document-preserved",
+      missingFontFallback: "styledReady-with-diagnostic",
       patchSamples: patchRoundTrips.length,
       patchP95Ms,
       bridgeP95Ms,
+      historyPatchMaxMs,
+      historyBridgeMaxMs,
+      dragPreviewRoundTripMs,
       lastPatchBridgeMs: patchAck.canvasPatchReceipt.bridgeCommitDurationMs,
       sameDocument: true,
       interactiveNodes: domSnapshot.nodes.length,
@@ -947,6 +1381,7 @@ const harness = `<!doctype html>
       canvasAgentDragIndicator: "rust-projected",
       canvasAgentBoundaryAction: "rust-projected",
       canvasAgentInspection: "physical-only",
+      historyCanvasPatch: "forward/inverse/redo",
     });
   }
 
@@ -961,6 +1396,39 @@ const harness = `<!doctype html>
 <\/script></body></html>`;
 
 const server = createServer((request, response) => {
+  if (request.url === "/old.css" || request.url === "/next.css") {
+    const changed = request.url === "/next.css";
+    response.writeHead(200, {
+      "content-type": "text/css; charset=utf-8",
+      "cache-control": "public, max-age=3600",
+    });
+    response.end(
+      `${fontCss}#probe{font-family:"Pana Runtime Probe",sans-serif;color:${
+        changed ? "rgb(30,100,220)" : "rgb(220,20,60)"
+      };text-align:${changed ? "left" : "center"}}`,
+    );
+    return;
+  }
+  if (request.url === "/font-probe.woff2") {
+    response.writeHead(200, {
+      "content-type": "font/woff2",
+      "cache-control": "public, max-age=3600",
+      "access-control-allow-origin": "*",
+    });
+    response.end(fontFixture);
+    return;
+  }
+  if (request.url === "/missing-font.css") {
+    response.writeHead(200, {
+      "content-type": "text/css; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(
+      '@font-face{font-family:"Pana Missing Probe";src:url("/missing-font.woff2") format("woff2");font-style:normal;font-weight:700;font-display:swap}'
+        + '#probe{font-family:"Pana Missing Probe",sans-serif;color:rgb(30,100,220)}',
+    );
+    return;
+  }
   if (request.url !== "/") {
     response.writeHead(404).end("not found");
     return;
@@ -981,8 +1449,11 @@ assert(address && typeof address === "object");
 
 const driverPort = 45000 + (process.pid % 1000);
 const snapGeckodriver = "/snap/firefox/current/usr/lib/firefox/geckodriver";
+const snapFirefox = "/snap/firefox/current/usr/lib/firefox/firefox";
 const geckodriverBinary = process.env.GECKODRIVER_BIN
   || (existsSync(snapGeckodriver) ? snapGeckodriver : "geckodriver");
+const firefoxBinary = process.env.FIREFOX_BIN
+  || (existsSync(snapFirefox) ? snapFirefox : null);
 const driver = spawn(geckodriverBinary, ["--port", String(driverPort)], {
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -1028,7 +1499,10 @@ try {
       capabilities: {
         alwaysMatch: {
           browserName: "firefox",
-          "moz:firefoxOptions": { args: ["-headless"] },
+          "moz:firefoxOptions": {
+            args: ["-headless"],
+            ...(firefoxBinary ? { binary: firefoxBinary } : {}),
+          },
         },
       },
     }),

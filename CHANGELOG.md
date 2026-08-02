@@ -5,6 +5,64 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-02
+
+### Added
+
+- ciclu de inițializare Rust-first pentru proiect, cu faze explicite până la
+  montarea Workbench-ului și deschiderea curată a paginii `index`;
+- recuperare WAL acționabilă direct din ecranul de pornire, cu diagnostic,
+  recitire și redeschiderea proiectului după reconciliere;
+- reconstrucție incrementală ProjectModel și SourceGraph, cu invalidare
+  tranzitivă sigură, raportare și fallback complet determinist;
+- editor de conținut Markdown dedicat activității Conținut, cu Tiptap și
+  setările paginii afișate într-un panou lateral;
+- reprezentare semantică distinctă pentru sursele Markdown proiectate prin
+  Tera, inclusiv blocuri Markdown evidențiate separat în Straturi;
+- editor complet pentru fundaluri CSS cu straturi multiple, imagini și
+  gradienturi, plus o piesă dedicată pentru configurarea gradienturilor;
+- Grid Builder vizual în Inspector pentru compunerea valorilor CSS Grid fără
+  editare directă în Canvas;
+- fonturi locale și licențele lor în tema Pană Studio inclusă în aplicație.
+
+### Changed
+
+- mutațiile Preview, inclusiv Undo/Redo, folosesc promovarea incrementală a
+  stilurilor și păstrează documentul montat când nu este necesar un rebuild;
+- drag-and-drop-ul afișează numai indicatorul în timpul tragerii și aplică
+  mutația structurală o singură dată, imediat după drop;
+- editarea vizuală a blocurilor native reconciliază HTML, SCSS și Page JS
+  într-o singură tranzacție ProjectWorkspace;
+- fișierele Markdown deschise din Editor sunt tratate ca sursă Cod, iar
+  editarea vizuală Markdown este deținută exclusiv de activitatea Conținut;
+- exploratorul de fișiere serializează selecțiile rapide și evită reconstruirea
+  inutilă a arborilor mari la hover sau expandare;
+- autoritatea de scriere, istoricul și reconcilierea Preview folosesc
+  identitatea exactă a tranzacției, fără mecanismul frontend paralel de lease.
+
+### Fixed
+
+- prima mutare vizuală, Undo și Redo nu mai așteaptă reconstruiri complete și
+  nu mai produc refresh-uri care reîncarcă fonturile;
+- promovarea CSS în Preview nu mai expune pentru un cadru HTML nestilizat și
+  nu mai produce layout shift după mutații structurale;
+- fișierele SCSS mari se deschid corect, iar încărcarea sursei nu mai lasă
+  sentinelul intern în editor;
+- navigarea nu mai păstrează rute sau identități stale după schimbarea
+  documentului și nu mai mută selecția la generarea unei clase unice;
+- ștergerea straturilor de gradient nu mai blochează interacțiunile UI, iar
+  listele CSS de fundal nu mai emit valori invalide precum `, center`;
+- erorile de compilare Zola deschid sursa diagnostică în Cod și permit
+  repararea proiectului fără abandonarea dosarului curent;
+- proiectele noi nu mai pornesc cu eroarea falsă de reconciliere Canvas;
+- inserarea unui bloc nativ nu mai publică identități ProjectModel
+  incompatibile și păstrează panoul de proprietăți disponibil;
+- Inspectorul corelează acum instanța blocului selectat cu `BlockGraph` folosind
+  câmpul `renderInstanceId` transmis efectiv de Rust și afișează controalele
+  blocului imediat după inserare;
+- operațiile de fundal, gradient și grid păstrează controalele editabile după
+  golirea unei valori și refuză stările CSS structural invalide.
+
 ## [0.1.3] - 2026-07-30
 
 ### Added
@@ -194,7 +252,8 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - documentația publică, politica de securitate și atribuirea componentelor terțe
   completate.
 
-[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.0...v0.1.1

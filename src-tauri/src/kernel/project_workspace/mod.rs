@@ -6,30 +6,33 @@ mod save;
 mod save_journal;
 mod workspace;
 
+pub(crate) use history::WorkspaceCanvasHistoryDelta;
 pub use model::{
     ProjectWorkspaceHistoryIdentity, ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt,
     ProjectWorkspaceSaveError, ProjectWorkspaceSaveReceipt, ProjectWorkspaceSaveStatus,
     ProjectWorkspaceSnapshot, WorkspaceBinaryResource, WorkspaceDocumentMutation,
     WorkspaceDocumentProjection, WorkspaceHistoryDirection, WorkspaceHistoryEntrySnapshot,
-    WorkspaceHistorySnapshot, WorkspaceMutationMetadata, WorkspaceProjectionLease,
+    WorkspaceHistorySnapshot, WorkspaceMutationMetadata, WorkspaceProjectionSnapshot,
     WorkspaceResourceDelete, WorkspaceResourceMutation, WorkspaceTextChange, WorkspaceTextDelete,
     WorkspaceTextMutationInput, WorkspaceTextResourceMutationInput, WorkspaceUndoRedoReceipt,
     PROJECT_WORKSPACE_SCHEMA_VERSION,
 };
 pub(crate) use model::{
-    WorkspaceBinaryRestoreChange, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
-    PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES,
+    SourceIdentityAliasTransition, WorkspaceBinaryRestoreChange,
+    PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES,
 };
 pub use recovery::{
     clear_project_open_recovery_decision, clear_project_workspace_recovery,
     commit_project_workspace_session_mutation,
-    commit_project_workspace_session_mutation_with_projection, emit_project_workspace_mutated,
-    inspect_project_workspace_recovery_for_open, persist_project_open_recovery_abandonment,
-    persist_project_workspace_recovery, require_project_open_recovery_assessment_unchanged,
-    resolve_project_open_recovery, restore_project_workspace_recovery,
-    save_project_workspace_with_recovery, ProjectOpenRecoveryAssessment,
-    ProjectOpenRecoveryConflictReason, ProjectOpenRecoveryDecisionAction,
-    ProjectOpenRecoveryDecisionInput, ProjectOpenRecoveryResolution, ProjectOpenRecoveryStatus,
+    commit_project_workspace_session_mutation_with_projection,
+    commit_project_workspace_session_mutation_with_projection_measured,
+    emit_project_workspace_mutated, inspect_project_workspace_recovery_for_open,
+    persist_project_open_recovery_abandonment, persist_project_workspace_recovery,
+    require_project_open_recovery_assessment_unchanged, resolve_project_open_recovery,
+    restore_project_workspace_recovery, save_project_workspace_with_recovery,
+    ProjectOpenRecoveryAssessment, ProjectOpenRecoveryConflictReason,
+    ProjectOpenRecoveryDecisionAction, ProjectOpenRecoveryDecisionInput,
+    ProjectOpenRecoveryResolution, ProjectOpenRecoveryStatus, ProjectWorkspaceCommitTimings,
     ProjectWorkspacePreviewProjection, ProjectWorkspaceRecoveryStatus,
 };
 pub use save::save_project_workspace;

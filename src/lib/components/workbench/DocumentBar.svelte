@@ -228,18 +228,6 @@
         <IconCode size={15} stroke={1.8} />
         <span>{t("workbench-code")}</span>
       </button>
-      <button
-        type="button"
-        class="ui-tab"
-        class:active={activeDocument?.surface === "markdown"}
-        aria-pressed={activeDocument?.surface === "markdown" ? "true" : "false"}
-        disabled={!/\.md$/i.test(activeDocument?.relativePath ?? "")}
-        title={t("workbench-markdown")}
-        onclick={() => { void setSurface("markdown"); }}
-      >
-        <IconMarkdown size={15} stroke={1.8} />
-        <span>{t("workbench-markdown")}</span>
-      </button>
     </div>
   {:else}
     <div class="split-mode-label" title={t("workbench-synchronized-surfaces")}>

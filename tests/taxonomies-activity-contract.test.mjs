@@ -79,7 +79,7 @@ test("Conținut atribuie dinamic taxonomiile din catalog, fără Tags/Categories
   const legacyPanel = source("../src/lib/components/project/ProjectPageSettingsTab.svelte");
   const frontmatter = source("../src/lib/markdown/frontmatter.ts");
 
-  assert.match(content, /<PageTaxonomyAssignments \{app\} page=\{selectedPage\}/);
+  assert.match(content, /<PageTaxonomyAssignments \{app\} page=\{editingPage\}/);
   assert.match(assignments, /readTaxonomyCatalog/);
   assert.match(assignments, /entry\.declared && entry\.language === pageLanguage/);
   assert.match(assignments, /kind:\s*"set_page_terms"/);

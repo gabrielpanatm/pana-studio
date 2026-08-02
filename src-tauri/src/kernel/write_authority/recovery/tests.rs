@@ -1594,7 +1594,7 @@ mod linux {
             decoded,
             WriteAuthorityRecoveryResolutionAction::AcceptCurrentState
         );
-        assert_eq!(WRITE_AUTHORITY_RECOVERY_RESOLUTION_SCHEMA_VERSION, 6);
+        assert_eq!(WRITE_AUTHORITY_RECOVERY_RESOLUTION_SCHEMA_VERSION, 7);
     }
 
     #[test]

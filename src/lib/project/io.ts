@@ -30,10 +30,15 @@ import type {
   ThemeStyleTargetSnapshot,
   PageCssCleanupResult,
   PageCssWriteResult,
+  ReusableCssWriteResult,
   UiContextProjection,
   AiContextStatus,
   AiCoordinationSnapshot,
   CodexMcpStatus,
+  ContentModelCatalog,
+  ContentModelMutationApplyReceipt,
+  ContentModelMutationInput,
+  ContentModelMutationPlan,
   ComponentMutationApplyReceipt,
   ComponentMutationInput,
   CanvasInteractionBindingReceipt,
@@ -61,6 +66,12 @@ import type {
   EditorMovePlanInput,
   BlockRuntimeSnapshot,
   UiBlockGraphSnapshot,
+  InsertCatalogContext,
+  InsertCatalogSnapshot,
+  DynamicWidgetSnapshot,
+  DynamicWidgetSnapshotRequest,
+  UpdateDynamicWidgetInput,
+  DeleteDynamicWidgetInput,
   EditTransitionReceipt,
   PageAssetContractApplyInput,
   PageAssetContractInput,
@@ -164,6 +175,8 @@ import type {
   TemplateCatalogSnapshot,
   CreateSemanticTemplateInput,
   CreateTemplateInput,
+  CreateListingItemInput,
+  DeleteListingItemInput,
   CreateTemplateCollectionInput,
   DeleteTemplateInput,
   DuplicateTemplateInput,
@@ -211,6 +224,7 @@ import {
   PROJECT_WORKSPACE_SCHEMA_VERSION,
   TAXONOMY_CATALOG_SCHEMA_VERSION,
   TAXONOMY_MUTATION_SCHEMA_VERSION,
+  CONTENT_MODEL_SCHEMA_VERSION,
   TEMPLATE_CATALOG_SCHEMA_VERSION,
   EDITOR_NAVIGATION_SCHEMA_VERSION,
   EDIT_SCOPE_GRANT_SCHEMA_VERSION,
@@ -222,6 +236,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { t } from "$lib/i18n/runtime.svelte";
+import type {
+  PageFrontmatterField,
+  PageFrontmatterMutationValue,
+} from "$lib/markdown/frontmatter";
 
 function schemaMismatch(resource: string, actual: number, expected: number) {
   return new Error(t("io-schema-mismatch", { resource, actual, expected }));
@@ -1151,6 +1169,79 @@ export async function applyTaxonomyMutation(
   return receipt;
 }
 
+export async function readContentModelCatalog(
+  identity: FileBufferRequestIdentity,
+  expectedWorkspaceRevision?: number,
+): Promise<ContentModelCatalog> {
+  const receipt = await invoke<FileBufferCommandReceipt<ContentModelCatalog>>(
+    "read_content_model_catalog",
+    { identity },
+  );
+  if (
+    receipt.projectRoot !== identity.expectedProjectRoot
+    || receipt.runtimeSessionId !== identity.expectedSessionId
+  ) {
+    throw new Error(t("io-workspace-catalog-identity-invalid", {
+      resource: t("io-resource-content-model-catalog"),
+    }));
+  }
+  if (
+    expectedWorkspaceRevision !== undefined
+    && receipt.workspaceRevision !== expectedWorkspaceRevision
+  ) {
+    throw new Error(t("io-workspace-catalog-revision-mismatch", {
+      resource: t("io-resource-content-model-catalog"),
+      actual: receipt.workspaceRevision,
+      expected: expectedWorkspaceRevision,
+    }));
+  }
+  if (receipt.payload.schemaVersion !== CONTENT_MODEL_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      t("io-resource-content-model-catalog"),
+      receipt.payload.schemaVersion,
+      CONTENT_MODEL_SCHEMA_VERSION,
+    );
+  }
+  return receipt.payload;
+}
+
+export async function planContentModelMutation(
+  input: ContentModelMutationInput,
+  identity: FileBufferRequestIdentity,
+): Promise<ContentModelMutationPlan> {
+  const plan = await invoke<ContentModelMutationPlan>("plan_content_model_mutation", {
+    input,
+    identity,
+  });
+  if (plan.schemaVersion !== CONTENT_MODEL_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      t("io-resource-content-model-plan"),
+      plan.schemaVersion,
+      CONTENT_MODEL_SCHEMA_VERSION,
+    );
+  }
+  return plan;
+}
+
+export async function applyContentModelMutation(
+  input: ContentModelMutationInput,
+  expectedPlanId: string,
+  identity: FileBufferRequestIdentity,
+): Promise<ContentModelMutationApplyReceipt> {
+  const receipt = await invoke<ContentModelMutationApplyReceipt>(
+    "apply_content_model_mutation",
+    { input, expectedPlanId, identity },
+  );
+  if (receipt.plan.schemaVersion !== CONTENT_MODEL_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      t("io-resource-content-model-receipt"),
+      receipt.plan.schemaVersion,
+      CONTENT_MODEL_SCHEMA_VERSION,
+    );
+  }
+  return receipt;
+}
+
 export function readProjectModel(draftSources?: Record<string, string>): Promise<ProjectModelSnapshot> {
   if (draftSources && Object.keys(draftSources).length > 0) {
     return invoke<ProjectModelSnapshot>("read_project_model_with_drafts", { draftSources });
@@ -1232,6 +1323,21 @@ export async function bindCanvasInteractionAgent(
       receipt.activeDocumentPath !== null
       && typeof receipt.activeDocumentPath !== "string"
     )
+    || !Array.isArray(receipt.authoringSurfaces)
+    || receipt.authoringSurfaces.some((surface) => (
+      !surface
+      || typeof surface.sourceNodeId !== "string"
+      || surface.sourceNodeId.length === 0
+      || typeof surface.boundaryInstanceId !== "string"
+      || surface.boundaryInstanceId.length === 0
+      || (
+        surface.renderInstanceId !== null
+        && (
+          typeof surface.renderInstanceId !== "string"
+          || surface.renderInstanceId.length === 0
+        )
+      )
+    ))
   ) {
     throw new Error("CanvasAgent a întors alt binding sau o secvență invalidă.");
   }
@@ -1935,6 +2041,21 @@ export function createProjectContentPage(options: {
   return invokeWorkspaceEntryMutation("workspace_create_content_page", { ...options, identity }, identity);
 }
 
+export function updateProjectPageFrontmatterField(
+  input: {
+    relativePath: string;
+    field: PageFrontmatterField;
+    value: PageFrontmatterMutationValue;
+  },
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_update_page_frontmatter_field",
+    { input, identity },
+    identity,
+  );
+}
+
 export function createProjectTextFile(
   relativePath: string,
   contents: string,
@@ -1952,6 +2073,28 @@ export function createTemplate(
   identity: FileBufferRequestIdentity,
 ): Promise<WorkspaceEntryMutationReceipt> {
   return invokeWorkspaceEntryMutation("workspace_create_template", { input, identity }, identity);
+}
+
+export function createListingItem(
+  input: CreateListingItemInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_create_listing_item",
+    { input, identity },
+    identity,
+  );
+}
+
+export function deleteListingItem(
+  input: DeleteListingItemInput,
+  identity: FileBufferRequestIdentity,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "workspace_delete_listing_item",
+    { input, identity },
+    identity,
+  );
 }
 
 export function createSemanticTemplate(
@@ -2119,6 +2262,71 @@ export async function readUiBlockGraph(
     throw new Error(t("io-ui-block-graph-session-mismatch"));
   }
   return snapshot;
+}
+
+export async function readInsertCatalog(
+  identity: FileBufferRequestIdentity,
+  expectedWorkspaceRevision: number,
+  context: InsertCatalogContext,
+): Promise<InsertCatalogSnapshot> {
+  requireProjectFileRequestIdentity(identity);
+  const snapshot = await invoke<InsertCatalogSnapshot>("read_insert_catalog", {
+    request: {
+      identity,
+      expectedWorkspaceRevision,
+      context,
+    },
+  });
+  if (
+    snapshot.schemaVersion !== 1
+    || snapshot.projectRoot !== identity.expectedProjectRoot
+    || snapshot.runtimeSessionId !== identity.expectedSessionId
+    || snapshot.workspaceRevision !== expectedWorkspaceRevision
+  ) {
+    throw new Error("Catalogul de inserare nu mai aparține reviziei active.");
+  }
+  return snapshot;
+}
+
+export async function readDynamicWidgetSnapshot(
+  request: DynamicWidgetSnapshotRequest,
+): Promise<DynamicWidgetSnapshot> {
+  requireProjectFileRequestIdentity(request.identity);
+  const snapshot = await invoke<DynamicWidgetSnapshot>("read_dynamic_widget_snapshot", {
+    request,
+  });
+  if (
+    snapshot.schemaVersion !== 1
+    || snapshot.projectRoot !== request.identity.expectedProjectRoot
+    || snapshot.runtimeSessionId !== request.identity.expectedSessionId
+    || snapshot.workspaceRevision !== request.expectedWorkspaceRevision
+    || snapshot.modelRevision !== request.expectedModelRevision
+    || snapshot.previewRevision !== request.previewRevision
+    || snapshot.sourceInstance.id !== request.sourceInstanceId
+  ) {
+    throw new Error("Snapshotul widgetului dinamic nu mai aparține selecției active.");
+  }
+  return snapshot;
+}
+
+export function updateDynamicWidget(
+  input: UpdateDynamicWidgetInput,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "update_dynamic_widget",
+    { input },
+    input.request.identity,
+  );
+}
+
+export function deleteDynamicWidget(
+  input: DeleteDynamicWidgetInput,
+): Promise<WorkspaceEntryMutationReceipt> {
+  return invokeWorkspaceEntryMutation(
+    "delete_dynamic_widget",
+    { input },
+    input.request.identity,
+  );
 }
 
 export function readProjectFile(relativePath: string): Promise<string> {
@@ -2915,6 +3123,8 @@ export async function resolveCssInspectorContext(options: {
   if (
     !resolution.target
     || !resolution.ruleContext
+    || !Array.isArray(resolution.target.consumerFiles)
+    || !Array.isArray(resolution.target.consumerTemplates)
     || resolution.target.file !== resolution.ruleContext.file
     || resolution.target.selector !== resolution.selector
     || resolution.ruleContext.selector !== resolution.selector
@@ -2958,6 +3168,22 @@ export function setPageCssRuleAtViewport(options: {
   expectedSelection?: SelectionMutationIdentity | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<PageCssWriteResult>> {
   return invokeBoundCssMutation<PageCssWriteResult>("set_page_css_rule_at_viewport", options, identity);
+}
+
+export function setReusableCssRuleAtViewport(options: {
+  templatePath: string;
+  relativePath: string;
+  selector: string;
+  properties: Partial<Record<keyof EditableStyles | string, string>>;
+  viewport: CssViewport;
+  cachebustAssets: boolean;
+  expectedSelection?: SelectionMutationIdentity | null;
+}, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<ReusableCssWriteResult>> {
+  return invokeBoundCssMutation<ReusableCssWriteResult>(
+    "set_reusable_css_rule_at_viewport",
+    options,
+    identity,
+  );
 }
 
 export function cleanupPageCssContract(

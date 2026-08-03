@@ -16,6 +16,7 @@ pub(super) struct PreviewWriteCommandContext {
     pub(super) session: ProjectSessionSnapshot,
     pub(super) accepted_disk: AcceptedProjectDiskManifest,
     pub(super) aliases: HashMap<String, String>,
+    pub(super) active_document_path: Option<String>,
     pub(super) workspace_revision: u64,
 }
 
@@ -36,12 +37,27 @@ pub(super) fn prepare_preview_write_command(
         .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?
         .source_identity_aliases
         .clone();
+    let workbench = state.workbench.read(&session)?;
+    let active_document_path = workbench
+        .groups
+        .iter()
+        .find(|group| group.group_id == workbench.active_group_id)
+        .and_then(|group| {
+            group.active_document_id.as_deref().and_then(|document_id| {
+                group
+                    .documents
+                    .iter()
+                    .find(|document| document.document_id == document_id)
+            })
+        })
+        .map(|document| document.relative_path.clone());
 
     Ok(PreviewWriteCommandContext {
         root,
         session,
         accepted_disk,
         aliases,
+        active_document_path,
         workspace_revision,
     })
 }

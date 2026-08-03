@@ -55,8 +55,23 @@ function snapshot() {
           requiresEditScopeId: "editor_boundary:empty",
         }),
         boundary: {
+          boundaryInstanceId: "boundary-empty-locked",
           sourceNodeId: "source-empty",
           empty: true,
+        },
+      },
+      {
+        id: "editor_boundary:empty-active",
+        kind: "teraBoundary",
+        renderInstanceId: null,
+        origin: "project",
+        capabilities: capabilities(),
+        boundary: {
+          boundaryInstanceId: "boundary-empty-active",
+          sourceNodeId: "source-empty",
+          // Preprocessarea poate proiecta un helper DOM drept rădăcină; Rust
+          // declară totuși această instanță drept suprafața activă de autor.
+          empty: false,
         },
       },
     ],
@@ -87,20 +102,40 @@ test("palette drop uses Rust render identity and fails closed outside edit scope
 test("empty Tera slots resolve only through the Rust boundary identity", () => {
   const authorized = editorNavigationDropTargetStatus({
     editorNavigationSnapshot: snapshot(),
-    editorEditScopeGrant: { scopeId: "editor_boundary:empty" },
+    editorEditScopeGrant: null,
   }, {
     targetBoundarySourceId: "source-empty",
+    targetBoundaryInstanceId: "boundary-empty-active",
   });
   assert.deepEqual(authorized, {
     allowed: true,
-    editorNodeId: "editor_boundary:empty",
+    editorNodeId: "editor_boundary:empty-active",
   });
+
+  const syntheticRenderDoesNotShadowBoundary = editorNavigationDropTargetStatus({
+    editorNavigationSnapshot: snapshot(),
+    editorEditScopeGrant: null,
+  }, {
+    targetRenderInstanceId: "render-partial",
+    targetBoundarySourceId: "source-empty",
+    targetBoundaryInstanceId: "boundary-empty-active",
+  });
+  assert.deepEqual(syntheticRenderDoesNotShadowBoundary, authorized);
+
+  const ambiguous = editorNavigationDropTargetStatus({
+    editorNavigationSnapshot: snapshot(),
+    editorEditScopeGrant: null,
+  }, {
+    targetBoundarySourceId: "source-empty",
+  });
+  assert.equal(ambiguous.allowed, false);
 
   const stale = editorNavigationDropTargetStatus({
     editorNavigationSnapshot: snapshot(),
     editorEditScopeGrant: { scopeId: "editor_boundary:empty" },
   }, {
     targetBoundarySourceId: "missing",
+    targetBoundaryInstanceId: "boundary-missing",
   });
   assert.equal(stale.allowed, false);
 });

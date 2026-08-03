@@ -30,6 +30,12 @@
     && navigationNode.boundary?.sourceNodeId === node?.id
       ? navigationNode
       : null;
+  $: directAuthoringBoundary = selectedBoundary?.origin === "project"
+    && selectedBoundary.sourceKind === "block"
+    && selectedBoundary.capabilities.requiresEditScopeId === null;
+  $: directAuthoringLabel = selectedBoundary?.file
+    ? fileName(selectedBoundary.file)
+    : node?.label ?? "";
   $: canEnterBoundary = selectedBoundary?.capabilities.canEnterBoundary === true;
   $: enterBoundaryReason = canEnterBoundary
     ? t("project-navigation-enter-scope")
@@ -54,11 +60,13 @@
     : navigationNode?.boundary?.effectScope === "sharedDefinition"
       ? t("source-provenance-impact-shared")
       : t("source-provenance-impact-single");
-  $: editingLabel = navigationNode?.capabilities.canEnterBoundary
-    ? t("source-provenance-edit-boundary")
-    : navigationNode
-      ? sourceCapabilityReason(navigationNode.capabilities)
-      : t("editor-navigation-boundary-missing");
+  $: editingLabel = directAuthoringBoundary
+    ? t("inspector-tera-direct-authoring")
+    : navigationNode?.capabilities.canEnterBoundary
+      ? t("source-provenance-edit-boundary")
+      : navigationNode
+        ? sourceCapabilityReason(navigationNode.capabilities)
+        : t("editor-navigation-boundary-missing");
 
   function editorReferenceOriginLabel(reference: EditorSourceReference) {
     if (reference.origin === "theme") {
@@ -67,13 +75,21 @@
     if (reference.origin === "project") return sourceOriginLabel("local");
     return t("inspector-tera-unknown");
   }
+
+  function fileName(path: string) {
+    return path.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? path;
+  }
 </script>
 
 <section class="tera-source-card">
   {#if node}
     <div class="tera-card-head">
-      <span class="tera-kind">{teraSourceKindLabel(node.kind)}</span>
-      <strong>{node.label}</strong>
+      <span class="tera-kind">
+        {directAuthoringBoundary
+          ? t("inspector-summary-kind-document")
+          : teraSourceKindLabel(node.kind)}
+      </span>
+      <strong>{directAuthoringBoundary ? directAuthoringLabel : node.label}</strong>
     </div>
 
     <dl class="tera-meta">
@@ -91,28 +107,32 @@
         <dt>{t("inspector-tera-origin")}</dt>
         <dd>{originLabel}</dd>
       </div>
-      <div>
-        <dt>{t("inspector-tera-impact")}</dt>
-        <dd>{impactLabel}</dd>
-      </div>
+      {#if !directAuthoringBoundary}
+        <div>
+          <dt>{t("inspector-tera-impact")}</dt>
+          <dd>{impactLabel}</dd>
+        </div>
+      {/if}
       <div>
         <dt>{t("inspector-tera-editing")}</dt>
         <dd>{editingLabel}</dd>
       </div>
     </dl>
 
-    <div class="tera-actions">
-      <button
-        type="button"
-        disabled={!canEnterBoundary || !selectedBoundary}
-        title={enterBoundaryReason}
-        onclick={() => {
-          if (selectedBoundary) void enterTeraBoundary(selectedBoundary.id);
-        }}
-      >
-        <IconEdit size={13} stroke={2} />
-        <span>{t("inspector-tera-edit")}</span>
-      </button>
+    <div class="tera-actions" class:direct-authoring={directAuthoringBoundary}>
+      {#if !directAuthoringBoundary}
+        <button
+          type="button"
+          disabled={!canEnterBoundary || !selectedBoundary}
+          title={enterBoundaryReason}
+          onclick={() => {
+            if (selectedBoundary) void enterTeraBoundary(selectedBoundary.id);
+          }}
+        >
+          <IconEdit size={13} stroke={2} />
+          <span>{t("inspector-tera-edit")}</span>
+        </button>
+      {/if}
       <button
         type="button"
         title={t("inspector-tera-open-source")}
@@ -121,16 +141,18 @@
         <IconCode size={13} stroke={2} />
         <span>{t("inspector-tera-code")}</span>
       </button>
-      <button
-        class="danger"
-        type="button"
-        disabled={!deleteCapability.canRun}
-        title={deleteCapability.reason}
-        onclick={() => { void deleteSelectedTeraNode(); }}
-      >
-        <IconTrash size={13} stroke={2} />
-        <span>{deleteCapability.label}</span>
-      </button>
+      {#if !directAuthoringBoundary}
+        <button
+          class="danger"
+          type="button"
+          disabled={!deleteCapability.canRun}
+          title={deleteCapability.reason}
+          onclick={() => { void deleteSelectedTeraNode(); }}
+        >
+          <IconTrash size={13} stroke={2} />
+          <span>{deleteCapability.label}</span>
+        </button>
+      {/if}
     </div>
   {:else}
     <p class="tera-empty">{t("inspector-tera-select-node")}</p>
@@ -208,6 +230,10 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
+  }
+
+  .tera-actions.direct-authoring {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .tera-actions button {

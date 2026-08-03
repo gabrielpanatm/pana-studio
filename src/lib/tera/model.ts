@@ -1,5 +1,10 @@
 import type { DropPosition } from "$lib/ui/drag";
-import type { SourceGraphNode, SourceNodeKind } from "$lib/types";
+import type {
+  DynamicWidgetProperties,
+  ProjectDynamicFieldBinding,
+  SourceGraphNode,
+  SourceNodeKind,
+} from "$lib/types";
 
 export type TeraConstructKind =
   | "extends"
@@ -7,12 +12,14 @@ export type TeraConstructKind =
   | "include"
   | "import"
   | "macro"
+  | "macroCall"
   | "for"
   | "if"
   | "set"
   | "teraVariable"
   | "teraComment"
-  | "raw";
+  | "raw"
+  | "dynamicWidget";
 
 export type TeraPaletteFamily = "composition" | "logic" | "data" | "reuse" | "safe";
 
@@ -27,6 +34,8 @@ export type TeraPaletteItem = {
   name?: string;
   expression?: string;
   sourceNodeId?: string;
+  dynamicBinding?: ProjectDynamicFieldBinding;
+  dynamicWidget?: DynamicWidgetProperties;
 };
 
 export type TeraPaletteGroup = {
@@ -66,12 +75,14 @@ export const teraConstructKinds: TeraConstructKind[] = [
   "include",
   "import",
   "macro",
+  "macroCall",
   "for",
   "if",
   "set",
   "teraVariable",
   "teraComment",
   "raw",
+  "dynamicWidget",
 ];
 
 export function isTeraConstructKind(value: unknown): value is TeraConstructKind {

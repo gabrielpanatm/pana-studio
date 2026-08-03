@@ -496,7 +496,7 @@ fn node_kind_matches(node: &SourceNode, kind: Option<&str>) -> bool {
     let Some(kind) = kind.map(str::trim).filter(|kind| !kind.is_empty()) else {
         return true;
     };
-    if matches!(kind, "preview" | "empty-tera-slot") {
+    if matches!(kind, "preview" | "empty-tera-slot" | "active-document-root") {
         return true;
     }
     tera_kind_label(&node.kind) == kind

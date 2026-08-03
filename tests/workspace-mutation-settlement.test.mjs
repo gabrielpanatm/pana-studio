@@ -253,6 +253,53 @@ test("reconcilierea derivată și proiecția canonică pornesc în paralel", asy
   assert.equal(settlement.projections.preview, "current");
 });
 
+test("SourceGraph este reconciliat numai după publicarea ProjectModel de către Preview", async () => {
+  const calls = [];
+  let projectModelPublished = false;
+  const target = host({
+    async reconcileWorkspaceDerivedState(options) {
+      if (options.refreshSourceGraph) {
+        calls.push("source-graph");
+        assert.equal(
+          projectModelPublished,
+          true,
+          "SourceGraph nu poate preceda publicarea ProjectModel",
+        );
+      } else {
+        calls.push("derived-without-source-graph");
+      }
+      return {
+        workspaceRevision: options.expectedWorkspaceRevision,
+        topology: "current",
+        sourceGraph: options.refreshSourceGraph ? "current" : "deferred",
+        scss: "current",
+        warnings: [],
+      };
+    },
+  });
+  mockIPC((command, args) => {
+    if (command === "read_project_workspace_state") return snapshot(2);
+    if (command === "project_project_workspace_preview") {
+      calls.push("preview");
+      projectModelPublished = true;
+      return projectionReceipt(args.input);
+    }
+    throw new Error(`Comandă IPC neașteptată: ${command}`);
+  });
+
+  const settlement = await settleProjectWorkspaceMutation(
+    target,
+    workspaceMutationAuthorityReceipt(mutation(), snapshot(2)),
+  );
+
+  assert.deepEqual(calls, [
+    "derived-without-source-graph",
+    "preview",
+    "source-graph",
+  ]);
+  assert.equal(settlement.projections.sourceGraph, "current");
+});
+
 test("lipsa Canvas-ului amână numai Preview-ul", async () => {
   const target = host({ canProjectWorkspacePreview: () => false });
   let ipcCalls = 0;

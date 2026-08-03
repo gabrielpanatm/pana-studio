@@ -93,6 +93,10 @@ export type PreviewRuntimeOptions = {
   cancelTimeout?: (timer: PreviewRuntimeTimer) => void;
 };
 
+export type PreviewRuntimeOperationOptions = {
+  ackTimeoutMs?: number;
+};
+
 export type PreviewRuntimeTransportFailureCode =
   | "ack_timeout"
   | "capacity"
@@ -234,7 +238,10 @@ export class PreviewRuntime {
     };
   }
 
-  send(payload: PreviewOperationPayload) {
+  send(
+    payload: PreviewOperationPayload,
+    options: PreviewRuntimeOperationOptions = {},
+  ) {
     while (this.pending.size >= this.maxPendingOperations) {
       const oldestRevision = this.pending.keys().next().value;
       if (typeof oldestRevision !== "number") break;
@@ -250,16 +257,17 @@ export class PreviewRuntime {
       type: payload.type,
       startedAt: this.now(),
     };
+    const ackTimeoutMs = positiveInteger(options.ackTimeoutMs, this.ackTimeoutMs);
     const timeout = this.scheduleTimeout(() => {
       this.failPending(
         revision,
         t("preview-runtime-ack-timeout", {
           operation: payload.type,
-          timeout: this.ackTimeoutMs,
+          timeout: ackTimeoutMs,
         }),
         "ack_timeout",
       );
-    }, this.ackTimeoutMs);
+    }, ackTimeoutMs);
     this.pending.set(revision, { operation, timeout });
     this.lastOperation = operation;
     this.host.postPreviewMessage({
@@ -269,8 +277,11 @@ export class PreviewRuntime {
     return operation;
   }
 
-  sendAndWait(payload: PreviewOperationPayload): Promise<PreviewOperationAck> {
-    const operation = this.send(payload);
+  sendAndWait(
+    payload: PreviewOperationPayload,
+    options: PreviewRuntimeOperationOptions = {},
+  ): Promise<PreviewOperationAck> {
+    const operation = this.send(payload, options);
     return new Promise<PreviewOperationAck>((resolve, reject) => {
       this.waiters.set(operation.revision, { resolve, reject });
     });

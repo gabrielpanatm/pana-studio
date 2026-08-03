@@ -5,6 +5,49 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-04
+
+### Added
+
+- modele de conținut Rust-first păstrate în `.panastudio`, cu câmpuri
+  personalizate reutilizabile, validare, atașare la secțiuni Zola și formulare
+  de completare integrate în editorul paginii;
+- widgeturi dinamice Tera pentru câmpuri și listing-uri, cu surse configurabile,
+  prezentări tipizate, Listing Item reutilizabil și proprietăți editabile direct
+  în Inspector;
+- catalog de inserare proiectat autoritativ de Rust pentru HTML, blocuri native,
+  componente, Tera și widgeturi dinamice, inclusiv inventarul HTML semantic
+  complet pentru media, formulare, tabele și conținut încorporat;
+- suprafețe vizuale editabile pentru documente și template-uri goale, cu zone de
+  drop stabile și aceeași regulă de autoritate ca documentele deja populate.
+
+### Changed
+
+- documentul activ este întotdeauna suprafața editabilă direct în Canvas;
+  limitele Tera moștenite sau incluse rămân externe și se deschid explicit;
+- mutațiile structurale folosesc o anvelopă comună pentru identificare,
+  poziționare, nesting, indentare și păstrarea markerilor multi-linie ai
+  widgeturilor dinamice;
+- crearea arhivelor și a conținutului de secțiune pregătește automat structura
+  Zola necesară, iar arhivele noi folosesc paginare implicită;
+- regulile SCSS ale template-urilor reutilizabile primesc ținte și consumatori
+  expliciți, astfel încât stilurile Listing Item să fie salvate și proiectate;
+- panoul „Adaugă element” și stările goale ale Inspectorului folosesc acum
+  layout-ul, iconografia Tabler și limbajul vizual comun al aplicației.
+
+### Fixed
+
+- inserarea blocurilor din catalog păstrează fragmentul complet, identitatea
+  Rust și panoul de proprietăți, în locul unor elemente HTML goale sau parțiale;
+- selecția, ștergerea și mutarea elementelor nu mai eșuează când instanța randată
+  provine dintr-un template dinamic sau dintr-un document proaspăt gol;
+- gate-ul Tera nu mai blochează al doilea element adăugat în documentul activ și
+  nu mai alternează vizual între limite concurente la selectare;
+- template-urile Listing Item afișează o singură instanță reprezentativă în
+  editor, fără a confunda sursa reală cu repetarea din arhivă;
+- navigarea contextuală din Straturi, inserarea câmpurilor dinamice și
+  actualizarea front matter-ului păstrează revizia și identitatea workspace-ului.
+
 ## [0.1.4] - 2026-08-02
 
 ### Added
@@ -252,7 +295,8 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - documentația publică, politica de securitate și atribuirea componentelor terțe
   completate.
 
-[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.1...v0.1.2

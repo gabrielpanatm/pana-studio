@@ -123,7 +123,10 @@ function isDisplayClass(className: string) {
 export function domNodeLabelFor(element: Element) {
   const tag = element.tagName.toLowerCase();
 
-  if (element.hasAttribute("data-pana-empty-tera-slot")) {
+  if (
+    element.hasAttribute("data-pana-empty-tera-slot") ||
+    element.hasAttribute("data-pana-active-document-root")
+  ) {
     return element.getAttribute("data-pana-empty-label") ?? semanticTagLabel(tag);
   }
 
@@ -217,12 +220,14 @@ const SKIP_ATTRS = new Set([
   "data-pana-preview-revision",
   SESSION_ID_ATTR,
   "data-pana-empty-tera-slot",
+  "data-pana-active-document-root",
   "data-pana-empty-html",
   "data-pana-empty-label",
 ]);
 const RUNTIME_CLASSES = new Set([
   "pana-studio-empty-editable",
   "pana-studio-empty-tera-slot",
+  "pana-studio-active-document-root",
 ]);
 
 function collectElementAttributes(element: Element): Record<string, string> {
@@ -301,10 +306,11 @@ export function collectPageSections(document: Document): PageSection[] {
   const fallbackNodes =
     semanticNodes.length > 0
       ? semanticNodes
-      : Array.from(document.body?.children ?? []).filter((child) => child instanceof Element && !isEmptyTeraSlot(child));
+      : Array.from(document.body?.children ?? []).filter((child) =>
+        child instanceof Element && !isEmptyTeraSlot(child) && !isActiveDocumentRoot(child));
 
   return fallbackNodes
-    .filter((element) => !isEmptyTeraSlot(element))
+    .filter((element) => !isEmptyTeraSlot(element) && !isActiveDocumentRoot(element))
     .map((element) => ({
       selector: createDomPathSelector(element),
       label: domNodeLabelFor(element),
@@ -335,6 +341,10 @@ function isEmptyTeraSlot(element: Element) {
   return element.hasAttribute("data-pana-empty-tera-slot");
 }
 
+function isActiveDocumentRoot(element: Element) {
+  return element.hasAttribute("data-pana-active-document-root");
+}
+
 export function collectDomTree(document: Document): PageSection[] {
   applyTemplateSourceIdsFromMarkers(document);
   const result: PageSection[] = [];
@@ -345,7 +355,7 @@ export function collectDomTree(document: Document): PageSection[] {
     const tag = element.tagName.toLowerCase();
     if (SKIP_TAGS.has(tag) || SVG_TAGS.has(tag)) return;
     if (STUDIO_OVERLAY_IDS.has(element.id)) return;
-    if (isEmptyTeraSlot(element)) return;
+    if (isEmptyTeraSlot(element) || isActiveDocumentRoot(element)) return;
 
     result.push({
       selector: createDomPathSelector(element),

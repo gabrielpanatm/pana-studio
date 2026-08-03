@@ -66,6 +66,7 @@ preview-projection-required-field-missing = The preview action is missing the re
 preview-projection-position-invalid = The preview drop position must be before, after, or inside.
 preview-projection-wrong-executor-intent = The preview action reached the wrong executor ({ $executor }).
 preview-projection-structural-plan-blocked = The requested structural change is not safe for this source.
+preview-projection-structural-plan-blocked-with-details = The requested structural change was refused: { $details }
 preview-projection-intent-accepted = The preview action is ready to run.
 preview-projection-intent-blocked = The preview action cannot run.
 preview-projection-intent-unsupported = The preview action is not supported.

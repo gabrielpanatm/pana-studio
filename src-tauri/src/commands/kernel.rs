@@ -136,6 +136,7 @@ pub fn execute_preview_html_insert_drop_intent(
                 workspace,
                 input,
                 &context.aliases,
+                context.active_document_path.as_deref(),
             )
         },
     )
@@ -291,6 +292,7 @@ pub fn execute_preview_tera_insert_drop_intent(
                 &context.root,
                 workspace,
                 input,
+                context.active_document_path.as_deref(),
             )
         },
     )

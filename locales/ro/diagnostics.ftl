@@ -70,6 +70,7 @@ preview-projection-required-field-missing = Acțiunii din preview îi lipsește 
 preview-projection-position-invalid = Poziția din preview trebuie să fie înainte, după sau în interior.
 preview-projection-wrong-executor-intent = Acțiunea din preview a ajuns la executorul greșit ({ $executor }).
 preview-projection-structural-plan-blocked = Modificarea structurală cerută nu este sigură pentru această sursă.
+preview-projection-structural-plan-blocked-with-details = Modificarea structurală cerută a fost refuzată: { $details }
 preview-projection-intent-accepted = Acțiunea din preview este pregătită pentru execuție.
 preview-projection-intent-blocked = Acțiunea din preview nu poate fi executată.
 preview-projection-intent-unsupported = Acțiunea din preview nu este acceptată.

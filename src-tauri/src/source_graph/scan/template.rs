@@ -40,6 +40,7 @@ pub(super) fn scan_template(
     let file = relative_project_path(project_root, path);
     let name = template_name(zola_root, path, theme_name.as_deref());
     let is_partial = name.starts_with("partials/")
+        || name.starts_with("listing-items/")
         || name.starts_with("macros/")
         || name.starts_with("shortcodes/");
     let file_node_kind = if is_partial {
@@ -59,6 +60,11 @@ pub(super) fn scan_template(
     );
 
     let source = read_source(path, &file, draft_sources, builder);
+    // The template/partial node is also the addressable root of a fragment
+    // opened directly in Template Workbench. Keeping its full-file range in
+    // SourceGraph gives HTML and Tera insertions one Rust-owned anchor even
+    // when the file is completely empty and has no child nodes yet.
+    builder.update_node_range(&node_id, source_range(&source, 0, source.len()));
     let mixed_document = parse_mixed_cst(&source, &name);
     debug_assert!(mixed_document.is_lossless());
     let tera_document = &mixed_document.tera;

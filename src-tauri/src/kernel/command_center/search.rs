@@ -463,6 +463,13 @@ fn static_candidates(has_project: bool) -> Vec<Candidate> {
             790,
         ),
         (
+            WorkbenchActivity::ContentModels,
+            "Modele de conținut",
+            "Scheme, câmpuri personalizate și atribuirea lor la secțiuni",
+            "content models custom fields scheme campuri personalizate",
+            790,
+        ),
+        (
             WorkbenchActivity::Taxonomies,
             "Taxonomii",
             "Definiții, termeni, rute și impact asupra conținutului",
@@ -718,6 +725,11 @@ const COMMAND_CENTER_COPY_CODES: &[(&str, &str, &str)] = &[
         "activity.content",
         "command-center-activity-content-title",
         "command-center-activity-content-subtitle",
+    ),
+    (
+        "activity.contentmodels",
+        "command-center-activity-contentmodels-title",
+        "command-center-activity-contentmodels-subtitle",
     ),
     (
         "activity.taxonomies",
@@ -1238,6 +1250,9 @@ mod tests {
                 structured_documents: Vec::new(),
                 component_graph: Default::default(),
                 block_graph: Default::default(),
+                content_models: Default::default(),
+                listing_items: Default::default(),
+                dynamic_widget_graph: Default::default(),
                 markdown_projections: Vec::new(),
                 nodes: Vec::new(),
                 relations: Vec::new(),

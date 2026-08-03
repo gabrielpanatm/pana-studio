@@ -13,9 +13,11 @@
   var TEMPLATE_SOURCE_STACK_ATTR = "data-pana-template-source-stack";
   var PREVIEW_REVISION_ATTR = "data-pana-preview-revision";
   var EMPTY_TERA_SLOT_ATTR = "data-pana-empty-tera-slot";
+  var ACTIVE_DOCUMENT_ROOT_ATTR = "data-pana-active-document-root";
   var EMPTY_HTML_ATTR = "data-pana-empty-html";
   var EMPTY_EDITABLE_CLASS = "pana-studio-empty-editable";
   var EMPTY_TERA_SLOT_CLASS = "pana-studio-empty-tera-slot";
+  var ACTIVE_DOCUMENT_ROOT_CLASS = "pana-studio-active-document-root";
   var previewInsertDragActive = false;
   var previewTeraInsertDragActive = false;
   var nextSessionElementId = 1;

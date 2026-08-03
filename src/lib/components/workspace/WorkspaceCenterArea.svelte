@@ -52,6 +52,7 @@
   type AuxiliaryWorkspaceComponent = Component<any>;
   let AuditWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let ContentWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
+  let ContentModelsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let DataWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let AssetsWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
   let BlocksWorkspace = $state<AuxiliaryWorkspaceComponent | null>(null);
@@ -110,6 +111,11 @@
     content: async () => {
       ContentWorkspace = (await import(
         "$lib/components/content/ContentWorkspace.svelte"
+      )).default;
+    },
+    content_models: async () => {
+      ContentModelsWorkspace = (await import(
+        "$lib/components/content-models/ContentModelsWorkspace.svelte"
       )).default;
     },
     taxonomies: async () => {
@@ -544,6 +550,8 @@
       <AssetsWorkspace {app} />
     {:else if retainedAuxiliarySurface === "content" && ContentWorkspace}
       <ContentWorkspace {app} {openWorkspaceSource} />
+    {:else if retainedAuxiliarySurface === "content_models" && ContentModelsWorkspace}
+      <ContentModelsWorkspace {app} {openWorkspaceSource} />
     {:else if retainedAuxiliarySurface === "taxonomies" && TaxonomiesWorkspace}
       <TaxonomiesWorkspace {app} {openWorkspaceSource} />
     {:else if retainedAuxiliarySurface === "data" && DataWorkspace}

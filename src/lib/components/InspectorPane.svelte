@@ -20,6 +20,9 @@
     CssProperty,
     CssRuleContext,
     BlockSelectionContext,
+    DynamicWidgetProperties,
+    DynamicWidgetSelectionContext,
+    DynamicWidgetSnapshot,
     EditableAttributes,
     EditorNavigationNode,
     InspectorHtmlPhysicalFacts,
@@ -41,6 +44,7 @@
     resolveCssInspectorContext,
     setCssRuleAtViewport,
     setPageCssRuleAtViewport,
+    setReusableCssRuleAtViewport,
     type CssRequestIdentity,
     type CssViewport,
   } from "$lib/project/io";
@@ -190,6 +194,8 @@
     inspectorSelectionSummary = null,
     inspectorHtmlPhysicalFacts = null,
     inspectorBlockSelectionContext = null,
+    inspectorDynamicWidgetSelectionContext = null,
+    sourceGraph = null,
     projectRoot = "",
     runtimeSessionId = "",
     selectedTemplateSourceNode = null,
@@ -254,6 +260,8 @@
     onCssCodeTargetChange,
     getOpenCssRuleContext,
     applyNativeBlockOption,
+    updateDynamicWidget,
+    deleteDynamicWidget,
     persistBlockPropertiesLayout,
     gridOverlayEnabled = false,
     onGridOverlayChange,
@@ -261,6 +269,8 @@
     inspectorSelectionSummary?: InspectorSelectionSummarySnapshot | null;
     inspectorHtmlPhysicalFacts?: InspectorHtmlPhysicalFacts | null;
     inspectorBlockSelectionContext?: BlockSelectionContext | null;
+    inspectorDynamicWidgetSelectionContext?: DynamicWidgetSelectionContext | null;
+    sourceGraph?: import("$lib/types").SourceGraph | null;
     projectRoot?: string;
     runtimeSessionId?: string;
     selectedTemplateSourceNode?: SourceGraphNode | null;
@@ -337,6 +347,11 @@
     }) => boolean | Promise<boolean>;
     getOpenCssRuleContext?: (file: string, selector: string, viewport: CssViewport) => CssRuleContext | null;
     applyNativeBlockOption: (request: ApplyNativeBlockOptionRequest) => Promise<EditorActionOutcome>;
+    updateDynamicWidget: (
+      snapshot: DynamicWidgetSnapshot,
+      properties: DynamicWidgetProperties,
+    ) => Promise<EditorActionOutcome>;
+    deleteDynamicWidget: (snapshot: DynamicWidgetSnapshot) => Promise<EditorActionOutcome>;
     persistBlockPropertiesLayout?: (height: number, collapsed: boolean) => void;
     gridOverlayEnabled?: boolean;
     onGridOverlayChange?: (enabled: boolean) => void;
@@ -457,6 +472,16 @@
   const hasMarkdownSelection = $derived(
     selectionSnapshot?.resolution === "resolved"
       && selectionSnapshot.subject?.kind === "markdownBoundary",
+  );
+  const directAuthoringDocumentPath = $derived(
+    hasTeraSelection
+      && selectedEditorNavigationNode?.kind === "teraBoundary"
+      && selectedEditorNavigationNode.sourceKind === "block"
+      && selectedEditorNavigationNode.origin === "project"
+      && selectedEditorNavigationNode.capabilities.requiresEditScopeId === null
+      && selectedEditorNavigationNode.file === selectionSnapshot?.activeDocumentPath
+        ? selectedEditorNavigationNode.file
+        : null,
   );
 
   let inspectorTab = $state<InspectorTab>("html");
@@ -931,11 +956,6 @@
   ): Promise<"allowed" | "blocked"> {
     const expectedSelection = captureCssSelectionIdentity();
     if (!expectedSelection || !await changeInspectorTab("css")) return "blocked";
-    classRules = [];
-    cssRuleContext = null;
-    cssInspectorResolution = null;
-    cssInspectorSelectionIdentity = null;
-    cssTargetInfo = null;
     pendingValues = pendingValuesForCurrentSelector();
 
     const selector = `.${className}`;
@@ -1008,7 +1028,9 @@
       file,
       selector,
       viewport,
-      pageTarget?.pageOwned ? pageTarget.templatePath ?? "page" : "existing",
+      pageTarget?.targetKind === "reusable"
+        ? pageTarget.templatePath ?? "reusable"
+        : pageTarget?.pageOwned ? pageTarget.templatePath ?? "page" : "existing",
     ].join("\u0000");
     return {
       identity,
@@ -1054,7 +1076,26 @@
       pageTarget,
       targetKey,
     } = target;
-    if (pageTarget?.pageOwned && pageTarget.templatePath) {
+    if (pageTarget?.targetKind === "reusable" && pageTarget.templatePath) {
+      const mutation = {
+        key: targetKey,
+        identity,
+        label: `CSS reutilizabil ${selector}`,
+        liveEpoch,
+        run: (properties: Record<string, string>) => setReusableCssRuleAtViewport({
+          templatePath: pageTarget.templatePath ?? "",
+          relativePath: file,
+          selector,
+          properties,
+          viewport,
+          cachebustAssets,
+          expectedSelection,
+        }, identity),
+      };
+      for (const [property, value] of entries) {
+        stageCssRuleMutation(mutation, property, value, baselines[property]);
+      }
+    } else if (pageTarget?.pageOwned && pageTarget.templatePath) {
       const mutation = {
         key: targetKey,
         identity,
@@ -1199,6 +1240,7 @@
   <div class="inspector-context">
     <SelectionSummaryCard
       summary={presentedInspectorSelectionSummary}
+      authoringDocumentPath={directAuthoringDocumentPath}
       selectClass={selectClassForCss}
     />
   </div>
@@ -1354,6 +1396,8 @@
     </div>
     <BlockPropertiesPane
       selectionContext={inspectorBlockSelectionContext}
+      dynamicSelectionContext={inspectorDynamicWidgetSelectionContext}
+      {sourceGraph}
       selectedTag={inspectorSelectionSummary?.tag ?? null}
       {projectRoot}
       {runtimeSessionId}
@@ -1363,6 +1407,8 @@
       collapsed={blockPropertiesCollapsed}
       onLayoutCommit={persistBlockPropertiesLayout}
       onApply={applyNativeBlockOption}
+      onDynamicUpdate={updateDynamicWidget}
+      onDynamicDelete={deleteDynamicWidget}
     />
   {/if}
 </aside>
@@ -1371,7 +1417,10 @@
   .inspector-pane {
     position: relative;
     display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
+    width: 100%;
+    height: 100%;
     min-height: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius-panel);
@@ -1407,6 +1456,9 @@
   }
 
   .inspector-editor-scroll {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
     padding: 0;
   }
 

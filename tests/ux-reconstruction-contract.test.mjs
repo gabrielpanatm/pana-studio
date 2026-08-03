@@ -170,6 +170,22 @@ test("design-system.css este singura sursă de tokeni și expune primitivele com
   assert.match(design, /--surface-[1-9]:\s*var\(--surface-(?:base|panel|raised)\)/);
 });
 
+test("panourile Editor ocupă permanent coloana și au o singură umbră", () => {
+  const shell = source("../src/routes/workspace-shell.css");
+  const projectPane = source("../src/lib/components/ProjectPane.svelte");
+  const inspectorPane = source("../src/lib/components/InspectorPane.svelte");
+  const editorShell = source("../src/lib/components/EditorShell.svelte");
+  const statusBar = source("../src/lib/components/StatusBar.svelte");
+
+  assert.match(shell, /\.workspace\s*\{[^}]*align-items:\s*stretch/s);
+  assert.match(shell, /\.project-pane-shell,[\s\S]*?\.inspector-pane-shell\s*\{[^}]*height:\s*100%[^}]*align-self:\s*stretch/s);
+  assert.doesNotMatch(shell, /box-shadow:\s*var\(--shadow-workspace-panel\)/);
+  assert.match(projectPane, /\.project-pane\s*\{[^}]*flex:\s*1\s+1\s+auto[^}]*height:\s*100%[^}]*box-shadow:\s*var\(--shadow-panel\)/s);
+  assert.match(inspectorPane, /\.inspector-pane\s*\{[^}]*flex:\s*1\s+1\s+auto[^}]*height:\s*100%[^}]*box-shadow:\s*var\(--shadow-panel\)/s);
+  assert.match(editorShell, /\.editor-shell\s*\{[^}]*height:\s*100%[^}]*box-shadow:\s*var\(--shadow-panel\)/s);
+  assert.doesNotMatch(statusBar, /box-shadow:\s*0\s+-1px/);
+});
+
 test("important rămâne izolat la suprascrierile din documentul preview", () => {
   const frontendFiles = filesBelow(new URL("../src/", import.meta.url), /\.(?:css|svelte|ts)$/);
   const forcedCascadeFiles = frontendFiles.flatMap((url) => {

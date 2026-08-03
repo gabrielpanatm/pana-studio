@@ -14,6 +14,7 @@ test("CSS panel has one Rust/ProjectWorkspace write authority", () => {
 
   assert.match(inspector, /setCssRuleAtViewport/);
   assert.match(inspector, /setPageCssRuleAtViewport/);
+  assert.match(inspector, /setReusableCssRuleAtViewport/);
   assert.doesNotMatch(inspector, /setScssVariable|VariablesPane|inspectorTab === "vars"/);
   assert.match(app, /async updateDesignSystemVariable[\s\S]*setScssVariable/);
   assert.match(design, /app\.updateDesignSystemVariable/);
@@ -23,6 +24,28 @@ test("CSS panel has one Rust/ProjectWorkspace write authority", () => {
   assert.doesNotMatch(inspector, /applyCssPanelEditToOpenSource/);
   assert.doesNotMatch(app, /applyCssPanelEditToOpenSource|projectOpenSourceInspectorCssMutation/);
   assert.doesNotMatch(sourceSync, /upsertCssPropertyInSource|upsertDeclarationInBlock/);
+});
+
+test("reusable template CSS has a deterministic Rust owner and consumer delivery", () => {
+  const theme = source("src-tauri/src/zola_theme.rs");
+  const rust = source("src-tauri/src/commands/css.rs");
+  const stylesheet = source("src-tauri/src/css/page/stylesheet.rs");
+  const io = source("src/lib/project/io.ts");
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const pane = source("src/lib/components/inspector/panes/CssPane.svelte");
+  const registry = source("src-tauri/src/tauri_command_registry.rs");
+
+  assert.match(theme, /pub fn reusable_scss_relative_path/);
+  assert.match(theme, /partials\/listing-items/);
+  assert.match(rust, /pub fn set_reusable_css_rule_at_viewport/);
+  assert.match(rust, /resolve_template_workbench_plan/);
+  assert.match(rust, /TemplateWorkbenchDependencyKind::Includes/);
+  assert.match(rust, /reusable_scoped_candidates/);
+  assert.match(stylesheet, /prepare_reusable_consumer_stylesheet_source/);
+  assert.match(io, /"set_reusable_css_rule_at_viewport"/);
+  assert.match(inspector, /pageTarget\?\.targetKind === "reusable"/);
+  assert.match(pane, /pageCssTarget\.consumerFiles/);
+  assert.match(registry, /set_reusable_css_rule_at_viewport/);
 });
 
 test("CSS inspector context is resolved atomically by Rust without the legacy manual search", () => {
@@ -165,6 +188,30 @@ test("Undo quiesces CSS reads and focus errors until history projection settles"
     app,
     /async selectCssFocusFromInspector[\s\S]*kernelUndoRedoFrontendQuiesceActive[\s\S]*kernelUndoRedoFrontendLeaseActive[\s\S]*return false/,
   );
+});
+
+test("CSS focus promotes the current Canvas revision before sending a Rust selection intent", () => {
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const app = source("src/lib/state/app.svelte.ts");
+  const classIntent = inspector.slice(
+    inspector.indexOf("async function selectClassForCss"),
+    inspector.indexOf("function selectCssVariant"),
+  );
+  const focusIntent = app.slice(
+    app.indexOf("async selectCssFocusFromInspector"),
+    app.indexOf("selectJsBehaviorFromCode"),
+  );
+
+  assert.doesNotMatch(
+    classIntent.slice(0, classIntent.indexOf("resolveCssInspectorContext")),
+    /classRules = \[\]|cssRuleContext = null|cssInspectorResolution = null/,
+  );
+  assert.match(focusIntent, /activeCanvasIdentity\?\.workspaceRevision !== expectedWorkspaceRevision/);
+  assert.match(focusIntent, /projectLatestProjectWorkspacePreview/);
+  assert.match(focusIntent, /minimumWorkspaceRevision: expectedWorkspaceRevision/);
+  assert.match(focusIntent, /refreshEditorNavigationSnapshot/);
+  assert.match(focusIntent, /stableAnchorMatches/);
+  assert.match(focusIntent, /expectedSelectionRevision = currentSelection\.selectionRevision/);
 });
 
 test("structured compound editors preserve unsupported values in raw mode", () => {

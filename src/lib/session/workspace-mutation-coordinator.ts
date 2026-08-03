@@ -327,10 +327,13 @@ export async function settleProjectWorkspaceMutation(
     };
   }
 
-  // Topology/source inventories and the canonical Zola candidate consume the
-  // same immutable Rust revision, but neither is an input of the other. Run
-  // them concurrently so Canvas verification is never queued behind a full
-  // frontend rescan.
+  const shouldRefreshSourceGraph = options.refreshSourceGraph ?? true;
+
+  // Topology/SCSS inventories can consume the immutable Rust revision while
+  // Preview builds the canonical ProjectModel. SourceGraph is intentionally
+  // excluded from this phase: it consumes that ProjectModel and is reconciled
+  // only after the Preview attempt has settled. When Canvas is unavailable,
+  // Rust's SourceGraph projection lazily materializes the same exact revision.
   const derivedTask = (async () => {
     try {
       const derived = await host.reconcileWorkspaceDerivedState({
@@ -339,7 +342,7 @@ export async function settleProjectWorkspaceMutation(
         expectedWorkspaceRevision: workspaceRevision,
         topologyChanged: (receipt.mutation.entry?.topologyPaths.length ?? 0) > 0,
         preferredRelativePath: options.preferredRelativePath,
-        refreshSourceGraph: options.refreshSourceGraph ?? true,
+        refreshSourceGraph: false,
         refreshScss: options.refreshScss ?? true,
       });
       return { derived, warning: null as string | null };
@@ -402,6 +405,37 @@ export async function settleProjectWorkspaceMutation(
     derivedTask,
     previewTask,
   ]);
+
+  if (!shouldRefreshSourceGraph) {
+    derived.sourceGraph = "deferred";
+  } else if (!currentSettlementSession(host, receipt)) {
+    derived.sourceGraph = "superseded";
+  } else {
+    try {
+      const sourceGraphProjection = await host.reconcileWorkspaceDerivedState({
+        expectedProjectRoot: receipt.projectRoot,
+        expectedSessionId: receipt.runtimeSessionId,
+        expectedWorkspaceRevision: workspaceRevision,
+        topologyChanged: false,
+        preferredRelativePath: options.preferredRelativePath,
+        refreshSourceGraph: true,
+        refreshScss: false,
+      });
+      derived.sourceGraph = sourceGraphProjection.sourceGraph;
+      derived.warnings.push(...sourceGraphProjection.warnings);
+    } catch (error) {
+      derived.sourceGraph = currentSettlementSession(host, receipt)
+        ? "degraded"
+        : "superseded";
+      derived.warnings.push(
+        t("workspace-mutation-derived-reconcile-failed", {
+          operation: warningLabel,
+          message: errorMessage(error),
+        }),
+      );
+    }
+  }
+
   warnings.push(...derived.warnings);
   if (previewResult.warning) warnings.push(previewResult.warning);
 

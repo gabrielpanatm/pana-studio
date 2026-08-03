@@ -451,10 +451,12 @@ export type PageCssTarget = {
   href: string | null;
   templatePath: string | null;
   pageOwned: boolean;
+  consumerFiles: string[];
+  consumerTemplates: string[];
   reason: string;
 };
 
-export const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION = 3;
+export const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION = 4;
 
 export type CssInspectorContextState = "existing" | "creation" | "ambiguous";
 
@@ -484,6 +486,14 @@ export type PageCssWriteResult = {
   href: string;
   stylesheetCreated: boolean;
   templateUpdated: boolean;
+  writtenFiles: WrittenProjectFile[];
+};
+
+export type ReusableCssWriteResult = {
+  file: string;
+  stylesheetCreated: boolean;
+  consumerFiles: string[];
+  consumerTemplates: string[];
   writtenFiles: WrittenProjectFile[];
 };
 
@@ -1698,6 +1708,7 @@ export type WorkbenchActivity =
   | "design_system"
   | "assets"
   | "content"
+  | "content_models"
   | "taxonomies"
   | "data"
   | "versioning"
@@ -3391,6 +3402,8 @@ export type EditorNavigationNode = {
   componentInvocationIds: string[];
   blockDefinitionIds: string[];
   blockSourceInstanceIds: string[];
+  dynamicWidgetProviderIds: string[];
+  dynamicWidgetSourceInstanceIds: string[];
   bindingKey: string | null;
   bindingPath: string | null;
   boundary: EditorNavigationBoundary | null;
@@ -3626,6 +3639,13 @@ export type CanvasInteractionBindingReceipt = {
   identity: CanvasInteractionIdentity;
   lastAcceptedSequence: number;
   activeDocumentPath: string | null;
+  authoringSurfaces: CanvasInteractionAuthoringSurface[];
+};
+
+export type CanvasInteractionAuthoringSurface = {
+  sourceNodeId: string;
+  boundaryInstanceId: string;
+  renderInstanceId: string | null;
 };
 
 export type CanvasInteractionResolveInput = {
@@ -3718,6 +3738,7 @@ export type SelectionAnchor = {
   provenanceStack: string[];
   componentInvocationIds: string[];
   blockSourceInstanceIds: string[];
+  dynamicWidgetSourceInstanceIds: string[];
   bindingKey: string | null;
   bindingPath: string | null;
 };
@@ -4778,6 +4799,383 @@ export type SourceGraphStyle = {
   nodeId: string;
 };
 
+export type ContentFieldKind =
+  | "text"
+  | "textarea"
+  | "markdown"
+  | "number"
+  | "boolean"
+  | "date"
+  | "select"
+  | "url"
+  | "color"
+  | "image"
+  | "group"
+  | "repeater";
+
+export type ContentFieldChoice = {
+  value: string;
+  label: string;
+};
+
+export type ContentFieldDefinition = {
+  id: string;
+  key: string;
+  label: string;
+  kind: ContentFieldKind;
+  required: boolean;
+  help: string;
+  defaultValue?: unknown;
+  choices: ContentFieldChoice[];
+  minimum?: number;
+  maximum?: number;
+  pattern?: string;
+  fields: ContentFieldDefinition[];
+};
+
+export type ContentModelDefinition = {
+  schemaVersion: number;
+  id: string;
+  label: string;
+  description: string;
+  fields: ContentFieldDefinition[];
+  file: string;
+};
+
+export type ContentModelAssignment = {
+  sectionPath: string;
+  modelId: string;
+};
+
+export type CustomFieldTemplateUsage = {
+  modelId: string;
+  fieldId: string;
+  fieldKey: string;
+  templateFile: string;
+  expression: string;
+  offset: number;
+};
+
+export type ContentModelPageBinding = {
+  pageFile: string;
+  sectionPath: string;
+  modelId: string;
+  values: Record<string, unknown>;
+  missingRequiredFields: string[];
+};
+
+export type ContentModelDiagnostic = {
+  severity: "warning" | "error";
+  code: string;
+  message: string;
+  file: string | null;
+};
+
+export type ContentModelCatalog = {
+  schemaVersion: number;
+  metadataPresent: boolean;
+  models: ContentModelDefinition[];
+  assignments: ContentModelAssignment[];
+  pageBindings: ContentModelPageBinding[];
+  templateUsages: CustomFieldTemplateUsage[];
+  diagnostics: ContentModelDiagnostic[];
+};
+
+export const CONTENT_MODEL_SCHEMA_VERSION = 1 as const;
+
+export type ContentModelMutationOperation =
+  | { kind: "create_model"; id: string; label: string; description: string }
+  | { kind: "update_model"; modelId: string; label: string; description: string }
+  | { kind: "rename_model"; modelId: string; newId: string; label: string; description: string }
+  | { kind: "delete_model"; modelId: string }
+  | {
+      kind: "upsert_field";
+      modelId: string;
+      parentFieldId: string | null;
+      originalFieldId: string | null;
+      field: ContentFieldDefinition;
+    }
+  | { kind: "remove_field"; modelId: string; parentFieldId: string | null; fieldId: string }
+  | {
+      kind: "reorder_field";
+      modelId: string;
+      parentFieldId: string | null;
+      fieldId: string;
+      targetIndex: number;
+    }
+  | { kind: "attach_model"; modelId: string; sectionPath: string }
+  | { kind: "detach_model"; modelId: string; sectionPath: string }
+  | {
+      kind: "replace_model";
+      sectionPath: string;
+      fromModelId: string;
+      toModelId: string;
+      fieldMigrations: Record<string, string>;
+    }
+  | { kind: "set_page_values"; pageFile: string; values: Record<string, unknown> };
+
+export type ContentModelMutationInput = {
+  operation: ContentModelMutationOperation;
+};
+
+export type ContentModelMutationPlan = {
+  schemaVersion: number;
+  planId: string;
+  operation: string;
+  label: string;
+  touchedFiles: string[];
+  affectedPages: string[];
+  affectedKeys: string[];
+  destructive: boolean;
+  blocked: boolean;
+  blockers: string[];
+  templateUsages: CustomFieldTemplateUsage[];
+  warnings: string[];
+};
+
+export type ContentModelMutationApplyReceipt = {
+  plan: ContentModelMutationPlan;
+  workspace: WorkspaceEntryMutationReceipt;
+};
+
+export type DynamicFieldScope =
+  | "page"
+  | "collectionItem"
+  | "section"
+  | "site"
+  | "repeaterItem"
+  | "taxonomyTerm";
+export type DynamicFieldPresentation =
+  | "auto"
+  | "text"
+  | "heading"
+  | "paragraph"
+  | "badge"
+  | "date"
+  | "number"
+  | "currency"
+  | "percent"
+  | "image"
+  | "link"
+  | "button"
+  | "trustedContent";
+export type DynamicFieldEmptyBehavior = "fallback" | "renderEmpty" | "hide";
+export type DynamicValueType =
+  | "text"
+  | "richHtml"
+  | "date"
+  | "number"
+  | "boolean"
+  | "url"
+  | "image"
+  | "listObject";
+export type DynamicValueSource =
+  | { kind: "builtin"; field: string }
+  | { kind: "customField"; modelId: string; fieldId: string }
+  | { kind: "configExtra"; path: string[] }
+  | { kind: "sectionExtra"; path: string[] };
+export type DynamicValueBinding = {
+  context: DynamicFieldScope;
+  source: DynamicValueSource;
+  valueType: DynamicValueType;
+};
+export type DynamicValueFormat = {
+  dateFormat: string;
+  decimals: number | null;
+  currency: string;
+};
+export type ListingSortBy = "date" | "updated" | "title" | "weight" | "slug" | "none";
+export type ListingSortOrder = "asc" | "desc";
+
+export type DynamicFieldWidgetProperties = {
+  binding: DynamicValueBinding;
+  presentation: DynamicFieldPresentation;
+  tag: string;
+  format: DynamicValueFormat;
+  prefix: string;
+  suffix: string;
+  fallback: string;
+  label: string;
+  emptyBehavior: DynamicFieldEmptyBehavior;
+};
+
+export type ListingWidgetProperties = {
+  sectionPath: string;
+  listingItemId: string;
+  listingItemTemplate: string;
+  includeSubsections: boolean;
+  sortBy: ListingSortBy;
+  sortOrder: ListingSortOrder;
+  limit: number | null;
+  offset: number;
+  emptyText: string;
+  tag: string;
+  className: string;
+};
+
+export type DynamicWidgetProperties =
+  | { kind: "dynamicField"; properties: DynamicFieldWidgetProperties }
+  | { kind: "listing"; properties: ListingWidgetProperties };
+
+export type DynamicWidgetProviderKind = "dynamic-field" | "listing";
+export type DynamicWidgetResolutionStatus =
+  | "resolved"
+  | "unknownProvider"
+  | "invalidContract"
+  | "incompatible";
+
+export type DynamicWidgetDiagnostic = {
+  code: string;
+  message: string;
+  file: string | null;
+  instanceId: string | null;
+};
+
+export type DynamicWidgetProviderDefinition = {
+  id: string;
+  schemaVersion: number;
+  kind: DynamicWidgetProviderKind;
+  label: string;
+  description: string;
+  capabilities: {
+    canInsert: boolean;
+    canEditProperties: boolean;
+    canDuplicate: boolean;
+    canDelete: boolean;
+    rendersMultipleInstances: boolean;
+  };
+};
+
+export type DynamicValueDefinition = {
+  id: string;
+  group: string;
+  label: string;
+  description: string;
+  contexts: DynamicFieldScope[];
+  valueType: DynamicValueType;
+  source: DynamicValueSource;
+  modelId: string | null;
+  compatiblePresentations: DynamicFieldPresentation[];
+  defaultPresentation: DynamicFieldPresentation;
+  defaultTag: string;
+};
+
+export type DynamicWidgetSourceInstance = {
+  id: string;
+  instanceId: string;
+  providerId: string;
+  providerKind: DynamicWidgetProviderKind | null;
+  file: string;
+  range: SourceRange;
+  startMarkerRange: SourceRange;
+  endMarkerRange: SourceRange;
+  sourceNodeIds: string[];
+  rootSourceNodeIds: string[];
+  status: DynamicWidgetResolutionStatus;
+  properties: DynamicWidgetProperties | null;
+  canonicalBindingPath: string | null;
+  canonicalBindingExpression: string | null;
+  sourceRevision: string;
+  diagnostics: DynamicWidgetDiagnostic[];
+};
+
+export type RenderedDynamicWidgetInstance = {
+  id: string;
+  sourceInstanceId: string;
+  instanceId: string;
+  providerId: string;
+  renderInstanceId: string;
+  route: string;
+  sourceNodeId: string | null;
+  parentInstanceId: string | null;
+  bindingKey: string | null;
+  bindingPath: string | null;
+};
+
+export type DynamicWidgetGraph = {
+  schemaVersion: number;
+  definitions: DynamicWidgetProviderDefinition[];
+  valueCatalog: DynamicValueDefinition[];
+  sourceInstances: DynamicWidgetSourceInstance[];
+  diagnostics: DynamicWidgetDiagnostic[];
+};
+
+export type DynamicWidgetSnapshotRequest = {
+  identity: FileBufferRequestIdentity;
+  expectedWorkspaceRevision: number;
+  expectedModelRevision: string;
+  previewRevision: string;
+  sourceInstanceId: string;
+};
+
+export type DynamicWidgetSnapshot = {
+  schemaVersion: number;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  modelRevision: string;
+  previewRevision: string;
+  sourceInstance: DynamicWidgetSourceInstance;
+  renderedInstances: RenderedDynamicWidgetInstance[];
+};
+
+/** Exact semantic dynamic boundary selected through Canvas navigation. */
+export type DynamicWidgetSelectionContext = {
+  sourceInstanceId: string;
+  sourceInstanceIds: string[];
+  providerId: string;
+  modelRevision: string;
+  previewRevision: string;
+  renderInstanceId: string;
+};
+
+export type UpdateDynamicWidgetInput = {
+  request: DynamicWidgetSnapshotRequest;
+  expectedSourceRevision: string;
+  properties: DynamicWidgetProperties;
+};
+
+export type DeleteDynamicWidgetInput = {
+  request: DynamicWidgetSnapshotRequest;
+  expectedSourceRevision: string;
+};
+
+export type ListingItemStatus =
+  | "resolved"
+  | "missingMetadata"
+  | "missingTemplate"
+  | "missingModel"
+  | "missingPreviewPage"
+  | "incompatiblePreviewPage";
+
+export type ListingItemDiagnostic = {
+  code: string;
+  message: string;
+  file: string | null;
+  itemId: string | null;
+};
+
+export type ListingItemDefinition = {
+  id: string;
+  label: string;
+  templateName: string;
+  file: string;
+  modelId: string | null;
+  previewPageFile: string | null;
+  previewUrl: string | null;
+  compatibleSectionPaths: string[];
+  usageCount: number;
+  status: ListingItemStatus;
+  diagnostics: ListingItemDiagnostic[];
+};
+
+export type ListingItemCatalog = {
+  schemaVersion: number;
+  metadataPresent: boolean;
+  items: ListingItemDefinition[];
+  diagnostics: ListingItemDiagnostic[];
+};
+
 export type SourceGraph = {
   projectRoot: string;
   zolaRoot: string;
@@ -4791,6 +5189,9 @@ export type SourceGraph = {
   structuredDocuments: SourceStructuredDocument[];
   componentGraph: ComponentGraph;
   blockGraph: BlockGraph;
+  contentModels: ContentModelCatalog;
+  listingItems: ListingItemCatalog;
+  dynamicWidgetGraph: DynamicWidgetGraph;
   markdownProjections: MarkdownProjection[];
   nodes: SourceGraphNode[];
   relations: SourceGraphRelation[];
@@ -4811,12 +5212,13 @@ export type WorkspaceCatalogProjectionReceipt<T> = {
   catalog: T;
 };
 
-export type TemplateCatalogRole = "page" | "layout" | "partial" | "macro_library" | "shortcode";
+export type TemplateCatalogRole = "page" | "layout" | "partial" | "macro_library" | "shortcode" | "listing_item";
 export type TemplateSemanticCategory =
   | "layout"
   | "page"
   | "archive"
   | "element"
+  | "listing_item"
   | "taxonomy"
   | "system";
 export type TemplateSemanticRole =
@@ -4826,6 +5228,7 @@ export type TemplateSemanticRole =
   | "specific_page"
   | "section_archive"
   | "section_element"
+  | "listing_item"
   | "taxonomy_list"
   | "taxonomy_term"
   | "not_found"
@@ -5075,12 +5478,28 @@ export type CreateTemplateInput = {
   parentTemplateName?: string | null;
 };
 
+export type CreateListingItemInput = {
+  label: string;
+  slug: string;
+  modelId: string;
+  previewPageFile: string;
+};
+
+export type DeleteListingItemInput = {
+  id: string;
+};
+
 export type TemplateSemanticCreateRole = TemplateSemanticRole;
 
 export type CreateSemanticTemplateInput = {
   role: TemplateSemanticCreateRole;
   name: string;
   targetId?: string | null;
+  newSection?: {
+    title: string;
+    slug: string;
+    sortBy?: "none" | "date" | "title" | "weight" | null;
+  } | null;
   parentTemplateName?: string | null;
   includePageContent: boolean;
 };
@@ -5463,6 +5882,7 @@ export type TemplateWorkbenchNavigatorEntry = {
 export type TemplateWorkbenchRenderMode =
   | "page"
   | "includedTemplate"
+  | "listingItemScenario"
   | "canonicalRoute"
   | "macroScenario"
   | "orphanTemplate";
@@ -5472,6 +5892,7 @@ export type TemplateWorkbenchRenderContextKind =
   | "realZolaConsumer"
   | "realZolaRoute"
   | "controlledMacroScenario"
+  | "controlledListingItemScenario"
   | "controlledTemplateFixture";
 
 export type TemplateWorkbenchRouteContext = {
@@ -5596,6 +6017,125 @@ export type ProjectTeraInsertItem = {
   target?: string | null;
   name?: string | null;
   expression?: string | null;
+  dynamicBinding?: ProjectDynamicFieldBinding | null;
+  dynamicWidget?: DynamicWidgetProperties | null;
+};
+
+export type ProjectDynamicFieldBinding = {
+  modelId: string;
+  fieldId: string;
+  path: string;
+  scope: "page" | "item";
+  itemPath: string | null;
+  presentation: "text" | "image" | "link" | "button" | "list" | "condition";
+  prefix: string;
+  suffix: string;
+  fallback: string;
+  text: string;
+};
+
+export type InsertCatalogCategory =
+  | "html"
+  | "block"
+  | "component"
+  | "tera"
+  | "dynamicWidget"
+  | "directField";
+
+export type InsertCatalogOrigin =
+  | "application"
+  | "native"
+  | "project"
+  | "theme"
+  | "contentModel";
+
+export type InsertCatalogContext = {
+  activeDocumentPath: string | null;
+  activeTemplatePath: string | null;
+  activePagePath: string | null;
+  canvasPreviewRevision: string | null;
+  canvasAvailable: boolean;
+  targetSourceId: string | null;
+  targetTag: string | null;
+};
+
+export type InsertCatalogCapabilities = {
+  canDrag: boolean;
+  allowedPositions: ProjectMovePosition[];
+  reasonCode: string | null;
+  reasonArguments: Record<string, string>;
+};
+
+export type InsertCatalogPayload =
+  | {
+      kind: "html";
+      tag: string;
+      className: string;
+      text: string;
+    }
+  | {
+      kind: "block";
+      blockId: string;
+      tag: string;
+      className: string;
+      text: string;
+    }
+  | {
+      kind: "component";
+      componentId: string;
+      teraKind: string;
+      family: string;
+      target: string;
+      name: string | null;
+      expression: string | null;
+    }
+  | {
+      kind: "tera";
+      teraKind: string;
+      family: string;
+      target: string | null;
+      name: string | null;
+      expression: string | null;
+    }
+  | {
+      kind: "dynamicField";
+      teraKind: string;
+      family: string;
+      expression: string;
+      binding: ProjectDynamicFieldBinding;
+    }
+  | {
+      kind: "dynamicWidget";
+      providerId: string;
+      properties: DynamicWidgetProperties;
+    };
+
+export type InsertCatalogItem = {
+  id: string;
+  category: InsertCatalogCategory;
+  origin: InsertCatalogOrigin;
+  label: string;
+  description: string;
+  capabilities: InsertCatalogCapabilities;
+  payload: InsertCatalogPayload;
+};
+
+export type InsertCatalogGroup = {
+  id: string;
+  category: InsertCatalogCategory;
+  label: string;
+  description: string;
+  items: InsertCatalogItem[];
+};
+
+export type InsertCatalogSnapshot = {
+  schemaVersion: number;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  modelRevision: string;
+  context: InsertCatalogContext;
+  groups: InsertCatalogGroup[];
 };
 
 export type ProjectTeraInsertIntent = {
@@ -6042,6 +6582,7 @@ export type ProjectHtmlDuplicatePatch = {
   dataAnimCount: number;
   duplicateIdCount: number;
   zolaImageContract: boolean;
+  dynamicWidgetContract: boolean;
 };
 
 export type PreviewHtmlDuplicateExecutionStatus = "committed" | "blocked";

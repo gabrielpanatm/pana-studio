@@ -93,6 +93,7 @@ test("Canvas Interaction waits for the navigation snapshot of the new Workbench 
       identity: payload.input.identity,
       lastAcceptedSequence: 0,
       activeDocumentPath: payload.input.activeDocumentPath,
+      authoringSurfaces: [],
     };
   });
 

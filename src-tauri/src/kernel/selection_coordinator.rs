@@ -87,6 +87,7 @@ pub struct SelectionAnchor {
     pub provenance_stack: Vec<String>,
     pub component_invocation_ids: Vec<String>,
     pub block_source_instance_ids: Vec<String>,
+    pub dynamic_widget_source_instance_ids: Vec<String>,
     pub binding_key: Option<String>,
     pub binding_path: Option<String>,
 }
@@ -1318,6 +1319,8 @@ fn rebase_candidate<'a>(
             provenance.is_some_and(|expected| &node.source_provenance == expected)
                 && node.component_invocation_ids == anchor.component_invocation_ids
                 && node.block_source_instance_ids == anchor.block_source_instance_ids
+                && node.dynamic_widget_source_instance_ids
+                    == anchor.dynamic_widget_source_instance_ids
                 && optional_anchor_matches(
                     anchor.binding_path.as_deref(),
                     node.binding_path.as_deref(),
@@ -1362,6 +1365,8 @@ fn rebase_candidate_for_source_id<'a>(
             node.source_node_id.as_deref() == Some(source_node_id)
                 && node.component_invocation_ids == anchor.component_invocation_ids
                 && node.block_source_instance_ids == anchor.block_source_instance_ids
+                && node.dynamic_widget_source_instance_ids
+                    == anchor.dynamic_widget_source_instance_ids
                 && optional_anchor_matches(
                     anchor.binding_path.as_deref(),
                     node.binding_path.as_deref(),
@@ -1458,6 +1463,7 @@ fn selection_from_node(
         provenance_stack: node.provenance_stack.clone(),
         component_invocation_ids: node.component_invocation_ids.clone(),
         block_source_instance_ids: node.block_source_instance_ids.clone(),
+        dynamic_widget_source_instance_ids: node.dynamic_widget_source_instance_ids.clone(),
         binding_key: node.binding_key.clone(),
         binding_path: node.binding_path.clone(),
     };
@@ -1514,6 +1520,7 @@ fn selection_from_source_node(
         provenance_stack: vec![source.id.clone()],
         component_invocation_ids: Vec::new(),
         block_source_instance_ids: Vec::new(),
+        dynamic_widget_source_instance_ids: Vec::new(),
         binding_key: None,
         binding_path: None,
     };
@@ -1776,7 +1783,9 @@ fn validate_inspector_facts(
         }
         if matches!(
             class_name.as_str(),
-            "pana-studio-empty-editable" | "pana-studio-empty-tera-slot"
+            "pana-studio-empty-editable"
+                | "pana-studio-empty-tera-slot"
+                | "pana-studio-active-document-root"
         ) {
             continue;
         }
@@ -2093,6 +2102,8 @@ mod tests {
             component_invocation_ids: vec!["include:hero".to_string()],
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: binding_key.map(str::to_string),
             binding_path: binding_key.map(|key| format!("hero.items[{key}]")),
             boundary: None,

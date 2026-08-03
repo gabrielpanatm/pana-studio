@@ -19,7 +19,7 @@
   }
 
   function dropPositionFromPreviewPointer(event, element) {
-    if (isEmptyTeraSlot(element)) return "inside";
+    if (isEmptyTeraSlot(element) || isActiveDocumentRoot(element)) return "inside";
     var rect = element.getBoundingClientRect();
     var relativeY = rect.height > 0 ? (event.clientY - rect.top) / rect.height : 0.5;
 
@@ -39,6 +39,8 @@
   }
 
   function previewDragTargetFromPoint(clientX, clientY) {
+    var authoringTarget = activeDocumentAuthoringTargetAtPoint(clientX, clientY);
+    if (authoringTarget) return authoringTarget.element;
     var element = document.elementFromPoint(clientX, clientY);
     if (!(element instanceof Element)) return null;
     if (element.id === "pana-studio-preview-drop-line" ||
@@ -116,7 +118,7 @@
 
     if (!target) return;
 
-    var rect = target.getBoundingClientRect();
+    var rect = activeDocumentAuthoringRectForElement(target) || target.getBoundingClientRect();
     if (invalid || position === "inside") {
       overlay.box.style.display = "block";
       overlay.box.style.left = Math.round(rect.left) + "px";
@@ -136,11 +138,19 @@
     var data = element || {};
     var tag = String(data.tag || "div").trim().toLowerCase();
     if (!/^[a-z][a-z0-9-]*$/.test(tag)) tag = "div";
+    var legacyComponent = data.kind === "component";
+    var kind = data.kind === "block" || legacyComponent ? "block" : "html";
+    var blockId = typeof data.blockId === "string"
+      ? data.blockId
+      : legacyComponent && typeof data.componentId === "string" ? data.componentId : "";
+    var blockKind = data.blockKind === "js" || data.blockKind === "css"
+      ? data.blockKind
+      : data.componentKind === "js" || data.componentKind === "css" ? data.componentKind : "";
     return {
       id: String(data.id || tag),
-      kind: data.kind === "component" ? "component" : "html",
-      componentId: typeof data.componentId === "string" ? data.componentId : "",
-      componentKind: data.componentKind === "js" ? "js" : data.componentKind === "css" ? "css" : "",
+      kind: kind,
+      blockId: blockId,
+      blockKind: blockKind,
       tag: tag,
       label: String(data.label || tag),
       description: typeof data.description === "string" ? data.description : "",
@@ -163,13 +173,15 @@
     include: true,
     import: true,
     macro: true,
+    macroCall: true,
     "for": true,
     "if": true,
     set: true,
     with: true,
     teraVariable: true,
     teraComment: true,
-    raw: true
+    raw: true,
+    dynamicWidget: true
   };
 
   function normalizedTeraItemPayload(item) {
@@ -186,6 +198,12 @@
       target: typeof data.target === "string" ? data.target : undefined,
       name: typeof data.name === "string" ? data.name : undefined,
       expression: typeof data.expression === "string" ? data.expression : undefined,
+      dynamicBinding: data.dynamicBinding && typeof data.dynamicBinding === "object"
+        ? data.dynamicBinding
+        : undefined,
+      dynamicWidget: data.dynamicWidget && typeof data.dynamicWidget === "object"
+        ? data.dynamicWidget
+        : undefined,
       sourceNodeId: typeof data.sourceNodeId === "string" ? data.sourceNodeId : undefined
     };
   }
@@ -234,9 +252,12 @@
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),
       targetSourceId: closestPreviewSourceAttribute(drop.target, SOURCE_ID_ATTR),
       targetTemplateSourceId: closestPreviewSourceAttribute(drop.target, TEMPLATE_SOURCE_ID_ATTR),
+      targetBoundaryInstanceId: closestPreviewSourceAttribute(drop.target, ACTIVE_AUTHORING_ATTR),
       targetSourceLocation: null,
       targetTag: drop.target.tagName.toLowerCase(),
-      targetKind: isEmptyTeraSlot(drop.target) ? "empty-tera-slot" : "html",
+      targetKind: isActiveDocumentRoot(drop.target)
+        ? "active-document-root"
+        : isEmptyTeraSlot(drop.target) ? "empty-tera-slot" : "html",
       position: drop.position,
       element: element
     });
@@ -267,8 +288,11 @@
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),
       targetSourceId: closestPreviewSourceAttribute(drop.target, SOURCE_ID_ATTR),
       targetTemplateSourceId: closestPreviewSourceAttribute(drop.target, TEMPLATE_SOURCE_ID_ATTR),
+      targetBoundaryInstanceId: closestPreviewSourceAttribute(drop.target, ACTIVE_AUTHORING_ATTR),
       targetTag: drop.target.tagName.toLowerCase(),
-      targetKind: isEmptyTeraSlot(drop.target) ? "empty-tera-slot" : "html",
+      targetKind: isActiveDocumentRoot(drop.target)
+        ? "active-document-root"
+        : isEmptyTeraSlot(drop.target) ? "empty-tera-slot" : "html",
       position: drop.position,
       item: item
     });

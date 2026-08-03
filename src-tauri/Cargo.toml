@@ -1,6 +1,6 @@
 [package]
 name = "pana-studio"
-version = "0.1.4"
+version = "0.1.5"
 description = "Editor vizual desktop open-source pentru site-uri Zola"
 authors = ["Gabriel Pană"]
 license = "EUPL-1.2-or-later"
@@ -32,6 +32,8 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+regex = "1"
+url = "2"
 # SDK-ul oficial MCP; versiunea exactă fixează semantica protocolului și
 # include corecțiile de conformitate pentru Streamable HTTP 2025-11-25.
 rmcp = { version = "=2.2.0", features = ["server", "macros", "schemars", "transport-streamable-http-server"] }

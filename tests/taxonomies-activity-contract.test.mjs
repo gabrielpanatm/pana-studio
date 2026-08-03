@@ -19,9 +19,9 @@ test("Taxonomii este o activitate Workbench sincronizată între Rust și fronte
       rustWorkbench.indexOf("pub enum WorkbenchActivity"),
       rustWorkbench.indexOf("pub enum WorkbenchSurface"),
     ),
-    /Content,\s+Taxonomies,\s+Data,/,
+    /Content,\s+ContentModels,\s+Taxonomies,\s+Data,/,
   );
-  assert.match(types, /\|\s*"content"\s+\|\s*"taxonomies"\s+\|\s*"data"/);
+  assert.match(types, /\|\s*"content"\s+\|\s*"content_models"\s+\|\s*"taxonomies"\s+\|\s*"data"/);
   assert.match(terms, /taxonomies:\s*"workbench-taxonomies"/);
   assert.match(rail, /id:\s*"taxonomies"[\s\S]*UI_TERM_IDS\.taxonomies/);
   assert.match(rail, /activity\.id === "taxonomies"[\s\S]*<IconTags/);

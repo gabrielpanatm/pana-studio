@@ -39,8 +39,14 @@ export type TeraActionsControllerHost = PreviewStructuralCanonicalProjectionHost
   sourceCache: Record<string, string>;
   clearPreviewSelection: (options?: { clearCanvasOverlay?: boolean }) => void;
   refreshSourceGraph: (options?: { strict?: boolean }) => Promise<void>;
+  selectDynamicWidgetSourceInstance?: (instanceId: string) => Promise<boolean>;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
 };
+
+export function dynamicWidgetInstanceIdFromSnippet(snippet: string): string | null {
+  if (!/\bpana:widget\b/.test(snippet)) return null;
+  return snippet.match(/\binstance=([A-Za-z0-9_-]+)/)?.[1] ?? null;
+}
 
 export function captureTeraActionTarget(
   node: SourceGraphNode | null | undefined,
@@ -150,6 +156,8 @@ async function insertTeraPaletteItemAtTargetInLane(
           target: request.item.target ?? null,
           name: request.item.name ?? null,
           expression: request.item.expression ?? null,
+          dynamicBinding: request.item.dynamicBinding ?? null,
+          dynamicWidget: request.item.dynamicWidget ?? null,
         },
       },
     }, previewStructuralCommandIdentity(lease));
@@ -165,6 +173,19 @@ async function insertTeraPaletteItemAtTargetInLane(
     const settlement = await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
       projectCommittedTeraSource(host, patch);
     });
+    const insertedDynamicWidgetId = dynamicWidgetInstanceIdFromSnippet(patch.snippet);
+    if (
+      insertedDynamicWidgetId
+      && settlement.projections.sourceGraph === "current"
+      && settlement.projections.preview === "current"
+    ) {
+      try {
+        await host.selectDynamicWidgetSourceInstance?.(insertedDynamicWidgetId);
+      } catch {
+        // Selection is a derived convenience after the Rust commit. It must
+        // never turn a committed insertion into a second mutation attempt.
+      }
+    }
     host.setGlobalStatus(
       settlement.warnings.length > 0
         ? t("tera-actions-inserted-resync", { label: resolution.label })

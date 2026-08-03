@@ -140,6 +140,9 @@ test("activitatea prezintă ierarhia Mosaic adaptată la Zola fără tabul Toate
   assert.doesNotMatch(templates, /\{ id: "all"/);
   assert.doesNotMatch(templates, /templates-view-(?:partials|macros)/);
   assert.match(templates, /function beginCreate\(\)[\s\S]*detailMode = "create"/);
+  assert.match(templates, /NEW_SECTION_TARGET/);
+  assert.match(templates, /templates-create-new-section/);
+  assert.match(templates, /content\/\{createSectionSlug \|\| "…"\}\/_index\.md/);
   assert.match(templates, /function beginRename\(resource: TemplateResource\)[\s\S]*detailMode = "rename"/);
   assert.match(templates, /detailMode === "create"[\s\S]*onsubmit=\{submitCreate\}/);
   assert.match(templates, /detailMode === "rename"[\s\S]*submitRename\(event, selectedResource\)/);
@@ -165,6 +168,8 @@ test("formularele șabloanelor păstrează comenzile Rust drept autoritate de mu
 
   assert.match(createFlow, /duplicateTemplate/);
   assert.match(createFlow, /createSemanticTemplate/);
+  assert.match(createFlow, /newSection:\s*creatingNewArchiveSection/);
+  assert.match(createFlow, /sortBy:\s*createSectionSort/);
   assert.doesNotMatch(createFlow, /createTemplateCollection/);
   assert.match(editFlow, /renameTemplate/);
   assert.match(templates, /setTemplateParent/);

@@ -3,6 +3,7 @@
     IconAlertTriangle,
     IconBox,
     IconCode,
+    IconDatabase,
     IconPlus,
     IconSearch,
     IconX,
@@ -14,15 +15,20 @@
   import type { AppState } from "$lib/state/app.svelte";
   import type {
     BlockDefinition,
+    ContentFieldDefinition,
+    ContentModelDefinition,
     FileBufferRequestIdentity,
     NativeBlockRegistrySnapshot,
+    ProjectDynamicFieldBinding,
+    SourceGraphNode,
     UiBlockGraphSnapshot,
   } from "$lib/types";
+  import type { TeraPaletteItem } from "$lib/tera/model";
   import { errorMessage } from "$lib/util";
 
   let { app }: { app: AppState } = $props();
 
-  type BlockView = "all" | "element" | "section" | "composition";
+  type BlockView = "all" | "element" | "section" | "composition" | "dynamic_fields";
   type DetailMode = "info" | "insert";
 
   const blockViews = $derived([
@@ -30,22 +36,32 @@
     { id: "element" as const, label: t("blocks-view-elements") },
     { id: "section" as const, label: t("blocks-view-sections") },
     { id: "composition" as const, label: t("blocks-view-compositions") },
+    { id: "dynamic_fields" as const, label: "Câmpuri dinamice" },
   ]);
 
   let activeView = $state<BlockView>("all");
   let detailMode = $state<DetailMode>("info");
   let selectedDefinitionId = $state("");
+  let selectedDynamicId = $state("");
   let query = $state("");
   let registry = $state<NativeBlockRegistrySnapshot | null>(null);
   let uiBlockGraph = $state<UiBlockGraphSnapshot | null>(null);
   let loadError = $state("");
   let inserting = $state(false);
   let refreshKey = "";
+  let dynamicPresentation = $state<ProjectDynamicFieldBinding["presentation"]>("text");
+  let dynamicScope = $state<ProjectDynamicFieldBinding["scope"]>("page");
+  let dynamicPrefix = $state("");
+  let dynamicSuffix = $state("");
+  let dynamicFallback = $state("");
+  let dynamicText = $state("");
+  let configuredDynamicId = "";
 
   const blockGraph = $derived(uiBlockGraph);
   const definitions = $derived(blockGraph?.definitions ?? []);
   const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredDefinitions = $derived(definitions.filter((definition) => {
+    if (activeView === "dynamic_fields") return false;
     const inView = activeView === "all" || definition.scale === activeView;
     if (!inView) return false;
     if (!normalizedQuery) return true;
@@ -86,6 +102,88 @@
       : [],
   );
   const insertTarget = $derived(app.coordinatedElementSelection);
+  const insertSourceNode = $derived(
+    app.sourceGraph?.nodes.find((node) => node.id === insertTarget?.sourceNodeId) ?? null,
+  );
+  type DynamicFieldEntry = {
+    id: string;
+    model: ContentModelDefinition;
+    field: ContentFieldDefinition;
+    path: string;
+    itemPath: string | null;
+  };
+  function flattenDynamicFields(
+    model: ContentModelDefinition,
+    fields: ContentFieldDefinition[],
+    parent = "",
+    itemParent: string | null = null,
+  ): DynamicFieldEntry[] {
+    return fields.flatMap((field) => {
+      const path = parent ? `${parent}.${field.key}` : field.key;
+      const itemPath = itemParent === null
+        ? null
+        : itemParent ? `${itemParent}.${field.key}` : field.key;
+      return [
+        { id: `${model.id}:${field.id}`, model, field, path, itemPath },
+        ...flattenDynamicFields(
+          model,
+          field.fields,
+          path,
+          field.kind === "repeater" ? "" : itemPath,
+        ),
+      ];
+    });
+  }
+  const dynamicFields = $derived(
+    (app.sourceGraph?.contentModels.models ?? []).flatMap((model) => (
+      flattenDynamicFields(model, model.fields)
+    )),
+  );
+  const filteredDynamicFields = $derived(dynamicFields.filter((entry) => {
+    if (activeView !== "dynamic_fields") return false;
+    if (!normalizedQuery) return true;
+    return `${entry.model.label} ${entry.field.label} ${entry.path}`
+      .toLocaleLowerCase(l10n.locale)
+      .includes(normalizedQuery);
+  }));
+  const selectedDynamicField = $derived(
+    dynamicFields.find((entry) => entry.id === selectedDynamicId)
+      ?? filteredDynamicFields[0]
+      ?? null,
+  );
+  function nodeHasForContext(node: SourceGraphNode | null): boolean {
+    const nodes = app.sourceGraph?.nodes ?? [];
+    const visited = new Set<string>();
+    let current = node;
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.kind === "for") return true;
+      current = current.parent
+        ? nodes.find((candidate) => candidate.id === current?.parent) ?? null
+        : null;
+    }
+    return false;
+  }
+  const dynamicItemTargetAllowed = $derived(
+    dynamicScope !== "item" || nodeHasForContext(insertSourceNode),
+  );
+  const activeTemplateName = $derived.by(() => {
+    const activePath = app.activeScannedPath ?? "";
+    return activePath.startsWith("templates/")
+      ? activePath.slice("templates/".length)
+      : "";
+  });
+  const dynamicPreviewPages = $derived(
+    (app.sourceGraph?.pages ?? [])
+      .filter((page) => page.pageKind === "page" && page.resolvedTemplate === activeTemplateName)
+      .sort((left, right) => left.title.localeCompare(right.title, l10n.locale)),
+  );
+
+  $effect(() => {
+    const entry = selectedDynamicField;
+    if (!entry || configuredDynamicId === entry.id) return;
+    configureDynamicField(entry);
+  });
 
   $effect(() => {
     const projectRoot = app.sessionProjectRoot;
@@ -121,6 +219,7 @@
   function selectView(view: BlockView) {
     activeView = view;
     selectedDefinitionId = "";
+    selectedDynamicId = "";
     detailMode = "info";
   }
 
@@ -128,6 +227,136 @@
     selectedDefinitionId = definition.id;
     detailMode = "info";
     loadError = "";
+  }
+
+  function selectDynamicField(entry: DynamicFieldEntry) {
+    selectedDynamicId = entry.id;
+    selectedDefinitionId = "";
+    detailMode = "info";
+    loadError = "";
+    configureDynamicField(entry);
+  }
+
+  function configureDynamicField(entry: DynamicFieldEntry) {
+    configuredDynamicId = entry.id;
+    dynamicScope = entry.itemPath ? "item" : "page";
+    dynamicPresentation = entry.field.kind === "image"
+      ? "image"
+      : entry.field.kind === "url"
+        ? "link"
+        : entry.field.kind === "repeater"
+          ? "list"
+          : entry.field.kind === "boolean"
+            ? "condition"
+            : "text";
+    dynamicPrefix = "";
+    dynamicSuffix = "";
+    dynamicFallback = "";
+    dynamicText = entry.field.label;
+  }
+
+  function dynamicPresentationOptions(field: ContentFieldDefinition) {
+    const options: Array<{ value: ProjectDynamicFieldBinding["presentation"]; label: string }> = [];
+    if (field.kind !== "group" && field.kind !== "repeater") options.push({ value: "text", label: "Text" });
+    if (field.kind === "image") options.push({ value: "image", label: "Imagine" });
+    if (field.kind === "url") options.push({ value: "link", label: "Link" }, { value: "button", label: "Buton" });
+    if (field.kind === "repeater") options.push({ value: "list", label: "Listă / Repeater" });
+    if (field.kind === "boolean") options.push({ value: "condition", label: "Condiție" });
+    return options;
+  }
+
+  function dynamicBinding(entry: DynamicFieldEntry): ProjectDynamicFieldBinding {
+    return {
+      modelId: entry.model.id,
+      fieldId: entry.field.id,
+      path: entry.path,
+      scope: dynamicScope,
+      itemPath: dynamicScope === "item" ? entry.itemPath : null,
+      presentation: dynamicPresentation,
+      prefix: dynamicPrefix,
+      suffix: dynamicSuffix,
+      fallback: dynamicFallback,
+      text: dynamicText,
+    };
+  }
+
+  function dynamicSnippet(entry: DynamicFieldEntry) {
+    const expression = dynamicScope === "item" ? `item.${entry.itemPath ?? entry.field.key}` : `page.extra.${entry.path}`;
+    if (dynamicPresentation === "list") return `{% for item in ${expression} %}\n  …\n{% endfor %}`;
+    if (dynamicPresentation === "condition") return `{% if ${expression} %}\n  …\n{% endif %}`;
+    if (dynamicPresentation === "image") return `<img src="{{ ${expression} }}" alt="${dynamicText}">`;
+    if (dynamicPresentation === "link" || dynamicPresentation === "button") return `<a href="{{ ${expression} }}">${dynamicText || entry.field.label}</a>`;
+    return `${dynamicPrefix}{{ ${expression} }}${dynamicSuffix}`;
+  }
+
+  async function selectPreviewContent(pageFile: string) {
+    const project = app.scannedProject;
+    const template = project?.files.find((file) => file.relativePath === app.activeScannedPath);
+    const page = dynamicPreviewPages.find((candidate) => candidate.file === pageFile);
+    if (!project || !template || !page) return;
+    loadError = "";
+    try {
+      await app.updateTemplateWorkbenchContext(project, template, page.file, {
+        preferredRoute: page.url,
+        strict: true,
+      });
+    } catch (cause) {
+      loadError = errorMessage(cause);
+    }
+  }
+
+  async function insertDynamicField() {
+    const target = insertTarget;
+    const dynamic = selectedDynamicField;
+    if (!target?.sourceLocation || !dynamic || inserting) return;
+    if (dynamicScope === "item" && !dynamicItemTargetAllowed) {
+      loadError = "Selectează bucla Tera a repetorului sau un element aflat în interiorul ei.";
+      return;
+    }
+    inserting = true;
+    loadError = "";
+    const expression = dynamicScope === "item"
+      ? `item.${dynamic.itemPath ?? dynamic.field.key}`
+      : `page.extra.${dynamic.path}`;
+    const kind = dynamicPresentation === "list"
+      ? "for"
+      : dynamicPresentation === "condition"
+        ? "if"
+        : "teraVariable";
+    const item: TeraPaletteItem = {
+      id: `dynamic-${dynamic.id}`,
+      kind,
+      family: "data",
+      label: dynamic.field.label,
+      description: `Valoare din modelul ${dynamic.model.label}`,
+      snippet: dynamicSnippet(dynamic),
+      expression,
+      dynamicBinding: dynamicBinding(dynamic),
+    };
+    try {
+      const outcome = await app.insertTeraPaletteItemAtTarget({
+        targetSelector: target.observation.domPath
+          || target.observation.cssSelector
+          || target.observation.selector,
+        targetSessionId: target.snapshot.runtimeSessionId,
+        targetSourceId: target.sourceNodeId,
+        targetTemplateSourceId: null,
+        targetTag: target.observation.tag,
+        position: dynamicScope === "item" && insertSourceNode?.kind === "for"
+          ? "inside"
+          : "after",
+        item,
+      });
+      if (outcome.status !== "committed") {
+        loadError = outcome.reason ?? "Câmpul dinamic nu a putut fi inserat.";
+        return;
+      }
+      await app.setWorkbenchActivity("editor");
+    } catch (cause) {
+      loadError = errorMessage(cause);
+    } finally {
+      inserting = false;
+    }
   }
 
   function beginInsert() {
@@ -150,6 +379,7 @@
         targetSessionId: target.snapshot.runtimeSessionId,
         targetSourceId: target.sourceNodeId,
         targetTemplateSourceId: null,
+        targetBoundaryInstanceId: null,
         targetSourceLocation: target.sourceLocation,
         targetTag: observation.tag,
         position: "after",
@@ -222,8 +452,10 @@
     <button
       class="ui-button primary toolbar toolbar-action"
       type="button"
-      disabled={!selectedDefinition?.capabilities.canInsert || !selectedPaletteElement}
-      onclick={beginInsert}
+      disabled={activeView === "dynamic_fields"
+        ? !selectedDynamicField || !insertTarget?.sourceLocation || !dynamicItemTargetAllowed
+        : !selectedDefinition?.capabilities.canInsert || !selectedPaletteElement}
+      onclick={() => activeView === "dynamic_fields" ? void insertDynamicField() : beginInsert()}
     >
       <IconPlus size={14} stroke={2} /> {t("blocks-add")}
     </button>
@@ -234,6 +466,19 @@
       {#if !blockGraph}
         <div class="workspace-state">{t("blocks-loading")}</div>
       {:else}
+        {#each filteredDynamicFields as entry (entry.id)}
+          <button
+            type="button"
+            class="resource-card ui-entity-selectable"
+            data-ui-selected={selectedDynamicField?.id === entry.id ? "true" : undefined}
+            aria-pressed={selectedDynamicField?.id === entry.id}
+            onclick={() => selectDynamicField(entry)}
+          >
+            <span class="resource-icon"><IconDatabase size={17} stroke={1.8} /></span>
+            <span><strong>{entry.field.label}</strong><small>{entry.model.label} · page.extra.{entry.path}</small></span>
+            <span class="resource-badges"><code>{entry.field.kind}</code><code>dynamic</code></span>
+          </button>
+        {/each}
         {#each filteredDefinitions as definition (definition.id)}
           <button
             type="button"
@@ -252,14 +497,50 @@
               <code>{definition.origin}</code>
             </span>
           </button>
-        {:else}
-          <div class="workspace-state">{t("blocks-empty-filter")}</div>
         {/each}
+        {#if filteredDefinitions.length === 0 && filteredDynamicFields.length === 0}
+          <div class="workspace-state">{t("blocks-empty-filter")}</div>
+        {/if}
       {/if}
     </div>
 
     <aside class="resource-detail" aria-label={t("blocks-detail-label")}>
-      {#if detailMode === "insert" && selectedDefinition && selectedPaletteElement}
+      {#if activeView === "dynamic_fields" && selectedDynamicField}
+        <div class="detail-kicker-row"><span class="detail-kicker">Câmp dinamic</span><span>{selectedDynamicField.field.kind}</span></div>
+        <h2>{selectedDynamicField.field.label}</h2>
+        <p>{selectedDynamicField.field.help || `Câmp definit de modelul ${selectedDynamicField.model.label}.`}</p>
+        {#if dynamicPreviewPages.length > 0}
+          <label class="preview-content-selector"><span>Conținut de previzualizare</span><select value={app.templateWorkbenchPreferredPagePath ?? dynamicPreviewPages[0]?.file ?? ""} onchange={(event) => { void selectPreviewContent(event.currentTarget.value); }}>{#each dynamicPreviewPages as page (page.file)}<option value={page.file}>{page.title} · {page.file}</option>{/each}</select><small>Randarea folosește pagina reală aleasă pentru acest template single.</small></label>
+        {/if}
+        <dl class="block-contract">
+          <div><dt>Model</dt><dd>{selectedDynamicField.model.id}</dd></div>
+          <div><dt>Cheie</dt><dd>{selectedDynamicField.path}</dd></div>
+          <div><dt>Tip</dt><dd>{selectedDynamicField.field.kind}</dd></div>
+          <div><dt>Obligatoriu</dt><dd>{selectedDynamicField.field.required ? "Da" : "Nu"}</dd></div>
+        </dl>
+        <section class="detail-section binding-editor">
+          <h3>Binding tipizat</h3>
+          <div class="binding-grid">
+            <label><span>Prezentare</span><select bind:value={dynamicPresentation}>{#each dynamicPresentationOptions(selectedDynamicField.field) as option (option.value)}<option value={option.value}>{option.label}</option>{/each}</select></label>
+            <label><span>Scope</span><select bind:value={dynamicScope}><option value="page" disabled={Boolean(selectedDynamicField.itemPath)}>Pagina curentă</option>{#if selectedDynamicField.itemPath}<option value="item">Elementul buclei</option>{/if}</select></label>
+          </div>
+          {#if dynamicPresentation === "text"}
+            <div class="binding-grid"><label><span>Prefix</span><input bind:value={dynamicPrefix} /></label><label><span>Sufix</span><input bind:value={dynamicSuffix} /></label></div>
+          {/if}
+          {#if dynamicPresentation === "image" || dynamicPresentation === "link" || dynamicPresentation === "button"}
+            <label><span>{dynamicPresentation === "image" ? "Text alternativ" : "Text afișat"}</span><input bind:value={dynamicText} /></label>
+          {/if}
+          {#if dynamicPresentation !== "list" && dynamicPresentation !== "condition"}
+            <label><span>Fallback</span><input bind:value={dynamicFallback} placeholder="Valoare folosită când câmpul lipsește" /></label>
+          {/if}
+          {#if dynamicScope === "item" && !dynamicItemTargetAllowed}<p class="form-error" role="status"><IconAlertTriangle size={14} /> Selectează bucla Tera a repetorului sau un element din interiorul ei.</p>{/if}
+        </section>
+        <section class="detail-section"><h3>Tera standard generat de Rust</h3><pre><code>{dynamicSnippet(selectedDynamicField)}</code></pre></section>
+        <section class="detail-section"><h3>Legături detectate de Rust</h3><div class="semantic-row"><code>template-uri</code><span>{app.sourceGraph?.contentModels.templateUsages.filter((usage) => usage.fieldId === selectedDynamicField.field.id).length ?? 0}</span></div></section>
+        {#if loadError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {loadError}</p>{/if}
+        <div class="target-card"><strong>{insertTarget ? `Inserare după <${insertTarget.observation.tag}>` : "Selectează un element din preview"}</strong><span>{insertTarget?.sourceLocation?.file ?? "Câmpul dinamic se inserează într-un template Tera editabil."}</span></div>
+        <div class="detail-actions"><button class="ui-button primary primary-action" type="button" disabled={!insertTarget?.sourceLocation || !dynamicItemTargetAllowed || inserting} onclick={() => { void insertDynamicField(); }}><IconPlus size={14} /> {inserting ? "Se inserează…" : "Inserează câmpul"}</button></div>
+      {:else if detailMode === "insert" && selectedDefinition && selectedPaletteElement}
         <header class="detail-heading">
           <div>
             <span class="detail-kicker">{t("blocks-prepare-insert")}</span>
@@ -360,6 +641,13 @@
   .block-contract dd { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .detail-section { margin-top: 14px; }
   .detail-section h3 { margin: 0 0 6px; color: var(--text-strong); font-size: 12px; }
+  .binding-editor { display: grid; gap: 7px; }
+  .binding-editor label { display: grid; gap: 3px; color: var(--wb-text-muted); font-size: 11px; font-weight: 750; }
+  .binding-editor input, .binding-editor select { width: 100%; min-width: 0; min-height: 31px; padding: 5px 7px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); font: inherit; }
+  .binding-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .preview-content-selector { display: grid; gap: 4px; margin-top: 10px; color: var(--wb-text-muted); font-size: 11px; font-weight: 750; }
+  .preview-content-selector select { min-height: 31px; padding: 5px 7px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--material-inset); font: inherit; }
+  .preview-content-selector small { font-weight: 500; }
   .semantic-row { display: grid; grid-template-columns: minmax(80px, .34fr) minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--wb-border-subtle); font-size: 11px; }
   .semantic-row code { color: var(--wb-accent-strong); }
   .semantic-row span { color: var(--wb-text-muted); }

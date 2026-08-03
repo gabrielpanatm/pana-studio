@@ -241,7 +241,8 @@
     var id = element.id || "";
     var classes = Array.prototype.filter.call(element.classList, function (className) {
       return className !== EMPTY_EDITABLE_CLASS &&
-        className !== EMPTY_TERA_SLOT_CLASS;
+        className !== EMPTY_TERA_SLOT_CLASS &&
+        className !== ACTIVE_DOCUMENT_ROOT_CLASS;
     });
     var parentElement =
       element.parentElement && element.parentElement.tagName.toLowerCase() !== "html"
@@ -250,12 +251,12 @@
     var childNodes = Array.prototype.slice
       .call(element.children)
       .filter(function (child) {
-        return child instanceof Element && !isEmptyTeraSlot(child);
+        return child instanceof Element && !isEmptyTeraSlot(child) && !isActiveDocumentRoot(child);
       })
       .slice(0, 24)
       .map(createDomNodeLink);
     var hasChildElements = Array.prototype.some.call(element.children, function (child) {
-      return child instanceof Element && !isEmptyTeraSlot(child);
+      return child instanceof Element && !isEmptyTeraSlot(child) && !isActiveDocumentRoot(child);
     });
 
     return {

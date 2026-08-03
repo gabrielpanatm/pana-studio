@@ -11,6 +11,7 @@ export type PageFrontmatterField =
   | "template"
   | "slug"
   | "weight"
+  | "paginateBy"
   | "draft"
   | "seoTitle"
   | "seoDescription"
@@ -25,6 +26,12 @@ export type PageFrontmatterValues = Omit<Record<PageFrontmatterField, string>, "
   draft: boolean;
 };
 
+export type PageFrontmatterMutationValue =
+  | { kind: "string"; value: string }
+  | { kind: "integer"; value: number }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "empty" };
+
 export type PageFrontmatterParseResult = {
   kind: "toml" | "yaml" | "none";
   values: PageFrontmatterValues;
@@ -37,6 +44,7 @@ const defaultPageFrontmatterValues: PageFrontmatterValues = {
   template: "",
   slug: "",
   weight: "",
+  paginateBy: "",
   draft: false,
   seoTitle: "",
   seoDescription: "",
@@ -55,6 +63,7 @@ const fieldToTomlKey: Record<PageFrontmatterField, string> = {
   template: "template",
   slug: "slug",
   weight: "weight",
+  paginateBy: "paginate_by",
   draft: "draft",
   seoTitle: "extra.seo_title",
   seoDescription: "extra.seo_description",
@@ -65,10 +74,6 @@ const fieldToTomlKey: Record<PageFrontmatterField, string> = {
   ogImage: "extra.og_image",
   ogType: "extra.og_type",
 };
-
-function tomlString(value: string) {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-}
 
 function parseTomlScalar(value: string): string | boolean {
   const trimmed = value.trim().replace(/,$/, "");
@@ -83,21 +88,57 @@ function parseTomlScalar(value: string): string | boolean {
   return quoted ? quoted[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\") : trimmed;
 }
 
-function readTomlValue(frontmatter: string, key: string) {
+function readTomlAssignment(frontmatter: string, key: string) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = frontmatter.match(new RegExp(`(?:^|\\s)${escaped}\\s*=\\s*(\\[[^\\]]*\\]|"[^"]*"|'[^']*'|[^\\s]+)`, "m"));
+  const match = frontmatter.match(new RegExp(`^\\s*${escaped}\\s*=\\s*(\\[[^\\]]*\\]|"[^"]*"|'[^']*'|[^\\s#]+)`, "m"));
   return match ? parseTomlScalar(match[1]) : undefined;
 }
 
-function replaceOrAppendTomlValue(frontmatter: string, key: string, value: string | boolean) {
-  const rendered = typeof value === "boolean"
-    ? String(value)
-    : tomlString(value);
-  const line = `${key} = ${rendered}`;
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^\\s*${escaped}\\s*=\\s*.+$`, "m");
-  if (pattern.test(frontmatter)) return frontmatter.replace(pattern, line);
-  return `${frontmatter.trimEnd()}\n${line}`.trimStart();
+function readTomlValue(frontmatter: string, key: string) {
+  const direct = readTomlAssignment(frontmatter, key);
+  if (direct !== undefined || !key.includes(".")) return direct;
+
+  const [tableName, ...nestedPath] = key.split(".");
+  const nestedKey = nestedPath.join(".");
+  const escapedTable = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tableMatch = new RegExp(`^\\s*\\[${escapedTable}\\]\\s*(?:#.*)?$`, "m").exec(frontmatter);
+  if (!tableMatch || tableMatch.index === undefined) return undefined;
+  const tableStart = tableMatch.index + tableMatch[0].length;
+  const afterTable = frontmatter.slice(tableStart);
+  const nextTableOffset = afterTable.search(/^\s*\[[^\]]+\]\s*(?:#.*)?$/m);
+  const tableBody = nextTableOffset >= 0 ? afterTable.slice(0, nextTableOffset) : afterTable;
+  return readTomlAssignment(tableBody, nestedKey);
+}
+
+export function pageFrontmatterMutationValue(
+  field: PageFrontmatterField,
+  value: string | boolean,
+): PageFrontmatterMutationValue {
+  if (field === "draft") {
+    if (typeof value !== "boolean") {
+      throw new Error("Starea draft trebuie să fie o valoare booleană.");
+    }
+    return { kind: "boolean", value };
+  }
+  if (typeof value !== "string") {
+    throw new Error("Valoarea acestui câmp trebuie să fie text.");
+  }
+  if (field === "weight") {
+    if (!value.trim()) return { kind: "empty" };
+    const number = Number(value);
+    if (!Number.isSafeInteger(number) || number < 0) {
+      throw new Error("Ordinea paginii trebuie să fie un număr întreg pozitiv sau zero.");
+    }
+    return { kind: "integer", value: number };
+  }
+  if (field === "paginateBy") {
+    const number = Number(value);
+    if (!value.trim() || !Number.isSafeInteger(number) || number <= 0) {
+      throw new Error("Arhiva trebuie să conțină cel puțin un articol pe pagină.");
+    }
+    return { kind: "integer", value: number };
+  }
+  return value.trim() ? { kind: "string", value } : { kind: "empty" };
 }
 
 export function splitMarkdownFrontmatter(source: string): MarkdownParts {
@@ -150,23 +191,4 @@ export function parsePageFrontmatter(source: string): PageFrontmatterParseResult
     }
   }
   return { kind: "toml", values };
-}
-
-export function updatePageFrontmatter(source: string, values: PageFrontmatterValues): string {
-  const parts = splitMarkdownFrontmatter(source);
-  const marker = parts.marker || "+++";
-  let frontmatter = marker === "---" ? "" : parts.frontmatter;
-
-  for (const [field, key] of Object.entries(fieldToTomlKey) as Array<[PageFrontmatterField, string]>) {
-    const value = values[field];
-    if (typeof value === "boolean" || String(value).trim()) {
-      frontmatter = replaceOrAppendTomlValue(frontmatter, key, value);
-    }
-  }
-
-  return joinMarkdownFrontmatter({
-    marker: "+++",
-    frontmatter,
-    body: parts.marker ? parts.body : source,
-  });
 }

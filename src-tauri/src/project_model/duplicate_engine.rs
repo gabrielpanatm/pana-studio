@@ -7,16 +7,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     blocks::{native_block_by_id, native_block_instance_id},
+    kernel::dynamic_widgets::{
+        generate_dynamic_widget_instance_id, render_dynamic_widget, DynamicWidgetSourceInstance,
+    },
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
     source_graph::model::SourceNode,
 };
 
 use super::move_engine::{
-    content_revision, direct_location_without_source_id, line_indent_at_offset,
+    content_revision, direct_location_without_source_id, insert_line_block,
+    inserted_block_start_line, line_block_after_index, line_indent_at_offset,
     line_number_at_offset, offset_for_source_location, parse_html_tag_at, reindent_html_fragment,
-    resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
-    source_location_at_offset, source_missing_message, ProjectSourceEditLocation, Span,
+    reindent_structural_fragment, resolve_html_element_span, resolve_html_node_for_anchor,
+    same_model_path, source_location_at_offset, source_missing_message, ProjectSourceEditLocation,
+    Span,
 };
+use super::structural_envelope::{structural_envelope_for_html_node, StructuralEnvelopeKind};
 use super::zola_image_engine::{contains_zola_image_contract, zola_image_contract_start};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -59,6 +65,7 @@ pub struct ProjectHtmlDuplicatePatch {
     pub data_anim_count: usize,
     pub duplicate_id_count: usize,
     pub zola_image_contract: bool,
+    pub dynamic_widget_contract: bool,
 }
 
 struct DuplicateHtml {
@@ -148,14 +155,6 @@ fn plan_html_duplicate_from_source_node(
     model: &ProjectModel,
     source_node: &SourceNode,
 ) -> Result<ProjectHtmlDuplicatePatch, String> {
-    if !source_node.capabilities.can_edit_visual {
-        return Err(source_node
-            .capabilities
-            .technical_reason()
-            .map(str::to_string)
-            .unwrap_or_else(|| "Elementul sursă nu este duplicabil vizual.".to_string()));
-    }
-
     let file = model
         .files
         .iter()
@@ -176,9 +175,24 @@ fn plan_html_duplicate_from_source_node(
         .range
         .as_ref()
         .ok_or_else(|| "Sursa nu are range stabil în Source Graph.".to_string())?;
-    let mut source_span = resolve_html_element_span(&file.contents, source_range.start)?;
-    if let Some(contract_start) = zola_image_contract_start(&file.contents, source_range.start)? {
-        source_span.start = contract_start;
+    let envelope = structural_envelope_for_html_node(model, &file.contents, source_node)?;
+    // The generated body of a dynamic widget commonly contains its own Tera
+    // condition. That condition is not an independently editable HTML node,
+    // but the Rust-owned widget envelope is an atomic structural unit and may
+    // be duplicated safely by rebuilding it with a fresh contract identity.
+    if !source_node.capabilities.can_edit_visual && envelope.dynamic_widget.is_none() {
+        return Err(source_node
+            .capabilities
+            .technical_reason()
+            .map(str::to_string)
+            .unwrap_or_else(|| "Elementul sursă nu este duplicabil vizual.".to_string()));
+    }
+    let mut source_span = envelope.span;
+    if envelope.kind == StructuralEnvelopeKind::HtmlElement {
+        if let Some(contract_start) = zola_image_contract_start(&file.contents, source_range.start)?
+        {
+            source_span.start = contract_start;
+        }
     }
 
     plan_html_duplicate_for_span(
@@ -186,7 +200,8 @@ fn plan_html_duplicate_from_source_node(
         file,
         &source_node.file,
         source_span,
-        source_range.start,
+        envelope.opening_start,
+        envelope.dynamic_widget,
         source_node.id.clone(),
         source_node.label.clone(),
     )
@@ -242,6 +257,7 @@ fn plan_html_duplicate_from_direct_location(
         &file.relative_path,
         source_span,
         tag.start,
+        None,
         resolved_source_id,
         format!("<{}>", tag.tag),
     )
@@ -253,6 +269,7 @@ fn plan_html_duplicate_for_span(
     file_path: &str,
     source_span: Span,
     opening_start: usize,
+    dynamic_widget: Option<&DynamicWidgetSourceInstance>,
     resolved_source_id: String,
     duplicated_label: String,
 ) -> Result<ProjectHtmlDuplicatePatch, String> {
@@ -263,10 +280,37 @@ fn plan_html_duplicate_for_span(
     let tag = parse_html_tag_at(&file.contents, opening_start)
         .map(|tag| tag.tag)
         .ok_or_else(|| "Nu am putut citi tag-ul HTML pentru duplicare.".to_string())?;
-    let duplicate = prepare_duplicated_html(model, &tag, source_html);
+    let dynamic_widget_contract = dynamic_widget.is_some();
+    let duplicate_source = if let Some(instance) = dynamic_widget {
+        let properties = instance.properties.as_ref().ok_or_else(|| {
+            format!(
+                "Widgetul dinamic {} nu are proprietăți valide și nu poate fi duplicat.",
+                instance.instance_id
+            )
+        })?;
+        let instance_id = generate_dynamic_widget_instance_id(
+            properties.provider_kind(),
+            &format!("duplicate:{}:{}", model.revision, instance.instance_id),
+            model
+                .source_graph
+                .dynamic_widget_graph
+                .source_instances
+                .iter()
+                .map(|candidate| candidate.instance_id.as_str()),
+        );
+        render_dynamic_widget(&instance_id, properties, &model.source_graph)?
+    } else {
+        source_html.to_string()
+    };
+    let duplicate = prepare_duplicated_html(model, &tag, &duplicate_source);
     let zola_image_contract = contains_zola_image_contract(source_html);
-    let applied =
-        apply_html_duplicate_after(&file.contents, file_path, source_span, &duplicate.html)?;
+    let applied = apply_html_duplicate_after(
+        &file.contents,
+        file_path,
+        source_span,
+        &duplicate.html,
+        dynamic_widget_contract,
+    )?;
 
     Ok(ProjectHtmlDuplicatePatch {
         file: file_path.to_string(),
@@ -288,6 +332,7 @@ fn plan_html_duplicate_for_span(
         data_anim_count: duplicate.data_anim_count,
         duplicate_id_count: duplicate.duplicate_id_count,
         zola_image_contract,
+        dynamic_widget_contract,
     })
 }
 
@@ -308,19 +353,20 @@ fn apply_html_duplicate_after(
     file: &str,
     source_span: Span,
     snippet: &str,
+    preserve_internal_indentation: bool,
 ) -> Result<DuplicateApplication, String> {
     let target_indent = line_indent_at_offset(source, source_span.start);
-    let inserted = reindent_html_fragment(snippet, &target_indent);
+    let inserted = if preserve_internal_indentation {
+        reindent_structural_fragment(snippet, "", &target_indent, true)
+    } else {
+        reindent_html_fragment(snippet, &target_indent)
+    };
     let source_start_line = line_number_at_offset(source, source_span.start);
     let source_end_line = line_number_at_offset(source, source_span.end);
-    let inserted_start_line = line_number_at_offset(source, source_span.end) + 1;
+    let insert_at = line_block_after_index(source, source_span.end);
+    let inserted_start_line = inserted_block_start_line(source, insert_at);
     Ok(DuplicateApplication {
-        contents: format!(
-            "{}\n{}{}",
-            &source[..source_span.end],
-            inserted,
-            &source[source_span.end..]
-        ),
+        contents: insert_line_block(source, insert_at, &inserted),
         inserted_location: ProjectSourceEditLocation {
             file: file.to_string(),
             line: inserted_start_line,
@@ -829,7 +875,14 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::project_model::build_project_model;
+    use crate::{
+        kernel::dynamic_widgets::{
+            DynamicFieldEmptyBehavior, DynamicFieldPresentation, DynamicFieldScope,
+            DynamicFieldWidgetProperties, DynamicValueBinding, DynamicValueFormat,
+            DynamicValueSource, DynamicValueType, DynamicWidgetProperties,
+        },
+        project_model::build_project_model,
+    };
 
     use super::*;
 
@@ -925,6 +978,73 @@ mod tests {
         assert!(patch.html.contains("data-anim=\"ps-span-"));
         assert!(patch.html.contains("data-pana-instance=\"counter-span-"));
         assert!(!patch.html.contains("counter-stale"));
+    }
+
+    #[test]
+    fn plan_html_duplicate_rebuilds_a_dynamic_widget_with_a_fresh_contract_identity() {
+        let root = unique_test_dir();
+        write_project(&root, "<main></main>\n");
+        let base_model = build_project_model(&root, &HashMap::new()).unwrap();
+        let properties = DynamicWidgetProperties::DynamicField(DynamicFieldWidgetProperties {
+            binding: DynamicValueBinding {
+                context: DynamicFieldScope::Section,
+                source: DynamicValueSource::Builtin {
+                    field: "title".to_string(),
+                },
+                value_type: DynamicValueType::Text,
+            },
+            presentation: DynamicFieldPresentation::Heading,
+            tag: "h2".to_string(),
+            format: DynamicValueFormat::default(),
+            prefix: String::new(),
+            suffix: String::new(),
+            fallback: String::new(),
+            label: "Titlu".to_string(),
+            empty_behavior: DynamicFieldEmptyBehavior::RenderEmpty,
+        });
+        let widget = render_dynamic_widget(
+            "dynamic-field-duplicate01",
+            &properties,
+            &base_model.source_graph,
+        )
+        .unwrap();
+        write_project(
+            &root,
+            &format!("<main>\n  {}\n</main>\n", widget.replace('\n', "\n  ")),
+        );
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let heading = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label.starts_with("<h2"))
+            .unwrap();
+
+        let plan = plan_html_duplicate(
+            &model,
+            &ProjectHtmlDuplicateIntent {
+                source_source_id: Some(heading.id.clone()),
+                source_location: None,
+                source_tag: Some("h2".to_string()),
+                source_selector: None,
+            },
+            &HashMap::new(),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.unwrap();
+        assert!(patch.dynamic_widget_contract);
+        assert!(!patch.html.contains("dynamic-field-duplicate01"));
+        assert_eq!(
+            patch.contents.matches("dynamic-field-duplicate01").count(),
+            4
+        );
+        assert_eq!(patch.contents.matches("{# pana:widget schema=2").count(), 2);
+        assert_eq!(
+            patch.contents.matches("data-pana-widget-instance=").count(),
+            4
+        );
     }
 
     #[test]

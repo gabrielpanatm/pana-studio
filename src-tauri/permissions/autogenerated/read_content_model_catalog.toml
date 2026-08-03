@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-content-model-catalog"
+description = "Enables the read_content_model_catalog command without any pre-configured scope."
+commands.allow = ["read_content_model_catalog"]
+
+[[permission]]
+identifier = "deny-read-content-model-catalog"
+description = "Denies the read_content_model_catalog command without any pre-configured scope."
+commands.deny = ["read_content_model_catalog"]

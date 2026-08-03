@@ -426,6 +426,35 @@ test("un timeout await-ed este clasificat pentru fallback fără toast prematur"
   runtime.reset();
 });
 
+test("replace-document poate cere un timeout local fără să schimbe bugetul runtime-ului", async () => {
+  let scheduledDelay = null;
+  let triggerTimeout = null;
+  const runtime = createPreviewRuntime({
+    postPreviewMessage() {},
+    setGlobalStatus() {},
+  }, {
+    ackTimeoutMs: 60_000,
+    scheduleTimeout(callback, delay) {
+      scheduledDelay = delay;
+      triggerTimeout = callback;
+      return 1;
+    },
+    cancelTimeout() {},
+  });
+
+  const confirmation = runtime.sendAndWait(
+    { type: "replace-document", html: "<html></html>" },
+    { ackTimeoutMs: 1_500 },
+  );
+  assert.equal(scheduledDelay, 1_500);
+  triggerTimeout();
+  await assert.rejects(
+    confirmation,
+    (error) => error instanceof PreviewRuntimeTransportError && error.code === "ack_timeout",
+  );
+  runtime.reset();
+});
+
 test("preview runtime requires exact receipts for CanvasPatch apply and rollback", async () => {
   const sent = [];
   const runtime = createPreviewRuntime({

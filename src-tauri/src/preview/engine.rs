@@ -853,6 +853,9 @@ fn render_template_workbench_document(
     );
 
     let rendered = match plan.render_mode {
+        TemplateWorkbenchRenderMode::ListingItemScenario => {
+            render_listing_item_scenario(site, &active_template_name, context, plan)?
+        }
         TemplateWorkbenchRenderMode::MacroScenario => {
             render_macro_scenario(&site.tera, &active_template_name, context)?
         }
@@ -925,6 +928,40 @@ fn render_template_workbench_document(
         )?,
         route,
     ))
+}
+
+fn render_listing_item_scenario(
+    site: &Site,
+    template_name: &str,
+    context: Context,
+    plan: &TemplateWorkbenchPlan,
+) -> Result<String, String> {
+    let page_file = plan
+        .selected_context
+        .as_ref()
+        .map(|consumer| normalized_content_file(&consumer.page_file))
+        .ok_or_else(|| {
+            "Scenariul Listing Item nu are articolul real ales pentru Preview.".to_string()
+        })?;
+    let harness = format!(
+        "{{% set item = get_page(path=\"{}\") %}}\n{{% include \"{}\" %}}",
+        escape_workbench_tera_string(&page_file),
+        escape_workbench_tera_string(template_name),
+    );
+    let mut tera = site.tera.clone();
+    let harness_name = "__pana_template_workbench_listing_item.html";
+    tera.add_raw_template(harness_name, &harness)
+        .map_err(|error| format!("Scenariul Listing Item nu a putut fi compilat: {error}"))?;
+    zola_utils::templates::render_template(harness_name, &tera, context, &site.config.theme)
+        .map_err(|error| format!("Scenariul Listing Item a eșuat: {error}"))
+}
+
+fn escape_workbench_tera_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 fn engine_template_name(name: &str, theme_name: Option<&str>) -> String {
@@ -1271,8 +1308,13 @@ fn mount_workbench_fragment(
         attributes.insert("data-pana-workbench-active-file", source_file.to_string());
     }
 
+    // The fragment root does not exist as an HTML element in the user's
+    // source, therefore its editable extent is carried by the same provenance
+    // marker protocol used by ordinary Tera boundaries. CanvasGraph and the
+    // bridge can now project a persistent append surface without inventing a
+    // wrapper that would ever be written to disk.
     let fragment_document = parse(format!(
-        "<!doctype html><html><body><div data-pana-workbench-mount>{fragment}</div></body></html>"
+        "<!doctype html><html><body><div data-pana-workbench-mount><!-- pana-template-source-start:{source_id} -->{fragment}<!-- pana-template-source-end:{source_id} --></div></body></html>"
     ));
     let mount = fragment_document
         .select_first("[data-pana-workbench-mount]")
@@ -1382,7 +1424,7 @@ fn build_new_official_zola_site(
     clear_site_content()?;
     let config_file = zola_config_file(projection_root)?;
     let mut site = Site::new(projection_root, config_file).map_err(|error| {
-        format!("Zola 0.22.1 nu a putut încărca proiecția reviziei {workspace_revision}: {error}")
+        format!("Zola 0.22.1 nu a putut încărca proiecția reviziei {workspace_revision}: {error:#}")
     })?;
     site.enable_serve_mode(BuildMode::Memory);
     // Embedded preview is an offline editor operation. Keep this explicit even
@@ -1397,10 +1439,12 @@ fn build_new_official_zola_site(
     site.set_base_url(base_url.to_string());
     site.set_output_path(artifact_root);
     site.load().map_err(|error| {
-        format!("Zola 0.22.1 nu a putut încărca conținutul reviziei {workspace_revision}: {error}")
+        format!(
+            "Zola 0.22.1 nu a putut încărca conținutul reviziei {workspace_revision}: {error:#}"
+        )
     })?;
     site.build().map_err(|error| {
-        format!("Zola 0.22.1 nu a putut randă revizia {workspace_revision}: {error}")
+        format!("Zola 0.22.1 nu a putut randă revizia {workspace_revision}: {error:#}")
     })?;
     let rendered = capture_site_content()?;
     Ok((site, rendered))
@@ -1870,6 +1914,29 @@ mod tests {
         assert!(!fragment.contains("Shell"));
         assert_eq!(fragment.matches("<article").count(), 1);
         fs::remove_dir_all(fixture).unwrap();
+    }
+
+    #[test]
+    fn workbench_fragment_mount_keeps_an_outer_source_boundary_when_empty() {
+        let html = mount_workbench_fragment(
+            None,
+            "",
+            "sg_listing_item_root",
+            "templates/listing-items/card.html",
+        )
+        .unwrap();
+
+        let start = html
+            .find("<!-- pana-template-source-start:sg_listing_item_root -->")
+            .expect("fragment start marker");
+        let end = html
+            .find("<!-- pana-template-source-end:sg_listing_item_root -->")
+            .expect("fragment end marker");
+        assert!(start < end);
+        assert!(
+            html.contains("data-pana-workbench-active-file=\"templates/listing-items/card.html\"")
+        );
+        assert!(!html.contains("data-pana-workbench-mount"));
     }
 
     fn stage_and_confirm<R: Runtime>(

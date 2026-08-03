@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-plan-content-model-mutation"
+description = "Enables the plan_content_model_mutation command without any pre-configured scope."
+commands.allow = ["plan_content_model_mutation"]
+
+[[permission]]
+identifier = "deny-plan-content-model-mutation"
+description = "Denies the plan_content_model_mutation command without any pre-configured scope."
+commands.deny = ["plan_content_model_mutation"]

@@ -169,11 +169,11 @@ test("cold open stages the index Workbench surface before commit and mounts it f
   assert.match(previewController, /readiness === "ready" \|\| readiness === "degraded"/);
 });
 
-test("initial SourceGraph consumes the ProjectModel already published by Preview", () => {
+test("SourceGraph consumes the current ProjectModel and rebuilds it after invalidation without Canvas", () => {
   const start = rustSourceGraphCommands.indexOf("pub(crate) fn read_source_graph_from_accepted_project");
   const end = rustSourceGraphCommands.indexOf("#[tauri::command", start);
   const body = rustSourceGraphCommands.slice(start, end);
   assert.match(body, /project_model_source_revision/);
-  assert.match(body, /ProjectModel-ul publicat de Preview/);
-  assert.doesNotMatch(body, /build_project_model_from_workspace_projection/);
+  assert.match(body, /build_project_model_from_workspace_projection/);
+  assert.match(body, /publish_project_model_if_current/);
 });

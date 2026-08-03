@@ -1,8 +1,12 @@
 use crate::{
-    css::page::{imports::variables_import_path, model::WrittenProjectFile},
+    css::page::{
+        imports::{relative_scss_import_path, variables_import_path},
+        model::WrittenProjectFile,
+    },
     zola_links::{stylesheet_link, template_contains_asset_path},
     zola_theme::{logical_template_name, theme_name_for_template_path},
 };
+use std::path::Path;
 
 pub fn prepare_page_stylesheet_source(
     relative_path: &str,
@@ -23,6 +27,73 @@ pub fn prepare_page_stylesheet_source(
         return format!("{}\n\n", import_line);
     }
     format!("{}\n\n{}", import_line, existing.trim_start_matches('\n'))
+}
+
+pub fn prepare_reusable_consumer_stylesheet_source(
+    consumer_stylesheet_path: &str,
+    existing: &str,
+    reusable_stylesheet_path: &str,
+    style_files: impl IntoIterator<Item = String>,
+    active_theme: Option<&str>,
+) -> Result<String, String> {
+    let prepared = prepare_page_stylesheet_source(
+        consumer_stylesheet_path,
+        existing,
+        style_files,
+        active_theme,
+    );
+    let import_path = relative_scss_import_path(
+        Path::new(consumer_stylesheet_path),
+        Path::new(reusable_stylesheet_path),
+    )
+    .ok_or_else(|| {
+        format!(
+            "Nu am putut deriva importul SCSS dintre {consumer_stylesheet_path} și {reusable_stylesheet_path}."
+        )
+    })?;
+    if scss_source_imports_path(&prepared, &import_path) {
+        return Ok(prepared);
+    }
+
+    let import_line = format!("@import '{}';", import_path);
+    if prepared.trim().is_empty() {
+        Ok(format!("{import_line}\n\n"))
+    } else {
+        Ok(format!("{}\n{import_line}\n", prepared.trim_end()))
+    }
+}
+
+pub fn reusable_consumer_import_path(
+    consumer_stylesheet_path: &str,
+    reusable_stylesheet_path: &str,
+) -> Option<String> {
+    relative_scss_import_path(
+        Path::new(consumer_stylesheet_path),
+        Path::new(reusable_stylesheet_path),
+    )
+}
+
+pub fn consumer_stylesheet_imports_reusable(
+    source: &str,
+    consumer_stylesheet_path: &str,
+    reusable_stylesheet_path: &str,
+) -> bool {
+    reusable_consumer_import_path(consumer_stylesheet_path, reusable_stylesheet_path)
+        .is_some_and(|import_path| scss_source_imports_path(source, &import_path))
+}
+
+fn scss_source_imports_path(source: &str, import_path: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("@import") else {
+            return false;
+        };
+        rest.trim()
+            .trim_end_matches(';')
+            .trim()
+            .trim_matches(['\'', '"'])
+            == import_path
+    })
 }
 
 /// Planifică legătura stylesheet-ului folosind sursa canonică furnizată de

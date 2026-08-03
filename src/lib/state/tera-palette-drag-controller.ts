@@ -44,6 +44,8 @@ function previewPayloadFor(item: TeraPaletteItem) {
     target: item.target,
     name: item.name,
     expression: item.expression,
+    dynamicBinding: item.dynamicBinding,
+    dynamicWidget: item.dynamicWidget,
     sourceNodeId: item.sourceNodeId,
   };
 }

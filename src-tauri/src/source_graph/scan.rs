@@ -623,6 +623,25 @@ fn build_source_graph_internal(
     );
     graph.component_graph = crate::source_graph::component_graph::build_component_graph(&graph);
     graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
+    graph.content_models =
+        crate::kernel::content_models::build_content_model_catalog_with_deletions(
+            &root,
+            draft_sources,
+            deleted_sources,
+            &graph,
+        );
+    graph.listing_items = crate::kernel::listing_items::build_listing_item_catalog(
+        &root,
+        draft_sources,
+        deleted_sources,
+        &graph,
+    );
+    graph.dynamic_widget_graph = crate::kernel::dynamic_widgets::build_dynamic_widget_graph(
+        &root,
+        draft_sources,
+        deleted_sources,
+        &graph,
+    );
     graph.markdown_projections = crate::source_graph::markdown::build_markdown_projections(&graph);
     let read_error = graph
         .diagnostics
@@ -844,6 +863,54 @@ mod tests {
                 && node.kind == SourceNodeKind::Html
                 && node.label == "<section .hero>"
         }));
+    }
+
+    #[test]
+    fn template_and_partial_roots_keep_full_file_ranges() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
+        let page_source = "<main>Acasă</main>\n";
+        let fragment_source = "\n";
+        fs::write(root.join("templates/index.html"), page_source).unwrap();
+        fs::write(
+            root.join("templates/listing-items/card.html"),
+            fragment_source,
+        )
+        .unwrap();
+
+        let graph = build_source_graph(&root).unwrap();
+        let page = graph
+            .templates
+            .iter()
+            .find(|template| template.file == "templates/index.html")
+            .unwrap();
+        let fragment = graph
+            .templates
+            .iter()
+            .find(|template| template.file == "templates/listing-items/card.html")
+            .unwrap();
+        let page_root = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == page.node_id)
+            .unwrap();
+        let fragment_root = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == fragment.node_id)
+            .unwrap();
+
+        assert_eq!(page_root.range.as_ref().unwrap().start, 0);
+        assert_eq!(page_root.range.as_ref().unwrap().end, page_source.len());
+        assert_eq!(fragment_root.range.as_ref().unwrap().start, 0);
+        assert_eq!(
+            fragment_root.range.as_ref().unwrap().end,
+            fragment_source.len()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

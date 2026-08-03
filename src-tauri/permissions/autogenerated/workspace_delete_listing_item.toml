@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-delete-listing-item"
+description = "Enables the workspace_delete_listing_item command without any pre-configured scope."
+commands.allow = ["workspace_delete_listing_item"]
+
+[[permission]]
+identifier = "deny-workspace-delete-listing-item"
+description = "Denies the workspace_delete_listing_item command without any pre-configured scope."
+commands.deny = ["workspace_delete_listing_item"]

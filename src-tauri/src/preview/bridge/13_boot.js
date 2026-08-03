@@ -20,7 +20,10 @@
     ensureInspectorStyles();
     applyTemplateSourceIdsFromMarkers();
     ensureElementSessionIds();
-    refreshEmptyEditableZones();
+    // Empty-state presentation waits for the Rust CanvasAgent binding. The
+    // preprocessor only leaves hidden provenance anchors; presenting generic
+    // HTML/Tera placeholders here would expose three transient authorities
+    // before the active document identity is known.
     syncStructure();
     announceCanvasAgentReady();
     var identity = mountedCanvasIdentity();

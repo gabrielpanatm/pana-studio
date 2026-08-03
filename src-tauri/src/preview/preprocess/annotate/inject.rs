@@ -719,7 +719,7 @@ fn empty_tera_slot_placeholder(source_id: &str, preview_revision: Option<&str>) 
         .map(|revision| format!(r#" data-pana-preview-revision="{}""#, revision))
         .unwrap_or_default();
     format!(
-        r#"<div class="pana-studio-empty-editable pana-studio-empty-tera-slot" data-pana-empty-tera-slot="{}" data-pana-empty-tera-slot-static="true" data-pana-source-id="{}" data-pana-template-source-id="{}"{} data-pana-empty-label="Block Tera gol"></div>"#,
+        r#"<div hidden class="pana-studio-empty-editable pana-studio-empty-tera-slot" data-pana-empty-tera-slot="{}" data-pana-empty-tera-slot-static="true" data-pana-source-id="{}" data-pana-template-source-id="{}"{}></div>"#,
         source_id, source_id, source_id, revision_attr
     )
 }

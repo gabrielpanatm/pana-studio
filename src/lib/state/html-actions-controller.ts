@@ -370,9 +370,14 @@ function sourceLocationForSourceReference(
   sourceId: string | null | undefined,
   fallbackSourceLocation?: SourceEditLocation | null,
 ): SourceEditLocation | null {
+  // The caller may carry the exact location published by the same Rust
+  // navigation snapshot as the source identity. Prefer that conjunctive
+  // anchor over a global graph lookup which can already describe a newer or
+  // older projection while a structural command waits in the serialized lane.
+  if (fallbackSourceLocation) return fallbackSourceLocation;
   const target = host.resolveSourceEditTargetForSourceId(sourceId);
   if (target) return sourceLocationForEditTarget(target);
-  return fallbackSourceLocation ?? null;
+  return null;
 }
 
 function sourceLocationForSessionReference(
@@ -393,7 +398,7 @@ function sourceLocationForInsertTarget(
   targetSourceId: string | null,
   capturedTarget?: HtmlActionTarget | null,
 ): SourceEditLocation | null {
-  if (request.targetKind !== "empty-tera-slot") {
+  if (request.targetKind !== "empty-tera-slot" && request.targetKind !== "active-document-root") {
     const sessionLocation = sourceLocationForSessionReference(
       host,
       request.targetSessionId,
@@ -918,7 +923,9 @@ async function insertPaletteElementAtTargetInLane(
   lease: PreviewStructuralSessionLease,
 ): Promise<EditorActionOutcome> {
   const targetSourceId = request.targetSourceId ||
-    (request.targetKind === "empty-tera-slot" ? request.targetTemplateSourceId : null);
+    (request.targetKind === "empty-tera-slot" || request.targetKind === "active-document-root"
+      ? request.targetTemplateSourceId
+      : null);
   const targetTpl = sourceLocationForInsertTarget(
     host,
     request,

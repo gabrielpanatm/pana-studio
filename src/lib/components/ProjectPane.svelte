@@ -4,7 +4,6 @@
     IconFiles,
     IconPlus,
     IconStack2,
-    IconX,
   } from "@tabler/icons-svelte";
   import type {
     EditorMovePlan,
@@ -16,13 +15,13 @@
     ProjectMovePosition,
     ProjectFile,
     ProjectPaneTab,
-    SourceGraph,
+    InsertCatalogContext,
+    InsertCatalogItem,
+    InsertCatalogSnapshot,
   } from "$lib/types";
-  import type { HtmlPaletteElement } from "$lib/project/html-palette";
-  import type { TeraPaletteItem } from "$lib/tera/model";
   import ProjectFilesTab from "$lib/components/project/ProjectFilesTab.svelte";
   import EditorNavigationTree from "$lib/components/project/EditorNavigationTree.svelte";
-  import ProjectStructureTab from "$lib/components/project/ProjectStructureTab.svelte";
+  import InsertCatalogPanel from "$lib/components/project/InsertCatalogPanel.svelte";
   import {
     legacyTranslator,
     localeRevision,
@@ -33,13 +32,13 @@
   export let scannedProject = false;
   export let projectRoot = "";
   export let runtimeSessionId = "";
+  export let workspaceRevision = 0;
   export let allProjectFiles: ProjectFile[] = [];
   export let activeScannedPath: string | null = null;
   export let fileExplorerSnapshot: FileExplorerSnapshot | null = null;
   export let fileExplorerLoading = false;
   export let fileExplorerError = "";
-  export let coordinatedSelectionTag: string | null = null;
-  export let sourceGraph: SourceGraph | null = null;
+  export let insertCatalogContext: InsertCatalogContext;
   export let editorNavigationSnapshot: EditorNavigationSnapshot | null = null;
   export let editorNavigationLoading = false;
   export let editorNavigationError = "";
@@ -57,7 +56,6 @@
   let projectPaneTab: ProjectPaneTab = "layers";
   let elementPaletteOpen = false;
   let elementPaletteTrigger: HTMLButtonElement;
-  let elementPaletteClose: HTMLButtonElement;
   let elementPaletteDialog: HTMLElement;
   let fileCollapsedDirs = new Set<string>();
   let fileKnownDirPaths = new Set<string>();
@@ -68,7 +66,7 @@
   async function setElementPaletteOpen(open: boolean, restoreFocus = true) {
     elementPaletteOpen = open;
     await tick();
-    if (open) elementPaletteClose?.focus();
+    if (open) elementPaletteDialog?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
     else if (restoreFocus) elementPaletteTrigger?.focus();
   }
 
@@ -139,8 +137,11 @@
   }
 
   export let openScannedFile: (file: ProjectFile) => void | Promise<void>;
-  export let startElementPaletteDrag: (element: HtmlPaletteElement, event: PointerEvent) => void;
-  export let startTeraPaletteDrag: (item: TeraPaletteItem, event: PointerEvent) => void;
+  export let startInsertCatalogDrag: (
+    item: InsertCatalogItem,
+    snapshot: InsertCatalogSnapshot,
+    event: PointerEvent,
+  ) => void;
   export let selectEditorNavigationNode: (node: EditorNavigationNode) => void;
   export let hoverEditorNavigationNode: (node: EditorNavigationNode | null) => void;
   export let enterEditorNavigationScope: (scopeId: string) => void | Promise<unknown>;
@@ -158,6 +159,11 @@
   export let deleteEditorNavigationNode: (
     node: EditorNavigationNode,
   ) => void | Promise<unknown>;
+  export let openEditorNavigationContextMenu: (
+    node: EditorNavigationNode,
+    x: number,
+    y: number,
+  ) => void;
 
   async function openEditorNavigationDocument(
     documentPath: string,
@@ -253,6 +259,7 @@
       previewMove={previewEditorNavigationMove}
       moveNode={moveEditorNavigationNode}
       deleteNode={deleteEditorNavigationNode}
+      openContextMenu={openEditorNavigationContextMenu}
       openDocument={openEditorNavigationDocument}
       activeDocumentPath={activeScannedPath}
       callerDocumentPath={editorNavigationCallers.at(-1)?.caller ?? null}
@@ -290,32 +297,18 @@
       role="dialog"
       tabindex="-1"
       aria-modal="false"
-      aria-labelledby="element-palette-title"
-      aria-describedby="element-palette-description"
+      aria-label={t("project-pane-add-element")}
       onkeydown={handleElementPaletteKeydown}
     >
-      <header class="element-palette-header">
-        <div>
-          <h2 id="element-palette-title">{t("project-pane-add-element")}</h2>
-          <p id="element-palette-description">{t("project-pane-add-element-description")}</p>
-        </div>
-        <button
-          bind:this={elementPaletteClose}
-          type="button"
-          class="ui-icon-button ui-close-button pane-action-btn"
-          title={t("project-pane-close-add-element")}
-          aria-label={t("project-pane-close-add-element")}
-          onclick={() => { void setElementPaletteOpen(false); }}
-        >
-          <IconX size={16} stroke={1.9} />
-        </button>
-      </header>
       <div class="element-palette-body">
-        <ProjectStructureTab
-          {coordinatedSelectionTag}
-          {sourceGraph}
-          {startElementPaletteDrag}
-          {startTeraPaletteDrag}
+        <InsertCatalogPanel
+          {projectRoot}
+          {runtimeSessionId}
+          {workspaceRevision}
+          context={insertCatalogContext}
+          startDrag={startInsertCatalogDrag}
+          closeLabel={t("project-pane-close-add-element")}
+          close={() => { void setElementPaletteOpen(false); }}
         />
       </div>
     </div>
@@ -328,8 +321,11 @@
     --project-pane-padding: 10px;
     position: relative;
     display: flex;
+    flex: 1 1 auto;
     flex-direction: column;
     gap: 8px;
+    width: 100%;
+    height: 100%;
     min-height: 0;
     padding: var(--project-pane-padding);
     border: 1px solid var(--border);
@@ -358,16 +354,6 @@
     overflow: auto;
     overscroll-behavior: contain;
   }
-  .pane-action-btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 32px; height: 32px; padding: 0;
-    border: 1px solid transparent; border-radius: var(--radius-control);
-    background: transparent; color: var(--text-muted); cursor: pointer;
-    transition: color 120ms, border-color 120ms, background 120ms;
-  }
-  .pane-action-btn :global(svg) { display: block; }
-  .pane-action-btn:hover { color: var(--text-strong); border-color: transparent; background: var(--control-hover); }
-  .pane-action-btn:focus-visible,
   .tab-btn:focus-visible { outline: 2px solid var(--wb-focus-ring, var(--brand-strong)); outline-offset: 1px; }
   /* ── Tabs ── */
   .pane-tabs {
@@ -395,8 +381,8 @@
     position: absolute;
     z-index: 12;
     inset: 0;
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
     border-radius: inherit;
@@ -405,21 +391,7 @@
     box-shadow: var(--shadow-float);
   }
 
-  .element-palette-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 12px;
-    border-bottom: 1px solid var(--border);
-    background: var(--material-panel);
-    box-shadow: inset 0 -1px 0 var(--skeuo-edge-highlight);
-  }
-
-  .element-palette-header > div { display: grid; gap: 4px; min-width: 0; }
-  .element-palette-header h2 { margin: 0; color: var(--text-strong); font-size: 14px; font-weight: 650; }
-  .element-palette-header p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.4; }
-  .element-palette-body { min-height: 0; padding: 8px; overflow: auto; }
+  .element-palette-body { display: flex; flex: 1 1 auto; min-height: 0; padding: 8px; overflow: hidden; }
 
   button:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>

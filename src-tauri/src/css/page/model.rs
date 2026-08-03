@@ -18,6 +18,8 @@ pub struct PageCssTarget {
     pub href: Option<String>,
     pub template_path: Option<String>,
     pub page_owned: bool,
+    pub consumer_files: Vec<String>,
+    pub consumer_templates: Vec<String>,
     pub reason: String,
 }
 
@@ -28,5 +30,15 @@ pub struct PageCssWriteResult {
     pub href: String,
     pub stylesheet_created: bool,
     pub template_updated: bool,
+    pub written_files: Vec<WrittenProjectFile>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReusableCssWriteResult {
+    pub file: String,
+    pub stylesheet_created: bool,
+    pub consumer_files: Vec<String>,
+    pub consumer_templates: Vec<String>,
     pub written_files: Vec<WrittenProjectFile>,
 }

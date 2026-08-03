@@ -94,6 +94,7 @@ content-settings-field-title = Titlu
 content-settings-field-description = Descriere
 content-settings-field-date = Dată
 content-settings-field-weight = Ordine
+content-settings-field-paginate-by = Articole pe pagină
 content-settings-field-template = Șablon
 content-settings-field-slug = Slug
 content-settings-field-draft = Ciornă

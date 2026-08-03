@@ -11,9 +11,10 @@ export type PreviewInsertDropRequest = {
   targetSessionId: string | null;
   targetSourceId: string | null;
   targetTemplateSourceId: string | null;
+  targetBoundaryInstanceId: string | null;
   targetSourceLocation: SourceEditLocation | null;
   targetTag: string;
-  targetKind?: "html" | "empty-tera-slot";
+  targetKind?: "html" | "empty-tera-slot" | "active-document-root";
   position: DropPosition;
   element: HtmlPaletteElement;
 };
@@ -27,6 +28,7 @@ export type PreviewInsertControllerHost = {
   previewDropTargetStatus?: (target: {
     targetRenderInstanceId?: string | null;
     targetBoundarySourceId?: string | null;
+    targetBoundaryInstanceId?: string | null;
   }) => { allowed: boolean; message?: string };
 };
 
@@ -84,9 +86,13 @@ export async function handlePreviewInsertDrop(
   const targetSessionId = stringValue(data.targetSessionId) || null;
   const targetSourceId = stringValue(data.targetSourceId) || null;
   const targetTemplateSourceId = stringValue(data.targetTemplateSourceId) || null;
-  const targetKind = data.targetKind === "empty-tera-slot" ? "empty-tera-slot" : "html";
+  const targetBoundaryInstanceId = stringValue(data.targetBoundaryInstanceId) || null;
+  const targetKind = data.targetKind === "active-document-root"
+    ? "active-document-root"
+    : data.targetKind === "empty-tera-slot" ? "empty-tera-slot" : "html";
+  const documentRootTarget = targetKind !== "html";
   const targetSource = host.resolveSourceEditTargetForSourceId?.(
-    targetSourceId || (targetKind === "empty-tera-slot" ? targetTemplateSourceId : null),
+    targetSourceId || (documentRootTarget ? targetTemplateSourceId : null),
   ) ?? null;
   const targetSourceLocation =
     sourceEditLocationValue(data.targetSourceLocation) ||
@@ -104,7 +110,9 @@ export async function handlePreviewInsertDrop(
   const targetStatus = host.previewDropTargetStatus?.({
     targetRenderInstanceId,
     targetBoundarySourceId:
-      targetKind === "empty-tera-slot" ? targetTemplateSourceId : null,
+      documentRootTarget ? targetTemplateSourceId : null,
+    targetBoundaryInstanceId:
+      documentRootTarget ? targetBoundaryInstanceId : null,
   });
   if (targetStatus && !targetStatus.allowed) {
     host.setGlobalStatus(
@@ -120,6 +128,7 @@ export async function handlePreviewInsertDrop(
     targetSessionId,
     targetSourceId,
     targetTemplateSourceId,
+    targetBoundaryInstanceId,
     targetSourceLocation,
     targetTag,
     targetKind,

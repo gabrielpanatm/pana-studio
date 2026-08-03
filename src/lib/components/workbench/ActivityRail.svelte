@@ -6,6 +6,7 @@
     IconCodeDots,
     IconDatabase,
     IconFileText,
+    IconForms,
     IconGitBranch,
     IconPhoto,
     IconPalette,
@@ -52,6 +53,7 @@
     { id: "design_system", label: t(UI_TERM_IDS.designSystem) },
     { id: "assets", label: t(UI_TERM_IDS.assets) },
     { id: "content", label: t(UI_TERM_IDS.content) },
+    { id: "content_models", label: t(UI_TERM_IDS.contentModels) },
     { id: "taxonomies", label: t(UI_TERM_IDS.taxonomies) },
     { id: "data", label: t(UI_TERM_IDS.data) },
     { id: "versioning", label: t(UI_TERM_IDS.versionControl) },
@@ -88,6 +90,8 @@
           <IconPhoto size={19} stroke={1.8} />
         {:else if activity.id === "content"}
           <IconFileText size={19} stroke={1.8} />
+        {:else if activity.id === "content_models"}
+          <IconForms size={19} stroke={1.8} />
         {:else if activity.id === "taxonomies"}
           <IconTags size={19} stroke={1.8} />
         {:else if activity.id === "data"}

@@ -80,6 +80,7 @@
     }
     canvasAgentDocumentEpoch = epoch;
     canvasAgentSelectionEnabled = Boolean(data.selection);
+    configureActiveDocumentAuthoringSurfaces(data.authoringSurfaces);
     clearCanvasAgentOverlays();
     postCanvasAgent("agentActivated", {
       documentEpoch: canvasAgentDocumentEpoch
@@ -92,6 +93,7 @@
       return;
     }
     canvasAgentSelectionEnabled = false;
+    clearActiveDocumentAuthoringSurfaces();
     clearCanvasAgentHoverDwell();
     canvasAgentPendingPointerMove = null;
     canvasAgentLastPointerHitKey = null;
@@ -127,6 +129,19 @@
     var result = [];
     var seen = {};
     var hitElements = new Map();
+    var authoringTarget = activeDocumentAuthoringTargetAtPoint(
+      Number(event && event.clientX),
+      Number(event && event.clientY)
+    );
+    if (authoringTarget) {
+      result.push({
+        kind: "boundaryInstance",
+        id: authoringTarget.surface.boundaryInstanceId
+      });
+      if (authoringTarget.surface.renderInstanceId) {
+        hitElements.set(authoringTarget.surface.renderInstanceId, authoringTarget.element);
+      }
+    }
     for (var index = 0; index < rawPath.length && result.length < 64; index += 1) {
       var node = rawPath[index];
       if (!(node instanceof Element) || isStudioOverlayElement(node)) continue;
@@ -656,6 +671,16 @@
       seen.push(element);
       elements.push(element);
     });
+    if (
+      elements.length === 0
+      && projection
+      && typeof projection.boundaryInstanceId === "string"
+    ) {
+      var authoringElement = activeDocumentAuthoringElementForBoundary(
+        projection.boundaryInstanceId
+      );
+      if (authoringElement instanceof Element) elements.push(authoringElement);
+    }
     return elements;
   }
 
@@ -1187,6 +1212,7 @@
     clearCanvasAgentHoverDwell();
     var hitPath = canvasAgentHitPath(event);
     if (hitPath.length === 0) return;
+    if (hitPath[0].kind === "boundaryInstance") return;
     canvasAgentDragSerial += 1;
     canvasAgentDragCandidate = {
       pointerId: event.pointerId,

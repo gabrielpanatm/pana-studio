@@ -4580,7 +4580,7 @@ dependencies = [
 
 [[package]]
 name = "pana-studio"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "allsorts",
  "ashpd",
@@ -4600,6 +4600,7 @@ dependencies = [
  "percent-encoding",
  "pest",
  "pest_derive",
+ "regex",
  "relative-path",
  "reqwest 0.12.28",
  "rmcp",
@@ -4623,6 +4624,7 @@ dependencies = [
  "tokio-util",
  "toml_edit 0.25.11+spec-1.1.0",
  "unic-langid",
+ "url",
  "utils",
  "walkdir",
  "webkit2gtk",

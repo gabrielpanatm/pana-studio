@@ -8,6 +8,7 @@ export const UI_TERM_IDS = Object.freeze({
   designSystem: "workbench-design-system",
   assets: "workbench-assets",
   content: "workbench-content",
+  contentModels: "workbench-content-models",
   taxonomies: "workbench-taxonomies",
   data: "workbench-data",
   versionControl: "workbench-version-control",

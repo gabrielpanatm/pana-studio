@@ -96,6 +96,7 @@
     return Array.prototype.find.call(element.classList, function (className) {
       return className !== EMPTY_EDITABLE_CLASS &&
         className !== EMPTY_TERA_SLOT_CLASS &&
+        className !== ACTIVE_DOCUMENT_ROOT_CLASS &&
         !generatedPrefix.test(className) &&
         !utilityClass.test(className);
     }) || "";
@@ -150,7 +151,7 @@
 
   function domNodeLabelFor(element) {
     var tag = element.tagName.toLowerCase();
-    if (element.hasAttribute(EMPTY_TERA_SLOT_ATTR)) {
+    if (element.hasAttribute(EMPTY_TERA_SLOT_ATTR) || element.hasAttribute(ACTIVE_DOCUMENT_ROOT_ATTR)) {
       return element.getAttribute("data-pana-empty-label") || semanticTagLabel(tag);
     }
 
@@ -237,6 +238,7 @@
   SKIP_ATTRS[PREVIEW_REVISION_ATTR] = true;
   SKIP_ATTRS[SESSION_ID_ATTR] = true;
   SKIP_ATTRS[EMPTY_TERA_SLOT_ATTR] = true;
+  SKIP_ATTRS[ACTIVE_DOCUMENT_ROOT_ATTR] = true;
   SKIP_ATTRS[EMPTY_HTML_ATTR] = true;
   SKIP_ATTRS["data-pana-empty-label"] = true;
 
@@ -280,6 +282,7 @@
     if (!document.body) return;
     var elements = document.body.querySelectorAll("*");
     for (var i = 0; i < elements.length; i += 1) {
+      if (isEmptyTeraSlot(elements[i]) || isActiveDocumentRoot(elements[i])) continue;
       if (!elements[i].getAttribute(SESSION_ID_ATTR)) {
         elements[i].setAttribute(SESSION_ID_ATTR, "ps-" + String(nextSessionElementId++));
       }
@@ -365,7 +368,7 @@
       var tag = element.tagName.toLowerCase();
       if (skipTags[tag] || svgTags[tag]) return;
       if (isStudioOverlayElement(element)) return;
-      if (isEmptyTeraSlot(element)) return;
+      if (isEmptyTeraSlot(element) || isActiveDocumentRoot(element)) return;
       result.push({
         selector: createDomPathSelector(element),
 	        label: domNodeLabelFor(element),

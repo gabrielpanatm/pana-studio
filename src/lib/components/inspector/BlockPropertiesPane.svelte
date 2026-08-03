@@ -6,15 +6,20 @@
     IconGripHorizontal,
   } from "@tabler/icons-svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import DynamicWidgetPropertiesEditor from "$lib/components/inspector/DynamicWidgetPropertiesEditor.svelte";
   import { resolveUiBlockSourceInstanceForSelection } from "$lib/blocks/registry";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
-  import { readUiBlockGraph } from "$lib/project/io";
+  import { readDynamicWidgetSnapshot, readUiBlockGraph } from "$lib/project/io";
   import type {
     BlockSelectionContext,
     BlockOptionDefinition,
     BlockOptionValue,
     FileBufferRequestIdentity,
+    DynamicWidgetProperties,
+    DynamicWidgetSelectionContext,
+    DynamicWidgetSnapshot,
     NativeBlockOptionState,
+    SourceGraph,
     UiBlockGraphSnapshot,
     UiBlockSourceInstance,
   } from "$lib/types";
@@ -33,6 +38,8 @@
 
   let {
     selectionContext = null,
+    dynamicSelectionContext = null,
+    sourceGraph = null,
     selectedTag = null,
     projectRoot = "",
     runtimeSessionId = "",
@@ -42,8 +49,12 @@
     collapsed = false,
     onLayoutCommit,
     onApply,
+    onDynamicUpdate,
+    onDynamicDelete,
   }: {
     selectionContext?: BlockSelectionContext | null;
+    dynamicSelectionContext?: DynamicWidgetSelectionContext | null;
+    sourceGraph?: SourceGraph | null;
     selectedTag?: string | null;
     projectRoot?: string;
     runtimeSessionId?: string;
@@ -53,6 +64,11 @@
     collapsed?: boolean;
     onLayoutCommit?: (height: number, collapsed: boolean) => void;
     onApply: (request: ApplyRequest) => Promise<EditorActionOutcome>;
+    onDynamicUpdate: (
+      snapshot: DynamicWidgetSnapshot,
+      properties: DynamicWidgetProperties,
+    ) => Promise<EditorActionOutcome>;
+    onDynamicDelete: (snapshot: DynamicWidgetSnapshot) => Promise<EditorActionOutcome>;
   } = $props();
 
   const MIN_HEIGHT = 140;
@@ -60,13 +76,17 @@
   let panelHeight = $state(220);
   let panelCollapsed = $state(false);
   let graph = $state<UiBlockGraphSnapshot | null>(null);
+  let dynamicSnapshot = $state<DynamicWidgetSnapshot | null>(null);
+  let dynamicLoadError = $state("");
   let loadError = $state("");
   let status = $state("");
   let pendingOption = $state("");
   let draftValues = $state<Record<string, BlockOptionValue>>({});
   let requestKey = "";
+  let dynamicRequestKey = "";
 
   const blockContext = $derived(selectionContext);
+  const dynamicContext = $derived(dynamicSelectionContext);
   const sourceInstance = $derived(
     resolveUiBlockSourceInstanceForSelection(graph, blockContext),
   );
@@ -75,10 +95,44 @@
       ? graph?.definitions.find((candidate) => candidate.id === sourceInstance.definitionId) ?? null
       : graph?.definitions.find((candidate) => candidate.providerId === blockContext?.providerId) ?? null,
   );
+  const dynamicDefinition = $derived(
+    sourceGraph?.dynamicWidgetGraph.definitions.find(
+      (candidate) => candidate.id === dynamicContext?.providerId,
+    ) ?? null,
+  );
 
   $effect(() => {
     panelHeight = clampHeight(height);
     panelCollapsed = collapsed;
+  });
+
+  $effect(() => {
+    const context = dynamicContext;
+    const key = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}\u0000${previewRevision}\u0000${context?.modelRevision ?? ""}\u0000${context?.sourceInstanceId ?? ""}`;
+    if (!context || !projectRoot || !runtimeSessionId) {
+      dynamicSnapshot = null;
+      dynamicLoadError = "";
+      dynamicRequestKey = key;
+      return;
+    }
+    if (dynamicRequestKey === key) return;
+    dynamicRequestKey = key;
+    dynamicSnapshot = null;
+    dynamicLoadError = "";
+    void readDynamicWidgetSnapshot({
+      identity: {
+        expectedProjectRoot: projectRoot,
+        expectedSessionId: runtimeSessionId,
+      },
+      expectedWorkspaceRevision: workspaceRevision,
+      expectedModelRevision: context.modelRevision,
+      previewRevision: context.previewRevision,
+      sourceInstanceId: context.sourceInstanceId,
+    }).then((snapshot) => {
+      if (dynamicRequestKey === key) dynamicSnapshot = snapshot;
+    }).catch((cause) => {
+      if (dynamicRequestKey === key) dynamicLoadError = errorMessage(cause);
+    });
   });
 
   $effect(() => {
@@ -319,7 +373,7 @@
   }
 </script>
 
-{#if blockContext}
+{#if dynamicContext || blockContext}
   <section
     class="block-properties"
     class:collapsed={panelCollapsed}
@@ -340,11 +394,13 @@
     {/if}
     <header>
       <div>
-        <span>{t("inspector-block-properties")}</span>
-        <strong>{localizedDefinitionName(
-          blockContext.providerId,
-          definition?.displayName ?? blockContext.providerId,
-        )}</strong>
+        <span>{dynamicContext ? t("inspector-extension-properties") : t("inspector-block-properties")}</span>
+        <strong>{dynamicContext
+          ? (dynamicDefinition?.label ?? dynamicContext.providerId)
+          : localizedDefinitionName(
+              blockContext?.providerId ?? "",
+              definition?.displayName ?? blockContext?.providerId ?? "",
+            )}</strong>
       </div>
       <div class="panel-actions">
         <button type="button" aria-label={t("inspector-block-maximize")} title={t("inspector-block-maximize")} onclick={maximize}>
@@ -365,6 +421,25 @@
 
     {#if !panelCollapsed}
       <div class="properties-body">
+        {#if dynamicContext}
+          <div class="block-breadcrumb">
+            <code>{dynamicContext.providerId}</code>
+            <span>›</span>
+            <span>{dynamicContext.sourceInstanceId}</span>
+          </div>
+          {#if dynamicLoadError}
+            <p class="diagnostic" role="alert">{dynamicLoadError}</p>
+          {:else if !dynamicSnapshot}
+            <p class="empty">{t("inspector-dynamic-reading")}</p>
+          {:else}
+            <DynamicWidgetPropertiesEditor
+              snapshot={dynamicSnapshot}
+              {sourceGraph}
+              onUpdate={onDynamicUpdate}
+              onDelete={onDynamicDelete}
+            />
+          {/if}
+        {:else if blockContext}
         <div class="block-breadcrumb">
           <code>{blockContext.providerId}</code>
           <span>›</span>
@@ -455,6 +530,7 @@
           {/if}
         {/if}
         {#if status}<p class="status" aria-live="polite">{status}</p>{/if}
+        {/if}
       </div>
     {/if}
   </section>

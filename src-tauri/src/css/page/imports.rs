@@ -44,7 +44,7 @@ fn find_variables_partial(style_files: &[String], style_root: &str) -> Option<St
         .map(|(_, path)| path)
 }
 
-pub(super) fn relative_scss_import_path(from_file: &Path, target_file: &Path) -> Option<String> {
+pub(crate) fn relative_scss_import_path(from_file: &Path, target_file: &Path) -> Option<String> {
     let from_parent = from_file.parent().unwrap_or_else(|| Path::new(""));
     let from_components = clean_components(from_parent);
     let mut target_components = clean_components(target_file);

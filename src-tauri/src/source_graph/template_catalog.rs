@@ -18,6 +18,7 @@ pub enum TemplateCatalogRole {
     Page,
     Layout,
     Partial,
+    ListingItem,
     MacroLibrary,
     Shortcode,
 }
@@ -29,6 +30,7 @@ pub enum TemplateSemanticCategory {
     Page,
     Archive,
     Element,
+    ListingItem,
     Taxonomy,
     System,
 }
@@ -59,6 +61,7 @@ pub enum TemplateSemanticRole {
     SpecificPage,
     SectionArchive,
     SectionElement,
+    ListingItem,
     TaxonomyList,
     TaxonomyTerm,
     NotFound,
@@ -373,6 +376,7 @@ fn build_semantic_entries(
                 matches!(
                     role,
                     TemplateCatalogRole::Partial
+                        | TemplateCatalogRole::ListingItem
                         | TemplateCatalogRole::MacroLibrary
                         | TemplateCatalogRole::Shortcode
                 )
@@ -817,6 +821,60 @@ fn build_semantic_entries(
         }
     }
 
+    for listing_item in &graph.listing_items.items {
+        let resource = effective_by_name
+            .get(&normalize_template_name(&listing_item.template_name))
+            .copied();
+        if let Some(resource) = resource {
+            represented_resources.insert(resource.id.clone());
+        }
+        let preview_page = listing_item
+            .preview_page_file
+            .as_deref()
+            .and_then(|file| graph.pages.iter().find(|page| page.file == file));
+        let affected_pages = preview_page
+            .map(|page| vec![page_usage(page)])
+            .unwrap_or_default();
+        entries.push(semantic_entry(
+            format!("semantic:listing-item:{}", listing_item.id),
+            TemplateSemanticCategory::ListingItem,
+            TemplateSemanticRole::ListingItem,
+            listing_item.label.clone(),
+            None,
+            TemplateSemanticTarget {
+                id: listing_item.id.clone(),
+                kind: TemplateSemanticTargetKind::Resource,
+                label: Some(listing_item.label.clone()),
+                label_diagnostic: None,
+                file: Some(listing_item.file.clone()),
+                url: listing_item.preview_url.clone(),
+            },
+            TemplateAssignment {
+                key: Some("include".to_string()),
+                source: TemplateAssignmentSource::Convention,
+                declared_in: Some(
+                    crate::kernel::listing_items::LISTING_ITEM_METADATA_PATH.to_string(),
+                ),
+                resource_id: resource.map(|resource| resource.id.clone()),
+                resource_name: listing_item.template_name.clone(),
+                fallback_name: None,
+            },
+            Some(TemplatePreviewContext {
+                kind: TemplateCatalogContext::Page,
+                page_file: listing_item.preview_page_file.clone(),
+                title: preview_page.map(|page| page.title.clone()),
+                title_diagnostic: None,
+                url: listing_item.preview_url.clone().unwrap_or_default(),
+                exact: true,
+                available: preview_page.is_some() && resource.is_some(),
+                unavailable_diagnostic: (preview_page.is_none() || resource.is_none()).then(|| {
+                    LocalizedDiagnostic::new("templates-preview-listing-item-unavailable")
+                }),
+            }),
+            affected_pages,
+        ));
+    }
+
     for resource in resources.iter().filter(|resource| {
         resource.effective
             && resource.roles.contains(&TemplateCatalogRole::Page)
@@ -825,6 +883,7 @@ fn build_semantic_entries(
                 matches!(
                     role,
                     TemplateCatalogRole::Partial
+                        | TemplateCatalogRole::ListingItem
                         | TemplateCatalogRole::MacroLibrary
                         | TemplateCatalogRole::Shortcode
                 )
@@ -972,8 +1031,9 @@ fn semantic_category_rank(category: TemplateSemanticCategory) -> u8 {
         TemplateSemanticCategory::Page => 1,
         TemplateSemanticCategory::Archive => 2,
         TemplateSemanticCategory::Element => 3,
-        TemplateSemanticCategory::Taxonomy => 4,
-        TemplateSemanticCategory::System => 5,
+        TemplateSemanticCategory::ListingItem => 4,
+        TemplateSemanticCategory::Taxonomy => 5,
+        TemplateSemanticCategory::System => 6,
     }
 }
 
@@ -1258,6 +1318,7 @@ fn template_roles(
     let mut roles = Vec::new();
     let is_macro_library = template.name.starts_with("macros/") || !template.macros.is_empty();
     let is_partial = template.name.starts_with("partials/");
+    let is_listing_item = template.name.starts_with("listing-items/");
     let is_shortcode = template.name.starts_with("shortcodes/");
     let is_layout = !template.blocks.is_empty()
         && (used_by_templates
@@ -1272,7 +1333,9 @@ fn template_roles(
     if is_layout {
         roles.push(TemplateCatalogRole::Layout);
     }
-    if is_partial {
+    if is_listing_item {
+        roles.push(TemplateCatalogRole::ListingItem);
+    } else if is_partial {
         roles.push(TemplateCatalogRole::Partial);
     }
     if is_macro_library {
@@ -1281,7 +1344,7 @@ fn template_roles(
     if is_shortcode {
         roles.push(TemplateCatalogRole::Shortcode);
     }
-    if roles.is_empty() && !is_partial && !is_macro_library && !is_shortcode {
+    if roles.is_empty() && !is_partial && !is_listing_item && !is_macro_library && !is_shortcode {
         roles.push(TemplateCatalogRole::Page);
     }
     roles
@@ -1460,6 +1523,9 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            content_models: Default::default(),
+            listing_items: Default::default(),
+            dynamic_widget_graph: Default::default(),
             markdown_projections: Vec::new(),
             nodes: Vec::<SourceNode>::new(),
             relations: vec![
@@ -1591,6 +1657,9 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            content_models: Default::default(),
+            listing_items: Default::default(),
+            dynamic_widget_graph: Default::default(),
             markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: vec![
@@ -1691,6 +1760,9 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            content_models: Default::default(),
+            listing_items: Default::default(),
+            dynamic_widget_graph: Default::default(),
             markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),
@@ -1749,6 +1821,9 @@ mod tests {
             structured_documents: Vec::new(),
             component_graph: Default::default(),
             block_graph: Default::default(),
+            content_models: Default::default(),
+            listing_items: Default::default(),
+            dynamic_widget_graph: Default::default(),
             markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),

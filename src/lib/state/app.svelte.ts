@@ -3,6 +3,10 @@ import { SOURCE_LOADING_SENTINEL } from "$lib/editor-runtime/source-state";
 import { tick } from "svelte";
 import { contextMenu } from "$lib/context-menu/store.svelte";
 import {
+  htmlElementContextMenuItems,
+  teraContextMenuItems,
+} from "$lib/editor-runtime/context-menu";
+import {
   createEditorRuntime,
   type EditorRuntime,
   type EditorRuntimeHost,
@@ -23,6 +27,7 @@ import {
 import {
   blockedAction,
   committedAction,
+  failedAction,
   noopAction,
   type EditorActionOutcome,
 } from "$lib/editor-runtime/action-outcome";
@@ -39,10 +44,12 @@ import type {
 import {
   acceptSelectionObservation,
   applySelectionIntent as applySelectionIntentInRust,
+  deleteDynamicWidget as deleteDynamicWidgetInRust,
   readEditorNavigationSnapshot,
   readSelectionSnapshot,
   readStartupFlow,
   stopVersionPreview,
+  updateDynamicWidget as updateDynamicWidgetInRust,
 } from "$lib/project/io";
 import {
   buildInteractivePreviewUrl,
@@ -184,7 +191,12 @@ import type {
   CoordinatedElementSelection,
   InspectorHtmlPhysicalFacts,
   InspectorSelectionSummarySnapshot,
+  InsertCatalogItem,
+  InsertCatalogSnapshot,
   BlockSelectionContext,
+  DynamicWidgetProperties,
+  DynamicWidgetSelectionContext,
+  DynamicWidgetSnapshot,
   CanvasElementObservation,
   SelectionCoordinatorSnapshot,
   SelectionIntent,
@@ -274,9 +286,14 @@ import {
   type HtmlDraftControllerHost,
 } from "$lib/state/html-draft-controller";
 import {
+  updatePageFrontmatterField as updatePageFrontmatterFieldFromController,
   updatePageFrontmatterSource as updatePageFrontmatterSourceFromController,
   type PageSettingsControllerHost,
 } from "$lib/state/page-settings-controller";
+import type {
+  PageFrontmatterField,
+  PageFrontmatterMutationValue,
+} from "$lib/markdown/frontmatter";
 
 import {
   requestControlledPreviewRefresh as requestControlledPreviewRefreshFromController,
@@ -364,6 +381,9 @@ import {
   startTeraPaletteDrag as startTeraPaletteDragFromController,
   type TeraPaletteDragHost,
 } from "$lib/state/tera-palette-drag-controller";
+import {
+  startInsertCatalogDrag as startInsertCatalogDragFromController,
+} from "$lib/state/insert-catalog-drag-controller";
 import {
   deleteSelectedTeraNode as deleteSelectedTeraNodeFromController,
   insertTeraPaletteItemAtTarget as insertTeraPaletteItemAtTargetFromController,
@@ -1040,6 +1060,37 @@ export class AppState {
         : null,
       rootTemplateSourceId: null,
       rootSessionId: coordinated.snapshot.runtimeSessionId,
+    };
+  });
+  inspectorDynamicWidgetSelectionContext = $derived.by<DynamicWidgetSelectionContext | null>(() => {
+    const coordinated = this.coordinatedElementSelection;
+    const navigation = this.editorNavigationSnapshot;
+    const node = this.selectedEditorNavigationNode;
+    if (
+      !coordinated
+      || !navigation
+      || !node
+      || node.renderInstanceId !== coordinated.renderInstanceId
+      || !canvasIdentityEquals(navigation.identity, coordinated.snapshot.canvasIdentity)
+    ) return null;
+    const sourceInstanceIds = Array.isArray(node.dynamicWidgetSourceInstanceIds)
+      ? [...node.dynamicWidgetSourceInstanceIds]
+      : [];
+    // Provenance is ordered outer-to-inner; the innermost widget is the
+    // property subject when, for example, a Dynamic Field lives in a Listing.
+    const sourceInstanceId = sourceInstanceIds.at(-1) ?? null;
+    if (!sourceInstanceId) return null;
+    const sourceInstance = this.sourceGraph?.dynamicWidgetGraph.sourceInstances.find(
+      (candidate) => candidate.id === sourceInstanceId,
+    ) ?? null;
+    if (!sourceInstance) return null;
+    return {
+      sourceInstanceId,
+      sourceInstanceIds,
+      providerId: sourceInstance.providerId,
+      modelRevision: navigation.modelRevision,
+      previewRevision: navigation.identity.previewRevision,
+      renderInstanceId: coordinated.renderInstanceId,
     };
   });
   selectionEpoch = $derived(this.selectionSnapshot?.selectionRevision ?? 0);
@@ -3535,29 +3586,78 @@ export class AppState {
       this.kernelUndoRedoFrontendQuiesceActive
       || this.kernelUndoRedoFrontendLeaseActive
     ) return false;
+    let expectedSelectionRevision = target.expectedSelectionRevision ?? null;
     if (
-      target.expectedSelectionRevision
-      && this.selectionSnapshot?.selectionRevision !== target.expectedSelectionRevision
+      expectedSelectionRevision
+      && this.selectionSnapshot?.selectionRevision !== expectedSelectionRevision
     ) return false;
     const property = target.property?.trim() || null;
-    const focus = this.selectionSnapshot?.focus;
-    if (
-      (
-        focus?.kind === "cssRule"
-        || focus?.kind === "cssProperty"
-      )
-      && focus.file === target.file
-      && focus.selector === target.selector
-      && (
-        (!property && focus.kind === "cssRule")
-        || (
-          property
-          && focus.kind === "cssProperty"
-          && focus.property === property
-        )
-      )
-    ) return true;
     try {
+      const expectedWorkspaceRevision = this.projectWorkspaceSnapshot?.revision ?? null;
+      if (
+        expectedWorkspaceRevision !== null
+        && this.activeCanvasIdentity?.workspaceRevision !== expectedWorkspaceRevision
+      ) {
+        const previousAnchor = this.selectionSnapshot?.anchor ?? null;
+        const outcome = await projectLatestProjectWorkspacePreview(this, {
+          reason: "manual",
+          minimumWorkspaceRevision: expectedWorkspaceRevision,
+          force: true,
+        });
+        if (
+          (outcome.status !== "published" && outcome.status !== "already_current")
+          || this.projectWorkspaceSnapshot?.revision !== expectedWorkspaceRevision
+          || this.activeCanvasIdentity?.workspaceRevision !== expectedWorkspaceRevision
+        ) return false;
+        await this.refreshEditorNavigationSnapshot(
+          this.activeCanvasIdentity,
+          this.activeCanvasUrl || this.previewSrc,
+          { strict: true },
+        );
+        const currentSelection = this.selectionSnapshot;
+        const currentAnchor = currentSelection?.anchor ?? null;
+        if (
+          !currentSelection
+          || currentSelection.resolution !== "resolved"
+          || !previousAnchor
+          || !currentAnchor
+        ) return false;
+        const stableAnchorMatches = Boolean(
+          (
+            previousAnchor.editorNodeId
+            && currentAnchor.editorNodeId === previousAnchor.editorNodeId
+          )
+          || (
+            previousAnchor.sourceNodeId
+            && currentAnchor.sourceNodeId === previousAnchor.sourceNodeId
+          )
+          || (
+            previousAnchor.bindingKey
+            && currentAnchor.bindingKey === previousAnchor.bindingKey
+            && currentAnchor.bindingPath === previousAnchor.bindingPath
+          ),
+        );
+        if (!stableAnchorMatches) return false;
+        expectedSelectionRevision = currentSelection.selectionRevision;
+      }
+
+      const focus = this.selectionSnapshot?.focus;
+      if (
+        (
+          focus?.kind === "cssRule"
+          || focus?.kind === "cssProperty"
+        )
+        && focus.file === target.file
+        && focus.selector === target.selector
+        && (
+          (!property && focus.kind === "cssRule")
+          || (
+            property
+            && focus.kind === "cssProperty"
+            && focus.property === property
+          )
+        )
+      ) return true;
       const selection = await this.applySelectionIntent({
         kind: "setFocus",
         focus: property
@@ -3574,7 +3674,7 @@ export class AppState {
               file: target.file,
               viewport: this.previewDevice,
             },
-        expectedSelectionRevision: target.expectedSelectionRevision ?? null,
+        expectedSelectionRevision,
       });
       if (
         !selection
@@ -3593,9 +3693,9 @@ export class AppState {
         this.kernelUndoRedoFrontendQuiesceActive
         || this.kernelUndoRedoFrontendLeaseActive
         || (
-          target.expectedSelectionRevision
+          expectedSelectionRevision
           && this.selectionSnapshot?.selectionRevision
-            !== target.expectedSelectionRevision
+            !== expectedSelectionRevision
         )
       ) return false;
       this.setGlobalStatus(
@@ -3829,6 +3929,7 @@ export class AppState {
   previewDropTargetStatus(target: {
     targetRenderInstanceId?: string | null;
     targetBoundarySourceId?: string | null;
+    targetBoundaryInstanceId?: string | null;
   }) {
     return editorNavigationDropTargetStatusFromController(this, target);
   }
@@ -4352,6 +4453,35 @@ export class AppState {
     startTeraPaletteDragFromController(this.teraPaletteDragHost(), item, event);
   }
 
+  startInsertCatalogDrag(
+    item: InsertCatalogItem,
+    snapshot: InsertCatalogSnapshot,
+    event: PointerEvent,
+  ) {
+    const currentRevision = this.projectWorkspaceSnapshot?.revision ?? null;
+    const context = snapshot.context;
+    if (
+      snapshot.schemaVersion !== 1
+      || snapshot.projectRoot !== this.sessionProjectRoot
+      || snapshot.runtimeSessionId !== this.kernelProjectSessionId
+      || snapshot.workspaceRevision !== currentRevision
+      || context.activeDocumentPath !== this.activeScannedPath
+      || context.activeTemplatePath !== this.activeRenderedTemplatePath
+      || context.activePagePath !== this.templateWorkbenchPreferredPagePath
+      || context.canvasPreviewRevision !== (this.activeCanvasIdentity?.previewRevision ?? null)
+      || context.canvasAvailable !== (this.centerView === "preview" && Boolean(this.activeCanvasIdentity))
+      || context.targetSourceId !== (this.coordinatedElementSelection?.sourceNodeId ?? null)
+      || context.targetTag !== (this.coordinatedElementSelection?.observation.tag ?? null)
+    ) {
+      this.setGlobalStatus(
+        "Catalogul de inserare s-a actualizat. Reia tragerea din lista curentă.",
+        "error",
+      );
+      return;
+    }
+    startInsertCatalogDragFromController(this.elementPaletteDragHost(), item, event);
+  }
+
   async insertPaletteElementAtTarget(request: PreviewInsertDropRequest) {
     return await insertPaletteElementAtTargetFromController(
       this.htmlActionsControllerHost(),
@@ -4361,6 +4491,26 @@ export class AppState {
 
   async insertTeraPaletteItemAtTarget(request: TeraDropRequest) {
     return await insertTeraPaletteItemAtTargetFromController(this.teraActionsControllerHost(), request);
+  }
+
+  async selectDynamicWidgetSourceInstance(instanceId: string) {
+    await this.refreshEditorNavigationSnapshot();
+    const sourceInstance = this.sourceGraph?.dynamicWidgetGraph.sourceInstances.find(
+      (candidate) => candidate.instanceId === instanceId,
+    ) ?? null;
+    if (!sourceInstance) return false;
+    const rootSourceNodeIds = new Set(sourceInstance.rootSourceNodeIds);
+    const node = this.editorNavigationSnapshot?.nodes.find((candidate) => (
+      candidate.dynamicWidgetSourceInstanceIds.includes(sourceInstance.id)
+      && Boolean(candidate.sourceNodeId && rootSourceNodeIds.has(candidate.sourceNodeId))
+      && Boolean(candidate.renderInstanceId)
+    )) ?? this.editorNavigationSnapshot?.nodes.find((candidate) => (
+      candidate.dynamicWidgetSourceInstanceIds.includes(sourceInstance.id)
+      && Boolean(candidate.renderInstanceId)
+    )) ?? null;
+    if (!node) return false;
+    this.selectEditorNavigationNode(node);
+    return true;
   }
 
   selectEditorNavigationNode(node: EditorNavigationNode) {
@@ -4412,6 +4562,119 @@ export class AppState {
     );
   }
 
+  openEditorNavigationContextMenu(
+    requestedNode: EditorNavigationNode,
+    x: number,
+    y: number,
+  ) {
+    const node = this.editorNavigationSnapshot?.nodes.find(
+      (candidate) => candidate.id === requestedNode.id,
+    ) ?? null;
+    if (!node) {
+      contextMenu.close();
+      return;
+    }
+
+    const selector = editorNavigationNodeSelector(node) ?? "";
+    const requiredScopeId = node.capabilities.requiresEditScopeId;
+    const scopeAllowsEdit = requiredScopeId !== null
+      && requiredScopeId === this.editorEditScopeId;
+    const sourceIsEditable = node.origin !== "theme"
+      && (!node.capabilities.readOnly || scopeAllowsEdit);
+    this.selectEditorNavigationNode(node);
+
+    if (node.kind === "htmlElement") {
+      const canMutate = sourceIsEditable
+        && Boolean(node.sourceNodeId && node.tag && selector);
+      const target: EditorHtmlTarget = {
+        kind: "html",
+        selector,
+        tag: node.tag ?? "",
+        label: node.label,
+        renderInstanceId: node.renderInstanceId,
+        sourceLocation: node.file && node.range
+          ? {
+              file: node.file,
+              line: node.range.line,
+              column: node.range.column,
+            }
+          : null,
+        sourceId: node.sourceNodeId,
+        sessionId: this.activeCanvasIdentity?.runtimeSessionId ?? null,
+      };
+      contextMenu.open({
+        source: "layers",
+        x,
+        y,
+        title: `<${node.tag ?? "element"}> ${node.label}`,
+        subtitle: node.file ?? selector,
+        items: htmlElementContextMenuItems(
+          this.editorRuntime,
+          target,
+          "layers",
+          {
+            canSelect: node.capabilities.canSelect,
+            canOpenInCode: node.capabilities.canOpenInCode,
+            canDuplicate: canMutate,
+            canDelete: canMutate,
+          },
+        ),
+      });
+      return;
+    }
+
+    if (node.kind === "teraBoundary") {
+      const sourceId = node.boundary?.sourceNodeId
+        ?? node.sourceNodeId
+        ?? "";
+      const sourceNode = this.sourceGraph?.nodes.find(
+        (candidate) => candidate.id === node.sourceNodeId
+          || candidate.id === sourceId,
+      ) ?? null;
+      const canDelete = sourceIsEditable
+        && Boolean(node.sourceNodeId && node.boundary)
+        && node.capabilities.canMoveAtomic;
+      const target: EditorTeraTarget = {
+        kind: "tera",
+        editorNodeId: node.id,
+        sourceId,
+        selector: selector || null,
+        label: node.label,
+        kindLabel: node.sourceKind ?? "Tera",
+        file: node.file,
+        origin: node.origin === "theme"
+          ? "theme"
+          : node.origin === "project"
+            ? "current"
+            : "unknown",
+        themeName: node.themeName,
+        canEnterBoundary: node.capabilities.canEnterBoundary,
+        sourceNode,
+      };
+      contextMenu.open({
+        source: "layers",
+        x,
+        y,
+        title: `${node.sourceKind ?? "Tera"}: ${node.label}`,
+        subtitle: node.file ?? sourceId,
+        items: teraContextMenuItems(
+          this.editorRuntime,
+          target,
+          "layers",
+          {
+            canSelect: node.capabilities.canSelect,
+            canEnterBoundary: node.capabilities.canEnterBoundary,
+            canOpenInCode: node.capabilities.canOpenInCode,
+            canDelete,
+          },
+        ),
+      });
+      return;
+    }
+
+    contextMenu.close();
+  }
+
   async deleteEditorNavigationNode(node: EditorNavigationNode) {
     const selector = editorNavigationNodeSelector(node) ?? "";
     if (node.kind === "htmlElement") {
@@ -4423,7 +4686,16 @@ export class AppState {
           selector,
           tag: node.tag ?? "",
           label: node.label,
+          renderInstanceId: node.renderInstanceId,
+          sourceLocation: node.file && node.range
+            ? {
+                file: node.file,
+                line: node.range.line,
+                column: node.range.column,
+              }
+            : null,
           sourceId: node.sourceNodeId,
+          sessionId: this.activeCanvasIdentity?.runtimeSessionId ?? null,
         },
       });
     }
@@ -4524,6 +4796,109 @@ export class AppState {
     );
   }
 
+  async updateDynamicWidgetFromInspector(
+    snapshot: DynamicWidgetSnapshot,
+    properties: DynamicWidgetProperties,
+  ): Promise<EditorActionOutcome> {
+    const workspace = this.projectWorkspaceSnapshot;
+    const context = this.inspectorDynamicWidgetSelectionContext;
+    if (
+      !workspace
+      || !context
+      || workspace.projectRoot !== snapshot.projectRoot
+      || workspace.runtimeSessionId !== snapshot.runtimeSessionId
+      || workspace.revision !== snapshot.workspaceRevision
+      || context.sourceInstanceId !== snapshot.sourceInstance.id
+      || context.modelRevision !== snapshot.modelRevision
+      || context.previewRevision !== snapshot.previewRevision
+    ) {
+      return blockedAction(t("inspector-dynamic-selection-stale"));
+    }
+    try {
+      const receipt = await updateDynamicWidgetInRust({
+        request: {
+          identity: {
+            expectedProjectRoot: snapshot.projectRoot,
+            expectedSessionId: snapshot.runtimeSessionId,
+          },
+          expectedWorkspaceRevision: snapshot.workspaceRevision,
+          expectedModelRevision: snapshot.modelRevision,
+          previewRevision: snapshot.previewRevision,
+          sourceInstanceId: snapshot.sourceInstance.id,
+        },
+        expectedSourceRevision: snapshot.sourceInstance.sourceRevision,
+        properties,
+      });
+      if (
+        this.sessionProjectRoot !== receipt.projectRoot
+        || this.kernelProjectSessionId !== receipt.runtimeSessionId
+      ) return blockedAction(t("inspector-dynamic-session-changed-update"));
+      const settlement = await settleProjectWorkspaceMutation(this, receipt, {
+        preferredRelativePath: snapshot.sourceInstance.file,
+        warningLabel: t("inspector-dynamic-update-operation"),
+      });
+      this.setGlobalStatus(
+        settlement.warnings.length > 0
+          ? t("inspector-dynamic-updated-resync-status")
+          : t("inspector-dynamic-updated-status"),
+        "unsaved",
+      );
+      return settlement.authority === "committed"
+        ? committedAction()
+        : noopAction(t("inspector-dynamic-no-changes"));
+    } catch (error) {
+      return failedAction(errorMessage(error));
+    }
+  }
+
+  async deleteDynamicWidgetFromInspector(
+    snapshot: DynamicWidgetSnapshot,
+  ): Promise<EditorActionOutcome> {
+    const workspace = this.projectWorkspaceSnapshot;
+    const context = this.inspectorDynamicWidgetSelectionContext;
+    if (
+      !workspace
+      || !context
+      || workspace.projectRoot !== snapshot.projectRoot
+      || workspace.runtimeSessionId !== snapshot.runtimeSessionId
+      || workspace.revision !== snapshot.workspaceRevision
+      || context.sourceInstanceId !== snapshot.sourceInstance.id
+      || context.modelRevision !== snapshot.modelRevision
+      || context.previewRevision !== snapshot.previewRevision
+    ) {
+      return blockedAction(t("inspector-dynamic-selection-stale"));
+    }
+    try {
+      const receipt = await deleteDynamicWidgetInRust({
+        request: {
+          identity: {
+            expectedProjectRoot: snapshot.projectRoot,
+            expectedSessionId: snapshot.runtimeSessionId,
+          },
+          expectedWorkspaceRevision: snapshot.workspaceRevision,
+          expectedModelRevision: snapshot.modelRevision,
+          previewRevision: snapshot.previewRevision,
+          sourceInstanceId: snapshot.sourceInstance.id,
+        },
+        expectedSourceRevision: snapshot.sourceInstance.sourceRevision,
+      });
+      if (
+        this.sessionProjectRoot !== receipt.projectRoot
+        || this.kernelProjectSessionId !== receipt.runtimeSessionId
+      ) return blockedAction(t("inspector-dynamic-session-changed-delete"));
+      const settlement = await settleProjectWorkspaceMutation(this, receipt, {
+        preferredRelativePath: snapshot.sourceInstance.file,
+        warningLabel: t("inspector-dynamic-delete-operation"),
+      });
+      this.setGlobalStatus(t("inspector-dynamic-deleted-status"), "unsaved");
+      return settlement.authority === "committed"
+        ? committedAction()
+        : noopAction(t("inspector-dynamic-already-deleted"));
+    } catch (error) {
+      return failedAction(errorMessage(error));
+    }
+  }
+
   async applyClassesToHtml() {
     return await applyClassesToHtmlFromController(this.htmlActionsControllerHost());
   }
@@ -4583,6 +4958,19 @@ export class AppState {
 
   updatePageFrontmatterSource(relativePath: string, nextSource: string) {
     updatePageFrontmatterSourceFromController(this.pageSettingsControllerHost(), relativePath, nextSource);
+  }
+
+  async updatePageFrontmatterField(
+    relativePath: string,
+    field: PageFrontmatterField,
+    value: PageFrontmatterMutationValue,
+  ): Promise<string> {
+    return await updatePageFrontmatterFieldFromController(
+      this.pageSettingsControllerHost(),
+      relativePath,
+      field,
+      value,
+    );
   }
 
   async readPageSettingsDocument(relativePath: string): Promise<string> {

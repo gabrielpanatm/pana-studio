@@ -57,6 +57,7 @@ export function editorNavigationNodeSelector(node: EditorNavigationNode): string
 export type EditorNavigationDropTarget = {
   targetRenderInstanceId?: string | null;
   targetBoundarySourceId?: string | null;
+  targetBoundaryInstanceId?: string | null;
 };
 
 export type EditorMoveNodeAnchor = Readonly<{
@@ -147,15 +148,19 @@ export function editorNavigationDropTargetStatus(
   }
   const renderInstanceId = target.targetRenderInstanceId?.trim() || null;
   const boundarySourceId = target.targetBoundarySourceId?.trim() || null;
-  const node = renderInstanceId
+  const boundaryInstanceId = target.targetBoundaryInstanceId?.trim() || null;
+  // An active empty document can also contain a synthetic render node used
+  // only to give the boundary geometry. Its semantic target remains the Rust
+  // boundary instance, so never let that helper render identity shadow it.
+  const node = boundaryInstanceId
     ? snapshot.nodes.find(
-      (candidate) => candidate.renderInstanceId === renderInstanceId,
+      (candidate) => candidate.kind === "teraBoundary"
+        && candidate.boundary?.boundaryInstanceId === boundaryInstanceId
+        && (!boundarySourceId || candidate.boundary.sourceNodeId === boundarySourceId),
     ) ?? null
-    : boundarySourceId
+    : renderInstanceId
       ? snapshot.nodes.find(
-        (candidate) => candidate.kind === "teraBoundary"
-          && candidate.boundary?.sourceNodeId === boundarySourceId
-          && candidate.boundary.empty,
+        (candidate) => candidate.renderInstanceId === renderInstanceId,
       ) ?? null
       : null;
   if (!node) {

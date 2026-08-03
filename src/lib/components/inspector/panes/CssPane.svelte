@@ -2,6 +2,7 @@
   import { IconPlus } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import ClassEditor from "$lib/components/inspector/ClassEditor.svelte";
+  import InspectorEmptyState from "$lib/components/inspector/InspectorEmptyState.svelte";
   import type {
     CssInspectorContextResolution,
     CssProperty,
@@ -144,29 +145,25 @@
           files: resolution.candidates.map((candidate) => candidate.file).join(", "),
         })}
       </p>
-    {:else if resolution?.state === "creation" && pageCssTarget}
-      <p class="hint">
-        {t("inspector-css-rule-will-create", { selector: effectiveSelector ?? "", file: pageCssTarget.file })}
-        {#if pageCssTarget.href && !pageCssTarget.linked}{t("inspector-css-will-link", { href: pageCssTarget.href })}{/if}
-      </p>
-      <ClassEditor
-        {classRules}
-        {pendingValues}
-        {scssVariables}
-        {fontFamilies}
-        {installedFontAxes}
-        {scannedAssets}
-        {cssPropertyEdit}
-        canonicalBackground={cssRuleContext?.background ?? null}
-        canonicalGrid={cssRuleContext?.grid ?? null}
-        gridViewport={cssRuleContext?.viewport ?? previewDevice}
-        gridHasBaseRule={cssRuleContext?.hasBaseRule ?? false}
-        gridHasViewportRule={cssRuleContext?.hasViewportRule ?? false}
-        {gridOverlayEnabled}
-        {onGridOverlayChange}
-      />
     {:else}
-      {#if previewDevice !== "desktop" && cssRuleContext?.hasBaseRule && !cssRuleContext?.hasViewportRule}
+      {#if pageCssTarget}
+        <p class="hint css-target-note">
+          {t("inspector-css-target-file", { file: pageCssTarget.file })}
+          {#if pageCssTarget.targetKind === "reusable"}
+            {#if pageCssTarget.consumerFiles.length > 0}
+              {t("inspector-css-reusable-consumers", { files: pageCssTarget.consumerFiles.join(", ") })}
+            {:else}
+              {t("inspector-css-reusable-preview-only")}
+            {/if}
+          {/if}
+        </p>
+      {/if}
+      {#if resolution?.state === "creation" && pageCssTarget}
+        <p class="hint">
+          {t("inspector-css-rule-will-create", { selector: effectiveSelector ?? "", file: pageCssTarget.file })}
+          {#if pageCssTarget.href && !pageCssTarget.linked}{t("inspector-css-will-link", { href: pageCssTarget.href })}{/if}
+        </p>
+      {:else if previewDevice !== "desktop" && cssRuleContext?.hasBaseRule && !cssRuleContext?.hasViewportRule}
         <p class="hint">
           {t("inspector-css-no-override", {
             viewport: `${viewportLabel}${cssRuleContext.resolvedBreakpoint ? ` (${cssRuleContext.resolvedBreakpoint})` : ""}`,
@@ -194,9 +191,9 @@
     {/if}
   </section>
 {:else if !hasElementSelection}
-  <p class="hint">{t("inspector-css-select-element")}</p>
+  <InspectorEmptyState kind="css" title="CSS" description={t("inspector-css-select-element")} />
 {:else if selectionSummary?.classes.length}
-  <p class="hint">{t("inspector-css-select-class")}</p>
+  <InspectorEmptyState kind="css" title="CSS" description={t("inspector-css-select-class")} />
 {/if}
 
 <style>
@@ -207,8 +204,13 @@
     line-height: 1.45;
   }
 
+  .css-target-note {
+    overflow-wrap: anywhere;
+  }
+
   .css-pane {
     display: flex;
+    flex: 1 1 auto;
     min-width: 0;
     flex-direction: column;
   }

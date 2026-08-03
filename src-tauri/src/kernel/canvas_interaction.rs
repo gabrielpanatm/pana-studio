@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     kernel::editor_navigation::{
         EditorNavigationEffectScope, EditorNavigationNode, EditorNavigationNodeKind,
-        EditorNavigationOrigin, EditorNavigationSnapshot, EditorSourceProvenance,
+        EditorNavigationOrigin, EditorNavigationSnapshot, EditorNavigationViewNodeKind,
+        EditorSourceProvenance,
     },
     preview::CanvasProjectionIdentity,
     project_model::model::ProjectModel,
-    source_graph::model::{SourceCapabilityReason, SourceRange},
+    source_graph::model::{SourceCapabilityReason, SourceNodeKind, SourceRange},
 };
 
 pub const CANVAS_INTERACTION_SCHEMA_VERSION: u32 = 2;
@@ -310,11 +311,153 @@ pub struct CanvasInteractionReceipt {
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct CanvasInteractionAuthoringSurface {
+    pub source_node_id: String,
+    pub boundary_instance_id: String,
+    pub render_instance_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct CanvasInteractionBindingReceipt {
     pub schema_version: u32,
     pub identity: CanvasInteractionIdentity,
     pub last_accepted_sequence: u64,
     pub active_document_path: Option<String>,
+    pub authoring_surfaces: Vec<CanvasInteractionAuthoringSurface>,
+}
+
+/// Projects the implicitly-open root of the active document as a stable
+/// authoring surface. Page templates use their local wrapper block, while
+/// directly opened fragments use their Template/Partial source root. The
+/// focused view identifies the root through the active source, its empty Slot,
+/// or its rendered children. The bridge then materializes one synthetic append
+/// affordance from provenance comments; authored children never become that
+/// affordance. Inherited and included boundaries retain their scope/ownership
+/// and can therefore never become authoring roots.
+fn active_document_authoring_surfaces(
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+) -> Vec<CanvasInteractionAuthoringSurface> {
+    let Some(active_document_path) = active_document_path
+        .map(normalized_canvas_document_path)
+        .filter(|path| !path.is_empty())
+    else {
+        return Vec::new();
+    };
+    let focused_authoring_context = snapshot
+        .focused_view
+        .as_ref()
+        .filter(|view| {
+            normalized_canvas_document_path(&view.active_document_path) == active_document_path
+        })
+        .map(|view| {
+            let source_ids = view
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == EditorNavigationViewNodeKind::Slot
+                        && node
+                            .source_kind
+                            .as_ref()
+                            .is_some_and(active_document_authoring_source_kind)
+                        && node.origin == EditorNavigationOrigin::Project
+                })
+                .filter_map(|node| node.source_node_id.as_deref())
+                .collect::<HashSet<_>>();
+            let render_instance_ids = view
+                .nodes
+                .iter()
+                .flat_map(|node| node.render_instance_ids.iter().map(String::as_str))
+                .collect::<HashSet<_>>();
+            (
+                view.active_source_node_id.as_str(),
+                source_ids,
+                render_instance_ids,
+            )
+        });
+    let mut candidates = Vec::new();
+    for node in snapshot.nodes.iter().filter(|node| {
+        node.kind == EditorNavigationNodeKind::TeraBoundary
+            && node
+                .source_kind
+                .as_ref()
+                .is_some_and(active_document_authoring_source_kind)
+            && node.capabilities.requires_edit_scope_id.is_none()
+            && node.origin == EditorNavigationOrigin::Project
+            && node
+                .file
+                .as_deref()
+                .is_some_and(|file| normalized_canvas_document_path(file) == active_document_path)
+            && focused_authoring_context.as_ref().is_none_or(
+                |(active_source_id, source_ids, render_ids)| {
+                    node.source_node_id
+                        .as_deref()
+                        .is_some_and(|source_node_id| {
+                            source_node_id == *active_source_id
+                                || source_ids.contains(source_node_id)
+                                || node.boundary.as_ref().is_some_and(|boundary| {
+                                    boundary.root_render_instance_ids.iter().any(
+                                        |render_instance_id| {
+                                            render_ids.contains(render_instance_id.as_str())
+                                        },
+                                    )
+                                })
+                        })
+                },
+            )
+    }) {
+        let Some(boundary) = node.boundary.as_ref() else {
+            continue;
+        };
+        let Some(source_kind) = node.source_kind.as_ref() else {
+            continue;
+        };
+        candidates.push((
+            source_kind.clone(),
+            CanvasInteractionAuthoringSurface {
+                source_node_id: boundary.source_node_id.clone(),
+                boundary_instance_id: boundary.boundary_instance_id.clone(),
+                render_instance_id: None,
+            },
+        ));
+    }
+    // A local Tera wrapper block remains the most precise authoring root when
+    // one exists. Template/Partial roots are the fallback for direct fragments
+    // (including empty listing items), not a competing second surface.
+    if candidates
+        .iter()
+        .any(|(kind, _)| *kind == SourceNodeKind::Block)
+    {
+        candidates.retain(|(kind, _)| *kind == SourceNodeKind::Block);
+    }
+    let mut surfaces = candidates
+        .into_iter()
+        .map(|(_, surface)| surface)
+        .collect::<Vec<_>>();
+    surfaces.sort_by(|left, right| {
+        left.source_node_id
+            .cmp(&right.source_node_id)
+            .then_with(|| left.boundary_instance_id.cmp(&right.boundary_instance_id))
+            .then_with(|| left.render_instance_id.cmp(&right.render_instance_id))
+    });
+    surfaces.dedup();
+    surfaces
+}
+
+fn active_document_authoring_source_kind(kind: &SourceNodeKind) -> bool {
+    matches!(
+        kind,
+        SourceNodeKind::Block | SourceNodeKind::Template | SourceNodeKind::Partial
+    )
+}
+
+fn normalized_canvas_document_path(path: &str) -> String {
+    path.trim()
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_string()
 }
 
 struct LiveCanvasAgent {
@@ -416,6 +559,10 @@ impl CanvasInteractionRuntime {
                     .last_accepted_ordered_sequence
                     .max(existing.last_accepted_hover_sequence),
                 active_document_path: existing.active_document_path.clone(),
+                authoring_surfaces: active_document_authoring_surfaces(
+                    &existing.snapshot,
+                    existing.active_document_path.as_deref(),
+                ),
             });
         }
 
@@ -452,6 +599,7 @@ impl CanvasInteractionRuntime {
             identity,
             last_accepted_sequence: 0,
             active_document_path: active_document_path.map(str::to_string),
+            authoring_surfaces: active_document_authoring_surfaces(snapshot, active_document_path),
         })
     }
 
@@ -1092,14 +1240,33 @@ fn receipt_with_diagnostic(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use crate::{
         kernel::editor_navigation::{
-            editor_navigation_snapshot_for_test, EditorNavigationBoundary,
-            EditorNavigationCapabilities, EditorNavigationSurface,
+            build_editor_navigation_snapshot, editor_navigation_snapshot_for_test,
+            EditorNavigationBoundary, EditorNavigationCapabilities, EditorNavigationSurface,
         },
         kernel::selection_coordinator::{SelectionCoordinatorRuntime, SelectionIntent},
+        preview::CanvasGraph,
+        project_model::build_project_model,
         source_graph::model::{SourceCapabilityReason, SourceNodeKind},
     };
+
+    fn test_project_root(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "pana-canvas-interaction-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
 
     fn canvas_identity() -> CanvasProjectionIdentity {
         CanvasProjectionIdentity {
@@ -1186,6 +1353,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: Some("card".to_string()),
             binding_path: Some("cards[0]".to_string()),
             boundary: Some(EditorNavigationBoundary {
@@ -1228,6 +1397,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: Some("card".to_string()),
             binding_path: Some("cards[0]".to_string()),
             boundary: None,
@@ -1261,6 +1432,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: None,
             binding_path: None,
             boundary: None,
@@ -1426,6 +1599,336 @@ mod tests {
             receipt.overlay.expect("overlay").render_instance_ids,
             vec!["render-1"]
         );
+    }
+
+    #[test]
+    fn binding_projects_the_active_document_root_without_a_render_identity() {
+        let mut snapshot = snapshot();
+        let boundary = snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_boundary:boundary-1")
+            .expect("boundary");
+        boundary.label = "content".to_string();
+        boundary.source_node_id = Some("source-content-block".to_string());
+        boundary.source_kind = Some(SourceNodeKind::Block);
+        boundary.capabilities.can_enter_boundary = false;
+        boundary.capabilities.requires_edit_scope_id = None;
+        let projected_boundary = boundary.boundary.as_mut().expect("boundary projection");
+        projected_boundary.source_node_id = "source-content-block".to_string();
+
+        let slot = snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_render:render-1")
+            .expect("empty slot");
+        slot.source_node_id = Some("source-content-block".to_string());
+        slot.source_kind = Some(SourceNodeKind::Block);
+        slot.tag = Some("div".to_string());
+        slot.capabilities.requires_edit_scope_id = None;
+
+        assert_eq!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/index.html")),
+            vec![CanvasInteractionAuthoringSurface {
+                source_node_id: "source-content-block".to_string(),
+                boundary_instance_id: "boundary-1".to_string(),
+                render_instance_id: None,
+            }]
+        );
+        assert!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/other.html")).is_empty()
+        );
+        assert!(active_document_authoring_surfaces(&snapshot, None).is_empty());
+
+        snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_boundary:boundary-1")
+            .unwrap()
+            .capabilities
+            .requires_edit_scope_id = Some("editor_boundary:boundary-1".to_string());
+        assert!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/index.html")).is_empty()
+        );
+    }
+
+    #[test]
+    fn binding_projects_source_empty_active_block_without_a_render_instance() {
+        let mut snapshot = snapshot();
+        let boundary = snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_boundary:boundary-1")
+            .expect("boundary");
+        boundary.label = "content".to_string();
+        boundary.source_node_id = Some("source-content-block".to_string());
+        boundary.source_kind = Some(SourceNodeKind::Block);
+        boundary.capabilities.can_enter_boundary = false;
+        boundary.capabilities.requires_edit_scope_id = None;
+        let projected_boundary = boundary.boundary.as_mut().expect("boundary projection");
+        projected_boundary.source_node_id = "source-content-block".to_string();
+        projected_boundary.root_render_instance_ids.clear();
+        projected_boundary.empty = true;
+
+        assert_eq!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/index.html")),
+            vec![CanvasInteractionAuthoringSurface {
+                source_node_id: "source-content-block".to_string(),
+                boundary_instance_id: "boundary-1".to_string(),
+                render_instance_id: None,
+            }]
+        );
+
+        snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_boundary:boundary-1")
+            .unwrap()
+            .capabilities
+            .requires_edit_scope_id = Some("editor_boundary:boundary-1".to_string());
+        assert!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/index.html")).is_empty()
+        );
+    }
+
+    #[test]
+    fn binding_projects_direct_partial_root_without_a_render_instance() {
+        let mut snapshot = snapshot();
+        let boundary = snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_boundary:boundary-1")
+            .expect("boundary");
+        boundary.label = "card.html".to_string();
+        boundary.source_node_id = Some("source-listing-item-root".to_string());
+        boundary.source_kind = Some(SourceNodeKind::Partial);
+        boundary.file = Some("templates/listing-items/card.html".to_string());
+        boundary.capabilities.can_enter_boundary = false;
+        boundary.capabilities.requires_edit_scope_id = None;
+        boundary.capabilities.read_only = false;
+        let projected = boundary.boundary.as_mut().expect("boundary projection");
+        projected.source_node_id = "source-listing-item-root".to_string();
+        projected.root_render_instance_ids.clear();
+        projected.empty = true;
+
+        assert_eq!(
+            active_document_authoring_surfaces(
+                &snapshot,
+                Some("templates/listing-items/card.html")
+            ),
+            vec![CanvasInteractionAuthoringSurface {
+                source_node_id: "source-listing-item-root".to_string(),
+                boundary_instance_id: "boundary-1".to_string(),
+                render_instance_id: None,
+            }]
+        );
+        assert!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/index.html")).is_empty()
+        );
+    }
+
+    #[test]
+    fn binding_prefers_local_block_over_fragment_root() {
+        let mut snapshot = snapshot();
+        let fragment = snapshot
+            .nodes
+            .iter_mut()
+            .find(|node| node.id == "editor_boundary:boundary-1")
+            .expect("fragment boundary");
+        fragment.source_node_id = Some("source-template-root".to_string());
+        fragment.source_kind = Some(SourceNodeKind::Template);
+        fragment.capabilities.requires_edit_scope_id = None;
+        fragment
+            .boundary
+            .as_mut()
+            .expect("boundary projection")
+            .source_node_id = "source-template-root".to_string();
+
+        let mut block = fragment.clone();
+        block.id = "editor_boundary:local-content".to_string();
+        block.source_node_id = Some("source-content-block".to_string());
+        block.source_kind = Some(SourceNodeKind::Block);
+        let block_boundary = block.boundary.as_mut().expect("block boundary projection");
+        block_boundary.source_node_id = "source-content-block".to_string();
+        block_boundary.boundary_instance_id = "local-content".to_string();
+        snapshot.nodes.push(block);
+
+        assert_eq!(
+            active_document_authoring_surfaces(&snapshot, Some("templates/index.html")),
+            vec![CanvasInteractionAuthoringSurface {
+                source_node_id: "source-content-block".to_string(),
+                boundary_instance_id: "local-content".to_string(),
+                render_instance_id: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn real_child_template_empty_block_is_an_authoring_surface_without_render_identity() {
+        let root = test_project_root("empty-child-template");
+        fs::create_dir_all(root.join("templates/servicii")).unwrap();
+        fs::create_dir_all(root.join("content/servicii")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = \"https://example.test\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/layout.html"),
+            "<!doctype html><html><body>{% block content %}{% endblock content %}</body></html>\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/servicii/arhiva.html"),
+            "{% extends \"layout.html\" %}\n{% block content %}\n\n{% endblock content %}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/servicii/_index.md"),
+            "+++\ntitle = \"Servicii\"\ntemplate = \"servicii/arhiva.html\"\n+++\n",
+        )
+        .unwrap();
+
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let content_block = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Block && node.file == "templates/servicii/arhiva.html"
+            })
+            .expect("child content block");
+        let rendered = format!(
+            concat!(
+                "<!doctype html><html><body>",
+                "<!-- pana-template-source-start:{} -->",
+                "<!-- pana-template-source-end:{} -->",
+                "</body></html>"
+            ),
+            content_block.id, content_block.id
+        );
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            17,
+            "preview-empty-child-17",
+            [("/servicii/", rendered.as_str())],
+        )
+        .unwrap();
+        let identity = CanvasProjectionIdentity {
+            project_root: root.to_string_lossy().to_string(),
+            runtime_session_id: "runtime-empty-child".to_string(),
+            workspace_revision: 17,
+            transaction_id: "canvas-empty-child".to_string(),
+            preview_revision: "preview-empty-child-17".to_string(),
+        };
+        let snapshot = build_editor_navigation_snapshot(
+            identity,
+            "/servicii/",
+            &model,
+            &graph,
+            Some("templates/servicii/arhiva.html"),
+            None,
+        )
+        .unwrap();
+        let focused_view = snapshot.focused_view.as_ref().expect("focused Layers view");
+        assert_eq!(focused_view.root_node_ids.len(), 1);
+        let authoring_root = focused_view
+            .nodes
+            .iter()
+            .find(|node| node.id == focused_view.root_node_ids[0])
+            .expect("empty document authoring root");
+        assert_eq!(authoring_root.kind, EditorNavigationViewNodeKind::Slot);
+        assert_eq!(authoring_root.label, "arhiva.html");
+        assert_eq!(
+            authoring_root.source_node_id.as_deref(),
+            Some(content_block.id.as_str())
+        );
+        assert!(!authoring_root.capabilities.read_only);
+        assert!(!authoring_root.capabilities.can_enter_boundary);
+        let surfaces =
+            active_document_authoring_surfaces(&snapshot, Some("templates/servicii/arhiva.html"));
+        assert_eq!(surfaces.len(), 1);
+        assert_eq!(surfaces[0].source_node_id, content_block.id);
+        assert!(surfaces[0].render_instance_id.is_none());
+
+        fs::write(
+            root.join("templates/servicii/arhiva.html"),
+            concat!(
+                "{% extends \"layout.html\" %}\n",
+                "{% block content %}\n",
+                "  <div class=\"primul\"></div>\n",
+                "{% endblock content %}\n",
+            ),
+        )
+        .unwrap();
+        let nonempty_model = build_project_model(&root, &HashMap::new()).unwrap();
+        let nonempty_block = nonempty_model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Block && node.file == "templates/servicii/arhiva.html"
+            })
+            .expect("nonempty child content block");
+        let authored_child = nonempty_model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Html
+                    && node.file == "templates/servicii/arhiva.html"
+                    && node.label.contains(".primul")
+            })
+            .expect("authored child");
+        let nonempty_rendered = format!(
+            concat!(
+                "<!doctype html><html><body>",
+                "<!-- pana-template-source-start:{} -->",
+                "<div class=\"primul\" data-pana-source-id=\"{}\"></div>",
+                "<!-- pana-template-source-end:{} -->",
+                "</body></html>"
+            ),
+            nonempty_block.id, authored_child.id, nonempty_block.id
+        );
+        let nonempty_graph = CanvasGraph::from_rendered_documents(
+            &nonempty_model,
+            18,
+            "preview-nonempty-child-18",
+            [("/servicii/", nonempty_rendered.as_str())],
+        )
+        .unwrap();
+        let nonempty_snapshot = build_editor_navigation_snapshot(
+            CanvasProjectionIdentity {
+                project_root: root.to_string_lossy().to_string(),
+                runtime_session_id: "runtime-nonempty-child".to_string(),
+                workspace_revision: 18,
+                transaction_id: "canvas-nonempty-child".to_string(),
+                preview_revision: "preview-nonempty-child-18".to_string(),
+            },
+            "/servicii/",
+            &nonempty_model,
+            &nonempty_graph,
+            Some("templates/servicii/arhiva.html"),
+            None,
+        )
+        .unwrap();
+        let nonempty_focused_view = nonempty_snapshot
+            .focused_view
+            .as_ref()
+            .expect("nonempty focused Layers view");
+        assert!(nonempty_focused_view
+            .nodes
+            .iter()
+            .any(|node| { node.source_node_id.as_deref() == Some(authored_child.id.as_str()) }));
+        let persistent_surfaces = active_document_authoring_surfaces(
+            &nonempty_snapshot,
+            Some("templates/servicii/arhiva.html"),
+        );
+        assert_eq!(persistent_surfaces.len(), 1);
+        assert_eq!(persistent_surfaces[0].source_node_id, nonempty_block.id);
+        assert!(persistent_surfaces[0].render_instance_id.is_none());
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

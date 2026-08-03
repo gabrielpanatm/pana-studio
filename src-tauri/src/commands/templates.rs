@@ -11,6 +11,10 @@ use crate::{
     },
     kernel::{
         file_buffer_store::FileBufferRequestIdentity,
+        listing_items::{
+            listing_item_contract_entries, serialize_listing_item_contract,
+            ListingItemContractEntry, LISTING_ITEM_METADATA_PATH,
+        },
         observability::now_ms,
         project_path::normalize_project_relative_path,
         project_workspace::{
@@ -21,6 +25,7 @@ use crate::{
             plan_template_reference_workspace_mutation_from_graph, SourceGraphRewriteOperation,
         },
     },
+    project::{DEFAULT_ARCHIVE_PAGINATE_BY, DEFAULT_ARCHIVE_PAGINATE_PATH},
     source_graph::{
         build_source_graph_from_workspace_projection, build_taxonomy_catalog,
         build_template_catalog,
@@ -49,6 +54,21 @@ pub struct CreateTemplateInput {
     pub parent_template_name: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateListingItemInput {
+    pub label: String,
+    pub slug: String,
+    pub model_id: String,
+    pub preview_page_file: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteListingItemInput {
+    pub id: String,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TemplateSemanticCreateRole {
@@ -72,9 +92,27 @@ pub struct CreateSemanticTemplateInput {
     #[serde(default)]
     pub target_id: Option<String>,
     #[serde(default)]
+    pub new_section: Option<CreateSemanticSectionInput>,
+    #[serde(default)]
     pub parent_template_name: Option<String>,
     #[serde(default)]
     pub include_page_content: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSemanticSectionInput {
+    pub title: String,
+    pub slug: String,
+    #[serde(default)]
+    pub sort_by: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedSemanticSection {
+    title: String,
+    relative_path: String,
+    contents: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -174,6 +212,173 @@ pub fn workspace_create_template(
 }
 
 #[tauri::command(async)]
+pub fn workspace_create_listing_item(
+    input: CreateListingItemInput,
+    identity: FileBufferRequestIdentity,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<WorkspaceEntryMutationReceipt, String> {
+    let slug = listing_item_slug(&input.slug)?;
+    let label = input.label.trim();
+    if label.is_empty() || label.len() > 160 || label.contains('\0') {
+        return Err("Numele Listing Item-ului este gol, prea lung sau invalid.".to_string());
+    }
+    let template_name = format!("listing-items/{slug}.html");
+    let destination = format!("templates/{template_name}");
+    let item_id = slug.clone();
+    let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
+    let workspace = live_workspace(&mut slot)?;
+    require_destination_available(workspace, &destination)?;
+    let projection = workspace.capture_projection_snapshot()?;
+    let graph = build_source_graph_from_workspace_projection(&root, &projection)?;
+    if !graph
+        .content_models
+        .models
+        .iter()
+        .any(|model| model.id == input.model_id)
+    {
+        return Err(format!("Modelul de conținut {} nu există.", input.model_id));
+    }
+    let preview_page = graph
+        .pages
+        .iter()
+        .find(|page| page.file == input.preview_page_file)
+        .ok_or_else(|| {
+            format!(
+                "Articolul de preview {} nu există.",
+                input.preview_page_file
+            )
+        })?;
+    if preview_page.page_kind != SourcePageKind::Page {
+        return Err("Preview-ul Listing Item cere un articol, nu o secțiune.".to_string());
+    }
+    let preview_model = graph
+        .content_models
+        .page_bindings
+        .iter()
+        .find(|binding| binding.page_file == input.preview_page_file)
+        .map(|binding| binding.model_id.as_str());
+    if preview_model != Some(input.model_id.as_str()) {
+        return Err(format!(
+            "Articolul de preview aparține modelului {}, nu {}.",
+            preview_model.unwrap_or("neatribuit"),
+            input.model_id
+        ));
+    }
+    let existing_metadata = workspace.documents.text_for(LISTING_ITEM_METADATA_PATH);
+    let mut entries = listing_item_contract_entries(existing_metadata.as_deref())?;
+    if entries
+        .iter()
+        .any(|entry| entry.id == item_id || entry.template_name == template_name)
+    {
+        return Err(format!("Listing Item-ul {item_id} există deja."));
+    }
+    entries.push(ListingItemContractEntry {
+        id: item_id.clone(),
+        label: label.to_string(),
+        template_name: template_name.clone(),
+        model_id: input.model_id,
+        preview_page_file: input.preview_page_file,
+    });
+    let metadata = serialize_listing_item_contract(&entries)?;
+    let contents = format!(
+        "<article class=\"listing-item listing-item-{slug}\" data-pana-listing-item=\"{item_id}\">\n  <h2>{{{{ item.title }}}}</h2>\n</article>\n"
+    );
+    let receipt_path = destination.clone();
+    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
+        candidate.stage_resource_texts(
+            &current_workspace_identity(candidate),
+            mutation_metadata("Creare Listing Item", "templates.listing_item.create"),
+            vec![
+                WorkspaceResourceMutation {
+                    relative_path: destination,
+                    contents,
+                    create_only: true,
+                },
+                WorkspaceResourceMutation {
+                    relative_path: LISTING_ITEM_METADATA_PATH.to_string(),
+                    contents: metadata,
+                    create_only: false,
+                },
+            ],
+            now_ms(),
+        )
+    })
+}
+
+#[tauri::command(async)]
+pub fn workspace_delete_listing_item(
+    input: DeleteListingItemInput,
+    identity: FileBufferRequestIdentity,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<WorkspaceEntryMutationReceipt, String> {
+    let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
+    let workspace = live_workspace(&mut slot)?;
+    let projection = workspace.capture_projection_snapshot()?;
+    let graph = build_source_graph_from_workspace_projection(&root, &projection)?;
+    let item = graph
+        .listing_items
+        .items
+        .iter()
+        .find(|item| item.id == input.id)
+        .ok_or_else(|| format!("Listing Item-ul {} nu există.", input.id))?;
+    if item.usage_count > 0 {
+        return Err(format!(
+            "Listing Item-ul {} este folosit de {} template-uri și nu poate fi șters.",
+            item.label, item.usage_count
+        ));
+    }
+    let metadata_source = projection
+        .source_texts
+        .get(LISTING_ITEM_METADATA_PATH)
+        .map(String::as_str);
+    let mut entries = listing_item_contract_entries(metadata_source)?;
+    let before_count = entries.len();
+    entries.retain(|entry| entry.id != input.id);
+    if entries.len() == before_count {
+        return Err(format!(
+            "Contractul editorial nu conține Listing Item-ul {}.",
+            input.id
+        ));
+    }
+    let metadata = serialize_listing_item_contract(&entries)?;
+    let relative_path = item.file.clone();
+    let receipt_path = relative_path.clone();
+    finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
+        candidate.stage_resource_changes(
+            &current_workspace_identity(candidate),
+            mutation_metadata("Ștergere Listing Item", "templates.listing-item.delete"),
+            vec![WorkspaceResourceMutation {
+                relative_path: LISTING_ITEM_METADATA_PATH.to_string(),
+                contents: metadata,
+                create_only: false,
+            }],
+            vec![WorkspaceResourceDelete { relative_path }],
+            now_ms(),
+        )
+    })
+}
+
+fn listing_item_slug(value: &str) -> Result<String, String> {
+    let value = value.trim().trim_end_matches(".html");
+    if value.is_empty()
+        || value.len() > 80
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+        || value.starts_with('-')
+        || value.ends_with('-')
+        || value.contains("--")
+    {
+        return Err(
+            "Slug-ul Listing Item acceptă numai litere mici ASCII, cifre și cratime.".to_string(),
+        );
+    }
+    Ok(value.to_string())
+}
+
+#[tauri::command(async)]
 pub fn workspace_create_semantic_template(
     input: CreateSemanticTemplateInput,
     identity: FileBufferRequestIdentity,
@@ -193,8 +398,41 @@ pub fn workspace_create_semantic_template(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
-    let assignment =
-        semantic_creation_assignment(workspace, &graph, input.role, target_id, &logical_name)?;
+    if input.new_section.is_some()
+        && !matches!(input.role, TemplateSemanticCreateRole::SectionArchive)
+    {
+        return Err(
+            "O secțiune nouă poate fi creată numai împreună cu șablonul său de listă/arhivă."
+                .to_string(),
+        );
+    }
+    if input.new_section.is_some() && target_id.is_some() {
+        return Err(
+            "Alege fie o secțiune existentă, fie crearea unei secțiuni noi, nu ambele.".to_string(),
+        );
+    }
+    let new_section = input
+        .new_section
+        .as_ref()
+        .map(|section| prepare_semantic_section(section, &logical_name))
+        .transpose()?;
+    if let Some(section) = &new_section {
+        if workspace
+            .documents
+            .files
+            .contains_key(&section.relative_path)
+        {
+            return Err(format!(
+                "Secțiunea {} există deja; selecteaz-o drept secțiune existentă.",
+                section.relative_path
+            ));
+        }
+    }
+    let assignment = if new_section.is_some() {
+        None
+    } else {
+        semantic_creation_assignment(workspace, &graph, input.role, target_id, &logical_name)?
+    };
     let parent = validate_parent_template(
         &root,
         workspace,
@@ -206,7 +444,9 @@ pub fn workspace_create_semantic_template(
     } else {
         TemplateDraftRole::Page
     };
-    let contents = if matches!(input.role, TemplateSemanticCreateRole::SectionElement)
+    let contents = if let Some(section) = &new_section {
+        collection_list_template_draft(&section.title, parent.as_deref())
+    } else if matches!(input.role, TemplateSemanticCreateRole::SectionElement)
         && input.include_page_content
     {
         collection_item_template_draft(parent.as_deref(), true)
@@ -218,7 +458,15 @@ pub fn workspace_create_semantic_template(
         contents,
         create_only: true,
     }];
-    let receipt_path = if let Some((content_path, key)) = assignment {
+    let receipt_path = if let Some(section) = new_section {
+        let section_path = section.relative_path;
+        mutations.push(WorkspaceResourceMutation {
+            relative_path: section_path.clone(),
+            contents: section.contents,
+            create_only: true,
+        });
+        section_path
+    } else if let Some((content_path, key)) = assignment {
         let source = workspace.documents.text_for(&content_path).ok_or_else(|| {
             format!(
                 "ProjectWorkspace nu urmărește ținta semantică {content_path} pentru atribuire."
@@ -237,12 +485,21 @@ pub fn workspace_create_semantic_template(
         mutations[0].relative_path.clone()
     };
 
+    let creates_section = input.new_section.is_some();
     finish_mutation(&app, workspace, Some(receipt_path), |candidate| {
         candidate.stage_resource_texts(
             &current_workspace_identity(candidate),
             mutation_metadata(
-                "Creare șablon semantic Zola/Tera",
-                "templates.create_semantic",
+                if creates_section {
+                    "Creare secțiune și șablon de arhivă Zola/Tera"
+                } else {
+                    "Creare șablon semantic Zola/Tera"
+                },
+                if creates_section {
+                    "templates.create_archive_section"
+                } else {
+                    "templates.create_semantic"
+                },
             ),
             mutations,
             now_ms(),
@@ -1051,7 +1308,7 @@ fn template_draft(role: TemplateDraftRole, parent: Option<&str>) -> String {
 
 fn collection_list_template_draft(title: &str, parent: Option<&str>) -> String {
     format!(
-        "{}{{% block content %}}\n<section class=\"colectie\">\n  <header class=\"colectie-header\">\n    <h1>{{{{ section.title | default(value=\"{}\") }}}}</h1>\n    {{% if section.description %}}<p>{{{{ section.description }}}}</p>{{% endif %}}\n  </header>\n  {{% if section.paginate_by %}}\n    {{% set entries = paginator.pages %}}\n  {{% else %}}\n    {{% set entries = section.pages %}}\n  {{% endif %}}\n  <div class=\"colectie-lista\">\n    {{% for entry in entries %}}\n      <article class=\"colectie-card\">\n        <h2><a href=\"{{{{ entry.permalink }}}}\">{{{{ entry.title }}}}</a></h2>\n        {{% if entry.description %}}<p>{{{{ entry.description }}}}</p>{{% endif %}}\n      </article>\n    {{% endfor %}}\n  </div>\n</section>\n{{% endblock content %}}\n",
+        "{}{{% block content %}}\n<section class=\"colectie\">\n  <header class=\"colectie-header\">\n    <h1>{{{{ section.title | default(value=\"{}\") }}}}</h1>\n    {{% if section.description %}}<p>{{{{ section.description }}}}</p>{{% endif %}}\n  </header>\n  <div class=\"colectie-lista\">\n    {{% for entry in paginator.pages %}}\n      <article class=\"colectie-card\">\n        <h2><a href=\"{{{{ entry.permalink }}}}\">{{{{ entry.title }}}}</a></h2>\n        {{% if entry.description %}}<p>{{{{ entry.description }}}}</p>{{% endif %}}\n      </article>\n    {{% endfor %}}\n  </div>\n  {{% if paginator.number_pagers > 1 %}}\n    <nav class=\"paginare\" aria-label=\"Paginare\">\n      {{% if paginator.previous %}}<a href=\"{{{{ paginator.previous }}}}\">Pagina anterioară</a>{{% endif %}}\n      <span>Pagina {{{{ paginator.current_index }}}} din {{{{ paginator.number_pagers }}}}</span>\n      {{% if paginator.next %}}<a href=\"{{{{ paginator.next }}}}\">Pagina următoare</a>{{% endif %}}\n    </nav>\n  {{% endif %}}\n</section>\n{{% endblock content %}}\n",
         extends_prefix(parent),
         escape_tera_string(title),
     )
@@ -1075,10 +1332,58 @@ fn collection_section_frontmatter(
     item_template_name: &str,
 ) -> String {
     format!(
-        "+++\ntitle = \"{}\"\ntemplate = \"{}\"\npage_template = \"{}\"\nsort_by = \"date\"\n+++\n",
+        "+++\ntitle = \"{}\"\ntemplate = \"{}\"\npage_template = \"{}\"\nsort_by = \"date\"\npaginate_by = {}\npaginate_path = \"{}\"\n+++\n",
         escape_toml_string(title),
         escape_toml_string(list_template_name),
         escape_toml_string(item_template_name),
+        DEFAULT_ARCHIVE_PAGINATE_BY,
+        DEFAULT_ARCHIVE_PAGINATE_PATH,
+    )
+}
+
+fn prepare_semantic_section(
+    input: &CreateSemanticSectionInput,
+    list_template_name: &str,
+) -> Result<PreparedSemanticSection, String> {
+    let title = input.title.trim();
+    if title.is_empty() {
+        return Err("Secțiunea nouă are nevoie de un nume.".to_string());
+    }
+    let slug = collection_slug(if input.slug.trim().is_empty() {
+        title
+    } else {
+        input.slug.as_str()
+    });
+    if slug.is_empty() {
+        return Err("Secțiunea nouă are nevoie de un slug valid.".to_string());
+    }
+    let sort_by = input
+        .sort_by
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("weight");
+    if !matches!(sort_by, "none" | "date" | "title" | "weight") {
+        return Err(format!(
+            "Ordinea secțiunii {sort_by} nu este acceptată de creatorul de arhive."
+        ));
+    }
+
+    Ok(PreparedSemanticSection {
+        title: title.to_string(),
+        relative_path: format!("content/{slug}/_index.md"),
+        contents: semantic_section_frontmatter(title, list_template_name, sort_by),
+    })
+}
+
+fn semantic_section_frontmatter(title: &str, template_name: &str, sort_by: &str) -> String {
+    format!(
+        "+++\ntitle = \"{}\"\ntemplate = \"{}\"\nsort_by = \"{}\"\npaginate_by = {}\npaginate_path = \"{}\"\n+++\n",
+        escape_toml_string(title),
+        escape_toml_string(template_name),
+        escape_toml_string(sort_by),
+        DEFAULT_ARCHIVE_PAGINATE_BY,
+        DEFAULT_ARCHIVE_PAGINATE_PATH,
     )
 }
 
@@ -1092,8 +1397,16 @@ fn collection_slug(value: &str) -> String {
     let mut slug = String::new();
     let mut previous_was_dash = false;
     for character in value.trim().chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
+        let normalized = match character {
+            'ă' | 'â' | 'Ă' | 'Â' => Some('a'),
+            'î' | 'Î' => Some('i'),
+            'ș' | 'ş' | 'Ș' | 'Ş' => Some('s'),
+            'ț' | 'ţ' | 'Ț' | 'Ţ' => Some('t'),
+            character if character.is_ascii_alphanumeric() => Some(character.to_ascii_lowercase()),
+            _ => None,
+        };
+        if let Some(character) = normalized {
+            slug.push(character);
             previous_was_dash = false;
         } else if !previous_was_dash {
             slug.push('-');
@@ -1210,12 +1523,59 @@ mod tests {
         assert!(section.contains("template = \"noutati/list.html\""));
         assert!(section.contains("page_template = \"noutati/single.html\""));
         assert!(section.contains("sort_by = \"date\""));
+        assert!(section.contains("paginate_by = 6"));
+        assert!(section.contains("paginate_path = \"pagina\""));
+
+        let archive = collection_list_template_draft("Noutăți", Some("layout.html"));
+        assert!(archive.starts_with("{% extends \"layout.html\" %}"));
+        assert!(archive.contains("paginator.pages"));
+        assert!(archive.contains("paginator.number_pagers > 1"));
+        assert!(!archive.contains("section.pages"));
 
         let visual = collection_item_template_draft(Some("layout.html"), false);
         assert!(visual.starts_with("{% extends \"layout.html\" %}"));
         assert!(!visual.contains("page.content"));
         let content_driven = collection_item_template_draft(Some("layout.html"), true);
         assert!(content_driven.contains("page.content | safe"));
+    }
+
+    #[test]
+    fn semantic_archive_prepares_its_new_section_and_assignment_atomically() {
+        let section = prepare_semantic_section(
+            &CreateSemanticSectionInput {
+                title: "Noutăți și Servicii".to_string(),
+                slug: "Noutăți și Servicii".to_string(),
+                sort_by: Some("weight".to_string()),
+            },
+            "noutati-servicii/arhiva.html",
+        )
+        .unwrap();
+
+        assert_eq!(
+            section.relative_path,
+            "content/noutati-si-servicii/_index.md"
+        );
+        assert!(section.contents.contains("title = \"Noutăți și Servicii\""));
+        assert!(section
+            .contents
+            .contains("template = \"noutati-servicii/arhiva.html\""));
+        assert!(section.contents.contains("sort_by = \"weight\""));
+        assert!(!section.contents.contains("page_template"));
+    }
+
+    #[test]
+    fn semantic_archive_rejects_an_unknown_section_order() {
+        let error = prepare_semantic_section(
+            &CreateSemanticSectionInput {
+                title: "Servicii".to_string(),
+                slug: "servicii".to_string(),
+                sort_by: Some("aleator".to_string()),
+            },
+            "servicii/arhiva.html",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("aleator"));
     }
 
     #[test]

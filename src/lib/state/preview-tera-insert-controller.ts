@@ -18,11 +18,13 @@ export type PreviewTeraInsertControllerHost = {
   previewDropTargetStatus?: (target: {
     targetRenderInstanceId?: string | null;
     targetBoundarySourceId?: string | null;
+    targetBoundaryInstanceId?: string | null;
   }) => { allowed: boolean; message?: string };
 };
 
 const dropPositions = new Set<DropPosition>(["before", "after", "inside"]);
 const families = new Set<TeraPaletteFamily>(["composition", "logic", "data", "reuse", "safe"]);
+const inFlightDrops = new Map<string, Promise<EditorActionOutcome>>();
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -56,6 +58,12 @@ function teraPaletteItemValue(value: unknown): TeraPaletteItem | null {
     target: typeof data.target === "string" ? data.target : undefined,
     name: typeof data.name === "string" ? data.name : undefined,
     expression: typeof data.expression === "string" ? data.expression : undefined,
+    dynamicBinding: typeof data.dynamicBinding === "object" && data.dynamicBinding !== null
+      ? data.dynamicBinding as TeraPaletteItem["dynamicBinding"]
+      : undefined,
+    dynamicWidget: typeof data.dynamicWidget === "object" && data.dynamicWidget !== null
+      ? data.dynamicWidget as TeraPaletteItem["dynamicWidget"]
+      : undefined,
     sourceNodeId: typeof data.sourceNodeId === "string" ? data.sourceNodeId : undefined,
   };
 }
@@ -70,6 +78,9 @@ export async function handlePreviewTeraInsertDrop(
   const targetSessionId = stringValue(data.targetSessionId) || null;
   const targetSourceId = stringValue(data.targetSourceId) || null;
   const targetTemplateSourceId = stringValue(data.targetTemplateSourceId) || null;
+  const targetBoundaryInstanceId = stringValue(data.targetBoundaryInstanceId) || null;
+  const documentRootTarget =
+    data.targetKind === "empty-tera-slot" || data.targetKind === "active-document-root";
   const targetTag = stringValue(data.targetTag).toLowerCase();
   const position = dropPositionValue(data.position);
   const item = teraPaletteItemValue(data.item);
@@ -83,7 +94,9 @@ export async function handlePreviewTeraInsertDrop(
   const targetStatus = host.previewDropTargetStatus?.({
     targetRenderInstanceId,
     targetBoundarySourceId:
-      data.targetKind === "empty-tera-slot" ? targetTemplateSourceId : null,
+      documentRootTarget ? targetTemplateSourceId : null,
+    targetBoundaryInstanceId:
+      documentRootTarget ? targetBoundaryInstanceId : null,
   });
   if (targetStatus && !targetStatus.allowed) {
     const reason = targetStatus.message || t("preview-drop-navigation-target-blocked");
@@ -91,7 +104,7 @@ export async function handlePreviewTeraInsertDrop(
     return blockedAction(reason);
   }
 
-  return await host.insertTeraPaletteItemAtTarget({
+  const request: TeraDropRequest = {
     targetSelector,
     targetSessionId,
     targetSourceId,
@@ -99,5 +112,18 @@ export async function handlePreviewTeraInsertDrop(
     targetTag,
     position,
     item,
-  });
+  };
+  const fingerprint = JSON.stringify(request);
+  const existing = inFlightDrops.get(fingerprint);
+  if (existing) return await existing;
+
+  const operation = Promise.resolve().then(() => host.insertTeraPaletteItemAtTarget(request));
+  inFlightDrops.set(fingerprint, operation);
+  try {
+    return await operation;
+  } finally {
+    if (inFlightDrops.get(fingerprint) === operation) {
+      inFlightDrops.delete(fingerprint);
+    }
+  }
 }

@@ -71,6 +71,7 @@
     previewMove,
     moveNode,
     deleteNode,
+    openContextMenu,
     openDocument,
     activeDocumentPath = null,
     callerDocumentPath = null,
@@ -98,6 +99,11 @@
       position: ProjectMovePosition,
     ) => void | Promise<unknown>;
     deleteNode: (node: EditorNavigationNode) => void | Promise<unknown>;
+    openContextMenu: (
+      node: EditorNavigationNode,
+      x: number,
+      y: number,
+    ) => void;
     openDocument: (
       documentPath: string,
       rememberCaller?: boolean,
@@ -345,7 +351,7 @@
       case "htmlElement": return htmlElementIcon(node.tag);
       case "boundary": return teraBoundaryIcon(node);
       case "relation": return IconLink;
-      case "slot": return IconLayout;
+      case "slot": return IconFileCode;
       case "source": return IconFileCode;
     }
   }
@@ -399,6 +405,18 @@
     }
     const resolved = editorNode(node);
     if (resolved) selectNode(resolved);
+  }
+
+  function openViewNodeContextMenu(
+    node: EditorNavigationViewNode,
+    event: MouseEvent,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearDrag();
+    const resolved = editorNode(node);
+    if (!resolved) return;
+    openContextMenu(resolved, event.clientX, event.clientY);
   }
 
   function hoverViewNode(node: EditorNavigationViewNode | null) {
@@ -632,6 +650,7 @@
           ondragend={clearDrag}
           onmouseenter={() => hoverViewNode(row.node)}
           onclick={() => selectViewNode(row.node)}
+          oncontextmenu={(event) => openViewNodeContextMenu(row.node, event)}
           onkeydown={(event) => handleRowKeydown(row.node, event)}
           >
           <span class="depth-rail" aria-hidden="true"></span>

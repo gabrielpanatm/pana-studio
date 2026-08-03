@@ -276,8 +276,37 @@ pub fn page_css_href(template_path: &str) -> String {
 }
 
 pub fn supports_page_css(template_path: &str) -> bool {
+    reusable_scss_relative_path(template_path).is_none()
+}
+
+/// Returns the canonical SCSS owner for a reusable template. Reusable
+/// templates never borrow the currently open page stylesheet: their rules
+/// live in a partial and are delivered by each real consumer page.
+pub fn reusable_scss_relative_path(template_path: &str) -> Option<String> {
     let template = logical_template_name(template_path);
-    !template.starts_with("partials/") && !template.starts_with("macros/")
+    let name = template.trim_end_matches(".html");
+    let (scope, component_name) = if let Some(name) = name.strip_prefix("partials/") {
+        ("partials", name)
+    } else if let Some(name) = name.strip_prefix("listing-items/") {
+        ("partials/listing-items", name)
+    } else if let Some(name) = name.strip_prefix("macros/") {
+        ("partials/macros", name)
+    } else {
+        return None;
+    };
+
+    let component_path = Path::new(component_name.trim_start_matches('/'));
+    let file_name = component_path.file_name()?.to_str()?;
+    let directory = component_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .and_then(Path::to_str)
+        .map(|parent| format!("/{parent}"))
+        .unwrap_or_default();
+    Some(format!(
+        "{}/{scope}{directory}/_{file_name}.scss",
+        style_root_for_template_path(template_path),
+    ))
 }
 
 pub fn style_root_for_template_path(template_path: &str) -> String {
@@ -321,6 +350,20 @@ pub fn conventional_style_files_for_template(
     if let Some(component_name) = name.strip_prefix("components/") {
         let component_name = component_name.trim_start_matches('/');
         return conventional_partial_style_files(&style_root, "componente", component_name);
+    }
+
+    if let Some(listing_item_name) = name.strip_prefix("listing-items/") {
+        let listing_item_name = listing_item_name.trim_start_matches('/');
+        return conventional_partial_style_files(
+            &style_root,
+            "partials/listing-items",
+            listing_item_name,
+        );
+    }
+
+    if let Some(macro_name) = name.strip_prefix("macros/") {
+        let macro_name = macro_name.trim_start_matches('/');
+        return conventional_partial_style_files(&style_root, "partials/macros", macro_name);
     }
 
     vec![format!("{}/pagini/{}.scss", style_root, name)]
@@ -679,6 +722,17 @@ theme = "ignored-after-table"
             vec![
                 "sass/partials/product/_card.scss",
                 "sass/partials/product/card.scss"
+            ]
+        );
+        assert_eq!(
+            resolver.conventional_style_files_for_template(
+                "listing-items/card-serviciu.html",
+                &ZolaTemplateOrigin::Local,
+                true,
+            ),
+            vec![
+                "sass/partials/listing-items/_card-serviciu.scss",
+                "sass/partials/listing-items/card-serviciu.scss"
             ]
         );
     }

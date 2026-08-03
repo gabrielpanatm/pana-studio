@@ -7,24 +7,37 @@
   } from "$lib/i18n/runtime.svelte";
 
   $: t = legacyTranslator($localeRevision);
-  import type { ProjectFile } from "$lib/types";
+  import type { ProjectFile, SourcePageKind } from "$lib/types";
   import {
+    pageFrontmatterMutationValue,
     parsePageFrontmatter,
-    updatePageFrontmatter,
     type PageFrontmatterField,
+    type PageFrontmatterMutationValue,
   } from "$lib/markdown/frontmatter";
   import { isActiveThemeTemplatePath, templateNameForPath } from "$lib/project/files";
+  import { errorMessage } from "$lib/util";
 
   export let activeScannedPath: string | null = null;
   export let scannedPages: ProjectFile[] = [];
   export let scannedTemplates: ProjectFile[] = [];
   export let activeTheme: string | null = null;
   export let pageSource = "";
-  export let updatePageFrontmatterSource: (relativePath: string, source: string) => void;
+  export let pageKind: SourcePageKind = "page";
+  export let updatePageFrontmatterField: (
+    relativePath: string,
+    field: PageFrontmatterField,
+    value: PageFrontmatterMutationValue,
+  ) => Promise<string | void>;
+  export let view: "settings" | "seo" = "settings";
+
+  let mutationTail: Promise<void> = Promise.resolve();
+  let mutationError = "";
+  let pendingMutations = 0;
 
   $: activePage = scannedPages.find((page) => page.relativePath === activeScannedPath) ?? null;
   $: parsed = parsePageFrontmatter(pageSource);
   $: values = parsed.values;
+  $: isSection = pageKind === "section";
   $: ogTypeOptions = [
     { value: "", label: t("content-settings-option-none") },
     "website",
@@ -34,12 +47,31 @@
 
   function setField(field: PageFrontmatterField, value: string | boolean) {
     if (!activePage) return;
-    const nextSource = updatePageFrontmatter(pageSource, { ...values, [field]: value });
-    updatePageFrontmatterSource(activePage.relativePath, nextSource);
+    const relativePath = activePage.relativePath;
+    let typedValue: PageFrontmatterMutationValue;
+    try {
+      typedValue = pageFrontmatterMutationValue(field, value);
+    } catch (error) {
+      mutationError = errorMessage(error);
+      return;
+    }
+
+    mutationError = "";
+    pendingMutations += 1;
+    const mutation = mutationTail.then(async () => {
+      await updatePageFrontmatterField(relativePath, field, typedValue);
+    });
+    mutationTail = mutation
+      .catch((error) => {
+        mutationError = errorMessage(error);
+      })
+      .finally(() => {
+        pendingMutations = Math.max(0, pendingMutations - 1);
+      });
   }
 </script>
 
-<section class="panel-card page-settings-panel">
+<section class="panel-card page-settings-panel" aria-busy={pendingMutations > 0}>
   <div class="section-heading">
     <h3>{t("content-settings-markdown-title")}</h3>
     {#if activePage}<span>MD</span>{/if}
@@ -52,62 +84,66 @@
     </div>
 
     <div class="metadata-groups" aria-label={t("content-settings-frontmatter-group")}>
-      <section class="metadata-group">
+      {#if view === "settings"}<section class="metadata-group">
         <h4>{t("content-settings-general")}</h4>
         <label class="field">
           <span>{t("content-settings-field-title")}</span>
-          <input value={values.title} oninput={(event) => setField("title", event.currentTarget.value)} />
+          <input value={values.title} onchange={(event) => setField("title", event.currentTarget.value)} />
         </label>
         <label class="field">
           <span>{t("content-settings-field-description")}</span>
-          <textarea rows="3" value={values.description} oninput={(event) => setField("description", event.currentTarget.value)}></textarea>
+          <textarea rows="3" value={values.description} onchange={(event) => setField("description", event.currentTarget.value)}></textarea>
         </label>
-        <div class="field-grid">
-          <label class="field">
+        <div class="field-grid" class:section-grid={isSection}>
+          {#if !isSection}<label class="field">
             <span>{t("content-settings-field-date")}</span>
-            <input type="date" value={values.date} oninput={(event) => setField("date", event.currentTarget.value)} />
-          </label>
+            <input type="date" value={values.date} onchange={(event) => setField("date", event.currentTarget.value)} />
+          </label>{/if}
           <label class="field">
             <span>{t("content-settings-field-weight")}</span>
-            <input type="number" step="1" value={values.weight} oninput={(event) => setField("weight", event.currentTarget.value)} />
+            <input type="number" min="0" step="1" value={values.weight} onchange={(event) => setField("weight", event.currentTarget.value)} />
           </label>
+          {#if isSection}<label class="field">
+            <span>{t("content-settings-field-paginate-by")}</span>
+            <input type="number" min="1" step="1" required value={values.paginateBy || "6"} onchange={(event) => setField("paginateBy", event.currentTarget.value)} />
+          </label>{/if}
         </div>
         <label class="field">
           <span>{t("content-settings-field-template")}</span>
-          <input list="page-template-options" value={values.template} oninput={(event) => setField("template", event.currentTarget.value)} />
+          <input list="page-template-options" value={values.template} onchange={(event) => setField("template", event.currentTarget.value)} />
           <datalist id="page-template-options">
             {#each scannedTemplates.filter((template) => isActiveThemeTemplatePath(template.relativePath, activeTheme)) as template}
               <option value={templateNameForPath(template.relativePath)}></option>
             {/each}
           </datalist>
         </label>
-        <label class="field">
+        {#if !isSection}<label class="field">
           <span>{t("content-settings-field-slug")}</span>
-          <input value={values.slug} oninput={(event) => setField("slug", event.currentTarget.value)} />
-        </label>
+          <input value={values.slug} onchange={(event) => setField("slug", event.currentTarget.value)} />
+        </label>{/if}
         <label class="toggle-field">
           <input type="checkbox" checked={values.draft} onchange={(event) => setField("draft", event.currentTarget.checked)} />
           <span>{t("content-settings-field-draft")}</span>
         </label>
-      </section>
+      </section>{/if}
 
-      <section class="metadata-group">
+      {#if view === "seo"}<section class="metadata-group">
         <h4>SEO</h4>
         <label class="field">
           <span>{t("content-settings-seo-title")}</span>
-          <input value={values.seoTitle} oninput={(event) => setField("seoTitle", event.currentTarget.value)} />
+          <input value={values.seoTitle} onchange={(event) => setField("seoTitle", event.currentTarget.value)} />
         </label>
         <label class="field">
           <span>{t("content-settings-seo-description")}</span>
-          <textarea rows="3" value={values.seoDescription} oninput={(event) => setField("seoDescription", event.currentTarget.value)}></textarea>
+          <textarea rows="3" value={values.seoDescription} onchange={(event) => setField("seoDescription", event.currentTarget.value)}></textarea>
         </label>
         <label class="field">
           <span>{t("content-settings-canonical-url")}</span>
-          <input type="url" value={values.canonicalUrl} oninput={(event) => setField("canonicalUrl", event.currentTarget.value)} />
+          <input type="url" value={values.canonicalUrl} onchange={(event) => setField("canonicalUrl", event.currentTarget.value)} />
         </label>
         <label class="field">
           <span>{t("content-settings-robots")}</span>
-          <input placeholder="index, follow" value={values.robots} oninput={(event) => setField("robots", event.currentTarget.value)} />
+          <input placeholder="index, follow" value={values.robots} onchange={(event) => setField("robots", event.currentTarget.value)} />
         </label>
       </section>
 
@@ -115,22 +151,23 @@
         <h4>OpenGraph</h4>
         <label class="field">
           <span>{t("content-settings-og-title")}</span>
-          <input value={values.ogTitle} oninput={(event) => setField("ogTitle", event.currentTarget.value)} />
+          <input value={values.ogTitle} onchange={(event) => setField("ogTitle", event.currentTarget.value)} />
         </label>
         <label class="field">
           <span>{t("content-settings-og-description")}</span>
-          <textarea rows="3" value={values.ogDescription} oninput={(event) => setField("ogDescription", event.currentTarget.value)}></textarea>
+          <textarea rows="3" value={values.ogDescription} onchange={(event) => setField("ogDescription", event.currentTarget.value)}></textarea>
         </label>
         <label class="field">
           <span>{t("content-settings-og-image")}</span>
-          <input value={values.ogImage} oninput={(event) => setField("ogImage", event.currentTarget.value)} />
+          <input value={values.ogImage} onchange={(event) => setField("ogImage", event.currentTarget.value)} />
         </label>
         <label class="field">
           <span>{t("content-settings-og-type")}</span>
           <SelectControl value={values.ogType} options={ogTypeOptions} ariaLabel={t("content-settings-og-type")} onchange={(value) => setField("ogType", value)} />
         </label>
-      </section>
+      </section>{/if}
     </div>
+    {#if mutationError}<p class="mutation-error" role="alert">{mutationError}</p>{/if}
   {:else if activePage && parsed.kind === "yaml"}
     <p class="empty-text">{t("content-settings-yaml-help")}</p>
   {:else}
@@ -294,5 +331,16 @@
     color: var(--text-muted);
     font-size: 12px;
     line-height: 1.45;
+  }
+
+  .mutation-error {
+    margin: 0;
+    padding: 7px 8px;
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border-2));
+    border-radius: 6px;
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 7%, var(--surface-3));
+    font-size: 12px;
+    line-height: 1.4;
   }
 </style>

@@ -166,12 +166,22 @@ where
     P: PreviewStructuralPatch,
     Plan: PreviewStructuralPlan<Patch = P>,
 {
-    let (model_revision, _diagnostic, patch) = plan.into_parts();
+    let (model_revision, diagnostic, patch) = plan.into_parts();
     patch.ok_or_else(|| PreviewStructuralPlanBlocked {
         model_revision,
         diagnostic: PreviewProjectionDiagnostic::blocking(
             spec.blocked_code,
-            LocalizedDiagnostic::new("preview-projection-structural-plan-blocked"),
+            diagnostic
+                .filter(|details| !details.trim().is_empty())
+                .map(|details| {
+                    LocalizedDiagnostic::new(
+                        "preview-projection-structural-plan-blocked-with-details",
+                    )
+                    .with_argument("details", details)
+                })
+                .unwrap_or_else(|| {
+                    LocalizedDiagnostic::new("preview-projection-structural-plan-blocked")
+                }),
         ),
     })
 }
@@ -349,7 +359,16 @@ mod tests {
 
         assert_eq!(blocked.model_revision, "model-1");
         assert_eq!(blocked.diagnostic.code, "editor_move_plan_became_stale");
-        assert!(blocked.diagnostic.diagnostic.arguments.is_empty());
+        assert_eq!(
+            blocked.diagnostic.diagnostic.code,
+            "preview-projection-structural-plan-blocked-with-details"
+        );
+        assert_eq!(
+            blocked.diagnostic.diagnostic.arguments.get("details"),
+            Some(&serde_json::Value::String(
+                "Ancora nu mai există.".to_string()
+            ))
+        );
         assert!(blocked.diagnostic.blocking);
     }
 

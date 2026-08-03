@@ -116,6 +116,7 @@ pub enum TemplateWorkbenchDependencyKind {
 pub enum TemplateWorkbenchRenderMode {
     Page,
     IncludedTemplate,
+    ListingItemScenario,
     CanonicalRoute,
     MacroScenario,
     OrphanTemplate,
@@ -137,6 +138,7 @@ pub enum TemplateWorkbenchRenderContextKind {
     RealZolaConsumer,
     RealZolaRoute,
     ControlledMacroScenario,
+    ControlledListingItemScenario,
     ControlledTemplateFixture,
 }
 
@@ -191,6 +193,20 @@ pub fn resolve_template_workbench_plan(
         .iter()
         .filter_map(|page| consumer_for_page(page, active, &templates_by_node, &dependencies))
         .collect::<Vec<_>>();
+    let active_listing_item = listing_item_for_template(graph, active).is_some();
+    let listing_item_scenario = if active_listing_item {
+        listing_item_preview_consumer(model, active, input.preferred_page_path.as_deref())
+    } else {
+        None
+    };
+    if let Some(consumer) = listing_item_scenario.clone() {
+        if !consumers
+            .iter()
+            .any(|candidate| candidate.page_file == consumer.page_file)
+        {
+            consumers.push(consumer);
+        }
+    }
     consumers.sort_by(|left, right| {
         left.page_url
             .cmp(&right.page_url)
@@ -202,23 +218,32 @@ pub fn resolve_template_workbench_plan(
         .as_deref()
         .map(normalize_project_path)
         .filter(|value| !value.is_empty());
-    let selected_context = preferred_page
-        .as_deref()
-        .and_then(|preferred| {
-            consumers.iter().find(|consumer| {
-                normalize_project_path(&consumer.page_file) == preferred
-                    || normalize_url(&consumer.page_url) == normalize_url(preferred)
+    let selected_context = if active_listing_item {
+        listing_item_scenario
+    } else {
+        preferred_page
+            .as_deref()
+            .and_then(|preferred| {
+                consumers.iter().find(|consumer| {
+                    normalize_project_path(&consumer.page_file) == preferred
+                        || normalize_url(&consumer.page_url) == normalize_url(preferred)
+                })
             })
-        })
-        .or_else(|| consumers.first())
-        .cloned();
+            .or_else(|| consumers.first())
+            .cloned()
+    };
     let selected_route = input
         .preferred_route
         .as_deref()
         .map(|route| resolve_canonical_route_context(model, active, route))
         .transpose()?;
 
-    let render_mode = render_mode(active, selected_context.as_ref(), selected_route.as_ref());
+    let render_mode = render_mode(
+        active,
+        selected_context.as_ref(),
+        selected_route.as_ref(),
+        active_listing_item,
+    );
     let render_context = render_context(
         &render_mode,
         selected_context.as_ref(),
@@ -273,6 +298,16 @@ pub fn resolve_template_workbench_plan(
     })
 }
 
+fn listing_item_for_template<'a>(
+    graph: &'a crate::source_graph::model::SourceGraph,
+    active: &SourceGraphTemplate,
+) -> Option<&'a crate::kernel::listing_items::ListingItemDefinition> {
+    graph.listing_items.items.iter().find(|item| {
+        normalize_project_path(&item.file) == normalize_project_path(&active.file)
+            || normalize_project_path(&item.template_name) == normalize_project_path(&active.name)
+    })
+}
+
 fn render_context(
     mode: &TemplateWorkbenchRenderMode,
     selected_context: Option<&TemplateWorkbenchConsumer>,
@@ -316,6 +351,21 @@ fn render_context(
                         .to_string()
                 }),
         },
+        TemplateWorkbenchRenderMode::ListingItemScenario => TemplateWorkbenchRenderContext {
+            kind: TemplateWorkbenchRenderContextKind::ControlledListingItemScenario,
+            canonical_truth: false,
+            label: "Articol real în Listing Item".to_string(),
+            explanation: selected_context
+                .map(|context| {
+                    format!(
+                        "Workbench-ul creează numai în Preview un consumator get_page + include pentru articolul «{}» ({}); proiectul nu primește un fișier auxiliar.",
+                        context.page_title, context.page_url
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "Workbench-ul creează numai în Preview un consumator get_page + include pentru Listing Item.".to_string()
+                }),
+        },
         TemplateWorkbenchRenderMode::MacroScenario => TemplateWorkbenchRenderContext {
             kind: TemplateWorkbenchRenderContextKind::ControlledMacroScenario,
             canonical_truth: false,
@@ -354,6 +404,46 @@ fn consumer_for_page(
         root_template_source_id: root_template.node_id.clone(),
         root_template_file: root_template.file.clone(),
         dependency_path,
+    })
+}
+
+fn listing_item_preview_consumer(
+    model: &ProjectModel,
+    active: &SourceGraphTemplate,
+    preferred_page_path: Option<&str>,
+) -> Option<TemplateWorkbenchConsumer> {
+    let item = listing_item_for_template(&model.source_graph, active)?;
+    let model_id = item.model_id.as_deref()?;
+    let compatible_page = |path: &str| {
+        let normalized = normalize_project_path(path);
+        model.source_graph.pages.iter().find(|page| {
+            normalize_project_path(&page.file) == normalized
+                && matches!(
+                    page.page_kind,
+                    crate::source_graph::model::SourcePageKind::Page
+                )
+                && model
+                    .source_graph
+                    .content_models
+                    .page_bindings
+                    .iter()
+                    .any(|binding| {
+                        normalize_project_path(&binding.page_file) == normalized
+                            && binding.model_id == model_id
+                    })
+        })
+    };
+    let page = preferred_page_path
+        .and_then(compatible_page)
+        .or_else(|| item.preview_page_file.as_deref().and_then(compatible_page))?;
+    Some(TemplateWorkbenchConsumer {
+        page_id: page.id.clone(),
+        page_file: page.file.clone(),
+        page_title: page.title.clone(),
+        page_url: page.url.clone(),
+        root_template_source_id: active.node_id.clone(),
+        root_template_file: active.file.clone(),
+        dependency_path: Vec::new(),
     })
 }
 
@@ -433,12 +523,16 @@ fn render_mode(
     active: &SourceGraphTemplate,
     selected_context: Option<&TemplateWorkbenchConsumer>,
     selected_route: Option<&TemplateWorkbenchRouteContext>,
+    active_listing_item: bool,
 ) -> TemplateWorkbenchRenderMode {
     if selected_route.is_some() {
         return TemplateWorkbenchRenderMode::CanonicalRoute;
     }
     if active.is_partial && !active.macros.is_empty() {
         return TemplateWorkbenchRenderMode::MacroScenario;
+    }
+    if active_listing_item && selected_context.is_some() {
+        return TemplateWorkbenchRenderMode::ListingItemScenario;
     }
     let Some(context) = selected_context else {
         return TemplateWorkbenchRenderMode::OrphanTemplate;
@@ -757,6 +851,134 @@ mod tests {
             macros.render_mode,
             TemplateWorkbenchRenderMode::MacroScenario
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn listing_item_without_consumer_uses_an_ephemeral_real_page_scenario() {
+        let root = fixture_root("listing-item-scenario");
+        write_fixture(&root, "<main>Acasă</main>");
+        fs::create_dir_all(root.join("content/services")).unwrap();
+        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
+        fs::create_dir_all(root.join(".panastudio/content-models")).unwrap();
+        fs::write(
+            root.join("content/services/_index.md"),
+            "+++\ntitle = \"Servicii\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/services/audit.md"),
+            "+++\ntitle = \"Audit\"\n[extra]\nprice = 80\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/listing-items/service-card.html"),
+            "<article><h2>{{ item.title }}</h2><span>{{ item.extra.price }}</span></article>",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".panastudio/project.toml"),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".panastudio/assignments.toml"),
+            "schema_version = 1\n\n[[assignments]]\nsectionPath = \"content/services/_index.md\"\nmodelId = \"service\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".panastudio/content-models/service.toml"),
+            "schemaVersion = 1\nid = \"service\"\nlabel = \"Serviciu\"\n\n[[fields]]\nid = \"field_price\"\nkey = \"price\"\nlabel = \"Preț\"\nkind = \"number\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join(".panastudio/listing-items.toml"),
+            "schema_version = 1\n\n[[items]]\nid = \"service-card\"\nlabel = \"Card serviciu\"\ntemplateName = \"listing-items/service-card.html\"\nmodelId = \"service\"\npreviewPageFile = \"content/services/audit.md\"\n",
+        )
+        .unwrap();
+
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let plan = resolve_template_workbench_plan(
+            &model,
+            &TemplateWorkbenchPlanInput {
+                template_path: "listing-items/service-card.html".to_string(),
+                preferred_page_path: Some("content/services/audit.md".to_string()),
+                preferred_route: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan.render_mode,
+            TemplateWorkbenchRenderMode::ListingItemScenario
+        );
+        assert_eq!(
+            plan.render_context.kind,
+            TemplateWorkbenchRenderContextKind::ControlledListingItemScenario
+        );
+        assert!(!plan.render_context.canonical_truth);
+        assert_eq!(
+            plan.selected_context
+                .as_ref()
+                .map(|context| context.page_file.as_str()),
+            Some("content/services/audit.md")
+        );
+        assert!(plan
+            .selected_context
+            .as_ref()
+            .is_some_and(|context| context.dependency_path.is_empty()));
+        assert!(!root
+            .join("templates/__pana_template_workbench_listing_item.html")
+            .exists());
+
+        fs::create_dir_all(root.join("templates/services")).unwrap();
+        fs::write(
+            root.join("content/services/_index.md"),
+            "+++\ntitle = \"Servicii\"\ntemplate = \"services/archive.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/services/hosting.md"),
+            "+++\ntitle = \"Găzduire\"\n[extra]\nprice = 40\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/services/archive.html"),
+            "{% for item in section.pages %}{% include \"listing-items/service-card.html\" %}{% endfor %}",
+        )
+        .unwrap();
+
+        let model_with_real_consumer = build_project_model(&root, &HashMap::new()).unwrap();
+        let plan_with_real_consumer = resolve_template_workbench_plan(
+            &model_with_real_consumer,
+            &TemplateWorkbenchPlanInput {
+                template_path: "listing-items/service-card.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: None,
+            },
+        )
+        .unwrap();
+        assert!(plan_with_real_consumer.consumers.iter().any(|consumer| {
+            consumer
+                .dependency_path
+                .iter()
+                .any(|step| step.kind == TemplateWorkbenchDependencyKind::Includes)
+        }));
+        assert_eq!(
+            plan_with_real_consumer.render_mode,
+            TemplateWorkbenchRenderMode::ListingItemScenario
+        );
+        assert_eq!(
+            plan_with_real_consumer
+                .selected_context
+                .as_ref()
+                .map(|context| context.page_file.as_str()),
+            Some("content/services/audit.md")
+        );
+        assert!(plan_with_real_consumer
+            .selected_context
+            .as_ref()
+            .is_some_and(|context| context.dependency_path.is_empty()));
 
         fs::remove_dir_all(root).unwrap();
     }

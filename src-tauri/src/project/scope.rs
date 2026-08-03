@@ -10,7 +10,6 @@ const DERIVED_OR_INTERNAL_DIRS: &[&str] = &[
     "target",
     "export",
     "public",
-    ".panastudio",
     ".panastudio_preview",
 ];
 
@@ -27,5 +26,7 @@ mod tests {
         assert!(is_derived_or_internal_dir("export"));
         assert!(is_derived_or_internal_dir("public"));
         assert!(!is_derived_or_internal_dir("content"));
+        assert!(!is_derived_or_internal_dir(".panastudio"));
+        assert!(is_derived_or_internal_dir(".panastudio_preview"));
     }
 }

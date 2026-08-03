@@ -53,6 +53,7 @@ export type PreviewControllerHost = PreviewRefreshLeaseHost & {
   previewDocumentMarkup: string | null;
   activeRenderedPreviewPageFile: ProjectFile | null;
   isActiveRenderedPreviewPage: boolean;
+  templateWorkbenchActive?: boolean;
   projectStatus: string;
   projectLifecycle: ProjectLifecycleSnapshot;
   overrideRules: Record<string, EditableStyles>;
@@ -589,12 +590,15 @@ async function replaceMountedPreviewWithCanonicalDocument(
   }
   let ack;
   try {
-    ack = await host.previewRuntime.sendAndWait({
-      type: "replace-document",
-      html: ready.html,
-      liveCss: serializeOverrides(host.overrideRules, host.variableOverrides),
-      canvasIdentity: plan.identity,
-    });
+    ack = await host.previewRuntime.sendAndWait(
+      {
+        type: "replace-document",
+        html: ready.html,
+        liveCss: serializeOverrides(host.overrideRules, host.variableOverrides),
+        canvasIdentity: plan.identity,
+      },
+      host.templateWorkbenchActive ? { ackTimeoutMs: 1_500 } : {},
+    );
   } catch (error) {
     if (error instanceof PreviewRuntimeTransportError) {
       return { kind: "unsupported", reason: "runtime_unresponsive" };

@@ -2,7 +2,7 @@
     var rect = null;
     elements.forEach(function (element) {
       if (!document.contains(element)) return;
-      var next = element.getBoundingClientRect();
+      var next = activeDocumentAuthoringRectForElement(element) || element.getBoundingClientRect();
       if (next.width <= 0 && next.height <= 0) return;
       if (!rect) {
         rect = {

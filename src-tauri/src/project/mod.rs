@@ -37,7 +37,8 @@ pub use site_structure::{
     PlannedSitePageStructure, PlannedSitePartialInclude, PlannedSitePartialStructure,
     PlannedSiteSingleStructure, SiteArchiveStructureInput, SitePageStructureInput,
     SitePartialIncludeInput, SitePartialStructureInput, SiteSingleStructureInput,
-    SiteTemplateWriteOrigin, SiteTextChange,
+    SiteTemplateWriteOrigin, SiteTextChange, DEFAULT_ARCHIVE_PAGINATE_BY,
+    DEFAULT_ARCHIVE_PAGINATE_PATH,
 };
 pub use startup::{
     apply_creation as apply_startup_creation, plan_creation as plan_startup_creation,

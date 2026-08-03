@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    kernel::{preview_projection::CanvasPatch, project_workspace::ProjectWorkspaceMutationReceipt},
+    kernel::{
+        dynamic_widgets::DynamicWidgetProperties, preview_projection::CanvasPatch,
+        project_workspace::ProjectWorkspaceMutationReceipt,
+    },
     preview::{
         CanvasBoundaryInstance, CanvasGraph, CanvasMarkdownProvenanceState, CanvasNodeOrigin,
         CanvasProjectionIdentity, CanvasRenderNode,
@@ -190,6 +193,8 @@ pub struct EditorNavigationNode {
     pub component_invocation_ids: Vec<String>,
     pub block_definition_ids: Vec<String>,
     pub block_source_instance_ids: Vec<String>,
+    pub dynamic_widget_provider_ids: Vec<String>,
+    pub dynamic_widget_source_instance_ids: Vec<String>,
     pub binding_key: Option<String>,
     pub binding_path: Option<String>,
     pub boundary: Option<EditorNavigationBoundary>,
@@ -1661,6 +1666,8 @@ pub(crate) fn build_editor_navigation_snapshot(
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: boundary.binding_key.clone(),
             binding_path: boundary.binding_path.clone(),
             boundary: Some(EditorNavigationBoundary {
@@ -1771,6 +1778,10 @@ pub(crate) fn build_editor_navigation_snapshot(
             component_invocation_ids: render_node.component_invocation_ids.clone(),
             block_definition_ids: render_node.block_definition_ids.clone(),
             block_source_instance_ids: render_node.block_source_instance_ids.clone(),
+            dynamic_widget_provider_ids: render_node.dynamic_widget_provider_ids.clone(),
+            dynamic_widget_source_instance_ids: render_node
+                .dynamic_widget_source_instance_ids
+                .clone(),
             binding_key: render_node.binding_key.clone(),
             binding_path: render_node.binding_path.clone(),
             boundary: None,
@@ -1969,8 +1980,91 @@ impl<'a> EditorNavigationViewBuilder<'a> {
         for source_node_id in roots {
             self.add_source_node(&source_node_id, None, None);
         }
-        let root_node_ids = self.rebuild_visual_hierarchy();
+        let mut root_node_ids = self.rebuild_visual_hierarchy();
+        if root_node_ids.is_empty() {
+            if let Some(authoring_root_id) = self.add_empty_document_authoring_root() {
+                root_node_ids.push(authoring_root_id);
+            }
+        }
         (root_node_ids, self.view_nodes, self.editor_nodes)
+    }
+
+    /// Proiectează rădăcina goală a documentului activ ca suprafață de autor,
+    /// nu ca gate Tera. Pentru pagini, ancora este block-ul local; pentru un
+    /// fragment deschis direct, ancora este chiar rădăcina Template/Partial.
+    /// Straturi primește aceeași identitate Rust pe care o folosește Canvas.
+    fn add_empty_document_authoring_root(&mut self) -> Option<String> {
+        let candidate = self
+            .source_nodes
+            .values()
+            .copied()
+            .filter(|source| {
+                source.origin == SourceOrigin::Local
+                    && (is_document_wrapper_block(source, self.template, &self.source_nodes)
+                        || is_document_fragment_root(source, self.template))
+            })
+            .filter_map(|source| {
+                let matches = self.global_nodes_by_source.get(source.id.as_str())?;
+                let representative = matches.iter().copied().find(|node| {
+                    node.kind == EditorNavigationNodeKind::TeraBoundary
+                        && is_empty_document_authoring_boundary(node, matches)
+                        && node.capabilities.requires_edit_scope_id.is_none()
+                })?;
+                let order = source.range.as_ref().map(|range| range.start).unwrap_or(0);
+                Some((
+                    order,
+                    source.id.clone(),
+                    source.clone(),
+                    representative.clone(),
+                ))
+            })
+            .min_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)))?;
+        let (order, source_id, source, representative) = candidate;
+        let view_node_id = format!("editor_view_authoring_root:{source_id}");
+        let label = self
+            .template
+            .file
+            .replace('\\', "/")
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
+            .unwrap_or(self.template.file.as_str())
+            .to_string();
+        let mut capabilities = representative.capabilities.clone();
+        capabilities.can_select = true;
+        capabilities.can_inspect = true;
+        capabilities.can_enter_boundary = false;
+        capabilities.can_move_atomic = false;
+        capabilities.can_move = false;
+        capabilities.can_edit_text = false;
+        capabilities.can_edit_attributes = false;
+        capabilities.read_only = false;
+        capabilities.requires_edit_scope_id = None;
+
+        self.view_nodes.push(EditorNavigationViewNode {
+            id: view_node_id.clone(),
+            editor_node_id: Some(representative.id),
+            parent_id: None,
+            children: Vec::new(),
+            order,
+            kind: EditorNavigationViewNodeKind::Slot,
+            label,
+            tag: None,
+            source_node_id: Some(source_id),
+            source_kind: Some(source.kind),
+            file: source.file,
+            origin: EditorNavigationOrigin::Project,
+            theme_name: None,
+            render_instance_ids: representative
+                .boundary
+                .as_ref()
+                .map(|boundary| boundary.root_render_instance_ids.clone())
+                .unwrap_or_default(),
+            boundary: representative.boundary,
+            relation: None,
+            capabilities,
+        });
+        Some(view_node_id)
     }
 
     fn add_source_node(
@@ -2080,6 +2174,8 @@ impl<'a> EditorNavigationViewBuilder<'a> {
         let tag = (source.kind == SourceNodeKind::Html)
             .then(|| source_html_tag(&source.label))
             .flatten();
+        let display_label = dynamic_widget_navigation_label(self.model, &source.id)
+            .unwrap_or_else(|| source.label.clone());
         if let Some(range) = source.range.clone() {
             self.view_ranges.insert(view_node_id.clone(), range);
         }
@@ -2091,7 +2187,7 @@ impl<'a> EditorNavigationViewBuilder<'a> {
             children: Vec::new(),
             order,
             kind: view_kind,
-            label: source.label.clone(),
+            label: display_label.clone(),
             tag: tag.clone(),
             source_node_id: Some(source.id.clone()),
             source_kind: Some(source.kind.clone()),
@@ -2121,7 +2217,7 @@ impl<'a> EditorNavigationViewBuilder<'a> {
                 } else {
                     EditorNavigationNodeKind::TeraBoundary
                 },
-                label: source.label.clone(),
+                label: display_label,
                 tag,
                 source_node_id: Some(source.id.clone()),
                 render_instance_id: render_instance_ids.first().cloned(),
@@ -2139,6 +2235,12 @@ impl<'a> EditorNavigationViewBuilder<'a> {
                 block_definition_ids: union_editor_ids(&matches, |node| &node.block_definition_ids),
                 block_source_instance_ids: union_editor_ids(&matches, |node| {
                     &node.block_source_instance_ids
+                }),
+                dynamic_widget_provider_ids: union_editor_ids(&matches, |node| {
+                    &node.dynamic_widget_provider_ids
+                }),
+                dynamic_widget_source_instance_ids: union_editor_ids(&matches, |node| {
+                    &node.dynamic_widget_source_instance_ids
                 }),
                 binding_key: representative.and_then(|node| node.binding_key.clone()),
                 binding_path: representative.and_then(|node| node.binding_path.clone()),
@@ -2373,6 +2475,32 @@ impl<'a> EditorNavigationViewBuilder<'a> {
     }
 }
 
+fn is_empty_document_authoring_boundary(
+    boundary_node: &EditorNavigationNode,
+    source_matches: &[&EditorNavigationNode],
+) -> bool {
+    let Some(boundary) = boundary_node.boundary.as_ref() else {
+        return false;
+    };
+    if boundary.empty {
+        return true;
+    }
+    !boundary.root_render_instance_ids.is_empty()
+        && boundary
+            .root_render_instance_ids
+            .iter()
+            .all(|render_instance_id| {
+                let render_node_id = format!("editor_render:{render_instance_id}");
+                source_matches.iter().copied().any(|render_node| {
+                    render_node.id == render_node_id
+                        && render_node.parent_id.as_deref() == Some(boundary_node.id.as_str())
+                        && render_node.source_node_id == boundary_node.source_node_id
+                        && render_node.source_kind == Some(SourceNodeKind::Block)
+                        && render_node.tag.as_deref() == Some("div")
+                })
+            })
+}
+
 fn build_editor_navigation_view(
     model: &ProjectModel,
     global_nodes: &[EditorNavigationNode],
@@ -2576,6 +2704,45 @@ fn union_editor_ids(
     result
 }
 
+fn dynamic_widget_navigation_label(model: &ProjectModel, source_node_id: &str) -> Option<String> {
+    let instance = model
+        .source_graph
+        .dynamic_widget_graph
+        .source_instances
+        .iter()
+        .rev()
+        .find(|instance| {
+            instance
+                .root_source_node_ids
+                .iter()
+                .any(|candidate| candidate == source_node_id)
+        })?;
+    match instance.properties.as_ref()? {
+        DynamicWidgetProperties::DynamicField(properties) => {
+            let label = model
+                .source_graph
+                .dynamic_widget_graph
+                .value_catalog
+                .iter()
+                .find(|definition| {
+                    definition.source == properties.binding.source
+                        && definition.contexts.contains(&properties.binding.context)
+                })
+                .map(|definition| definition.label.as_str())
+                .filter(|label| !label.trim().is_empty())
+                .unwrap_or(properties.label.as_str());
+            Some(if label.trim().is_empty() {
+                "Câmp dinamic".to_string()
+            } else {
+                format!("Câmp dinamic · {label}")
+            })
+        }
+        DynamicWidgetProperties::Listing(properties) => {
+            Some(format!("Listing · {}", properties.listing_item_template))
+        }
+    }
+}
+
 fn view_node_kind(kind: &SourceNodeKind) -> EditorNavigationViewNodeKind {
     match kind {
         SourceNodeKind::Html => EditorNavigationViewNodeKind::HtmlElement,
@@ -2757,6 +2924,16 @@ fn is_document_wrapper_block(
         && source.file == template.file
         && source.parent.as_deref() == Some(template.node_id.as_str())
         && !source_is_inside_html(source, source_nodes)
+}
+
+fn is_document_fragment_root(source: &SourceNode, template: &SourceGraphTemplate) -> bool {
+    source.id == template.node_id
+        && source.file == template.file
+        && source.parent.is_none()
+        && matches!(
+            source.kind,
+            SourceNodeKind::Template | SourceNodeKind::Partial
+        )
 }
 
 fn source_is_inside_html(source: &SourceNode, source_nodes: &HashMap<&str, &SourceNode>) -> bool {
@@ -3009,6 +3186,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: None,
             binding_path: None,
             boundary: Some(EditorNavigationBoundary {
@@ -3462,6 +3641,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: Some(binding_key.to_string()),
             binding_path: Some(format!("section.pages[{occurrence}]")),
             tag: "article".to_string(),
@@ -3516,6 +3697,7 @@ mod tests {
                 ],
             }],
             component_instances: Vec::new(),
+            dynamic_widget_instances: Vec::new(),
             block_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
@@ -3636,6 +3818,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: None,
             binding_path: None,
             tag: source_html_tag(&source.label).unwrap(),
@@ -3689,6 +3873,7 @@ mod tests {
                 ],
             }],
             component_instances: Vec::new(),
+            dynamic_widget_instances: Vec::new(),
             block_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
@@ -4517,6 +4702,85 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[test]
+    fn empty_direct_fragment_projects_one_local_authoring_root() {
+        let root = editor_navigation_test_project("empty-direct-fragment");
+        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
+        fs::write(root.join("templates/listing-items/card.html"), "\n").unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fragment = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Partial
+                    && node.file == "templates/listing-items/card.html"
+                    && node.parent.is_none()
+            })
+            .expect("listing item root");
+        let rendered = format!(
+            "<body><!-- pana-template-source-start:{} --><!-- pana-template-source-end:{} --></body>",
+            fragment.id, fragment.id
+        );
+        let route = "/__pana_workbench/listing-item/";
+        let graph = CanvasGraph::from_rendered_documents(
+            &model,
+            31,
+            "preview-empty-fragment-31",
+            [(route, rendered.as_str())],
+        )
+        .unwrap();
+        let identity = CanvasProjectionIdentity {
+            project_root: root.to_string_lossy().to_string(),
+            runtime_session_id: "runtime-empty-fragment".to_string(),
+            workspace_revision: 31,
+            transaction_id: "canvas-empty-fragment".to_string(),
+            preview_revision: "preview-empty-fragment-31".to_string(),
+        };
+        let snapshot = build_editor_navigation_snapshot(
+            identity,
+            route,
+            &model,
+            &graph,
+            Some("templates/listing-items/card.html"),
+            None,
+        )
+        .unwrap();
+
+        let boundary = snapshot
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == EditorNavigationNodeKind::TeraBoundary
+                    && node.source_node_id.as_deref() == Some(fragment.id.as_str())
+            })
+            .expect("fragment root boundary");
+        assert_eq!(boundary.source_kind, Some(SourceNodeKind::Partial));
+        assert!(!boundary.capabilities.read_only);
+        assert!(boundary.capabilities.requires_edit_scope_id.is_none());
+        assert!(boundary
+            .boundary
+            .as_ref()
+            .is_some_and(|boundary| boundary.empty));
+
+        let view = snapshot
+            .focused_view
+            .as_ref()
+            .expect("focused fragment view");
+        assert_eq!(view.root_node_ids.len(), 1);
+        let slot = view
+            .nodes
+            .iter()
+            .find(|node| node.id == view.root_node_ids[0])
+            .expect("empty fragment authoring slot");
+        assert_eq!(slot.kind, EditorNavigationViewNodeKind::Slot);
+        assert_eq!(slot.source_kind, Some(SourceNodeKind::Partial));
+        assert_eq!(slot.source_node_id.as_deref(), Some(fragment.id.as_str()));
+        assert!(!slot.capabilities.read_only);
+        assert!(slot.capabilities.requires_edit_scope_id.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn focused_snapshot(
         root: &std::path::Path,
         model: &ProjectModel,
@@ -4541,6 +4805,7 @@ mod tests {
             }],
             component_instances: Vec::new(),
             block_instances: Vec::new(),
+            dynamic_widget_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
         };
@@ -4590,6 +4855,8 @@ mod tests {
             component_invocation_ids: Vec::new(),
             block_definition_ids: Vec::new(),
             block_source_instance_ids: Vec::new(),
+            dynamic_widget_provider_ids: Vec::new(),
+            dynamic_widget_source_instance_ids: Vec::new(),
             binding_key: None,
             binding_path: None,
             boundary: None,

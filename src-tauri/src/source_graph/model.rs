@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::kernel::content_models::ContentModelCatalog;
+use crate::kernel::dynamic_widgets::DynamicWidgetGraph;
+use crate::kernel::listing_items::ListingItemCatalog;
 use crate::localization::LocalizedDiagnostic;
 use crate::source_graph::tera_semantics::{TeraSemanticDocument, TeraSemanticExpression};
 use crate::source_graph::zola_shortcode::ZolaShortcodeInvocation;
@@ -21,6 +24,9 @@ pub struct SourceGraph {
     pub structured_documents: Vec<SourceStructuredDocument>,
     pub component_graph: ComponentGraph,
     pub block_graph: BlockGraph,
+    pub content_models: ContentModelCatalog,
+    pub listing_items: ListingItemCatalog,
+    pub dynamic_widget_graph: DynamicWidgetGraph,
     pub markdown_projections: Vec<MarkdownProjection>,
     pub nodes: Vec<SourceNode>,
     pub relations: Vec<SourceRelation>,

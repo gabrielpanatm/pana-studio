@@ -243,9 +243,11 @@ pub(crate) fn read_source_graph_from_accepted_project(
     identity: &PreviewStructuralCommandIdentity,
     state: &State<AppState>,
 ) -> Result<SourceGraphProjectionReceipt, String> {
-    use crate::project_model::cache::capture_project_model_build_context;
+    use crate::project_model::cache::{
+        capture_project_model_build_context, publish_project_model_if_current,
+    };
 
-    let (_root, session, context) = capture_project_model_build_context(state)?;
+    let (root, session, context) = capture_project_model_build_context(state)?;
     require_preview_command_identity(&session, identity)?;
     let cached_model = {
         let workspace = state.project_workspace.lock().map_err(|_| {
@@ -260,13 +262,21 @@ pub(crate) fn read_source_graph_from_accepted_project(
             None
         }
     };
-    let model = cached_model.ok_or_else(|| {
-        format!(
-            "SourceGraph așteaptă ProjectModel-ul publicat de Preview pentru workspace revision {}.",
-            context.projection().revision
-        )
-    })?;
-    let graph = model.source_graph.clone();
+    let graph = match cached_model {
+        Some(model) => model.source_graph.clone(),
+        None => {
+            // Workspace mutations invalidate ProjectModel before every derived
+            // frontend view. Preview normally republishes it first; activities
+            // without a mounted Canvas still need an exact Rust projection.
+            let model = crate::project_model::build_project_model_from_workspace_projection(
+                &root,
+                context.projection(),
+            )?;
+            let graph = model.source_graph.clone();
+            publish_project_model_if_current(state, &context, model)?;
+            graph
+        }
+    };
     Ok(SourceGraphProjectionReceipt {
         project_root: context.projection().project_root.clone(),
         runtime_session_id: context.projection().runtime_session_id.clone(),

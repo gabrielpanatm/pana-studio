@@ -199,7 +199,12 @@ function validateTeraDrop(
     }
   }
 
-  if ((request.item.kind === "include" || request.item.kind === "import") && !templateTargetExists(graph, request.item.target)) {
+  if (
+    (request.item.kind === "include"
+      || request.item.kind === "import"
+      || request.item.kind === "macroCall")
+    && !templateTargetExists(graph, request.item.target)
+  ) {
     return {
       allowed: false,
       reason: t("tera-drop-target-missing", {

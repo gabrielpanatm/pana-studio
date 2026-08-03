@@ -4,7 +4,11 @@ use super::{
     imports::{relative_scss_import_path, variables_import_path},
     page_scss_relative_path,
     paths::supports_page_css,
-    stylesheet::{ensure_page_css_block, remove_page_stylesheet_link},
+    reusable_scss_relative_path,
+    stylesheet::{
+        consumer_stylesheet_imports_reusable, ensure_page_css_block,
+        prepare_reusable_consumer_stylesheet_source, remove_page_stylesheet_link,
+    },
 };
 
 #[test]
@@ -37,6 +41,36 @@ fn detects_theme_partials_as_not_page_owned_css() {
         "themes/pana-studio/templates/partials/header.html"
     ));
     assert!(supports_page_css("themes/pana-studio/templates/index.html"));
+}
+
+#[test]
+fn detects_listing_items_as_reusable_css_owners() {
+    assert!(!supports_page_css(
+        "templates/listing-items/card-serviciu.html"
+    ));
+    assert!(!supports_page_css(
+        "themes/pana-studio/templates/listing-items/card-serviciu.html"
+    ));
+}
+
+#[test]
+fn derives_deterministic_reusable_scss_owners() {
+    assert_eq!(
+        reusable_scss_relative_path("templates/listing-items/card-serviciu.html").as_deref(),
+        Some("sass/partials/listing-items/_card-serviciu.scss")
+    );
+    assert_eq!(
+        reusable_scss_relative_path("templates/partials/navigation/header.html").as_deref(),
+        Some("sass/partials/navigation/_header.scss")
+    );
+    assert_eq!(
+        reusable_scss_relative_path(
+            "themes/pana-studio/templates/listing-items/card-serviciu.html"
+        )
+        .as_deref(),
+        Some("themes/pana-studio/sass/partials/listing-items/_card-serviciu.scss")
+    );
+    assert_eq!(reusable_scss_relative_path("templates/index.html"), None);
 }
 
 #[test]
@@ -128,4 +162,34 @@ fn local_page_stylesheet_can_import_active_theme_variables() {
         result.as_deref(),
         Some("../../themes/pana-studio/sass/css-framework/variabile")
     );
+}
+
+#[test]
+fn prepares_and_deduplicates_reusable_consumer_import() {
+    let style_files = ["themes/pana-studio/sass/css-framework/_variabile.scss".to_string()];
+    let source = prepare_reusable_consumer_stylesheet_source(
+        "sass/pagini/servicii-arhiva.scss",
+        "",
+        "sass/partials/listing-items/_card-serviciu.scss",
+        style_files.clone(),
+        Some("pana-studio"),
+    )
+    .unwrap();
+    assert!(source.contains("@import '../../themes/pana-studio/sass/css-framework/variabile';"));
+    assert!(source.contains("@import '../partials/listing-items/card-serviciu';"));
+    assert!(consumer_stylesheet_imports_reusable(
+        &source,
+        "sass/pagini/servicii-arhiva.scss",
+        "sass/partials/listing-items/_card-serviciu.scss",
+    ));
+
+    let repeated = prepare_reusable_consumer_stylesheet_source(
+        "sass/pagini/servicii-arhiva.scss",
+        &source,
+        "sass/partials/listing-items/_card-serviciu.scss",
+        style_files,
+        Some("pana-studio"),
+    )
+    .unwrap();
+    assert_eq!(repeated, source);
 }

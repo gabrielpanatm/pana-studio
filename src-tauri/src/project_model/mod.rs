@@ -14,6 +14,7 @@ pub mod insert_engine;
 pub mod model;
 pub mod move_engine;
 mod ranges;
+mod structural_envelope;
 pub mod tag_engine;
 pub mod template_workbench;
 pub mod tera_delete_engine;

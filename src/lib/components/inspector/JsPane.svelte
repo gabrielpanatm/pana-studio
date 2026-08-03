@@ -2,6 +2,7 @@
   import type { InspectorSelectionSummarySnapshot } from "$lib/types";
   import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
   import MotionStudioPanel from "$lib/components/inspector/js/MotionStudioPanel.svelte";
+  import InspectorEmptyState from "$lib/components/inspector/InspectorEmptyState.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
 
   let {
@@ -28,34 +29,30 @@
 
 <div class="js-pane">
   {#if !hasElementSelection}
-    <div class="jp-state">
-      <strong>Motion</strong>
-      <span>{t("inspector-js-select-element")}</span>
-    </div>
+    <InspectorEmptyState kind="js" title="Motion" description={t("inspector-js-select-element")} />
   {:else if !dataAnim}
-    <div class="jp-state">
-      <strong>{t("inspector-js-no-motion-identity")}</strong>
-      <span>{t("inspector-js-add-data-anim-before")} <code>data-anim</code> {t("inspector-js-add-data-anim-after")}</span>
-      {#if onSwitchToHtml}
-        <button type="button" onclick={onSwitchToHtml}>{t("inspector-js-go-html")}</button>
-      {/if}
-    </div>
+    <InspectorEmptyState
+      kind="js"
+      title={t("inspector-js-no-motion-identity")}
+      description={t("inspector-js-add-data-anim-before")}
+      codeToken="data-anim"
+      descriptionAfter={t("inspector-js-add-data-anim-after")}
+      actionLabel={onSwitchToHtml ? t("inspector-js-go-html") : ""}
+      onAction={onSwitchToHtml}
+    />
   {:else if !templatePath}
-    <div class="jp-state jp-error">
-      <strong>{t("inspector-js-unavailable")}</strong>
-      <span>{t("inspector-js-no-active-template")}</span>
-    </div>
+    <InspectorEmptyState kind="js" tone="danger" title={t("inspector-js-unavailable")} description={t("inspector-js-no-active-template")} />
   {:else if workspace.loadState === "error"}
-    <div class="jp-state jp-error" role="alert">
-      <strong>{t("inspector-js-motion-load-failed")}</strong>
-      <span>{workspace.error}</span>
-      <button type="button" onclick={() => { void workspace.reload(); }}>{t("inspector-js-retry")}</button>
-    </div>
+    <InspectorEmptyState
+      kind="js"
+      tone="danger"
+      title={t("inspector-js-motion-load-failed")}
+      description={workspace.error}
+      actionLabel={t("inspector-js-retry")}
+      onAction={() => { void workspace.reload(); }}
+    />
   {:else if workspace.loadState !== "ready"}
-    <div class="jp-state" aria-live="polite">
-      <strong>Motion v2</strong>
-      <span>{t("inspector-js-reading-rust")}</span>
-    </div>
+    <InspectorEmptyState kind="js" loading title="Motion v2" description={t("inspector-js-reading-rust")} />
   {:else}
     <div class="jp-target">
       <div>
@@ -72,35 +69,9 @@
   .js-pane {
     display: flex;
     min-width: 0;
+    flex: 1 1 auto;
     flex-direction: column;
   }
-
-  .jp-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 7px;
-    padding: 24px 14px;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.45;
-  }
-
-  .jp-state strong { color:var(--text); font-size:12px; }
-  .jp-state code { color:var(--brand-strong); }
-  .jp-state button {
-    min-height: 29px;
-    padding: 0 10px;
-    border: 1px solid color-mix(in srgb, var(--brand) 38%, var(--border-subtle));
-    border-radius: var(--radius-control);
-    color: var(--brand-strong);
-    background: var(--material-control);
-    box-shadow: var(--shadow-control);
-    font-weight: 800;
-    cursor: pointer;
-  }
-  .jp-error span { color:var(--danger); overflow-wrap:anywhere; }
   .jp-target {
     display: flex;
     align-items: center;

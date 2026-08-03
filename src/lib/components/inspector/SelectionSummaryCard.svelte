@@ -7,9 +7,11 @@
 
   let {
     summary = null,
+    authoringDocumentPath = null,
     selectClass,
   }: {
     summary?: InspectorSelectionSummarySnapshot | null;
+    authoringDocumentPath?: string | null;
     selectClass: (className: string) => Promise<"allowed" | "blocked">;
   } = $props();
 
@@ -26,6 +28,7 @@
   function summaryLabel(value: InspectorSelectionSummarySnapshot | null) {
     if (!value) return t("inspector-summary-loading");
     if (value.state !== "resolved") return summaryStateLabel(value.state);
+    if (authoringDocumentPath) return fileName(authoringDocumentPath);
     return value.selector
       ?? value.label
       ?? value.tag
@@ -57,10 +60,17 @@
   }
 
   function subjectLabel(value: InspectorSelectionSummarySnapshot) {
+    if (value.subjectKind === "teraBoundary" && authoringDocumentPath) {
+      return t("inspector-summary-kind-document");
+    }
     if (value.subjectKind === "teraBoundary") return t("inspector-summary-kind-tera");
     if (value.subjectKind === "markdownBoundary") return t("markdown-boundary");
     if (value.subjectKind === "runtimeElement") return t("inspector-summary-kind-runtime");
     return t("inspector-summary-kind-html");
+  }
+
+  function fileName(path: string) {
+    return path.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? path;
   }
 
   function handleClassKeydown(event: KeyboardEvent) {

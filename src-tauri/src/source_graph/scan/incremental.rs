@@ -183,6 +183,26 @@ pub(crate) fn rebuild_local_template_graph(
     let block_graph_started = Instant::now();
     graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
     let block_graph_ms = elapsed_ms(block_graph_started);
+    let mut content_models = std::mem::take(&mut graph.content_models);
+    crate::kernel::content_models::refresh_content_model_template_usages(
+        project_root,
+        projected_sources,
+        &graph,
+        &mut content_models,
+    );
+    graph.content_models = content_models;
+    graph.listing_items = crate::kernel::listing_items::build_listing_item_catalog(
+        project_root,
+        projected_sources,
+        &HashSet::new(),
+        &graph,
+    );
+    graph.dynamic_widget_graph = crate::kernel::dynamic_widgets::build_dynamic_widget_graph(
+        project_root,
+        projected_sources,
+        &HashSet::new(),
+        &graph,
+    );
     graph.markdown_projections = crate::source_graph::markdown::build_markdown_projections(&graph);
 
     Ok((

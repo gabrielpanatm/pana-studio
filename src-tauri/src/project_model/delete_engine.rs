@@ -13,6 +13,7 @@ use super::move_engine::{
     resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
     source_location_at_offset, source_missing_message, ProjectSourceEditLocation, Span,
 };
+use super::structural_envelope::{structural_envelope_for_html_node, StructuralEnvelopeKind};
 use super::zola_image_engine::zola_image_contract_start;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -132,9 +133,13 @@ fn plan_html_delete_from_source_node(
         .range
         .as_ref()
         .ok_or_else(|| "Ținta nu are range stabil în Source Graph.".to_string())?;
-    let mut span = resolve_html_element_span(&file.contents, target_range.start)?;
-    if let Some(contract_start) = zola_image_contract_start(&file.contents, target_range.start)? {
-        span.start = contract_start;
+    let envelope = structural_envelope_for_html_node(model, &file.contents, target_node)?;
+    let mut span = envelope.span;
+    if envelope.kind == StructuralEnvelopeKind::HtmlElement {
+        if let Some(contract_start) = zola_image_contract_start(&file.contents, target_range.start)?
+        {
+            span.start = contract_start;
+        }
     }
 
     plan_html_delete_for_span(
@@ -417,6 +422,50 @@ mod tests {
             .diagnostic
             .unwrap()
             .contains("Nu am putut ancora țintă"));
+    }
+
+    #[test]
+    fn plan_html_delete_removes_the_complete_dynamic_widget_envelope() {
+        let root = unique_test_dir();
+        write_project(
+            &root,
+            concat!(
+                "<main>\n",
+                "  {# pana:widget schema=2 provider=dynamic-field instance=dynamic-field-delete01 props=00 #}\n",
+                "  <h2 data-pana-widget-instance=\"dynamic-field-delete01\">{{ page.title }}</h2>\n",
+                "  {# /pana:widget instance=dynamic-field-delete01 #}\n",
+                "  <p>Rămâne</p>\n",
+                "</main>\n",
+            ),
+        );
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let heading = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == crate::source_graph::model::SourceNodeKind::Html
+                    && node.label.starts_with("<h2")
+            })
+            .unwrap();
+
+        let plan = plan_html_delete(
+            &model,
+            &ProjectHtmlDeleteIntent {
+                target_source_id: Some(heading.id.clone()),
+                target_location: None,
+                target_tag: Some("h2".to_string()),
+                target_selector: None,
+            },
+            &HashMap::new(),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let contents = plan.patch.unwrap().contents;
+        assert!(!contents.contains("dynamic-field-delete01"));
+        assert!(!contents.contains("{{ page.title }}"));
+        assert!(contents.contains("<p>Rămâne</p>"));
     }
 
     fn write_project(root: &PathBuf, template: &str) {

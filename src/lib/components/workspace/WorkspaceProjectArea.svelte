@@ -29,13 +29,21 @@
         scannedProject={true}
         projectRoot={app.scannedProject.root}
         runtimeSessionId={app.kernelProjectSessionId}
+        workspaceRevision={app.projectWorkspaceSnapshot?.revision ?? 0}
         allProjectFiles={app.scannedProject.files}
         activeScannedPath={app.activeScannedPath}
         fileExplorerSnapshot={app.fileExplorerSnapshot}
         fileExplorerLoading={app.fileExplorerLoading}
         fileExplorerError={app.fileExplorerError}
-        coordinatedSelectionTag={app.selectionSnapshot?.subject?.tag ?? null}
-        sourceGraph={app.sourceGraph}
+        insertCatalogContext={{
+          activeDocumentPath: app.activeScannedPath,
+          activeTemplatePath: app.activeRenderedTemplatePath,
+          activePagePath: app.templateWorkbenchPreferredPagePath,
+          canvasPreviewRevision: app.activeCanvasIdentity?.previewRevision ?? null,
+          canvasAvailable: app.centerView === "preview" && Boolean(app.activeCanvasIdentity),
+          targetSourceId: app.coordinatedElementSelection?.sourceNodeId ?? null,
+          targetTag: app.coordinatedElementSelection?.observation.tag ?? null,
+        }}
         editorNavigationSnapshot={app.editorNavigationSnapshot}
         editorNavigationLoading={app.editorNavigationLoading}
         editorNavigationError={app.editorNavigationError}
@@ -46,8 +54,8 @@
         planFileExplorerOperation={(operation) => app.planFileExplorerOperation(operation)}
         commitFileExplorerOperation={(plan) => app.commitFileExplorerOperation(plan)}
         openScannedFile={(file) => app.loadScannedProjectFile(file)}
-        startElementPaletteDrag={(element, event) => app.startElementPaletteDrag(element, event)}
-        startTeraPaletteDrag={(item, event) => app.startTeraPaletteDrag(item, event)}
+        startInsertCatalogDrag={(item, snapshot, event) =>
+          app.startInsertCatalogDrag(item, snapshot, event)}
         selectEditorNavigationNode={(node) => app.selectEditorNavigationNode(node)}
         hoverEditorNavigationNode={(node) => app.hoverEditorNavigationNode(node)}
         enterEditorNavigationScope={(scopeId) => app.enterEditorNavigationScope(scopeId)}
@@ -58,6 +66,8 @@
           app.moveEditorNavigationNode(sourceNodeId, targetNodeId, position)}
         deleteEditorNavigationNode={(node) =>
           app.deleteEditorNavigationNode(node)}
+        openEditorNavigationContextMenu={(node, x, y) =>
+          app.openEditorNavigationContextMenu(node, x, y)}
       />
     </div>
   {/key}

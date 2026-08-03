@@ -124,7 +124,7 @@ pub fn apply_theme_style_draft(
         Some(expected_workspace_revision),
         "design_system.theme_styles",
         None,
-        |_project_root, _zola_root, store| {
+        |_project_root, _zola_root, store, _project_model| {
             let (source_path, source, _source_origin) = resolve_theme_style_source(store)?;
             let (updated, target) =
                 plan_theme_style_update(&source_path, &source, &target_id, &properties)?;

@@ -51,10 +51,13 @@ use commands::{
         read_zola_project_settings, save_application_settings, save_project_app_config,
         save_project_env, save_zola_base_url, save_zola_project_settings,
     },
+    content_models::{
+        apply_content_model_mutation, plan_content_model_mutation, read_content_model_catalog,
+    },
     css::{
         cleanup_page_css_contract, create_scss_variable, get_scss_variables,
         resolve_css_inspector_context, set_css_rule, set_css_rule_at_viewport,
-        set_page_css_rule_at_viewport, set_scss_variable,
+        set_page_css_rule_at_viewport, set_reusable_css_rule_at_viewport, set_scss_variable,
     },
     data::{apply_data_mutation, read_data_node_editor},
     deploy::{
@@ -65,6 +68,7 @@ use commands::{
         read_design_class_inventory, read_design_token_catalog, read_theme_style_catalog,
         rename_design_class,
     },
+    dynamic_widgets::{delete_dynamic_widget, read_dynamic_widget_snapshot, update_dynamic_widget},
     editor_navigation::{
         accept_selection_observation, apply_selection_intent, bind_canvas_interaction_agent,
         commit_editor_move, plan_editor_move, read_editor_navigation_snapshot,
@@ -81,6 +85,7 @@ use commands::{
         get_font_manager, get_font_preview_asset, plan_font_family_removal, plan_local_font_import,
         remove_font_family, search_google_fonts, set_font_display, set_font_preload,
     },
+    insert_catalog::read_insert_catalog,
     js::{
         apply_motion_mutation, clear_page_js_draft, get_page_data_anims, get_page_js,
         get_page_js_workspace_state, read_page_js_drafts, stage_page_js_draft,
@@ -139,9 +144,10 @@ use commands::{
     },
     taxonomies::{apply_taxonomy_mutation, plan_taxonomy_mutation},
     templates::{
-        workspace_create_semantic_template, workspace_create_template,
-        workspace_create_template_collection, workspace_delete_template,
-        workspace_duplicate_template, workspace_override_theme_template, workspace_rename_template,
+        workspace_create_listing_item, workspace_create_semantic_template,
+        workspace_create_template, workspace_create_template_collection,
+        workspace_delete_listing_item, workspace_delete_template, workspace_duplicate_template,
+        workspace_override_theme_template, workspace_rename_template,
         workspace_set_template_assignment, workspace_set_template_parent,
     },
     themes::{apply_theme_change, plan_theme_change, read_theme_catalog},
@@ -159,7 +165,10 @@ use commands::{
     },
     window::reset_main_webview_zoom,
     workbench::{apply_workbench_intent, read_workbench_state},
-    workspace_entries::{workspace_create_content_page, workspace_create_project_text_file},
+    workspace_entries::{
+        workspace_create_content_page, workspace_create_project_text_file,
+        workspace_update_page_frontmatter_field,
+    },
 };
 use kernel::ai_coordination::EditAuthority;
 use kernel::observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel};

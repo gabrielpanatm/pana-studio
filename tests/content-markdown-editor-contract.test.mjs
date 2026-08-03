@@ -15,11 +15,22 @@ test("TipTap belongs only to Content page editing and shares one canonical sourc
   assert.match(content, /await app\.openContentPageEditor\(page\.file\)/);
   assert.match(content, /<MarkdownEditor[\s\S]*source=\{metadataSource\}[\s\S]*onChange=/);
   assert.match(content, /<ProjectPageSettingsTab[\s\S]*pageSource=\{metadataSource\}/);
+  assert.match(content, /<ProjectPageSettingsTab[\s\S]*pageKind=\{editingPage\.pageKind\}/);
   assert.match(content, /class="content-page-workspace"/);
   assert.match(content, /grid-template-columns: minmax\(0, 1fr\) minmax\(290px, 360px\)/);
   assert.doesNotMatch(content, /DetailMode = "info" \| "create" \| "edit"/);
   assert.doesNotMatch(content, /content-finish-editing|content-controlled-change/);
   assert.doesNotMatch(editorShell, /MarkdownEditor|surface === "markdown"/);
+});
+
+test("section settings expose mandatory pagination and hide page-only fields", () => {
+  const settings = source("../src/lib/components/project/ProjectPageSettingsTab.svelte");
+
+  assert.match(settings, /isSection = pageKind === "section"/);
+  assert.match(settings, /isSection[\s\S]*content-settings-field-paginate-by/);
+  assert.match(settings, /min="1"[\s\S]*setField\("paginateBy"/);
+  assert.match(settings, /\{#if !isSection\}<label class="field">[\s\S]*content-settings-field-date/);
+  assert.match(settings, /\{#if !isSection\}<label class="field">[\s\S]*content-settings-field-slug/);
 });
 
 test("the technical editor has Visual and Code only, while raw Markdown opens in Code", () => {

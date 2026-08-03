@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-dynamic-widget-snapshot"
+description = "Enables the read_dynamic_widget_snapshot command without any pre-configured scope."
+commands.allow = ["read_dynamic_widget_snapshot"]
+
+[[permission]]
+identifier = "deny-read-dynamic-widget-snapshot"
+description = "Denies the read_dynamic_widget_snapshot command without any pre-configured scope."
+commands.deny = ["read_dynamic_widget_snapshot"]

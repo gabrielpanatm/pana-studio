@@ -787,7 +787,7 @@
       throw new Error("Documentul Canvas nu conține structura canonică head/body.");
     }
     var visualHeadNode = nextDocument.head.querySelector(
-      "[data-pana-empty-tera-slot], .pana-studio-empty-editable, div, main, section, article"
+      "[data-pana-empty-tera-slot], [data-pana-active-document-root], .pana-studio-empty-editable, div, main, section, article"
     );
     if (visualHeadNode) {
       throw new Error("Documentul Canvas conține un element vizual invalid în head.");

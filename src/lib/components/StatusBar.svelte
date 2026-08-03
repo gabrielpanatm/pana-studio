@@ -70,7 +70,6 @@
     border-bottom: 1px solid var(--skeuo-edge-highlight);
     border-top: 1px solid var(--border);
     background: var(--material-panel);
-    box-shadow: 0 -1px 2px var(--skeuo-shade-soft);
     font-size: var(--font-meta);
     font-weight: 500;
     color: var(--text-muted);

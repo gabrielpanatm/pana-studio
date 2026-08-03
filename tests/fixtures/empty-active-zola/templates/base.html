@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ config.title }}</title>
+    <style>
+      html, body { min-height: 100%; margin: 0; }
+      body { display: flex; min-height: 100vh; flex-direction: column; font-family: sans-serif; }
+      header, footer { padding: 24px; background: #f2f5f4; }
+      main { flex: 1; }
+    </style>
+  </head>
+  <body>
+    <header>Antet extern</header>
+    <main>{% block content %}{% endblock content %}</main>
+    <footer>Subsol extern</footer>
+  </body>
+</html>

@@ -101,6 +101,7 @@ pub fn execute_preview_html_insert_drop(
     workspace: &mut ProjectWorkspace,
     input: PreviewHtmlInsertDropExecutionInput,
     aliases: &HashMap<String, String>,
+    active_document_path: Option<&str>,
 ) -> Result<PreviewHtmlInsertDropExecutionOutcome, String> {
     let intent_receipt = match require_preview_executor_intent(
         input.intent.clone(),
@@ -124,7 +125,14 @@ pub fn execute_preview_html_insert_drop(
         project_root,
         workspace,
         HTML_INSERT_DROP_PLAN,
-        |before_model| plan_html_insert(before_model, &input.insert_intent, aliases),
+        |before_model| {
+            plan_html_insert(
+                before_model,
+                &input.insert_intent,
+                aliases,
+                active_document_path,
+            )
+        },
     )? {
         Ok(committed) => committed,
         Err(blocked) => {
@@ -151,13 +159,26 @@ pub fn execute_preview_html_insert_drop(
     let inserted_anchor =
         html_node_id_at_location(&commit.after_model, &patch.inserted_location, &patch.tag)
             .map(|source_id| CanvasPatchAnchor::source(source_id, None, Some(&patch.tag)));
+    // În sursă, elementul este inserat în interiorul blocului documentului.
+    // În DOM, rădăcina de autor este o ancoră sintetică de append între markerii
+    // blocului, deci elementul se așază înaintea ei, nu ca fiu al affordance-ului.
+    let canvas_position = if input
+        .insert_intent
+        .target_kind
+        .as_deref()
+        .is_some_and(|kind| matches!(kind.trim(), "empty-tera-slot" | "active-document-root"))
+    {
+        ProjectMovePosition::Before
+    } else {
+        input.insert_intent.position
+    };
     let forward_operation = CanvasPatchOperation::Insert {
         target: CanvasPatchAnchor::source(
             &patch.resolved_target_id,
             input.insert_intent.target_selector.as_deref(),
             input.insert_intent.target_tag.as_deref(),
         ),
-        position: input.insert_intent.position,
+        position: canvas_position,
         html: patch.html.clone(),
         inserted: inserted_anchor.clone(),
     };
@@ -630,7 +651,7 @@ pub fn execute_preview_html_duplicate(
         html: patch.html.clone(),
         inserted: inserted_anchor.clone(),
     };
-    let canvas_patch = if patch.zola_image_contract {
+    let canvas_patch = if patch.zola_image_contract || patch.dynamic_widget_contract {
         None
     } else {
         Some(issue_canvas_patch(
@@ -641,7 +662,7 @@ pub fn execute_preview_html_duplicate(
             forward_operation.clone(),
         )?)
     };
-    if !patch.zola_image_contract {
+    if !patch.zola_image_contract && !patch.dynamic_widget_contract {
         attach_canvas_history_delta(
             workspace,
             &commit.workspace_mutation,

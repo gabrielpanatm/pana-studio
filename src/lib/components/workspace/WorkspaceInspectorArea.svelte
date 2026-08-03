@@ -90,6 +90,8 @@
       inspectorSelectionSummary={app.inspectorSelectionSummary}
       inspectorHtmlPhysicalFacts={app.inspectorHtmlPhysicalFacts}
       inspectorBlockSelectionContext={app.inspectorBlockSelectionContext}
+      inspectorDynamicWidgetSelectionContext={app.inspectorDynamicWidgetSelectionContext}
+      sourceGraph={app.sourceGraph}
       projectRoot={app.sessionProjectRoot}
       runtimeSessionId={app.kernelProjectSessionId}
       selectedTemplateSourceNode={app.selectedTemplateSourceNode}
@@ -166,6 +168,9 @@
       getOpenCssRuleContext={(file, selector, viewport) =>
         app.cssRuleContextFromOpenSource(file, selector, viewport)}
       applyNativeBlockOption={(request) => app.applyNativeBlockOption(request)}
+      updateDynamicWidget={(snapshot, properties) =>
+        app.updateDynamicWidgetFromInspector(snapshot, properties)}
+      deleteDynamicWidget={(snapshot) => app.deleteDynamicWidgetFromInspector(snapshot)}
       persistBlockPropertiesLayout={(height, collapsed) => {
         void app.persistBlockPropertiesLayout(height, collapsed);
       }}

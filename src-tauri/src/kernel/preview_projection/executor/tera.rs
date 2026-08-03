@@ -6,7 +6,7 @@ use crate::{
     kernel::{project_session::ProjectSessionSnapshot, project_workspace::ProjectWorkspace},
     project_model::{
         model::ProjectModel, tera_delete_engine::plan_tera_delete,
-        tera_insert_engine::plan_tera_insert,
+        tera_insert_engine::plan_tera_insert_for_active_document,
     },
 };
 
@@ -41,6 +41,7 @@ pub fn execute_preview_tera_insert_drop(
     project_root: &Path,
     workspace: &mut ProjectWorkspace,
     input: PreviewTeraInsertDropExecutionInput,
+    active_document_path: Option<&str>,
 ) -> Result<PreviewTeraInsertDropExecutionOutcome, String> {
     let intent_receipt = match require_preview_executor_intent(
         input.intent.clone(),
@@ -63,7 +64,13 @@ pub fn execute_preview_tera_insert_drop(
         project_root,
         workspace,
         TERA_INSERT_DROP_PLAN,
-        |before_model| plan_tera_insert(before_model, &input.insert_intent),
+        |before_model| {
+            plan_tera_insert_for_active_document(
+                before_model,
+                &input.insert_intent,
+                active_document_path,
+            )
+        },
     )? {
         Ok(committed) => committed,
         Err(blocked) => {

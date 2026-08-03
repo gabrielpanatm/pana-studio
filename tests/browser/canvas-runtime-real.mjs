@@ -78,8 +78,8 @@ const initialDocument = `<!doctype html>
       data-pana-canvas-runtime-session-id="runtime-browser-real"
       data-pana-canvas-workspace-revision="1"
       data-pana-canvas-transaction-id="canvas_active_browser_real">
-  <head><meta name="description" content="Before"><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="${oldCss}"></head>
-  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/servicii">Servicii</a></main>
+  <head><meta name="description" content="Before"><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="${oldCss}"><style>html,body,h1{margin:0}header{height:72px}main{min-height:calc(100vh - 136px)}footer{height:64px}</style></head>
+  <body><header><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/servicii">Servicii</a></header><main><!-- pana-template-source-start:source-empty-content --><div hidden class="pana-studio-empty-editable pana-studio-empty-tera-slot" data-pana-empty-tera-slot="source-empty-content" data-pana-empty-tera-slot-static="true" data-pana-source-id="source-empty-content" data-pana-template-source-id="source-empty-content"></div><!-- pana-template-source-end:source-empty-content --></main><footer id="flow-footer">Footer extern</footer><!-- pana-template-source-start:source-external-scripts --><!-- pana-template-source-end:source-external-scripts -->
   <script>
     window.addEventListener("error", function (event) {
       window.parent.postMessage({source:"pana-browser-harness",type:"child-error",message:String(event.message || "error"),line:event.lineno,column:event.colno}, "*");
@@ -164,7 +164,7 @@ const interactiveDocument = `<!doctype html>
 </html>`;
 
 const harness = `<!doctype html>
-<html><head><meta charset="utf-8"><title>RUNNING</title></head>
+<html><head><meta charset="utf-8"><title>RUNNING</title><style>#canvas{width:800px;height:600px}</style></head>
 <body><pre id="result">running</pre>
 <iframe id="canvas" sandbox="allow-scripts allow-same-origin"></iframe>
 <iframe id="interactive" sandbox="allow-scripts allow-same-origin"></iframe>
@@ -280,6 +280,17 @@ const harness = `<!doctype html>
       throw new Error("boot phase sequence mismatch");
     }
     const agentReady = await waitForCanvasAgentMessage((data) => data?.type === "agentReady");
+    const preActivationSlot = frame.contentDocument.querySelector(
+      '[data-pana-empty-tera-slot="source-empty-content"]'
+    );
+    if (
+      !preActivationSlot?.hidden
+      || preActivationSlot.getClientRects().length !== 0
+      || preActivationSlot.hasAttribute("data-pana-empty-label")
+      || frame.contentDocument.querySelector("main")?.hasAttribute("data-pana-empty-html")
+    ) {
+      throw new Error("empty document leaked a transient placeholder before Rust activation");
+    }
     frame.contentWindow.postMessage({
       source: "pana-studio-app",
       type: "activate-canvas-interaction-agent",
@@ -287,7 +298,12 @@ const harness = `<!doctype html>
       agentInstanceId: agentReady.agentInstanceId,
       documentEpoch: 1,
       lastAcceptedSequence: 0,
-      selection: true
+      selection: true,
+      authoringSurfaces: [{
+        sourceNodeId: "source-empty-content",
+        boundaryInstanceId: "boundary-empty-content",
+        renderInstanceId: null
+      }]
     }, "*");
     const agentActivated = await waitForCanvasAgentMessage((data) =>
       data?.type === "agentActivated"
@@ -297,6 +313,201 @@ const harness = `<!doctype html>
       || agentActivated.documentEpoch !== 1
     ) {
       throw new Error("CanvasAgent activation acknowledgement mismatch");
+    }
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const dynamicAuthoringSlot = frame.contentDocument.querySelector(
+      '[data-pana-active-document-root="source-empty-content"]'
+    );
+    const authoringOverlay = frame.contentDocument.querySelector(
+      '[data-pana-active-authoring-overlay="0"]'
+    );
+    if (!(dynamicAuthoringSlot instanceof frame.contentWindow.Element)) {
+      throw new Error("persistent active document root was not materialized");
+    }
+    if (
+      frame.contentDocument.querySelectorAll('[data-pana-active-document-root="source-empty-content"]').length !== 1
+      || frame.contentDocument.querySelector('[data-pana-empty-tera-slot="source-empty-content"]')
+    ) {
+      throw new Error("active document root did not replace the bootstrap placeholder exactly once");
+    }
+    if (dynamicAuthoringSlot.getAttribute("data-pana-empty-label") !== "Document gol") {
+      throw new Error("active document slot leaked its internal Tera implementation label");
+    }
+    if (
+      dynamicAuthoringSlot.hidden
+      || dynamicAuthoringSlot.hasAttribute("data-pana-empty-tera-slot-static")
+      || dynamicAuthoringSlot.getAttribute("data-pana-active-authoring-surface")
+        !== "boundary-empty-content"
+    ) {
+      throw new Error("active document root did not adopt the exact Rust boundary instance");
+    }
+    if (frame.contentDocument.querySelector('[data-pana-empty-tera-slot="source-external-scripts"]')) {
+      throw new Error("external empty Tera boundary leaked into the visual authoring surface");
+    }
+    const authoringSlotRect = dynamicAuthoringSlot.getBoundingClientRect();
+    const externalFooterRect = frame.contentDocument.getElementById("flow-footer")?.getBoundingClientRect();
+    if (
+      authoringSlotRect.height < 400
+      || !externalFooterRect
+      || Math.abs(externalFooterRect.bottom - frame.contentWindow.innerHeight) > 2
+      || frame.contentDocument.querySelector("main")?.hasAttribute("data-pana-empty-html")
+      || frame.contentDocument.documentElement.scrollHeight > frame.contentWindow.innerHeight + 1
+    ) {
+      throw new Error("active empty document did not occupy the flow between external header and footer");
+    }
+    if (
+      authoringOverlay?.style.display !== "block"
+      || authoringOverlay.getBoundingClientRect().height
+        < dynamicAuthoringSlot.getBoundingClientRect().height - 2
+    ) {
+      throw new Error("active document root did not receive the expanded authoring surface");
+    }
+    const authoringCenter = {
+      x: authoringSlotRect.left + authoringSlotRect.width / 2,
+      y: authoringSlotRect.top + authoringSlotRect.height / 2
+    };
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "preview-insert-drag-drop",
+      x: authoringCenter.x,
+      y: authoringCenter.y,
+      element: {
+        id: "html:div",
+        kind: "html",
+        tag: "div",
+        label: "Container",
+        text: "",
+        className: "",
+        html: ""
+      }
+    }, "*");
+    const authoringDrop = await waitForMessage((data) => data?.type === "preview-insert-drop");
+    if (
+      authoringDrop.targetKind !== "active-document-root"
+      || authoringDrop.targetTemplateSourceId !== "source-empty-content"
+      || authoringDrop.targetBoundaryInstanceId !== "boundary-empty-content"
+    ) {
+      throw new Error("empty document drop lost its exact Rust boundary identity");
+    }
+    const firstSyntheticChild = frame.contentDocument.createElement("div");
+    firstSyntheticChild.textContent = "Primul copil";
+    dynamicAuthoringSlot.parentNode.insertBefore(firstSyntheticChild, dynamicAuthoringSlot);
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "activate-canvas-interaction-agent",
+      schemaVersion: 2,
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      lastAcceptedSequence: 0,
+      selection: true,
+      authoringSurfaces: [{
+        sourceNodeId: "source-empty-content",
+        boundaryInstanceId: "boundary-empty-content",
+        renderInstanceId: null
+      }]
+    }, "*");
+    await waitForCanvasAgentMessage((data) => data?.type === "agentActivated");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+    const persistentAuthoringRoot = frame.contentDocument.querySelector(
+      '[data-pana-active-document-root="source-empty-content"]'
+    );
+    if (
+      !(persistentAuthoringRoot instanceof frame.contentWindow.Element)
+      || persistentAuthoringRoot.hasAttribute("data-pana-empty-label")
+      || !persistentAuthoringRoot.hasAttribute("data-pana-active-document-populated")
+    ) {
+      throw new Error("active document root disappeared after the first authored child");
+    }
+    const persistentRootRect = persistentAuthoringRoot.getBoundingClientRect();
+    const populatedParentRect = persistentAuthoringRoot.parentElement.getBoundingClientRect();
+    const persistentDropRect = {
+      left: persistentRootRect.left,
+      right: persistentRootRect.right,
+      top: persistentRootRect.top,
+      bottom: populatedParentRect.bottom,
+      width: persistentRootRect.width,
+      height: Math.max(0, populatedParentRect.bottom - persistentRootRect.top),
+    };
+    const authoredChildRect = firstSyntheticChild.getBoundingClientRect();
+    const populatedFooterRect = frame.contentDocument.getElementById("flow-footer")?.getBoundingClientRect();
+    if (
+      persistentRootRect.height > 1
+      || !persistentDropRect
+      || persistentDropRect.height < 300
+      || !populatedFooterRect
+      || Math.abs(populatedFooterRect.top - populatedParentRect.bottom) > 1
+      || persistentDropRect.top < authoredChildRect.bottom - 1
+    ) {
+      throw new Error("populated active document root still consumes permanent layout space");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "preview-insert-drag-drop",
+      x: persistentDropRect.left + persistentDropRect.width / 2,
+      y: persistentDropRect.top + persistentDropRect.height / 2,
+      element: {
+        id: "html:section",
+        kind: "html",
+        tag: "section",
+        label: "Secțiune",
+        text: "",
+        className: "",
+        html: ""
+      }
+    }, "*");
+    const secondAuthoringDrop = await waitForMessage((data) =>
+      data?.type === "preview-insert-drop" && data?.element?.tag === "section"
+    );
+    if (
+      secondAuthoringDrop.targetKind !== "active-document-root"
+      || secondAuthoringDrop.targetTemplateSourceId !== "source-empty-content"
+      || secondAuthoringDrop.targetBoundaryInstanceId !== "boundary-empty-content"
+    ) {
+      throw new Error("second drop fell back to the Tera gate after the first child");
+    }
+    result.textContent = "canvas-agent-dynamic-authoring";
+    document.title = "AGENT_AUTHORING_WAIT";
+    const authoringClick = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture" && data.gesture === "click"
+    );
+    if (
+      authoringClick.documentEpoch !== 1
+      || authoringClick.hitPath?.[0]?.kind !== "boundaryInstance"
+      || authoringClick.hitPath?.[0]?.id !== "boundary-empty-content"
+    ) {
+      throw new Error("dynamic authoring surface did not prioritize its Rust boundary");
+    }
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "render-canvas-interaction-overlay",
+      agentInstanceId: agentReady.agentInstanceId,
+      documentEpoch: 1,
+      channel: "selection",
+      targetKind: "teraBoundary",
+      editorNodeId: "editor_boundary:boundary-empty-content",
+      gestureSequence: authoringClick.gestureSequence,
+      selectionRevision: 40,
+      actions: { canEnterBoundary: false },
+      projection: {
+        primaryRenderInstanceId: null,
+        renderInstanceIds: [],
+        boundaryInstanceId: "boundary-empty-content"
+      }
+    }, "*");
+    await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(() =>
+      frame.contentWindow.requestAnimationFrame(resolve)
+    ));
+    const dynamicSelectionOverlay = frame.contentDocument.getElementById(
+      "pana-studio-canvas-agent-selection"
+    );
+    if (
+      dynamicSelectionOverlay?.style.display !== "block"
+      || dynamicSelectionOverlay.getBoundingClientRect().height
+        < dynamicAuthoringSlot.getBoundingClientRect().height - 2
+    ) {
+      throw new Error("empty Rust boundary did not reuse its dynamic authoring geometry");
     }
     result.textContent = "canvas-agent-native-hover";
     document.title = "AGENT_HOVER_WAIT";
@@ -338,7 +549,9 @@ const harness = `<!doctype html>
     result.textContent = "canvas-agent-native-click";
     document.title = "AGENT_WAIT";
     const agentClick = await waitForCanvasAgentMessage((data) =>
-      data?.type === "gesture" && data.gesture === "click"
+      data?.type === "gesture"
+        && data.gesture === "click"
+        && data.gestureSequence > authoringClick.gestureSequence
     );
     if (
       agentClick.documentEpoch !== 1
@@ -589,7 +802,7 @@ const harness = `<!doctype html>
     };
     projectDragPreview(dragOver.gestureSequence, dragOver.drag.position);
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
-    const unchangedDuringDrag = frame.contentDocument.querySelector("main");
+    const unchangedDuringDrag = frame.contentDocument.getElementById("probe")?.parentElement;
     if (
       unchangedDuringDrag?.children[0]?.id !== "probe"
       || unchangedDuringDrag?.children[1]?.id !== "nav-probe"
@@ -615,7 +828,7 @@ const harness = `<!doctype html>
     if (dragIndicator.style.display !== "none") {
       throw new Error("CanvasAgent drag indicator survived pointer release");
     }
-    const unchangedAtDrop = frame.contentDocument.querySelector("main");
+    const unchangedAtDrop = frame.contentDocument.getElementById("probe")?.parentElement;
     if (
       unchangedAtDrop?.children[0]?.id !== "probe"
       || unchangedAtDrop?.children[1]?.id !== "nav-probe"
@@ -649,9 +862,10 @@ const harness = `<!doctype html>
       dragSessionId: dragOver.drag.sessionId
     }, "*");
     await new Promise((resolve) => frame.contentWindow.requestAnimationFrame(resolve));
+    const rolledBackParent = frame.contentDocument.getElementById("probe")?.parentElement;
     if (
-      frame.contentDocument.querySelector("main")?.children[0]?.id !== "probe"
-      || frame.contentDocument.querySelector("main")?.children[1]?.id !== "nav-probe"
+      rolledBackParent?.children[0]?.id !== "probe"
+      || rolledBackParent?.children[1]?.id !== "nav-probe"
     ) {
       throw new Error("CanvasAgent did not rollback the failed Drop projection exactly");
     }
@@ -1514,6 +1728,7 @@ try {
   });
 
   let title = "";
+  let canvasAgentAuthoringClicked = false;
   let canvasAgentHovered = false;
   let canvasAgentClicked = false;
   let canvasAgentDragged = false;
@@ -1524,6 +1739,56 @@ try {
       method: "POST",
       body: JSON.stringify({ script: "return document.title", args: [] }),
     });
+    if (title === "AGENT_AUTHORING_WAIT" && !canvasAgentAuthoringClicked) {
+      canvasAgentAuthoringClicked = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      const authoringSlotElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({
+          using: "css selector",
+          value: '[data-pana-active-document-root="source-empty-content"]',
+        }),
+      });
+      const authoringSlotRect = await webdriver(`/session/${sessionId}/execute/sync`, {
+        method: "POST",
+        body: JSON.stringify({
+          script: "const rect = arguments[0].getBoundingClientRect(); const parent = arguments[0].parentElement.getBoundingClientRect(); return { left: rect.left, right: rect.right, top: rect.top, bottom: parent.bottom };",
+          args: [authoringSlotElement],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions: [{
+            type: "pointer",
+            id: "canvas-authoring-mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              {
+                type: "pointerMove",
+                duration: 0,
+                origin: "viewport",
+                x: Math.round((authoringSlotRect.left + authoringSlotRect.right) / 2),
+                y: Math.round((authoringSlotRect.top + authoringSlotRect.bottom) / 2),
+              },
+              { type: "pointerDown", button: 0 },
+              { type: "pointerUp", button: 0 },
+            ],
+          }],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
     if (title === "AGENT_HOVER_WAIT" && !canvasAgentHovered) {
       canvasAgentHovered = true;
       const frameElement = await webdriver(`/session/${sessionId}/element`, {

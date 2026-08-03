@@ -13,7 +13,6 @@ const TEXT_EXTENSIONS: &[&str] = &[
 ];
 const SKIP_DIRS: &[&str] = &[
     ".git",
-    ".panastudio",
     ".panastudio_preview",
     "build",
     "dist",

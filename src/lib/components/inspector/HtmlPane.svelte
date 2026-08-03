@@ -6,6 +6,7 @@
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import InspectorSection from "./InspectorSection.svelte";
+  import InspectorEmptyState from "./InspectorEmptyState.svelte";
   import AssetPicker from "./controls/AssetPicker.svelte";
   import {
     htmlAccessibilityAttributeNames,
@@ -507,7 +508,7 @@
 {/snippet}
 
 {#if !hasElementSelection}
-  <p class="hint">{t("inspector-select-element")}</p>
+  <InspectorEmptyState kind="html" title="HTML" description={t("inspector-select-element")} />
 {:else}
 
 <!-- ── ELEMENT ──────────────────────────────────────────────────────────── -->
@@ -1533,13 +1534,6 @@
   }
 
   /* ── Misc ──────────────────────────────────────────────────────────────── */
-
-  .hint {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 13px;
-    line-height: 1.45;
-  }
 
   .hint-inline {
     font-size: 12px;

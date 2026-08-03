@@ -235,6 +235,8 @@ test("CSS inspector resolution is bound to one workspace and semantic selection 
     href: null,
     templatePath: "templates/index.html",
     pageOwned: false,
+    consumerFiles: [],
+    consumerTemplates: [],
     reason: "existing",
   };
   mockIPC((command, args) => {

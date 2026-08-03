@@ -711,6 +711,7 @@ function reactivateRetainedCanvasAgent(
     documentEpoch: binding.identity.documentEpoch,
     lastAcceptedSequence,
     selection: true,
+    authoringSurfaces: binding.authoringSurfaces,
   });
   clearActivationTimer(runtime);
   runtime.activationTimer = window.setTimeout(() => {
@@ -791,6 +792,7 @@ async function bindCurrentCanvasAgent(app: AppState) {
       documentEpoch,
       lastAcceptedSequence: receipt.lastAcceptedSequence,
       selection: true,
+      authoringSurfaces: receipt.authoringSurfaces,
     });
     clearActivationTimer(runtime);
     runtime.activationTimer = window.setTimeout(() => {

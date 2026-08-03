@@ -8,9 +8,11 @@ use tauri::{AppHandle, State};
 use crate::{
     css::{
         page::{
-            page_css_href, page_scss_relative_path, page_target_for_template,
-            plan_page_stylesheet_link_writes_with_reader, prepare_page_stylesheet_source,
-            remove_page_stylesheet_link, PageCssTarget, PageCssWriteResult, WrittenProjectFile,
+            consumer_stylesheet_imports_reusable, page_css_href, page_scss_relative_path,
+            page_target_for_template, plan_page_stylesheet_link_writes_with_reader,
+            prepare_page_stylesheet_source, prepare_reusable_consumer_stylesheet_source,
+            remove_page_stylesheet_link, reusable_scss_relative_path, PageCssTarget,
+            PageCssWriteResult, ReusableCssWriteResult, WrittenProjectFile,
         },
         rules::{selector_source_target, upsert_css_rule_desktop},
         validation::{
@@ -39,7 +41,12 @@ use crate::{
     },
     project::{strip_zola_root_prefix, zola_project_root},
     project_model::{
-        model::ProjectModelFileKind, rebuild_project_model_after_workspace_change,
+        model::{ProjectModel, ProjectModelFileKind},
+        rebuild_project_model_after_workspace_change,
+        template_workbench::{
+            resolve_template_workbench_plan, TemplateWorkbenchDependencyKind,
+            TemplateWorkbenchPlanInput,
+        },
         ProjectModelIncrementalIntent,
     },
     state::AppState,
@@ -386,7 +393,45 @@ pub(crate) fn with_bound_css_file_buffer_revision<T>(
         u64,
     ) -> Result<T, String>,
 ) -> Result<FileBufferCommandReceipt<T>, String> {
-    let (project_root, session, accepted_disk, store, workspace_revision) = {
+    with_bound_css_file_buffer_revision_internal(
+        state,
+        identity,
+        false,
+        |project_root, zola_root, session, store, workspace_revision, _project_model| {
+            operation(project_root, zola_root, session, store, workspace_revision)
+        },
+    )
+}
+
+fn with_bound_css_file_buffer_revision_and_model<T>(
+    state: &AppState,
+    identity: &FileBufferRequestIdentity,
+    operation: impl FnOnce(
+        &Path,
+        &Path,
+        &ProjectSessionSnapshot,
+        &FileBufferStore,
+        u64,
+        Option<&ProjectModel>,
+    ) -> Result<T, String>,
+) -> Result<FileBufferCommandReceipt<T>, String> {
+    with_bound_css_file_buffer_revision_internal(state, identity, true, operation)
+}
+
+fn with_bound_css_file_buffer_revision_internal<T>(
+    state: &AppState,
+    identity: &FileBufferRequestIdentity,
+    capture_project_model: bool,
+    operation: impl FnOnce(
+        &Path,
+        &Path,
+        &ProjectSessionSnapshot,
+        &FileBufferStore,
+        u64,
+        Option<&ProjectModel>,
+    ) -> Result<T, String>,
+) -> Result<FileBufferCommandReceipt<T>, String> {
+    let (project_root, session, accepted_disk, store, workspace_revision, project_model) = {
         // Project Transition publică root-ul și ProjectWorkspace în aceeași
         // ordine. Capturăm o proiecție exactă sub ambele lock-uri, apoi le
         // eliberăm înaintea scanării de disk și a analizei CSS.
@@ -423,6 +468,10 @@ pub(crate) fn with_bound_css_file_buffer_revision<T>(
             workspace.accepted_disk.clone(),
             workspace.documents.clone(),
             workspace.revision,
+            (capture_project_model
+                && workspace.project_model_source_revision == Some(workspace.revision))
+            .then(|| workspace.project_model.clone())
+            .flatten(),
         )
     };
 
@@ -438,6 +487,7 @@ pub(crate) fn with_bound_css_file_buffer_revision<T>(
         &session,
         &store,
         workspace_revision,
+        project_model.as_ref(),
     )?;
     accepted_disk.require_live_complete(
         &session.runtime_instance_id(),
@@ -497,6 +547,7 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
         &Path,
         &Path,
         &FileBufferStore,
+        Option<&ProjectModel>,
     ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
 ) -> Result<CssMutationCommandReceipt<R>, String> {
     let current_root = state
@@ -534,7 +585,15 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
         ));
     }
 
-    let (input, result_value) = build(project_root, &zola_root, &workspace.documents)?;
+    let current_model = (workspace.project_model_source_revision == Some(workspace.revision))
+        .then(|| workspace.project_model.as_ref())
+        .flatten();
+    let (input, result_value) = build(
+        project_root,
+        &zola_root,
+        &workspace.documents,
+        current_model,
+    )?;
     let Some(input) = input else {
         let session = workspace.session.clone();
         return Ok(CssMutationCommandReceipt::noop(
@@ -589,9 +648,15 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
             )?;
             if mutation.changed
                 && previous_model_source_revision == Some(mutation.revision_before)
-                && previous_model.as_ref().is_some_and(|model| {
-                    !mutation.touched_files.is_empty()
-                        && mutation.touched_files.iter().all(|relative_path| {
+                && previous_model.is_some()
+                && !mutation.touched_files.is_empty()
+            {
+                let style_only = mutation.touched_files.iter().all(|relative_path| {
+                    let extension = Path::new(relative_path)
+                        .extension()
+                        .and_then(|extension| extension.to_str());
+                    matches!(extension, Some("css" | "scss" | "sass"))
+                        || previous_model.as_ref().is_some_and(|model| {
                             matches!(model
                                 .files
                                 .iter()
@@ -599,8 +664,7 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
                                 .collect::<Vec<_>>()
                                 .as_slice(), [file] if file.kind == ProjectModelFileKind::Style)
                         })
-                })
-            {
+                });
                 let projection = candidate.capture_projection_snapshot()?;
                 let outcome = rebuild_project_model_after_workspace_change(
                     project_root,
@@ -608,7 +672,11 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
                     previous_model_source_revision,
                     &projection,
                     &mutation.touched_files,
-                    ProjectModelIncrementalIntent::StyleDeclaration,
+                    if style_only {
+                        ProjectModelIncrementalIntent::StyleDeclaration
+                    } else {
+                        ProjectModelIncrementalIntent::Unsupported
+                    },
                 )?;
                 candidate.publish_project_model(&projection, outcome.model)?;
             }
@@ -663,7 +731,7 @@ fn execute_css_workspace_mutation<R>(
         None,
         "css.panel",
         Some("css.panel"),
-        build,
+        |project_root, zola_root, store, _project_model| build(project_root, zola_root, store),
     )
 }
 
@@ -679,6 +747,44 @@ fn execute_selection_bound_css_workspace_mutation<R>(
     ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
 ) -> Result<CssMutationCommandReceipt<R>, String> {
     let execute = || execute_css_workspace_mutation(app, state, identity, build);
+    let Some(expected) = expected_selection else {
+        return execute();
+    };
+    state
+        .selection_coordinator
+        .with_stable_semantic_mutation_target(
+            &identity.expected_session_id,
+            expected.selection_revision,
+            expected.editor_node_id.as_deref(),
+            expected.source_node_id.as_deref(),
+            expected.render_instance_id.as_deref(),
+            execute,
+        )
+}
+
+fn execute_selection_bound_css_workspace_mutation_with_model<R>(
+    app: &AppHandle,
+    state: &State<AppState>,
+    identity: &FileBufferRequestIdentity,
+    expected_selection: Option<&SelectionMutationIdentity>,
+    build: impl FnOnce(
+        &Path,
+        &Path,
+        &FileBufferStore,
+        Option<&ProjectModel>,
+    ) -> Result<(Option<WorkspaceTextResourceMutationInput>, R), String>,
+) -> Result<CssMutationCommandReceipt<R>, String> {
+    let execute = || {
+        execute_css_workspace_mutation_with_metadata(
+            app,
+            state,
+            identity,
+            None,
+            "css.panel.reusable",
+            Some("css.panel.reusable"),
+            build,
+        )
+    };
     let Some(expected) = expected_selection else {
         return execute();
     };
@@ -743,7 +849,127 @@ fn collect_scss_replacements(
     Ok(())
 }
 
-const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION: u32 = 3;
+const CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION: u32 = 4;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReusableCssConsumer {
+    template_path: String,
+    stylesheet_path: String,
+    href: String,
+}
+
+fn reusable_css_consumers(
+    model: &ProjectModel,
+    reusable_template_path: &str,
+) -> Result<Vec<ReusableCssConsumer>, String> {
+    let plan = resolve_template_workbench_plan(
+        model,
+        &TemplateWorkbenchPlanInput {
+            template_path: reusable_template_path.to_string(),
+            preferred_page_path: None,
+            preferred_route: None,
+        },
+    )?;
+    let mut consumers = plan
+        .consumers
+        .into_iter()
+        .filter(|consumer| {
+            consumer.dependency_path.iter().any(|step| {
+                matches!(
+                    step.kind,
+                    TemplateWorkbenchDependencyKind::Includes
+                        | TemplateWorkbenchDependencyKind::Imports
+                )
+            })
+        })
+        .map(|consumer| {
+            let template_path = consumer.root_template_file;
+            ReusableCssConsumer {
+                stylesheet_path: page_scss_relative_path(&template_path),
+                href: page_css_href(&template_path),
+                template_path,
+            }
+        })
+        .collect::<Vec<_>>();
+    consumers.sort_by(|left, right| left.template_path.cmp(&right.template_path));
+    consumers.dedup_by(|left, right| left.template_path == right.template_path);
+    Ok(consumers)
+}
+
+fn is_page_stylesheet_path(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    normalized.starts_with("sass/pagini/") || normalized.contains("/sass/pagini/")
+}
+
+fn reusable_scoped_candidates(
+    candidates: Vec<CssInspectorSourceCandidate>,
+    owner_file: Option<&str>,
+) -> Vec<CssInspectorSourceCandidate> {
+    let Some(owner_file) = owner_file else {
+        return candidates;
+    };
+    let owner_file = to_project_relative_path(owner_file);
+    let owner_candidates = candidates
+        .iter()
+        .filter(|candidate| candidate.file == owner_file)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !owner_candidates.is_empty() {
+        return owner_candidates;
+    }
+    candidates
+        .into_iter()
+        .filter(|candidate| !is_page_stylesheet_path(&candidate.file))
+        .collect()
+}
+
+fn populate_reusable_target_delivery(
+    project_root: &Path,
+    store: &FileBufferStore,
+    model: Option<&ProjectModel>,
+    target: &mut PageCssTarget,
+) -> Result<Vec<ReusableCssConsumer>, String> {
+    let Some(template_path) = target.template_path.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let Some(model) = model else {
+        target.reason = "Proprietarul SCSS reutilizabil este determinist, dar ProjectModel-ul curent nu este încă publicat; consumatorii vor fi validați înainte de scriere.".to_string();
+        return Ok(Vec::new());
+    };
+    let consumers = reusable_css_consumers(model, template_path)?;
+    target.consumer_files = consumers
+        .iter()
+        .map(|consumer| consumer.stylesheet_path.clone())
+        .collect();
+    target.consumer_templates = consumers
+        .iter()
+        .map(|consumer| consumer.template_path.clone())
+        .collect();
+    let mut all_linked = !consumers.is_empty();
+    for consumer in &consumers {
+        let stylesheet_linked = read_current_zola_text(
+            project_root,
+            store,
+            &consumer.stylesheet_path,
+        )?
+        .is_some_and(|source| {
+            consumer_stylesheet_imports_reusable(&source, &consumer.stylesheet_path, &target.file)
+        });
+        let template_linked = read_current_zola_text(project_root, store, &consumer.template_path)?
+            .is_some_and(|source| template_contains_asset_path(&source, &consumer.href));
+        all_linked &= stylesheet_linked && template_linked;
+    }
+    target.linked = all_linked;
+    target.reason = if consumers.is_empty() {
+        "Regula aparține partialului SCSS reutilizabil. Nu există încă un consumator public real; Workbench-ul o proiectează numai în preview.".to_string()
+    } else {
+        format!(
+            "Regula aparține partialului SCSS reutilizabil și este livrată prin {} foaie/foi de pagină consumatoare.",
+            consumers.len(),
+        )
+    };
+    Ok(consumers)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -875,10 +1101,10 @@ pub fn resolve_css_inspector_context(
         expected_selection.source_node_id.as_deref(),
         expected_selection.render_instance_id.as_deref(),
         || {
-            with_bound_css_file_buffer_revision(
+            with_bound_css_file_buffer_revision_and_model(
                 state.inner(),
                 &identity,
-                move |project_root, _root, _session, store, workspace_revision| {
+                move |project_root, _root, _session, store, workspace_revision, project_model| {
                     if workspace_revision != expected_workspace_revision {
                         return Err(format!(
                             "[css_inspector_stale_workspace] Rezoluția CSS a cerut revizia ProjectWorkspace {expected_workspace_revision}, dar revizia activă este {workspace_revision}."
@@ -889,14 +1115,20 @@ pub fn resolve_css_inspector_context(
                         template_path.map(|path| to_zola_relative_path(&path));
                     let fallback_file =
                         fallback_file.map(|path| to_zola_relative_path(&path));
+                    let reusable_owner = template_path
+                        .as_deref()
+                        .and_then(reusable_scss_relative_path);
                     let breakpoints = current_css_breakpoints(project_root, store)?;
                     let sources = collect_current_project_style_sources(project_root, store)?;
-                    let candidates = css_inspector_source_candidates(
-                        &sources,
-                        &breakpoints,
-                        &selector,
-                        &selector,
-                        &viewport,
+                    let candidates = reusable_scoped_candidates(
+                        css_inspector_source_candidates(
+                            &sources,
+                            &breakpoints,
+                            &selector,
+                            &selector,
+                            &viewport,
+                        ),
+                        reusable_owner.as_deref(),
                     );
 
                     if candidates.len() > 1 {
@@ -933,7 +1165,7 @@ pub fn resolve_css_inspector_context(
                             })
                             .transpose()?
                             .unwrap_or(false);
-                        let target = PageCssTarget {
+                        let mut target = PageCssTarget {
                             exists: project_relative_exists(project_root, store, &file)?,
                             page_owned: !page_file.is_empty()
                                 && file == to_project_relative_path(&page_file),
@@ -945,8 +1177,20 @@ pub fn resolve_css_inspector_context(
                             template_path: template_path
                                 .clone()
                                 .map(|path| to_project_relative_path(&path)),
+                            consumer_files: Vec::new(),
+                            consumer_templates: Vec::new(),
                             reason: "Regula există deja în acest fișier.".to_string(),
                         };
+                        if reusable_owner.as_deref() == Some(target.file.as_str()) {
+                            target.target_kind = "reusable".to_string();
+                            target.href = None;
+                            populate_reusable_target_delivery(
+                                project_root,
+                                store,
+                                project_model,
+                                &mut target,
+                            )?;
+                        }
                         return Ok(CssInspectorContextResolution {
                             schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
                             selection_revision: expected_selection.selection_revision,
@@ -960,12 +1204,15 @@ pub fn resolve_css_inspector_context(
                     }
 
                     if let Some(base_selector) = base_class_selector(&selector) {
-                        let base_candidates = css_inspector_source_candidates(
-                            &sources,
-                            &breakpoints,
-                            &base_selector,
-                            &selector,
-                            &viewport,
+                        let base_candidates = reusable_scoped_candidates(
+                            css_inspector_source_candidates(
+                                &sources,
+                                &breakpoints,
+                                &base_selector,
+                                &selector,
+                                &viewport,
+                            ),
+                            reusable_owner.as_deref(),
                         );
                         if base_candidates.len() > 1 {
                             return Ok(CssInspectorContextResolution {
@@ -1000,7 +1247,7 @@ pub fn resolve_css_inspector_context(
                                 })
                                 .transpose()?
                                 .unwrap_or(false);
-                            let target = PageCssTarget {
+                            let mut target = PageCssTarget {
                                 exists: project_relative_exists(project_root, store, &file)?,
                                 page_owned: !page_file.is_empty()
                                     && file == to_project_relative_path(&page_file),
@@ -1012,10 +1259,22 @@ pub fn resolve_css_inspector_context(
                                 template_path: template_path
                                     .clone()
                                     .map(|path| to_project_relative_path(&path)),
+                                consumer_files: Vec::new(),
+                                consumer_templates: Vec::new(),
                                 reason: format!(
                                     "Varianta va fi creată lângă regula de bază {base_selector}."
                                 ),
                             };
+                            if reusable_owner.as_deref() == Some(target.file.as_str()) {
+                                target.target_kind = "reusable".to_string();
+                                target.href = None;
+                                populate_reusable_target_delivery(
+                                    project_root,
+                                    store,
+                                    project_model,
+                                    &mut target,
+                                )?;
+                            }
                             return Ok(CssInspectorContextResolution {
                                 schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
                                 selection_revision: expected_selection.selection_revision,
@@ -1065,6 +1324,14 @@ pub fn resolve_css_inspector_context(
                     target.template_path = target
                         .template_path
                         .map(|path| to_project_relative_path(&path));
+                    if target.target_kind == "reusable" {
+                        populate_reusable_target_delivery(
+                            project_root,
+                            store,
+                            project_model,
+                            &mut target,
+                        )?;
+                    }
                     Ok(CssInspectorContextResolution {
                         schema_version: CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
                         selection_revision: expected_selection.selection_revision,
@@ -1472,6 +1739,150 @@ fn set_css_rule_at_viewport_impl(
     )
 }
 
+/// Writes a rule owned by an included/reusable template and atomically wires
+/// that partial into every real page template which consumes it. The active
+/// Code tab is never used as an ownership fallback.
+#[tauri::command(async)]
+pub fn set_reusable_css_rule_at_viewport(
+    template_path: String,
+    relative_path: String,
+    selector: String,
+    properties: HashMap<String, String>,
+    viewport: String,
+    cachebust_assets: bool,
+    identity: FileBufferRequestIdentity,
+    expected_selection: Option<SelectionMutationIdentity>,
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<CssMutationCommandReceipt<ReusableCssWriteResult>, String> {
+    let properties = normalize_panel_rule_input(&selector, &properties, &viewport)?;
+    let template_path = to_zola_relative_path(&template_path);
+    let zola_relative_path = strip_zola_root_prefix(&relative_path).to_string();
+    let expected_owner = reusable_scss_relative_path(&template_path).ok_or_else(|| {
+        format!("Template-ul {template_path} nu are un proprietar SCSS reutilizabil determinist.")
+    })?;
+    if zola_relative_path != expected_owner {
+        return Err(format!(
+            "Ținta SCSS reutilizabilă a fost refuzată: {zola_relative_path}; proprietarul canonic este {expected_owner}."
+        ));
+    }
+
+    execute_selection_bound_css_workspace_mutation_with_model(
+        &app,
+        &state,
+        &identity,
+        expected_selection.as_ref(),
+        move |project_root, _zola_root, store, project_model| {
+            let model = project_model.ok_or_else(|| {
+                "ProjectModel-ul reviziei curente nu este disponibil pentru legarea SCSS reutilizabilă. Reîncearcă după resincronizarea editorului."
+                    .to_string()
+            })?;
+            let consumers = reusable_css_consumers(model, &template_path)?;
+            let consumer_files = consumers
+                .iter()
+                .map(|consumer| consumer.stylesheet_path.clone())
+                .collect::<Vec<_>>();
+            let consumer_templates = consumers
+                .iter()
+                .map(|consumer| consumer.template_path.clone())
+                .collect::<Vec<_>>();
+            let project_relative_path = to_project_relative_path(&zola_relative_path);
+            let stylesheet_created =
+                !project_relative_exists(project_root, store, &project_relative_path)?;
+
+            if properties.is_empty() {
+                return Ok((
+                    None,
+                    ReusableCssWriteResult {
+                        file: project_relative_path,
+                        stylesheet_created: false,
+                        consumer_files,
+                        consumer_templates,
+                        written_files: Vec::new(),
+                    },
+                ));
+            }
+
+            let existing = read_current_zola_text(project_root, store, &zola_relative_path)?
+                .unwrap_or_default();
+            let breakpoints = current_css_breakpoints(project_root, store)?;
+            let updated = write_rule_at_viewport(
+                &breakpoints,
+                &existing,
+                selector.trim(),
+                &properties,
+                &viewport,
+            );
+            require_complete_style_inventory(store)?;
+            let mut style_files = current_style_paths(store);
+            style_files.insert(zola_relative_path.clone());
+            let active_theme = current_active_theme(project_root, store)?;
+            let mut changes_by_path = BTreeMap::new();
+            if updated != existing {
+                changes_by_path.insert(project_relative_path.clone(), updated);
+            }
+
+            for consumer in &consumers {
+                let consumer_existing =
+                    read_current_zola_text(project_root, store, &consumer.stylesheet_path)?
+                        .unwrap_or_default();
+                let consumer_updated = prepare_reusable_consumer_stylesheet_source(
+                    &consumer.stylesheet_path,
+                    &consumer_existing,
+                    &zola_relative_path,
+                    style_files.iter().cloned(),
+                    active_theme.as_deref(),
+                )?;
+                if consumer_updated != consumer_existing {
+                    changes_by_path.insert(consumer.stylesheet_path.clone(), consumer_updated);
+                }
+
+                for file in plan_page_stylesheet_link_writes_with_reader(
+                    &consumer.template_path,
+                    &consumer.href,
+                    cachebust_assets,
+                    active_theme.as_deref(),
+                    |relative_path| read_current_zola_text(project_root, store, relative_path),
+                )? {
+                    changes_by_path
+                        .insert(to_project_relative_path(&file.relative_path), file.contents);
+                }
+            }
+
+            let written_files = changes_by_path
+                .iter()
+                .map(|(relative_path, contents)| WrittenProjectFile {
+                    relative_path: relative_path.clone(),
+                    contents: contents.clone(),
+                })
+                .collect::<Vec<_>>();
+            let changes = changes_by_path
+                .into_iter()
+                .map(|(relative_path, new_text)| WorkspaceTextChange {
+                    relative_path,
+                    new_text,
+                })
+                .collect::<Vec<_>>();
+            let input = (!changes.is_empty()).then_some(WorkspaceTextResourceMutationInput {
+                label: format!("Reusable CSS rule {selector}"),
+                target: project_relative_path.clone(),
+                changes,
+                deletes: Vec::new(),
+            });
+            Ok((
+                input,
+                ReusableCssWriteResult {
+                    file: project_relative_path,
+                    stylesheet_created,
+                    consumer_files,
+                    consumer_templates,
+                    written_files,
+                },
+            ))
+        },
+    )
+}
+
 /// Write a CSS rule in a page-owned stylesheet and make sure the page template
 /// links the compiled stylesheet. Used when a selector does not already belong
 /// to an existing global/framework rule.
@@ -1662,6 +2073,12 @@ fn set_page_css_rule_at_viewport_impl(
 
 #[cfg(test)]
 mod css_inspector_context_tests {
+    use std::{
+        collections::HashMap,
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::*;
 
     #[test]
@@ -1761,5 +2178,88 @@ mod css_inspector_context_tests {
         assert_eq!(candidates[0].file, "sass/_hero.scss");
         assert_eq!(candidates[0].rule_context.selector, ".hero-title:hover");
         assert!(!candidates[0].rule_context.has_base_rule);
+    }
+
+    #[test]
+    fn reusable_owner_wins_and_unrelated_page_rules_cannot_hijack() {
+        let candidates = vec![
+            CssInspectorSourceCandidate {
+                file: "sass/pagini/despre.scss".to_string(),
+                rule_context: get_rule_context(
+                    &CssBreakpointValues::default(),
+                    "sass/pagini/despre.scss".to_string(),
+                    ".ps-card { color: red; }",
+                    ".ps-card".to_string(),
+                    "desktop".to_string(),
+                ),
+            },
+            CssInspectorSourceCandidate {
+                file: "sass/partials/listing-items/_card.scss".to_string(),
+                rule_context: get_rule_context(
+                    &CssBreakpointValues::default(),
+                    "sass/partials/listing-items/_card.scss".to_string(),
+                    ".ps-card { color: blue; }",
+                    ".ps-card".to_string(),
+                    "desktop".to_string(),
+                ),
+            },
+        ];
+
+        let scoped =
+            reusable_scoped_candidates(candidates, Some("sass/partials/listing-items/_card.scss"));
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].file, "sass/partials/listing-items/_card.scss");
+    }
+
+    #[test]
+    fn reusable_consumers_are_derived_from_the_project_model_include_graph() {
+        let root = std::env::temp_dir().join(format!(
+            "pana-reusable-css-consumer-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("content/servicii")).unwrap();
+        fs::create_dir_all(root.join("templates/servicii")).unwrap();
+        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = 'https://example.test'\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/servicii/_index.md"),
+            "+++\ntitle = 'Servicii'\ntemplate = 'servicii/arhiva.html'\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/layout.html"),
+            "<!doctype html><body>{% block content %}{% endblock %}</body>",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/servicii/arhiva.html"),
+            "{% extends 'layout.html' %}{% block content %}{% include 'listing-items/card.html' %}{% endblock %}",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/listing-items/card.html"),
+            "<article class='ps-card'></article>",
+        )
+        .unwrap();
+
+        let model = crate::project_model::build_project_model(&root, &HashMap::new()).unwrap();
+        let consumers =
+            reusable_css_consumers(&model, "templates/listing-items/card.html").unwrap();
+        assert_eq!(consumers.len(), 1);
+        assert_eq!(consumers[0].template_path, "templates/servicii/arhiva.html");
+        assert_eq!(
+            consumers[0].stylesheet_path,
+            "sass/pagini/servicii-arhiva.scss"
+        );
+        assert_eq!(consumers[0].href, "/pagini/servicii-arhiva.css");
+
+        fs::remove_dir_all(root).unwrap();
     }
 }

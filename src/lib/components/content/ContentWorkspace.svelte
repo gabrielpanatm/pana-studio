@@ -8,12 +8,19 @@
     IconHome,
     IconPlus,
     IconSearch,
+    IconSettings,
+    IconTags,
     IconX,
   } from "@tabler/icons-svelte";
+  import PageCustomFieldsPanel from "$lib/components/content/PageCustomFieldsPanel.svelte";
   import MarkdownEditor from "$lib/components/markdown/MarkdownEditor.svelte";
   import PageTaxonomyAssignments from "$lib/components/content/PageTaxonomyAssignments.svelte";
   import ProjectPageSettingsTab from "$lib/components/project/ProjectPageSettingsTab.svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import type {
+    PageFrontmatterField,
+    PageFrontmatterMutationValue,
+  } from "$lib/markdown/frontmatter";
   import { slugifyPageTitle } from "$lib/project/files";
   import type { AppState } from "$lib/state/app.svelte";
   import type { SourceGraphPage, SourcePageKind } from "$lib/types";
@@ -29,6 +36,7 @@
 
   type ContentView = "all" | "pages" | "sections";
   type DetailMode = "info" | "create";
+  type PageSettingsView = "settings" | "seo" | "custom_fields";
 
   const contentViews = $derived([
     { id: "all" as const, label: t("content-view-all") },
@@ -55,6 +63,7 @@
   let contentSessionId = "";
   let pageListElement = $state<HTMLDivElement | null>(null);
   let pageListScrollTop = $state(0);
+  let pageSettingsView = $state<PageSettingsView>("settings");
 
   const pages = $derived(app.sourceGraph?.pages ?? []);
   const sections = $derived.by(() => {
@@ -207,6 +216,21 @@
     app.updatePageFrontmatterSource(relativePath, source);
   }
 
+  async function updateMetadataField(
+    relativePath: string,
+    field: PageFrontmatterField,
+    value: PageFrontmatterMutationValue,
+  ) {
+    metadataSource = await app.updatePageFrontmatterField(relativePath, field, value);
+    loadedMetadataPath = relativePath;
+  }
+
+  async function refreshMetadataSource() {
+    if (!editingPagePath) return;
+    metadataSource = await app.readPageSettingsDocument(editingPagePath);
+    loadedMetadataPath = editingPagePath;
+  }
+
   $effect(() => {
     const sessionId = app.kernelProjectSessionId;
     if (contentSessionId === sessionId) return;
@@ -221,6 +245,7 @@
     metadataError = "";
     loadedMetadataPath = "";
     pageListScrollTop = 0;
+    pageSettingsView = "settings";
   });
 
   $effect(() => {
@@ -339,16 +364,31 @@
       {:else if metadataLoading && loadedMetadataPath !== editingPagePath}
         <div class="settings-diagnostic"><span>{t("content-loading-frontmatter")}</span></div>
       {:else if editingPage}
+        <div class="page-settings-tabs" role="tablist" aria-label="Setările paginii">
+          <button type="button" role="tab" class:active={pageSettingsView === "settings"} aria-selected={pageSettingsView === "settings"} onclick={() => { pageSettingsView = "settings"; }}><IconSettings size={13} /> Setări</button>
+          <button type="button" role="tab" class:active={pageSettingsView === "seo"} aria-selected={pageSettingsView === "seo"} onclick={() => { pageSettingsView = "seo"; }}><IconSearch size={13} /> SEO</button>
+          <button type="button" role="tab" class:active={pageSettingsView === "custom_fields"} aria-selected={pageSettingsView === "custom_fields"} onclick={() => { pageSettingsView = "custom_fields"; }}><IconTags size={13} /> Câmpuri</button>
+        </div>
         <div class="metadata-editor">
-          <ProjectPageSettingsTab
-            activeScannedPath={editingPage.file}
-            scannedPages={app.scannedPages}
-            scannedTemplates={app.scannedTemplates}
-            activeTheme={app.scannedProject?.activeTheme ?? null}
-            pageSource={metadataSource}
-            updatePageFrontmatterSource={updateMetadataSource}
-          />
-          <PageTaxonomyAssignments {app} page={editingPage} />
+          {#if pageSettingsView === "settings" || pageSettingsView === "seo"}
+            <ProjectPageSettingsTab
+              activeScannedPath={editingPage.file}
+              scannedPages={app.scannedPages}
+              scannedTemplates={app.scannedTemplates}
+              activeTheme={app.scannedProject?.activeTheme ?? null}
+              pageSource={metadataSource}
+              pageKind={editingPage.pageKind}
+              updatePageFrontmatterField={updateMetadataField}
+              view={pageSettingsView === "seo" ? "seo" : "settings"}
+            />
+            {#if pageSettingsView === "settings"}<PageTaxonomyAssignments {app} page={editingPage} />{/if}
+          {:else}
+            <PageCustomFieldsPanel
+              {app}
+              pageFile={editingPage.file}
+              onSourceChanged={refreshMetadataSource}
+            />
+          {/if}
         </div>
       {/if}
     </aside>
@@ -589,6 +629,9 @@
   .detail-actions .primary-action, .detail-actions .secondary-action { flex: 1; }
   .detail-panel > .secondary-action { width: 100%; margin-top: 7px; }
   .metadata-editor { min-width: 0; margin-top: 10px; }
+  .page-settings-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 3px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--material-inset); }
+  .page-settings-tabs button { display: flex; min-width: 0; min-height: 28px; align-items: center; justify-content: center; gap: 4px; padding: 0 5px; border: 1px solid transparent; border-radius: 5px; color: var(--wb-text-muted); background: transparent; font-size: 11px; font-weight: 700; }
+  .page-settings-tabs button.active { border-color: var(--wb-border-subtle); color: var(--wb-accent-strong); background: var(--wb-surface-document); box-shadow: var(--shadow-control); }
   .metadata-editor :global(.page-settings-panel) { padding: 0; border: 0; background: transparent; }
   .metadata-editor :global(.page-file-chip) { background: var(--wb-surface-document); }
   .metadata-editor :global(.metadata-group) { border-color: var(--wb-border-subtle); background: var(--wb-surface-document); }

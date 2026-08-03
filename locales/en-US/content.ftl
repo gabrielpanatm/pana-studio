@@ -94,6 +94,7 @@ content-settings-field-title = Title
 content-settings-field-description = Description
 content-settings-field-date = Date
 content-settings-field-weight = Weight
+content-settings-field-paginate-by = Items per page
 content-settings-field-template = Template
 content-settings-field-slug = Slug
 content-settings-field-draft = Draft

@@ -32,6 +32,9 @@ export function teraSnippetForItem(item: TeraPaletteItem) {
   if (item.kind === "macro") {
     return `{% macro ${item.name || "component"}() %}\n{% endmacro %}`;
   }
+  if (item.kind === "macroCall") {
+    return `{% import "${item.target || "macros.html"}" as pana_component %}\n{{ pana_component::${item.name || "component"}() }}`;
+  }
   if (item.kind === "for") {
     return `{% for ${item.expression || "item in items"} %}\n{% endfor %}`;
   }
@@ -46,6 +49,9 @@ export function teraSnippetForItem(item: TeraPaletteItem) {
   }
   if (item.kind === "teraComment") {
     return `{# ${item.expression || "comment"} #}`;
+  }
+  if (item.kind === "dynamicWidget") {
+    return `{# ${item.label || "Widget dinamic"} — sursa este generată de Rust #}`;
   }
   return `{% raw %}\n{% endraw %}`;
 }

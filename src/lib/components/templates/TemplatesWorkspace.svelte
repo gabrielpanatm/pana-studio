@@ -21,7 +21,9 @@
   } from "@tabler/icons-svelte";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import {
+    createListingItem,
     createSemanticTemplate,
+    deleteListingItem,
     deleteTemplate,
     duplicateTemplate,
     overrideThemeTemplate,
@@ -58,6 +60,9 @@
 
   type DetailMode = "info" | "create" | "rename";
   type CreateTarget = { id: string; label: string; file: string | null; url: string | null };
+  type SectionSort = "none" | "date" | "title" | "weight";
+
+  const NEW_SECTION_TARGET = "__new_section__";
 
   function diagnosticText(diagnostic: import("$lib/types").LocalizedDiagnostic | null | undefined) {
     return diagnostic ? errorMessage(diagnostic) : "";
@@ -95,6 +100,7 @@
     { id: "page" as const, label: t("templates-view-pages") },
     { id: "archive" as const, label: t("templates-view-archives") },
     { id: "element" as const, label: t("templates-view-elements") },
+    { id: "listing_item" as const, label: t("templates-view-listing-items") },
     { id: "taxonomy" as const, label: t("templates-view-taxonomies") },
     { id: "system" as const, label: t("templates-view-system") },
   ]);
@@ -104,6 +110,7 @@
     page: ["homepage", "default_page", "specific_page", "custom"],
     archive: ["section_archive"],
     element: ["section_element"],
+    listing_item: ["listing_item"],
     taxonomy: ["taxonomy_list", "taxonomy_term"],
     system: ["not_found"],
   };
@@ -124,9 +131,18 @@
   let createName = $state("");
   let createTargetId = $state("");
   let createParent = $state("");
+  let createSectionTitle = $state("");
+  let createSectionSlug = $state("");
+  let createSectionSort = $state<SectionSort>("weight");
+  let createSectionSlugTouched = $state(false);
+  let createNameTouched = $state(false);
   let includePageContent = $state(false);
+  let listingLabel = $state("");
+  let listingModelId = $state("");
+  let listingPreviewPageFile = $state("");
   let duplicateSourcePath = $state<string | null>(null);
   let draftNameInput = $state<HTMLInputElement | null>(null);
+  let draftSectionTitleInput = $state<HTMLInputElement | null>(null);
 
   let parentDraft = $state("");
   let parentDraftForId = $state("");
@@ -171,6 +187,16 @@
   const localResourceCount = $derived(resources.filter((resource) => resource.editable).length);
   const themeResourceCount = $derived(resources.filter((resource) => !resource.editable).length);
   const createTargets = $derived(targetsForRole(createRole));
+  const listingModels = $derived(app.sourceGraph?.contentModels.models ?? []);
+  const listingPreviewPages = $derived(
+    (app.sourceGraph?.contentModels.pageBindings ?? [])
+      .filter((binding) => binding.modelId === listingModelId)
+      .map((binding) => app.sourceGraph?.pages.find((page) => page.file === binding.pageFile))
+      .filter((page): page is NonNullable<typeof page> => Boolean(page)),
+  );
+  const creatingNewArchiveSection = $derived(
+    createRole === "section_archive" && createTargetId === NEW_SECTION_TARGET,
+  );
   const canAssignSelected = $derived(
     selectedEntry?.target.file
       && (selectedEntry.assignment.key === "template" || selectedEntry.assignment.key === "page_template"),
@@ -320,6 +346,7 @@
       specific_page: t("templates-role-specific-page"),
       section_archive: t("templates-role-section-archive"),
       section_element: t("templates-role-section-element"),
+      listing_item: t("templates-role-listing-item"),
       taxonomy_list: t("templates-role-taxonomy-list"),
       taxonomy_term: t("templates-role-taxonomy-term"),
       not_found: t("templates-role-not-found"),
@@ -379,6 +406,40 @@
     return stem;
   }
 
+  function collectionSlug(value: string) {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase(l10n.locale)
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function generatedArchiveName(slug: string) {
+    return slug ? `${slug}/arhiva` : "";
+  }
+
+  function resetNewSectionDraft() {
+    createSectionTitle = "";
+    createSectionSlug = "";
+    createSectionSort = "weight";
+    createSectionSlugTouched = false;
+    createNameTouched = false;
+  }
+
+  function updateSectionTitle(value: string) {
+    createSectionTitle = value;
+    if (createSectionSlugTouched) return;
+    createSectionSlug = collectionSlug(value);
+    if (!createNameTouched) createName = generatedArchiveName(createSectionSlug);
+  }
+
+  function updateSectionSlug(value: string) {
+    createSectionSlugTouched = true;
+    createSectionSlug = collectionSlug(value);
+    if (!createNameTouched) createName = generatedArchiveName(createSectionSlug);
+  }
+
   function resetPanelState() {
     detailMode = "info";
     formError = "";
@@ -389,9 +450,19 @@
   function beginCreate() {
     createRole = createRoles[activeView][0] ?? "custom";
     const targets = targetsForRole(createRole);
-    createTargetId = targets[0]?.id ?? "";
-    createName = suggestedName(createRole, createTargetId);
+    resetNewSectionDraft();
+    createTargetId = createRole === "section_archive"
+      ? NEW_SECTION_TARGET
+      : targets[0]?.id ?? "";
+    createName = createRole === "section_archive" ? "" : suggestedName(createRole, createTargetId);
     createParent = layoutOptions[0]?.name ?? "";
+    if (createRole === "listing_item") {
+      listingLabel = "";
+      createName = "";
+      listingModelId = listingModels[0]?.id ?? "";
+      listingPreviewPageFile = (app.sourceGraph?.contentModels.pageBindings ?? [])
+        .find((binding) => binding.modelId === listingModelId)?.pageFile ?? "";
+    }
     includePageContent = false;
     duplicateSourcePath = null;
     formError = "";
@@ -408,6 +479,7 @@
     }
     activeView = entry.category;
     createRole = role;
+    resetNewSectionDraft();
     createTargetId = targetsForRole(role).some((target) => target.id === entry.target.id)
       ? entry.target.id
       : "";
@@ -424,13 +496,17 @@
   function changeCreateRole(role: TemplateSemanticCreateRole) {
     createRole = role;
     const targets = targetsForRole(role);
-    createTargetId = targets[0]?.id ?? "";
-    createName = suggestedName(role, createTargetId);
+    resetNewSectionDraft();
+    createTargetId = role === "section_archive" ? NEW_SECTION_TARGET : targets[0]?.id ?? "";
+    createName = role === "section_archive" ? "" : suggestedName(role, createTargetId);
   }
 
   function changeCreateTarget(targetId: string) {
     createTargetId = targetId;
-    createName = suggestedName(createRole, targetId);
+    createNameTouched = false;
+    createName = targetId === NEW_SECTION_TARGET
+      ? generatedArchiveName(createSectionSlug)
+      : suggestedName(createRole, targetId);
   }
 
   function beginDuplicate(resource: TemplateResource) {
@@ -453,14 +529,53 @@
 
   function focusDraftName() {
     requestAnimationFrame(() => {
-      draftNameInput?.focus();
-      draftNameInput?.select();
+      const input = detailMode === "create" && creatingNewArchiveSection
+        ? draftSectionTitleInput
+        : draftNameInput;
+      input?.focus();
+      input?.select();
     });
+  }
+
+  function updateListingLabel(value: string) {
+    listingLabel = value;
+    if (!createNameTouched) createName = collectionSlug(value);
+  }
+
+  function changeListingModel(modelId: string) {
+    listingModelId = modelId;
+    listingPreviewPageFile = (app.sourceGraph?.contentModels.pageBindings ?? [])
+      .find((binding) => binding.modelId === modelId)?.pageFile ?? "";
   }
 
   async function submitCreate(event: SubmitEvent) {
     event.preventDefault();
     const name = createName.trim();
+    if (createRole === "listing_item" && !duplicateSourcePath) {
+      if (!listingLabel.trim() || !name || !listingModelId || !listingPreviewPageFile) {
+        formError = t("templates-listing-required");
+        return;
+      }
+      const receipt = await finishMutation(
+        () => createListingItem({
+          label: listingLabel.trim(),
+          slug: name,
+          modelId: listingModelId,
+          previewPageFile: listingPreviewPageFile,
+        }, identity()),
+        t("templates-listing-created", { name: listingLabel.trim() }),
+      );
+      if (receipt) resetPanelState();
+      return;
+    }
+    if (creatingNewArchiveSection && !createSectionTitle.trim()) {
+      formError = t("templates-section-title-required");
+      return;
+    }
+    if (creatingNewArchiveSection && !createSectionSlug.trim()) {
+      formError = t("templates-section-slug-required");
+      return;
+    }
     if (!name) {
       formError = t("templates-name-required");
       return;
@@ -476,7 +591,7 @@
       if (receipt) resetPanelState();
       return;
     }
-    if (createTargets.length > 0 && !createTargetId) {
+    if (!creatingNewArchiveSection && createTargets.length > 0 && !createTargetId) {
       formError = t("templates-target-required");
       return;
     }
@@ -484,11 +599,18 @@
       () => createSemanticTemplate({
         role: createRole,
         name,
-        targetId: createTargetId || null,
+        targetId: creatingNewArchiveSection ? null : createTargetId || null,
+        newSection: creatingNewArchiveSection ? {
+          title: createSectionTitle.trim(),
+          slug: createSectionSlug,
+          sortBy: createSectionSort,
+        } : null,
         parentTemplateName: createParent || null,
         includePageContent,
       }, identity()),
-      t("templates-status-created", { name }),
+      creatingNewArchiveSection
+        ? t("templates-status-section-created", { title: createSectionTitle.trim() })
+        : t("templates-status-created", { name }),
     );
     if (receipt) resetPanelState();
   }
@@ -574,10 +696,12 @@
     if (receipt) resetPanelState();
   }
 
-  async function removeResource(resource: TemplateResource) {
+  async function removeResource(entry: TemplateSemanticEntry, resource: TemplateResource) {
     if (!resource.canDelete) return;
     const receipt = await finishMutation(
-      () => deleteTemplate({ relativePath: resource.file }, identity()),
+      () => entry.role === "listing_item"
+        ? deleteListingItem({ id: entry.target.id }, identity())
+        : deleteTemplate({ relativePath: resource.file }, identity()),
       t("templates-status-deleted", { name: resource.name }),
     );
     if (receipt) resetPanelState();
@@ -667,7 +791,7 @@
               {#if entry.role === "layout"}<IconLayout size={17} stroke={1.8} />
               {:else if entry.role === "homepage"}<IconHome size={17} stroke={1.8} />
               {:else if entry.category === "archive"}<IconListDetails size={17} stroke={1.8} />
-              {:else if entry.category === "element"}<IconArticle size={17} stroke={1.8} />
+              {:else if entry.category === "element" || entry.category === "listing_item"}<IconArticle size={17} stroke={1.8} />
               {:else if entry.category === "taxonomy"}<IconTags size={17} stroke={1.8} />
               {:else if entry.category === "system"}<IconAlertTriangle size={17} stroke={1.8} />
               {:else}<IconFileText size={17} stroke={1.8} />{/if}
@@ -709,6 +833,58 @@
           </div>
 
           <div class="form-fields">
+            {#if createRole === "listing_item" && !duplicateSourcePath}
+              <label>
+                <span>{t("templates-listing-name")}</span>
+                <input
+                  bind:this={draftNameInput}
+                  value={listingLabel}
+                  type="text"
+                  autocomplete="off"
+                  placeholder={t("templates-listing-name-placeholder")}
+                  disabled={busy}
+                  oninput={(event) => updateListingLabel(event.currentTarget.value)}
+                />
+              </label>
+              <label>
+                <span>{t("templates-listing-id")}</span>
+                <input
+                  value={createName}
+                  type="text"
+                  autocomplete="off"
+                  placeholder={t("templates-listing-id-placeholder")}
+                  disabled={busy}
+                  oninput={(event) => {
+                    createNameTouched = true;
+                    createName = collectionSlug(event.currentTarget.value);
+                  }}
+                />
+                <small>{t("templates-listing-result-file")} <code>templates/listing-items/{createName || "…"}.html</code></small>
+              </label>
+              <label>
+                <span>{t("templates-listing-model")}</span>
+                <select value={listingModelId} disabled={busy} onchange={(event) => changeListingModel(event.currentTarget.value)}>
+                  {#each listingModels as model (model.id)}
+                    <option value={model.id}>{model.label} · {model.id}</option>
+                  {/each}
+                </select>
+                <small>{t("templates-listing-model-help")}</small>
+              </label>
+              <label>
+                <span>{t("templates-listing-preview-page")}</span>
+                <select bind:value={listingPreviewPageFile} disabled={busy || listingPreviewPages.length === 0}>
+                  {#each listingPreviewPages as page (page.file)}
+                    <option value={page.file}>{page.title} · {page.url}</option>
+                  {/each}
+                </select>
+                <small>{t("templates-listing-preview-help")}</small>
+              </label>
+              {#if listingModels.length === 0}
+                <p class="guard-message">{t("templates-listing-model-missing")}</p>
+              {:else if listingPreviewPages.length === 0}
+                <p class="guard-message">{t("templates-listing-preview-missing")}</p>
+              {/if}
+            {:else}
             {#if !duplicateSourcePath && createRoles[activeView].length > 1}
               <label>
                 <span>{t("templates-field-role")}</span>
@@ -720,7 +896,20 @@
               </label>
             {/if}
 
-            {#if !duplicateSourcePath && createTargets.length > 0}
+            {#if !duplicateSourcePath && createRole === "section_archive"}
+              <label>
+                <span>{t("templates-field-section-target")}</span>
+                <select value={createTargetId} disabled={busy} onchange={(event) => changeCreateTarget(event.currentTarget.value)}>
+                  <option value={NEW_SECTION_TARGET}>{t("templates-create-new-section")}</option>
+                  {#each createTargets as target (target.id)}
+                    <option value={target.id}>{target.label} · {target.url ?? target.file}</option>
+                  {/each}
+                </select>
+                <small>{creatingNewArchiveSection
+                  ? t("templates-new-section-atomic-help")
+                  : t("templates-existing-section-help")}</small>
+              </label>
+            {:else if !duplicateSourcePath && createTargets.length > 0}
               <label>
                 <span>{t("templates-field-exact-target")}</span>
                 <select value={createTargetId} disabled={busy} onchange={(event) => changeCreateTarget(event.currentTarget.value)}>
@@ -731,9 +920,52 @@
               </label>
             {/if}
 
+            {#if !duplicateSourcePath && creatingNewArchiveSection}
+              <label>
+                <span>{t("templates-field-section-title")}</span>
+                <input
+                  bind:this={draftSectionTitleInput}
+                  value={createSectionTitle}
+                  type="text"
+                  autocomplete="off"
+                  placeholder={t("templates-section-title-placeholder")}
+                  disabled={busy}
+                  oninput={(event) => updateSectionTitle(event.currentTarget.value)}
+                />
+              </label>
+              <label>
+                <span>{t("templates-field-section-slug")}</span>
+                <input
+                  value={createSectionSlug}
+                  type="text"
+                  autocomplete="off"
+                  placeholder={t("templates-section-slug-placeholder")}
+                  disabled={busy}
+                  oninput={(event) => updateSectionSlug(event.currentTarget.value)}
+                />
+                <small>{t("templates-resulting-section-path")} <code>content/{createSectionSlug || "…"}/_index.md</code></small>
+              </label>
+              <label>
+                <span>{t("templates-field-section-sort")}</span>
+                <select bind:value={createSectionSort} disabled={busy}>
+                  <option value="weight">{t("templates-section-sort-weight")}</option>
+                  <option value="date">{t("templates-section-sort-date")}</option>
+                  <option value="title">{t("templates-section-sort-title")}</option>
+                  <option value="none">{t("templates-section-sort-none")}</option>
+                </select>
+              </label>
+            {/if}
+
             <label>
               <span>{t("templates-field-logical-name")}</span>
-              <input bind:this={draftNameInput} bind:value={createName} type="text" autocomplete="off" disabled={busy} />
+              <input
+                bind:this={draftNameInput}
+                bind:value={createName}
+                type="text"
+                autocomplete="off"
+                disabled={busy}
+                oninput={() => { createNameTouched = true; }}
+              />
               <small>{t("templates-resulting-path")} <code>templates/{createName || "…"}.html</code></small>
             </label>
 
@@ -757,6 +989,7 @@
                 <input bind:checked={includePageContent} type="checkbox" disabled={busy} />
                 <span>{t("templates-include-page-content")}</span>
               </label>
+            {/if}
             {/if}
           </div>
 
@@ -867,7 +1100,7 @@
               <div><dt>{t("templates-uses")}</dt><dd>{l10n.formatNumber(selectedResource.usedByTemplates.length)}</dd></div>
             </dl>
 
-            {#if selectedResource.editable}
+            {#if selectedResource.editable && selectedEntry.role !== "listing_item"}
               <div class="parent-control">
                 <label>
                   <span>{t("templates-field-parent-layout")}</span>
@@ -890,8 +1123,10 @@
               <IconExternalLink size={14} /> {t("templates-open")}
             </button>
             {#if selectedResource.editable}
+              {#if selectedEntry.role !== "listing_item"}
               <button type="button" disabled={busy} onclick={() => beginRename(selectedResource)}><IconEdit size={14} /> {t("templates-rename")}</button>
               <button type="button" disabled={busy} onclick={() => beginDuplicate(selectedResource)}><IconCopy size={14} /> {t("templates-duplicate")}</button>
+              {/if}
               <button
                 class="ui-button danger"
                 type="button"
@@ -909,7 +1144,7 @@
               <div><strong>{t("templates-delete-question", { name: selectedResource.name })}</strong><span>{t("templates-delete-description")}</span></div>
               <div>
                 <button type="button" onclick={() => { deleteConfirmationOpen = false; }}>{t("templates-cancel")}</button>
-                <button class="ui-button danger" type="button" disabled={busy} onclick={() => { void removeResource(selectedResource); }}><IconTrash size={14} /> {t("templates-confirm")}</button>
+                <button class="ui-button danger" type="button" disabled={busy} onclick={() => { void removeResource(selectedEntry, selectedResource); }}><IconTrash size={14} /> {t("templates-confirm")}</button>
               </div>
             </section>
           {/if}

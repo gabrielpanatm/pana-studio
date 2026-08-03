@@ -8,16 +8,23 @@ use crate::{
         unique_native_block_identity,
     },
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
-    source_graph::model::SourceNode,
+    source_graph::{
+        model::{SourceNode, SourceNodeKind, SourceOrigin},
+        tera::{parse_tera_items, TeraItemKind},
+    },
 };
 
 use super::move_engine::{
-    can_receive_children, content_revision, direct_location_without_source_id, html_tag_at,
-    inside_prefix_for_insert, line_indent_at_offset, line_number_at_offset,
-    offset_for_source_location, parse_html_tag_at, reindent_html_fragment,
-    resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
-    source_location_at_offset, source_missing_message, ProjectMovePosition,
-    ProjectSourceEditLocation, Span,
+    append_document_fragment, can_receive_children, content_revision,
+    direct_location_without_source_id, html_tag_at, insert_line_block, inserted_block_start_line,
+    inside_prefix_for_insert, line_block_after_index, line_block_before_index,
+    line_indent_at_offset, line_number_at_offset, offset_for_source_location, parse_html_tag_at,
+    reindent_html_fragment, resolve_conjunctive_anchor, resolve_html_element_span,
+    resolve_html_node_for_anchor, same_model_path, source_location_at_offset,
+    source_missing_message, ProjectMovePosition, ProjectSourceEditLocation, Span,
+};
+use super::structural_envelope::{
+    semantic_html_indent, structural_envelope_for_html_node, StructuralEnvelopeKind,
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -88,8 +95,9 @@ pub fn plan_html_insert(
     model: &ProjectModel,
     intent: &ProjectHtmlInsertIntent,
     aliases: &HashMap<String, String>,
+    active_document_path: Option<&str>,
 ) -> ProjectHtmlInsertPlan {
-    match plan_html_insert_inner(model, intent, aliases) {
+    match plan_html_insert_inner(model, intent, aliases, active_document_path) {
         Ok(patch) => ProjectHtmlInsertPlan {
             allowed: true,
             diagnostic: None,
@@ -109,19 +117,22 @@ fn plan_html_insert_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlInsertIntent,
     aliases: &HashMap<String, String>,
+    active_document_path: Option<&str>,
 ) -> Result<ProjectHtmlInsertPatch, String> {
-    if intent
-        .target_kind
-        .as_deref()
-        .is_some_and(|kind| kind.trim() == "empty-tera-slot")
+    let snippet = build_insert_snippet(model, &intent.element)?;
+    let document_root_kind = intent.target_kind.as_deref().map(str::trim);
+    if document_root_kind
+        .is_some_and(|kind| matches!(kind, "empty-tera-slot" | "active-document-root"))
     {
-        return Err(
-            "Inserarea în slot Tera cere planner Tera dedicat; HTML Insert Engine refuză acest caz."
-                .to_string(),
+        return plan_html_insert_into_active_document_root(
+            model,
+            intent,
+            &snippet,
+            active_document_path,
+            document_root_kind == Some("active-document-root"),
         );
     }
 
-    let snippet = build_insert_snippet(model, &intent.element)?;
     if let Some(target_node) = resolve_html_node_for_anchor(
         model,
         intent.target_source_id.as_deref(),
@@ -145,6 +156,261 @@ fn plan_html_insert_inner(
         intent.target_location.as_ref(),
         intent.target_selector.as_deref(),
     ))
+}
+
+fn plan_html_insert_into_active_document_root(
+    model: &ProjectModel,
+    intent: &ProjectHtmlInsertIntent,
+    snippet: &InsertSnippet,
+    active_document_path: Option<&str>,
+    accepts_existing_content: bool,
+) -> Result<ProjectHtmlInsertPatch, String> {
+    if intent.position != ProjectMovePosition::Inside {
+        return Err("Rădăcina documentului activ acceptă inserări numai în interior.".to_string());
+    }
+    let active_document_path = active_document_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| {
+            "HTML Insert Engine nu poate confirma documentul activ pentru rădăcina de autor."
+                .to_string()
+        })?;
+    let target_node = resolve_active_document_root_anchor(model, intent).ok_or_else(|| {
+        source_missing_message(
+            "rădăcina documentului activ",
+            intent.target_source_id.as_deref(),
+            intent.target_location.as_ref(),
+            intent.target_selector.as_deref(),
+        )
+    })?;
+    if target_node.origin != SourceOrigin::Local
+        || !same_model_path(&target_node.file, active_document_path)
+    {
+        return Err(format!(
+            "Blocul Tera aparține sursei externe {}, nu documentului activ {}. Deschide sursa externă înainte de editare.",
+            target_node.file, active_document_path
+        ));
+    }
+
+    let file = model
+        .files
+        .iter()
+        .find(|file| same_model_path(&file.relative_path, &target_node.file))
+        .ok_or_else(|| {
+            format!(
+                "Nu am găsit documentul activ {} în Project Model.",
+                target_node.file
+            )
+        })?;
+    if file.kind != ProjectModelFileKind::Template {
+        return Err(
+            "Rădăcina Tera editabilă este disponibilă numai în template-uri Zola.".to_string(),
+        );
+    }
+
+    if matches!(
+        target_node.kind,
+        SourceNodeKind::Template | SourceNodeKind::Partial
+    ) {
+        let owner = model
+            .source_graph
+            .templates
+            .iter()
+            .find(|template| template.node_id == target_node.id)
+            .ok_or_else(|| {
+                "Rădăcina fragmentului activ nu mai aparține unui template din Source Graph."
+                    .to_string()
+            })?;
+        if target_node.parent.is_some()
+            || !same_model_path(&owner.file, active_document_path)
+            || owner.origin != SourceOrigin::Local
+        {
+            return Err(
+                "Rădăcina fragmentului nu este documentul local deschis în Workbench.".to_string(),
+            );
+        }
+        if !accepts_existing_content && !file.contents.trim().is_empty() {
+            return Err(
+                "Rădăcina documentului nu mai este goală; reconstruiește Canvas-ul înaintea inserării."
+                    .to_string(),
+            );
+        }
+        if is_complete_html_document_source(&file.contents) {
+            return Err(
+                "Un document HTML complet se editează prin elementele sale reale, nu prin rădăcina de fragment."
+                    .to_string(),
+            );
+        }
+        let inserted = reindent_html_fragment(&snippet.html, "");
+        let applied = append_document_fragment(&file.contents, &inserted);
+        return Ok(ProjectHtmlInsertPatch {
+            file: target_node.file.clone(),
+            resolved_target_id: target_node.id.clone(),
+            inserted_label: format!("<{}>", snippet.tag),
+            before_revision: file.revision.clone(),
+            after_revision: content_revision(&applied.contents),
+            contents: applied.contents,
+            target_location: source_location_at_offset(
+                &file.contents,
+                &target_node.file,
+                target_node
+                    .range
+                    .as_ref()
+                    .map(|range| range.start)
+                    .unwrap_or(0),
+            ),
+            inserted_location: ProjectSourceEditLocation {
+                file: target_node.file.clone(),
+                line: applied.inserted_start_line,
+                column: 1,
+            },
+            inserted_start_line: applied.inserted_start_line,
+            line_shift_start: applied.inserted_start_line,
+            line_shift: applied.line_shift,
+            tag: snippet.tag.clone(),
+            class_name: snippet.class_name.clone(),
+            text: snippet.text.clone(),
+            html: snippet.html.clone(),
+            block_id: snippet.block_id.clone(),
+            data_anim: snippet.data_anim.clone(),
+            block_instance_id: snippet.block_instance_id.clone(),
+        });
+    }
+    if target_node.kind != SourceNodeKind::Block {
+        return Err(
+            "Rădăcina documentului activ nu este un block sau un fragment editabil.".to_string(),
+        );
+    }
+    let target_range = target_node
+        .range
+        .as_ref()
+        .ok_or_else(|| "Blocul Tera activ nu are range stabil în Source Graph.".to_string())?;
+    let target_source = file
+        .contents
+        .get(target_range.start..target_range.end)
+        .ok_or_else(|| "Range-ul blocului Tera activ este invalid.".to_string())?;
+    let items = parse_tera_items(target_source);
+    let opening = items
+        .iter()
+        .find(|item| {
+            item.kind == TeraItemKind::Node
+                && item.node_kind == Some(SourceNodeKind::Block)
+                && item.start == 0
+        })
+        .ok_or_else(|| "Range-ul activ nu mai începe cu un bloc Tera.".to_string())?;
+    let closing = items
+        .iter()
+        .rev()
+        .find(|item| item.kind == TeraItemKind::EndScope)
+        .ok_or_else(|| "Blocul Tera activ nu mai are închidere stabilă.".to_string())?;
+    let body = target_source
+        .get(opening.end..closing.start)
+        .ok_or_else(|| "Interiorul blocului Tera activ are un range invalid.".to_string())?;
+    if !accepts_existing_content && !body.trim().is_empty() {
+        return Err(
+            "Slotul Tera nu mai este gol; reconstruiește Canvas-ul înaintea inserării.".to_string(),
+        );
+    }
+
+    let block_indent = line_indent_at_offset(&file.contents, target_range.start);
+    let child_indent = format!("{block_indent}  ");
+    let inserted = reindent_html_fragment(&snippet.html, &child_indent);
+    let opening_end = target_range.start + opening.end;
+    let insert_at = target_range.start + closing.start;
+    let before_insert = inside_prefix_for_insert(&file.contents, opening_end, insert_at);
+    let inserted_start_line = line_number_at_offset(&before_insert, before_insert.len()) + 1;
+    let contents = format!(
+        "{}\n{}\n{}{}",
+        before_insert,
+        inserted,
+        block_indent,
+        &file.contents[insert_at..]
+    );
+
+    Ok(ProjectHtmlInsertPatch {
+        file: target_node.file.clone(),
+        resolved_target_id: target_node.id.clone(),
+        inserted_label: format!("<{}>", snippet.tag),
+        before_revision: file.revision.clone(),
+        after_revision: content_revision(&contents),
+        contents,
+        target_location: source_location_at_offset(
+            &file.contents,
+            &target_node.file,
+            target_range.start,
+        ),
+        inserted_location: ProjectSourceEditLocation {
+            file: target_node.file.clone(),
+            line: inserted_start_line,
+            column: child_indent.chars().count() + 1,
+        },
+        inserted_start_line,
+        line_shift_start: inserted_start_line,
+        line_shift: snippet_line_count(&inserted) as isize + 1,
+        tag: snippet.tag.clone(),
+        class_name: snippet.class_name.clone(),
+        text: snippet.text.clone(),
+        html: snippet.html.clone(),
+        block_id: snippet.block_id.clone(),
+        data_anim: snippet.data_anim.clone(),
+        block_instance_id: snippet.block_instance_id.clone(),
+    })
+}
+
+fn resolve_active_document_root_anchor<'a>(
+    model: &'a ProjectModel,
+    intent: &ProjectHtmlInsertIntent,
+) -> Option<&'a SourceNode> {
+    let id_node = intent.target_source_id.as_deref().and_then(|source_id| {
+        model.source_graph.nodes.iter().find(|node| {
+            node.id == source_id
+                && matches!(
+                    node.kind,
+                    SourceNodeKind::Block | SourceNodeKind::Template | SourceNodeKind::Partial
+                )
+        })
+    });
+    let location_node = intent.target_location.as_ref().and_then(|location| {
+        if location.line == 0 || location.column == 0 {
+            return None;
+        }
+        let mut candidates = model.source_graph.nodes.iter().filter(|node| {
+            matches!(
+                node.kind,
+                SourceNodeKind::Block | SourceNodeKind::Template | SourceNodeKind::Partial
+            ) && same_model_path(&node.file, &location.file)
+                && node.range.as_ref().is_some_and(|range| {
+                    range.line == location.line && range.column == location.column
+                })
+        });
+        let candidate = candidates.next()?;
+        candidates.next().is_none().then_some(candidate)
+    });
+    // A document root spans its descendants, so line 1:1 can legitimately be
+    // shared with the first child. The Rust-issued root identity remains the
+    // authority; the location only has to corroborate that same file/start.
+    if let (Some(id_node), Some(location)) = (id_node, intent.target_location.as_ref()) {
+        return id_node
+            .range
+            .as_ref()
+            .filter(|range| {
+                same_model_path(&id_node.file, &location.file)
+                    && range.line == location.line
+                    && range.column == location.column
+            })
+            .map(|_| id_node);
+    }
+    resolve_conjunctive_anchor(
+        intent.target_source_id.as_deref(),
+        intent.target_location.as_ref(),
+        id_node,
+        location_node,
+    )
+}
+
+fn is_complete_html_document_source(source: &str) -> bool {
+    let normalized = source.trim_start().to_ascii_lowercase();
+    normalized.starts_with("<!doctype html") || normalized.starts_with("<html")
 }
 
 fn plan_html_insert_from_source_node(
@@ -181,7 +447,20 @@ fn plan_html_insert_from_source_node(
         .range
         .as_ref()
         .ok_or_else(|| "Destinația nu are range stabil în Source Graph.".to_string())?;
-    let target_span = resolve_html_element_span(&file.contents, target_range.start)?;
+    let envelope = structural_envelope_for_html_node(model, &file.contents, target_node)?;
+    if intent.position == ProjectMovePosition::Inside
+        && envelope.kind == StructuralEnvelopeKind::DynamicWidget
+    {
+        return Err(
+            "Corpul unui widget dinamic este generat de contractul său. Adaugă elementul înainte sau după widget ori editează proprietățile widgetului."
+                .to_string(),
+        );
+    }
+    let target_span = if intent.position == ProjectMovePosition::Inside {
+        resolve_html_element_span(&file.contents, target_range.start)?
+    } else {
+        envelope.span
+    };
     let target_tag = html_tag_at(&file.contents, target_range.start)?;
     validate_insert_target(&target_tag, intent.position)?;
 
@@ -194,6 +473,7 @@ fn plan_html_insert_from_source_node(
         &target_tag,
         intent.position,
         &snippet.html,
+        &semantic_html_indent(model, &file.contents, target_node),
     )?;
 
     Ok(ProjectHtmlInsertPatch {
@@ -261,6 +541,7 @@ fn plan_html_insert_from_direct_location(
         &tag.tag,
         intent.position,
         &snippet.html,
+        &line_indent_at_offset(&file.contents, target_span.start),
     )?;
     let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
         format!(
@@ -416,19 +697,16 @@ fn apply_html_insert(
     target_tag: &str,
     position: ProjectMovePosition,
     snippet: &str,
+    semantic_target_indent: &str,
 ) -> Result<InsertApplication, String> {
-    let target_indent = line_indent_at_offset(source, target_span.start);
+    let target_indent = semantic_target_indent.to_string();
     match position {
         ProjectMovePosition::Before => {
             let inserted = reindent_html_fragment(snippet, &target_indent);
-            let inserted_start_line = line_number_at_offset(source, target_span.start);
+            let insert_at = line_block_before_index(source, target_span.start);
+            let inserted_start_line = inserted_block_start_line(source, insert_at);
             Ok(InsertApplication {
-                contents: format!(
-                    "{}{}\n{}",
-                    &source[..target_span.start],
-                    inserted,
-                    &source[target_span.start..]
-                ),
+                contents: insert_line_block(source, insert_at, &inserted),
                 inserted_location: ProjectSourceEditLocation {
                     file: file.to_string(),
                     line: inserted_start_line,
@@ -441,14 +719,10 @@ fn apply_html_insert(
         }
         ProjectMovePosition::After => {
             let inserted = reindent_html_fragment(snippet, &target_indent);
-            let inserted_start_line = line_number_at_offset(source, target_span.end) + 1;
+            let insert_at = line_block_after_index(source, target_span.end);
+            let inserted_start_line = inserted_block_start_line(source, insert_at);
             Ok(InsertApplication {
-                contents: format!(
-                    "{}\n{}{}",
-                    &source[..target_span.end],
-                    inserted,
-                    &source[target_span.end..]
-                ),
+                contents: insert_line_block(source, insert_at, &inserted),
                 inserted_location: ProjectSourceEditLocation {
                     file: file.to_string(),
                     line: inserted_start_line,
@@ -543,6 +817,39 @@ fn build_html_snippet(tag: &str, class_name: &str, text: &str) -> String {
             text_or(text, "Buton nou")
         );
     }
+    if tag == "hgroup" {
+        return format!(
+            "<hgroup{attrs}><h2>{}</h2><p>Subtitlu</p></hgroup>",
+            text_or(text, "Titlu grup")
+        );
+    }
+    if tag == "details" {
+        return format!(
+            "<details{attrs}><summary>{}</summary><p>Conținut detalii</p></details>",
+            text_or(text, "Detalii")
+        );
+    }
+    if tag == "dialog" {
+        return format!(
+            "<dialog{attrs} open>{}</dialog>",
+            text_or(text, "Dialog nou")
+        );
+    }
+    if tag == "bdo" {
+        return format!("<bdo{attrs} dir=\"ltr\">{}</bdo>", text_or(text, "Text"));
+    }
+    if tag == "data" {
+        return format!(
+            "<data{attrs} value=\"\">{}</data>",
+            text_or(text, "Valoare")
+        );
+    }
+    if tag == "ruby" {
+        return format!(
+            "<ruby{attrs}>{}<rp> (</rp><rt>Pronunție</rt><rp>)</rp></ruby>",
+            text_or(text, "Text")
+        );
+    }
     if tag == "img" {
         return format!(
             "<img{attrs} src=\"\" alt=\"{}\">",
@@ -558,6 +865,11 @@ fn build_html_snippet(tag: &str, class_name: &str, text: &str) -> String {
     if tag == "source" {
         return format!("<source{attrs} src=\"\" type=\"\">");
     }
+    if tag == "track" {
+        return format!(
+            "<track{attrs} src=\"\" kind=\"captions\" srclang=\"ro\" label=\"Română\">"
+        );
+    }
     if tag == "video" {
         return format!("<video{attrs} controls></video>");
     }
@@ -570,11 +882,46 @@ fn build_html_snippet(tag: &str, class_name: &str, text: &str) -> String {
             escape_attr(text_or_raw(text, "Iframe"))
         );
     }
+    if tag == "canvas" {
+        return format!(
+            "<canvas{attrs} width=\"300\" height=\"150\">{}</canvas>",
+            text_or(text, "Canvas indisponibil")
+        );
+    }
+    if tag == "object" {
+        return format!(
+            "<object{attrs} data=\"\" type=\"\"><p>{}</p></object>",
+            text_or(text, "Conținut indisponibil")
+        );
+    }
+    if tag == "embed" {
+        return format!("<embed{attrs} src=\"\" type=\"\">");
+    }
+    if tag == "map" {
+        return format!(
+            "<map{attrs} name=\"harta\"><area shape=\"rect\" coords=\"\" href=\"#\" alt=\"Zonă\"></map>"
+        );
+    }
+    if tag == "area" {
+        return format!(
+            "<area{attrs} shape=\"rect\" coords=\"\" href=\"#\" alt=\"{}\">",
+            escape_attr(text_or_raw(text, "Zonă"))
+        );
+    }
     if tag == "picture" {
         return format!(
             "<picture{attrs}><img src=\"\" alt=\"{}\"></picture>",
             escape_attr(text_or_raw(text, "Imagine"))
         );
+    }
+    if tag == "template" {
+        return format!(
+            "<template{attrs}><div>{}</div></template>",
+            text_or(text, "Conținut șablon")
+        );
+    }
+    if tag == "slot" {
+        return format!("<slot{attrs}>{}</slot>", text_or(text, "Conținut implicit"));
     }
     if tag == "ul" {
         return format!(
@@ -586,6 +933,12 @@ fn build_html_snippet(tag: &str, class_name: &str, text: &str) -> String {
         return format!(
             "<ol{attrs}><li>{}</li></ol>",
             text_or(text, "Element listă")
+        );
+    }
+    if tag == "menu" {
+        return format!(
+            "<menu{attrs}><li>{}</li></menu>",
+            text_or(text, "Element meniu")
         );
     }
     if tag == "dl" {
@@ -612,17 +965,38 @@ fn build_html_snippet(tag: &str, class_name: &str, text: &str) -> String {
             text_or(text, "Opțiune")
         );
     }
+    if tag == "optgroup" {
+        return format!(
+            "<optgroup{attrs} label=\"{}\"><option>Opțiune</option></optgroup>",
+            escape_attr(text_or_raw(text, "Grup"))
+        );
+    }
+    if tag == "datalist" {
+        return format!(
+            "<datalist{attrs}><option value=\"{}\"></option></datalist>",
+            escape_attr(text_or_raw(text, "Opțiune"))
+        );
+    }
     if tag == "fieldset" {
         return format!(
             "<fieldset{attrs}><legend>{}</legend></fieldset>",
             text_or(text, "Legendă")
         );
     }
+    if tag == "progress" {
+        return format!("<progress{attrs} value=\"0\" max=\"100\">0%</progress>");
+    }
+    if tag == "meter" {
+        return format!("<meter{attrs} min=\"0\" max=\"100\" value=\"0\">0</meter>");
+    }
     if tag == "table" {
         return format!(
             "<table{attrs}><tbody><tr><td>{}</td></tr></tbody></table>",
             text_or(text, "Celulă")
         );
+    }
+    if tag == "colgroup" {
+        return format!("<colgroup{attrs}><col></colgroup>");
     }
     if tag == "thead" {
         return format!(
@@ -775,6 +1149,7 @@ mod tests {
                 },
             },
             &HashMap::new(),
+            None,
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -786,7 +1161,291 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_insert_renders_registered_component_from_rust_registry() {
+    fn plan_html_insert_populates_empty_block_owned_by_active_document() {
+        let root = unique_test_dir();
+        write_project(
+            &root,
+            concat!(
+                "{% extends \"layout.html\" %}\n\n",
+                "{% block content %}\n\n",
+                "{% endblock content %}\n",
+            ),
+        );
+        fs::write(
+            root.join("templates/layout.html"),
+            "<body>{% block content %}{% endblock content %}</body>\n",
+        )
+        .unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let content = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Block
+                    && node.file == "templates/index.html"
+                    && node.label == "content"
+            })
+            .unwrap();
+        let range = content.range.as_ref().unwrap();
+
+        let plan = plan_html_insert(
+            &model,
+            &ProjectHtmlInsertIntent {
+                target_source_id: Some(content.id.clone()),
+                target_location: Some(ProjectSourceEditLocation {
+                    file: content.file.clone(),
+                    line: range.line,
+                    column: range.column,
+                }),
+                target_tag: Some("div".to_string()),
+                target_selector: Some("[data-pana-empty-tera-slot='source-content']".to_string()),
+                target_kind: Some("empty-tera-slot".to_string()),
+                position: ProjectMovePosition::Inside,
+                element: ProjectHtmlInsertElement {
+                    kind: Some("html".to_string()),
+                    block_id: None,
+                    tag: "section".to_string(),
+                    class_name: Some("servicii".to_string()),
+                    text: None,
+                    label: Some("Secțiune".to_string()),
+                },
+            },
+            &HashMap::new(),
+            Some("templates/index.html"),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.unwrap();
+        assert_eq!(patch.file, "templates/index.html");
+        assert!(patch.contents.contains(concat!(
+            "{% block content %}\n",
+            "  <section class=\"servicii\"></section>\n",
+            "{% endblock content %}",
+        )));
+        assert_eq!(patch.inserted_location.line, 4);
+        assert_eq!(patch.inserted_location.column, 3);
+    }
+
+    #[test]
+    fn plan_html_insert_appends_repeatedly_to_active_document_root() {
+        let root = unique_test_dir();
+        write_project(
+            &root,
+            concat!(
+                "{% extends \"layout.html\" %}\n\n",
+                "{% block content %}\n",
+                "  <div class=\"primul\"></div>\n",
+                "{% endblock content %}\n",
+            ),
+        );
+        fs::write(
+            root.join("templates/layout.html"),
+            "<body>{% block content %}{% endblock content %}</body>\n",
+        )
+        .unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let content = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Block
+                    && node.file == "templates/index.html"
+                    && node.label == "content"
+            })
+            .unwrap();
+        let range = content.range.as_ref().unwrap();
+
+        let plan = plan_html_insert(
+            &model,
+            &ProjectHtmlInsertIntent {
+                target_source_id: Some(content.id.clone()),
+                target_location: Some(ProjectSourceEditLocation {
+                    file: content.file.clone(),
+                    line: range.line,
+                    column: range.column,
+                }),
+                target_tag: Some("div".to_string()),
+                target_selector: Some("[data-pana-active-document-root]".to_string()),
+                target_kind: Some("active-document-root".to_string()),
+                position: ProjectMovePosition::Inside,
+                element: ProjectHtmlInsertElement {
+                    kind: Some("html".to_string()),
+                    block_id: None,
+                    tag: "section".to_string(),
+                    class_name: Some("al-doilea".to_string()),
+                    text: None,
+                    label: Some("Secțiune".to_string()),
+                },
+            },
+            &HashMap::new(),
+            Some("templates/index.html"),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let contents = plan.patch.unwrap().contents;
+        assert!(contents.contains(concat!(
+            "{% block content %}\n",
+            "  <div class=\"primul\"></div>\n",
+            "  <section class=\"al-doilea\"></section>\n",
+            "{% endblock content %}",
+        )));
+    }
+
+    #[test]
+    fn plan_html_insert_appends_repeatedly_to_direct_fragment_root() {
+        let root = unique_test_dir();
+        write_project(&root, "<main></main>\n");
+        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
+        let fragment_path = root.join("templates/listing-items/card.html");
+        fs::write(&fragment_path, "\n").unwrap();
+
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fragment = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Partial
+                    && node.file == "templates/listing-items/card.html"
+                    && node.parent.is_none()
+            })
+            .expect("listing item root");
+        let range = fragment.range.as_ref().expect("fragment root range");
+        let first = plan_html_insert(
+            &model,
+            &ProjectHtmlInsertIntent {
+                target_source_id: Some(fragment.id.clone()),
+                target_location: Some(ProjectSourceEditLocation {
+                    file: fragment.file.clone(),
+                    line: range.line,
+                    column: range.column,
+                }),
+                target_tag: Some("div".to_string()),
+                target_selector: Some("[data-pana-active-document-root]".to_string()),
+                target_kind: Some("active-document-root".to_string()),
+                position: ProjectMovePosition::Inside,
+                element: ProjectHtmlInsertElement {
+                    kind: Some("html".to_string()),
+                    block_id: None,
+                    tag: "article".to_string(),
+                    class_name: Some("card".to_string()),
+                    text: None,
+                    label: Some("Article".to_string()),
+                },
+            },
+            &HashMap::new(),
+            Some("templates/listing-items/card.html"),
+        );
+        assert!(first.allowed, "{:?}", first.diagnostic);
+        let first_contents = first.patch.expect("first patch").contents;
+        assert_eq!(first_contents, "<article class=\"card\"></article>\n");
+        fs::write(&fragment_path, &first_contents).unwrap();
+
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fragment = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Partial
+                    && node.file == "templates/listing-items/card.html"
+                    && node.parent.is_none()
+            })
+            .expect("rebuilt listing item root");
+        let range = fragment
+            .range
+            .as_ref()
+            .expect("rebuilt fragment root range");
+        let second = plan_html_insert(
+            &model,
+            &ProjectHtmlInsertIntent {
+                target_source_id: Some(fragment.id.clone()),
+                target_location: Some(ProjectSourceEditLocation {
+                    file: fragment.file.clone(),
+                    line: range.line,
+                    column: range.column,
+                }),
+                target_tag: Some("div".to_string()),
+                target_selector: Some("[data-pana-active-document-root]".to_string()),
+                target_kind: Some("active-document-root".to_string()),
+                position: ProjectMovePosition::Inside,
+                element: ProjectHtmlInsertElement {
+                    kind: Some("html".to_string()),
+                    block_id: None,
+                    tag: "p".to_string(),
+                    class_name: None,
+                    text: Some("Descriere".to_string()),
+                    label: Some("Paragraph".to_string()),
+                },
+            },
+            &HashMap::new(),
+            Some("templates/listing-items/card.html"),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(second.allowed, "{:?}", second.diagnostic);
+        let contents = second.patch.expect("second patch").contents;
+        assert_eq!(
+            contents,
+            "<article class=\"card\"></article>\n<p>Descriere</p>\n"
+        );
+        assert!(!contents.contains("data-pana-active-document-root"));
+    }
+
+    #[test]
+    fn plan_html_insert_refuses_empty_block_from_external_document() {
+        let root = unique_test_dir();
+        write_project(&root, "{% block content %}\n\n{% endblock content %}\n");
+        fs::write(
+            root.join("templates/arhiva.html"),
+            "{% block content %}\n\n{% endblock content %}\n",
+        )
+        .unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let external_content = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Block
+                    && node.file == "templates/index.html"
+                    && node.label == "content"
+            })
+            .unwrap();
+
+        let plan = plan_html_insert(
+            &model,
+            &ProjectHtmlInsertIntent {
+                target_source_id: Some(external_content.id.clone()),
+                target_location: None,
+                target_tag: Some("div".to_string()),
+                target_selector: Some("[data-pana-empty-tera-slot]".to_string()),
+                target_kind: Some("empty-tera-slot".to_string()),
+                position: ProjectMovePosition::Inside,
+                element: ProjectHtmlInsertElement {
+                    kind: Some("html".to_string()),
+                    block_id: None,
+                    tag: "section".to_string(),
+                    class_name: None,
+                    text: None,
+                    label: Some("Secțiune".to_string()),
+                },
+            },
+            &HashMap::new(),
+            Some("templates/arhiva.html"),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(!plan.allowed);
+        assert!(plan.diagnostic.unwrap().contains("sursei externe"));
+    }
+
+    #[test]
+    fn plan_html_insert_renders_registered_block_from_rust_registry() {
         let root = unique_test_dir();
         write_project(&root, "<section></section>\n");
         let model = build_project_model(&root, &HashMap::new()).unwrap();
@@ -807,7 +1466,7 @@ mod tests {
                 target_kind: Some("html".to_string()),
                 position: ProjectMovePosition::Inside,
                 element: ProjectHtmlInsertElement {
-                    kind: Some("component".to_string()),
+                    kind: Some("block".to_string()),
                     block_id: Some("counter".to_string()),
                     tag: "span".to_string(),
                     class_name: None,
@@ -816,6 +1475,7 @@ mod tests {
                 },
             },
             &HashMap::new(),
+            None,
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -828,6 +1488,65 @@ mod tests {
         assert!(patch
             .contents
             .contains(r#"data-pana-instance="counter-counter-"#));
+    }
+
+    #[test]
+    fn plan_html_insert_renders_every_complete_native_block_from_registry() {
+        for (block_id, tag, expected_structure) in [
+            ("accordion", "div", "accordion__trigger"),
+            ("tabs", "div", "tabs__tab"),
+            ("dialog", "div", "dialog__panel"),
+            ("offcanvas", "div", "offcanvas__panel"),
+            ("nav-menu", "nav", "nav-menu__toggle"),
+        ] {
+            let root = unique_test_dir();
+            write_project(&root, "<section></section>\n");
+            let model = build_project_model(&root, &HashMap::new()).unwrap();
+            let section = model
+                .source_graph
+                .nodes
+                .iter()
+                .find(|node| node.label == "<section>")
+                .unwrap();
+
+            let plan = plan_html_insert(
+                &model,
+                &ProjectHtmlInsertIntent {
+                    target_source_id: Some(section.id.clone()),
+                    target_location: None,
+                    target_tag: Some("section".to_string()),
+                    target_selector: Some("section".to_string()),
+                    target_kind: Some("html".to_string()),
+                    position: ProjectMovePosition::Inside,
+                    element: ProjectHtmlInsertElement {
+                        kind: Some("block".to_string()),
+                        block_id: Some(block_id.to_string()),
+                        tag: tag.to_string(),
+                        class_name: None,
+                        text: None,
+                        label: Some(block_id.to_string()),
+                    },
+                },
+                &HashMap::new(),
+                None,
+            );
+
+            fs::remove_dir_all(&root).unwrap();
+            assert!(plan.allowed, "{block_id}: {:?}", plan.diagnostic);
+            let patch = plan.patch.unwrap();
+            assert_eq!(patch.block_id.as_deref(), Some(block_id));
+            assert!(
+                patch
+                    .html
+                    .contains(&format!(r#"data-pana-block="{block_id}""#)),
+                "{block_id} nu are markerul canonic"
+            );
+            assert!(
+                patch.html.contains(expected_structure),
+                "{block_id} a pierdut structura {expected_structure}"
+            );
+            assert!(patch.contents.contains(expected_structure));
+        }
     }
 
     #[test]
@@ -873,6 +1592,7 @@ mod tests {
                 },
             },
             &HashMap::new(),
+            None,
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -916,6 +1636,7 @@ mod tests {
                 },
             },
             &HashMap::new(),
+            None,
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -924,6 +1645,68 @@ mod tests {
             .diagnostic
             .unwrap()
             .contains("NativeBlockRegistry Rust"));
+    }
+
+    #[test]
+    fn plan_html_insert_respects_dynamic_widget_boundaries() {
+        let root = unique_test_dir();
+        write_project(
+            &root,
+            concat!(
+                "<main>\n",
+                "  {# pana:widget schema=2 provider=dynamic-field instance=dynamic-field-insert01 props=00 #}\n",
+                "  <div data-pana-widget-instance=\"dynamic-field-insert01\"><span>Valoare</span></div>\n",
+                "  {# /pana:widget instance=dynamic-field-insert01 #}\n",
+                "</main>\n",
+            ),
+        );
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let widget_root = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label.starts_with("<div"))
+            .unwrap();
+        let intent = |position| ProjectHtmlInsertIntent {
+            target_source_id: Some(widget_root.id.clone()),
+            target_location: None,
+            target_tag: Some("div".to_string()),
+            target_selector: None,
+            target_kind: Some("html".to_string()),
+            position,
+            element: ProjectHtmlInsertElement {
+                kind: Some("html".to_string()),
+                block_id: None,
+                tag: "p".to_string(),
+                class_name: None,
+                text: Some("Nou".to_string()),
+                label: Some("Paragraf".to_string()),
+            },
+        };
+
+        let before = plan_html_insert(
+            &model,
+            &intent(ProjectMovePosition::Before),
+            &HashMap::new(),
+            None,
+        );
+        let inside = plan_html_insert(
+            &model,
+            &intent(ProjectMovePosition::Inside),
+            &HashMap::new(),
+            None,
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(before.allowed, "{:?}", before.diagnostic);
+        let contents = before.patch.unwrap().contents;
+        assert!(contents.find("<p>Nou</p>").unwrap() < contents.find("{# pana:widget").unwrap());
+        assert_eq!(contents.matches("dynamic-field-insert01").count(), 3);
+        assert!(!inside.allowed);
+        assert!(inside
+            .diagnostic
+            .unwrap()
+            .contains("Corpul unui widget dinamic"));
     }
 
     fn write_project(root: &PathBuf, template: &str) {

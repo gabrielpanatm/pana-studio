@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-update-page-frontmatter-field"
+description = "Enables the workspace_update_page_frontmatter_field command without any pre-configured scope."
+commands.allow = ["workspace_update_page_frontmatter_field"]
+
+[[permission]]
+identifier = "deny-workspace-update-page-frontmatter-field"
+description = "Denies the workspace_update_page_frontmatter_field command without any pre-configured scope."
+commands.deny = ["workspace_update_page_frontmatter_field"]

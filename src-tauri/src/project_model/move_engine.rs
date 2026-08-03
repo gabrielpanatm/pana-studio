@@ -5,6 +5,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::structural_envelope::{
+    semantic_html_indent, structural_envelope_for_html_node, StructuralEnvelopeKind,
+};
 use super::zola_image_engine::zola_image_contract_start;
 use crate::{
     project_model::model::{ProjectModel, ProjectModelFileKind},
@@ -294,12 +297,39 @@ fn plan_html_move_inner(
         .range
         .as_ref()
         .ok_or_else(|| "Destinația nu are range stabil în Source Graph.".to_string())?;
-    let mut source_span = resolve_html_element_span(&file.contents, source_range.start)?;
-    if let Some(contract_start) = zola_image_contract_start(&file.contents, source_range.start)? {
-        source_span.start = contract_start;
+    let source_envelope = structural_envelope_for_html_node(model, &file.contents, source_node)?;
+    let target_envelope = structural_envelope_for_html_node(model, &file.contents, target_node)?;
+    if intent.position == ProjectMovePosition::Inside
+        && target_envelope.kind == StructuralEnvelopeKind::DynamicWidget
+    {
+        return Err(
+            "Corpul unui widget dinamic este generat de contractul său. Mută widgetul ca unitate sau editează-i proprietățile; nu insera copii direct în corpul generat."
+                .to_string(),
+        );
     }
-    let mut target_span = resolve_html_element_span(&file.contents, target_range.start)?;
-    if intent.position == ProjectMovePosition::Before {
+    if source_envelope
+        .dynamic_widget
+        .zip(target_envelope.dynamic_widget)
+        .is_some_and(|(source, target)| source.instance_id == target.instance_id)
+    {
+        return Err("Widgetul dinamic nu poate fi mutat în propriul contract.".to_string());
+    }
+
+    let mut source_span = source_envelope.span;
+    if source_envelope.kind == StructuralEnvelopeKind::HtmlElement {
+        if let Some(contract_start) = zola_image_contract_start(&file.contents, source_range.start)?
+        {
+            source_span.start = contract_start;
+        }
+    }
+    let mut target_span = if intent.position == ProjectMovePosition::Inside {
+        resolve_html_element_span(&file.contents, target_range.start)?
+    } else {
+        target_envelope.span
+    };
+    if intent.position == ProjectMovePosition::Before
+        && target_envelope.kind == StructuralEnvelopeKind::HtmlElement
+    {
         if let Some(contract_start) = zola_image_contract_start(&file.contents, target_range.start)?
         {
             target_span.start = contract_start;
@@ -327,6 +357,8 @@ fn plan_html_move_inner(
         target_span,
         &target_tag,
         intent.position,
+        &semantic_html_indent(model, &file.contents, target_node),
+        source_envelope.preserves_internal_indentation(),
     )?;
 
     Ok(ProjectHtmlMovePatch {
@@ -600,6 +632,8 @@ fn apply_html_move(
     target_span: Span,
     target_tag: &str,
     position: ProjectMovePosition,
+    semantic_target_indent: &str,
+    preserve_internal_indentation: bool,
 ) -> Result<MoveApplication, String> {
     let removal = removal_range_for_span(source, source_span);
     let removed_length = removal.end.saturating_sub(removal.start);
@@ -618,37 +652,42 @@ fn apply_html_move(
     };
     let adjusted_target_start = adjust_index(target_span.start);
     let adjusted_target_end = adjust_index(target_span.end);
-    let target_indent = line_indent_at_offset(source, target_span.start);
+    let source_indent = line_indent_at_offset(source, source_span.start);
+    let target_indent = semantic_target_indent.to_string();
     let source_start_line = line_number_at_offset(source, source_span.start);
     let source_end_line = line_number_at_offset(source, source_span.end);
 
     match position {
         ProjectMovePosition::Before => {
-            let moving = reindent_html_fragment(&moving_source, &target_indent);
+            let moving = reindent_structural_fragment(
+                &moving_source,
+                &source_indent,
+                &target_indent,
+                preserve_internal_indentation,
+            );
+            let insert_at = line_block_before_index(&without_source, adjusted_target_start);
+            let new_start_line = inserted_block_start_line(&without_source, insert_at);
             Ok(MoveApplication {
-                contents: format!(
-                    "{}{}\n{}",
-                    &without_source[..adjusted_target_start],
-                    moving,
-                    &without_source[adjusted_target_start..]
-                ),
+                contents: insert_line_block(&without_source, insert_at, &moving),
                 source_start_line,
                 source_end_line,
-                new_start_line: line_number_at_offset(&without_source, adjusted_target_start),
+                new_start_line,
             })
         }
         ProjectMovePosition::After => {
-            let moving = reindent_html_fragment(&moving_source, &target_indent);
+            let moving = reindent_structural_fragment(
+                &moving_source,
+                &source_indent,
+                &target_indent,
+                preserve_internal_indentation,
+            );
+            let insert_at = line_block_after_index(&without_source, adjusted_target_end);
+            let new_start_line = inserted_block_start_line(&without_source, insert_at);
             Ok(MoveApplication {
-                contents: format!(
-                    "{}\n{}{}",
-                    &without_source[..adjusted_target_end],
-                    moving,
-                    &without_source[adjusted_target_end..]
-                ),
+                contents: insert_line_block(&without_source, insert_at, &moving),
                 source_start_line,
                 source_end_line,
-                new_start_line: line_number_at_offset(&without_source, adjusted_target_end) + 1,
+                new_start_line,
             })
         }
         ProjectMovePosition::Inside => {
@@ -665,7 +704,12 @@ fn apply_html_move(
                     "Nu am putut reciti tag-ul destinație după eliminarea sursei.".to_string()
                 })?;
             let child_indent = format!("{target_indent}  ");
-            let moving = reindent_html_fragment(&moving_source, &child_indent);
+            let moving = reindent_structural_fragment(
+                &moving_source,
+                &source_indent,
+                &child_indent,
+                preserve_internal_indentation,
+            );
             let insert_at = adjusted_target_start + close_offset;
             let before_insert = inside_prefix_for_insert(&without_source, opening.end, insert_at);
             let next_contents = format!(
@@ -702,6 +746,109 @@ fn reindent_html_subtree_at(
         formatted,
         &source[span.end..]
     ))
+}
+
+pub(super) fn line_block_before_index(source: &str, opening_start: usize) -> usize {
+    let opening_start = opening_start.min(source.len());
+    let line_start = source
+        .get(..opening_start)
+        .and_then(|prefix| prefix.rfind('\n').map(|index| index + 1))
+        .unwrap_or(0);
+    if source
+        .get(line_start..opening_start)
+        .is_some_and(|prefix| prefix.trim().is_empty())
+    {
+        line_start
+    } else {
+        opening_start
+    }
+}
+
+pub(super) fn line_block_after_index(source: &str, span_end: usize) -> usize {
+    let span_end = span_end.min(source.len());
+    let Some(relative_line_end) = source.get(span_end..).and_then(|suffix| suffix.find('\n'))
+    else {
+        return span_end;
+    };
+    let line_end = span_end + relative_line_end;
+    if source
+        .get(span_end..line_end)
+        .is_some_and(|suffix| suffix.trim().is_empty())
+    {
+        line_end + 1
+    } else {
+        span_end
+    }
+}
+
+pub(super) fn insert_line_block(source: &str, index: usize, block: &str) -> String {
+    let index = index.min(source.len());
+    let needs_leading_break = index > 0 && source.as_bytes().get(index - 1) != Some(&b'\n');
+    let needs_trailing_break = index < source.len() && source.as_bytes().get(index) != Some(&b'\n');
+    format!(
+        "{}{}{}{}{}",
+        &source[..index],
+        if needs_leading_break { "\n" } else { "" },
+        block.trim_matches(|character| character == '\n' || character == '\r'),
+        if needs_trailing_break { "\n" } else { "" },
+        &source[index..]
+    )
+}
+
+pub(super) struct DocumentFragmentAppend {
+    pub(super) contents: String,
+    pub(super) inserted_start_line: usize,
+    pub(super) line_shift: isize,
+}
+
+/// Appends one top-level structural unit before the source's trailing
+/// whitespace. This is the shared persistence rule for a directly opened
+/// Template/Partial root: no synthetic Canvas wrapper is ever serialized, and
+/// a second drop follows the first one instead of targeting generated DOM.
+pub(super) fn append_document_fragment(source: &str, fragment: &str) -> DocumentFragmentAppend {
+    let insert_at = source.trim_end_matches(char::is_whitespace).len();
+    let contents = insert_line_block(source, insert_at, fragment);
+    let inserted_start_line = inserted_block_start_line(source, insert_at);
+    let before_lines = source.bytes().filter(|byte| *byte == b'\n').count() as isize;
+    let after_lines = contents.bytes().filter(|byte| *byte == b'\n').count() as isize;
+    DocumentFragmentAppend {
+        contents,
+        inserted_start_line,
+        line_shift: after_lines - before_lines,
+    }
+}
+
+pub(super) fn inserted_block_start_line(source: &str, index: usize) -> usize {
+    line_number_at_offset(source, index)
+        + usize::from(index > 0 && source.as_bytes().get(index - 1) != Some(&b'\n'))
+}
+
+pub(super) fn reindent_structural_fragment(
+    source: &str,
+    source_indent: &str,
+    target_indent: &str,
+    preserve_internal_indentation: bool,
+) -> String {
+    if !preserve_internal_indentation {
+        return reindent_html_fragment(source, target_indent);
+    }
+    let trimmed = source.trim_matches(|character| character == '\n' || character == '\r');
+    trimmed
+        .split('\n')
+        .enumerate()
+        .map(|(index, line)| {
+            if line.trim().is_empty() {
+                return String::new();
+            }
+            let relative = if index == 0 {
+                line
+            } else {
+                line.strip_prefix(source_indent).unwrap_or(line)
+            };
+            format!("{target_indent}{}", relative.trim_end())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(super) fn inside_prefix_for_insert(
@@ -1209,6 +1356,87 @@ mod tests {
         assert!(!unscoped.allowed);
         assert!(scoped.allowed, "{:?}", scoped.diagnostic);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn html_move_keeps_a_dynamic_widget_contract_atomic_and_repairs_indentation() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(
+            root.join("zola.toml"),
+            "base_url = \"http://example.test\"\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("content/_index.md"),
+            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            concat!(
+                "<main>\n",
+                "  <div>\n",
+                "        {# pana:widget schema=2 provider=dynamic-field instance=dynamic-field-atomic01 props=00 #}\n",
+                "<h2 data-pana-widget-instance=\"dynamic-field-atomic01\">{{ page.title }}</h2>\n",
+                "{# /pana:widget instance=dynamic-field-atomic01 #}\n",
+                "    <p class=\"target\">Țintă</p>\n",
+                "  </div>\n",
+                "</main>\n",
+            ),
+        )
+        .unwrap();
+        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let source = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::Html && node.label.starts_with("<h2"))
+            .unwrap();
+        let target = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::Html && node.label.starts_with("<p"))
+            .unwrap();
+        assert!(model
+            .source_graph
+            .dynamic_widget_graph
+            .source_instances
+            .iter()
+            .any(|instance| instance.source_node_ids.contains(&source.id)));
+
+        let plan = plan_html_move(
+            &model,
+            &ProjectHtmlMoveIntent {
+                source_source_id: Some(source.id.clone()),
+                target_source_id: Some(target.id.clone()),
+                source_location: None,
+                target_location: None,
+                source_tag: Some("h2".to_string()),
+                target_tag: Some("p".to_string()),
+                source_selector: None,
+                target_selector: None,
+                position: ProjectMovePosition::After,
+            },
+            &HashMap::new(),
+        );
+
+        fs::remove_dir_all(root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let contents = plan.patch.unwrap().contents;
+        let target_at = contents.find("<p class=\"target\"").unwrap();
+        let start_at = contents.find("{# pana:widget").unwrap();
+        let body_at = contents
+            .find("<h2 data-pana-widget-instance=\"dynamic-field-atomic01\"")
+            .unwrap();
+        let end_at = contents.find("{# /pana:widget").unwrap();
+        assert!(target_at < start_at && start_at < body_at && body_at < end_at);
+        assert_eq!(contents.matches("dynamic-field-atomic01").count(), 3);
+        assert!(contents.contains("\n    {# pana:widget"));
+        assert!(contents.contains("\n    <h2 data-pana-widget-instance"));
+        assert!(contents.contains("\n    {# /pana:widget"));
     }
 
     fn write_project(root: &PathBuf) {

@@ -40,6 +40,59 @@ test("Straturi păstrează Canvas global și proiectează separat documentul act
   assert.doesNotMatch(pane, /<ProjectLayersTab/);
 });
 
+test("click-dreapta în Straturi deschide meniul aplicației pentru nodul Rust curent", () => {
+  const tree = source("../src/lib/components/project/EditorNavigationTree.svelte");
+  const pane = source("../src/lib/components/ProjectPane.svelte");
+  const projectArea = source(
+    "../src/lib/components/workspace/WorkspaceProjectArea.svelte",
+  );
+  const app = source("../src/lib/state/app.svelte.ts");
+
+  assert.match(tree, /event\.preventDefault\(\)/);
+  assert.match(tree, /event\.stopPropagation\(\)/);
+  assert.match(
+    tree,
+    /openContextMenu\(resolved, event\.clientX, event\.clientY\)/,
+  );
+  assert.match(
+    tree,
+    /oncontextmenu=\{\(event\) => openViewNodeContextMenu\(row\.node, event\)\}/,
+  );
+  assert.match(pane, /openContextMenu=\{openEditorNavigationContextMenu\}/);
+  assert.match(
+    projectArea,
+    /app\.openEditorNavigationContextMenu\(node, x, y\)/,
+  );
+  assert.match(app, /openEditorNavigationContextMenu\(/);
+  assert.match(app, /candidate\.id === requestedNode\.id/);
+  assert.match(app, /htmlElementContextMenuItems\(/);
+  assert.match(app, /teraContextMenuItems\(/);
+  assert.match(app, /source:\s*"layers"/);
+});
+
+test("ștergerea din Straturi păstrează identitatea și locația aceleiași proiecții Rust", () => {
+  const app = source("../src/lib/state/app.svelte.ts");
+  const actions = source("../src/lib/state/html-actions-controller.ts");
+  const deleteMethod = app.slice(
+    app.indexOf("async deleteEditorNavigationNode"),
+    app.indexOf("async deleteHtmlElement"),
+  );
+
+  assert.match(deleteMethod, /renderInstanceId:\s*node\.renderInstanceId/);
+  assert.match(deleteMethod, /sourceLocation:\s*node\.file && node\.range/);
+  assert.match(deleteMethod, /line:\s*node\.range\.line/);
+  assert.match(deleteMethod, /column:\s*node\.range\.column/);
+  assert.match(deleteMethod, /sessionId:\s*this\.activeCanvasIdentity\?\.runtimeSessionId/);
+  const resolver = actions.slice(
+    actions.indexOf("function sourceLocationForSourceReference"),
+    actions.indexOf("function sourceLocationForSessionReference"),
+  );
+  assert.ok(
+    resolver.indexOf("if (fallbackSourceLocation)")
+      < resolver.indexOf("host.resolveSourceEditTargetForSourceId"),
+  );
+});
+
 test("documentul activ și mutațiile sunt validate de Workbench-ul Rust", () => {
   const command = source("../src-tauri/src/commands/editor_navigation.rs");
   const kernel = source("../src-tauri/src/kernel/editor_navigation.rs");

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use super::paths::resolve_project_write_path;
 
+pub const DEFAULT_ARCHIVE_PAGINATE_BY: usize = 6;
+pub const DEFAULT_ARCHIVE_PAGINATE_PATH: &str = "pagina";
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SiteTemplateWriteOrigin {
@@ -549,15 +552,17 @@ fn page_template_source_text() -> String {
 
 fn archive_frontmatter(title: &str, template: &str) -> String {
     format!(
-        "+++\ntitle = \"{}\"\ntemplate = \"{}\"\nsort_by = \"date\"\n+++\n\n",
+        "+++\ntitle = \"{}\"\ntemplate = \"{}\"\nsort_by = \"date\"\npaginate_by = {}\npaginate_path = \"{}\"\n+++\n\n",
         escape_toml_string(title),
-        escape_toml_string(template)
+        escape_toml_string(template),
+        DEFAULT_ARCHIVE_PAGINATE_BY,
+        DEFAULT_ARCHIVE_PAGINATE_PATH,
     )
 }
 
 fn archive_template_source_text(title: &str) -> String {
     format!(
-        "{{% extends \"layout.html\" %}}\n\n{{% block content %}}\n<section class=\"arhiva\">\n  <h1>{{{{ section.title | default(value=\"{}\") }}}}</h1>\n  <div class=\"lista-articole\">\n    {{% for page in section.pages %}}\n      <article class=\"card-articol\">\n        <h2><a href=\"{{{{ page.permalink }}}}\">{{{{ page.title }}}}</a></h2>\n        {{% if page.description %}}<p>{{{{ page.description }}}}</p>{{% endif %}}\n      </article>\n    {{% endfor %}}\n  </div>\n</section>\n{{% endblock %}}\n",
+        "{{% extends \"layout.html\" %}}\n\n{{% block content %}}\n<section class=\"arhiva\">\n  <h1>{{{{ section.title | default(value=\"{}\") }}}}</h1>\n  <div class=\"lista-articole\">\n    {{% for page in paginator.pages %}}\n      <article class=\"card-articol\">\n        <h2><a href=\"{{{{ page.permalink }}}}\">{{{{ page.title }}}}</a></h2>\n        {{% if page.description %}}<p>{{{{ page.description }}}}</p>{{% endif %}}\n      </article>\n    {{% endfor %}}\n  </div>\n  {{% if paginator.number_pagers > 1 %}}\n    <nav class=\"paginare\" aria-label=\"Paginare\">\n      {{% if paginator.previous %}}<a href=\"{{{{ paginator.previous }}}}\">Pagina anterioară</a>{{% endif %}}\n      <span>Pagina {{{{ paginator.current_index }}}} din {{{{ paginator.number_pagers }}}}</span>\n      {{% if paginator.next %}}<a href=\"{{{{ paginator.next }}}}\">Pagina următoare</a>{{% endif %}}\n    </nav>\n  {{% endif %}}\n</section>\n{{% endblock %}}\n",
         escape_tera_string(title)
     )
 }
@@ -852,7 +857,15 @@ mod tests {
         );
         assert_eq!(plan.changes.len(), 2);
         assert!(plan.changes[0].new_text.contains("sort_by = \"date\""));
-        assert!(plan.changes[1].new_text.contains("section.pages"));
+        assert!(plan.changes[0].new_text.contains("paginate_by = 6"));
+        assert!(plan.changes[0]
+            .new_text
+            .contains("paginate_path = \"pagina\""));
+        assert!(plan.changes[1].new_text.contains("paginator.pages"));
+        assert!(plan.changes[1]
+            .new_text
+            .contains("paginator.number_pagers > 1"));
+        assert!(!plan.changes[1].new_text.contains("section.pages"));
 
         cleanup(&root);
     }

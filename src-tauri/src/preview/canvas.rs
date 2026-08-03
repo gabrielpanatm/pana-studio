@@ -18,6 +18,7 @@ use walkdir::WalkDir;
 
 use crate::{
     js::parse_page_js,
+    kernel::dynamic_widgets::RenderedDynamicWidgetInstance,
     project_model::model::ProjectModel,
     source_graph::model::{
         ComponentInvocationKind, MarkdownProjection, MarkdownProjectionKind, RenderedBlockInstance,
@@ -154,6 +155,8 @@ pub(crate) struct CanvasRenderNode {
     pub component_invocation_ids: Vec<String>,
     pub block_definition_ids: Vec<String>,
     pub block_source_instance_ids: Vec<String>,
+    pub dynamic_widget_provider_ids: Vec<String>,
+    pub dynamic_widget_source_instance_ids: Vec<String>,
     pub binding_key: Option<String>,
     pub binding_path: Option<String>,
     pub tag: String,
@@ -254,6 +257,7 @@ pub(crate) struct CanvasGraph {
     pub documents: Vec<CanvasDocumentGraph>,
     pub component_instances: Vec<RenderedComponentInstance>,
     pub block_instances: Vec<RenderedBlockInstance>,
+    pub dynamic_widget_instances: Vec<RenderedDynamicWidgetInstance>,
     pub runtime_nodes: Vec<CanvasRuntimeNode>,
     pub diagnostics: Vec<CanvasGraphDiagnostic>,
 }
@@ -266,6 +270,10 @@ struct CanvasSemanticIndex<'a> {
     block_definition_ids_by_source: HashMap<String, Vec<String>>,
     block_source_instance_ids_by_source: HashMap<String, Vec<String>>,
     block_definition_by_source_instance: HashMap<String, Option<String>>,
+    dynamic_widget_provider_ids_by_source: HashMap<String, Vec<String>>,
+    dynamic_widget_source_instance_ids_by_source: HashMap<String, Vec<String>>,
+    dynamic_widget_provider_by_source_instance: HashMap<String, String>,
+    dynamic_widget_instance_id_by_source_instance: HashMap<String, String>,
     binding_path_by_source: HashMap<String, String>,
     repeated_sources: HashSet<String>,
     markdown_projection_by_id: HashMap<&'a str, &'a MarkdownProjection>,
@@ -311,6 +319,11 @@ impl<'a> CanvasSemanticIndex<'a> {
         let mut block_definition_ids_by_source = HashMap::<String, Vec<String>>::new();
         let mut block_source_instance_ids_by_source = HashMap::<String, Vec<String>>::new();
         let mut block_definition_by_source_instance = HashMap::<String, Option<String>>::new();
+        let mut dynamic_widget_provider_ids_by_source = HashMap::<String, Vec<String>>::new();
+        let mut dynamic_widget_source_instance_ids_by_source =
+            HashMap::<String, Vec<String>>::new();
+        let mut dynamic_widget_provider_by_source_instance = HashMap::<String, String>::new();
+        let mut dynamic_widget_instance_id_by_source_instance = HashMap::<String, String>::new();
         let mut binding_path_by_source = HashMap::<String, String>::new();
         let mut repeated_sources = HashSet::new();
         let markdown_projection_by_id = model
@@ -417,6 +430,25 @@ impl<'a> CanvasSemanticIndex<'a> {
             }
         }
 
+        for instance in &model.source_graph.dynamic_widget_graph.source_instances {
+            dynamic_widget_provider_by_source_instance
+                .insert(instance.id.clone(), instance.provider_id.clone());
+            dynamic_widget_instance_id_by_source_instance
+                .insert(instance.id.clone(), instance.instance_id.clone());
+            for source_node_id in &instance.source_node_ids {
+                push_unique_map_value(
+                    &mut dynamic_widget_source_instance_ids_by_source,
+                    source_node_id,
+                    &instance.id,
+                );
+                push_unique_map_value(
+                    &mut dynamic_widget_provider_ids_by_source,
+                    source_node_id,
+                    &instance.provider_id,
+                );
+            }
+        }
+
         Self {
             live_source_ids,
             definition_ids_by_source,
@@ -425,6 +457,10 @@ impl<'a> CanvasSemanticIndex<'a> {
             block_definition_ids_by_source,
             block_source_instance_ids_by_source,
             block_definition_by_source_instance,
+            dynamic_widget_provider_ids_by_source,
+            dynamic_widget_source_instance_ids_by_source,
+            dynamic_widget_provider_by_source_instance,
+            dynamic_widget_instance_id_by_source_instance,
             binding_path_by_source,
             repeated_sources,
             markdown_projection_by_id,
@@ -461,6 +497,23 @@ impl<'a> CanvasSemanticIndex<'a> {
             }
         }
         (definitions, source_instances)
+    }
+
+    fn dynamic_widget_ids(&self, provenance: &[String]) -> (Vec<String>, Vec<String>) {
+        let mut providers = Vec::new();
+        let mut source_instances = Vec::new();
+        for source_id in provenance {
+            if let Some(values) = self.dynamic_widget_provider_ids_by_source.get(source_id) {
+                push_unique_all(&mut providers, values);
+            }
+            if let Some(values) = self
+                .dynamic_widget_source_instance_ids_by_source
+                .get(source_id)
+            {
+                push_unique_all(&mut source_instances, values);
+            }
+        }
+        (providers, source_instances)
     }
 
     fn repeated_binding_path(&self, provenance: &[String]) -> Option<String> {
@@ -618,6 +671,8 @@ impl CanvasGraph {
         result_documents.sort_by(|left, right| left.route.cmp(&right.route));
         let component_instances = derive_component_instances(&semantic_index, &result_documents);
         let block_instances = derive_block_instances(&semantic_index, &result_documents);
+        let dynamic_widget_instances =
+            derive_dynamic_widget_instances(&semantic_index, &result_documents);
         let runtime_nodes = derive_runtime_nodes(model, &result_documents);
         diagnostics.shrink_to_fit();
 
@@ -629,6 +684,7 @@ impl CanvasGraph {
             documents: result_documents,
             component_instances,
             block_instances,
+            dynamic_widget_instances,
             runtime_nodes,
             diagnostics,
         })
@@ -905,6 +961,89 @@ fn derive_block_instances(
             .then_with(|| left.render_instance_id.cmp(&right.render_instance_id))
             .then_with(|| left.source_instance_id.cmp(&right.source_instance_id))
             .then_with(|| left.definition_id.cmp(&right.definition_id))
+    });
+    instances
+}
+
+fn derive_dynamic_widget_instances(
+    semantic_index: &CanvasSemanticIndex<'_>,
+    documents: &[CanvasDocumentGraph],
+) -> Vec<RenderedDynamicWidgetInstance> {
+    let mut instances = Vec::new();
+    let mut seen = HashSet::new();
+    for document in documents {
+        let nodes_by_render_id = document
+            .nodes
+            .iter()
+            .map(|node| (node.render_instance_id.as_str(), node))
+            .collect::<HashMap<_, _>>();
+        for node in &document.nodes {
+            let parent = node
+                .parent_render_instance_id
+                .as_deref()
+                .and_then(|parent_id| nodes_by_render_id.get(parent_id))
+                .copied();
+            for source_instance_id in &node.dynamic_widget_source_instance_ids {
+                if parent.is_some_and(|parent| {
+                    parent
+                        .dynamic_widget_source_instance_ids
+                        .contains(source_instance_id)
+                }) {
+                    continue;
+                }
+                let identity_key = (
+                    document.route.clone(),
+                    node.render_instance_id.clone(),
+                    source_instance_id.clone(),
+                );
+                if !seen.insert(identity_key) {
+                    continue;
+                }
+                let Some(provider_id) = semantic_index
+                    .dynamic_widget_provider_by_source_instance
+                    .get(source_instance_id)
+                    .cloned()
+                else {
+                    continue;
+                };
+                let Some(instance_id) = semantic_index
+                    .dynamic_widget_instance_id_by_source_instance
+                    .get(source_instance_id)
+                    .cloned()
+                else {
+                    continue;
+                };
+                let mut hasher = Sha256::new();
+                hasher.update(b"dynamic-widget-instance");
+                hasher.update([0]);
+                hasher.update(document.route.as_bytes());
+                hasher.update([0]);
+                hasher.update(node.render_instance_id.as_bytes());
+                hasher.update([0]);
+                hasher.update(source_instance_id.as_bytes());
+                instances.push(RenderedDynamicWidgetInstance {
+                    id: format!("dynamic_widget_instance_{}", short_hex(&hasher.finalize())),
+                    source_instance_id: source_instance_id.clone(),
+                    instance_id,
+                    provider_id,
+                    render_instance_id: node.render_instance_id.clone(),
+                    route: document.route.clone(),
+                    source_node_id: node
+                        .source_node_id
+                        .clone()
+                        .or_else(|| node.template_source_node_id.clone()),
+                    parent_instance_id: None,
+                    binding_key: node.binding_key.clone(),
+                    binding_path: node.binding_path.clone(),
+                });
+            }
+        }
+    }
+    instances.sort_by(|left, right| {
+        left.route
+            .cmp(&right.route)
+            .then_with(|| left.render_instance_id.cmp(&right.render_instance_id))
+            .then_with(|| left.source_instance_id.cmp(&right.source_instance_id))
     });
     instances
 }
@@ -1576,6 +1715,8 @@ fn collect_render_nodes(
                 semantic_index.component_ids(&provenance_stack_snapshot);
             let (block_definition_ids, block_source_instance_ids) =
                 semantic_index.block_ids(&provenance_stack_snapshot);
+            let (dynamic_widget_provider_ids, dynamic_widget_source_instance_ids) =
+                semantic_index.dynamic_widget_ids(&provenance_stack_snapshot);
             let binding_path = semantic_index.repeated_binding_path(&provenance_stack_snapshot);
             if semantic_index.is_repeated(&provenance_stack_snapshot) && binding_key.is_none() {
                 diagnostics.push(CanvasGraphDiagnostic {
@@ -1597,6 +1738,8 @@ fn collect_render_nodes(
                 component_invocation_ids,
                 block_definition_ids,
                 block_source_instance_ids,
+                dynamic_widget_provider_ids,
+                dynamic_widget_source_instance_ids,
                 binding_key,
                 binding_path,
                 tag,
@@ -2350,6 +2493,7 @@ impl CanvasProjectionTransaction {
             documents: Vec::new(),
             component_instances: Vec::new(),
             block_instances: Vec::new(),
+            dynamic_widget_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
         };
@@ -3005,6 +3149,7 @@ mod tests {
             documents: Vec::new(),
             component_instances: Vec::new(),
             block_instances: Vec::new(),
+            dynamic_widget_instances: Vec::new(),
             runtime_nodes: Vec::new(),
             diagnostics: Vec::new(),
         };

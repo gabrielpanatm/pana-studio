@@ -28,6 +28,7 @@ pub enum WorkbenchActivity {
     DesignSystem,
     Assets,
     Content,
+    ContentModels,
     Taxonomies,
     Data,
     Versioning,

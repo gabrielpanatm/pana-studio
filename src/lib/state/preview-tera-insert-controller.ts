@@ -74,7 +74,6 @@ export async function handlePreviewTeraInsertDrop(
 ): Promise<EditorActionOutcome> {
   const data = payload as Record<string, unknown>;
   const targetRenderInstanceId = stringValue(data.targetRenderInstanceId) || null;
-  const targetSelector = stringValue(data.targetSelector);
   const targetSessionId = stringValue(data.targetSessionId) || null;
   const targetSourceId = stringValue(data.targetSourceId) || null;
   const targetTemplateSourceId = stringValue(data.targetTemplateSourceId) || null;
@@ -85,7 +84,7 @@ export async function handlePreviewTeraInsertDrop(
   const position = dropPositionValue(data.position);
   const item = teraPaletteItemValue(data.item);
 
-  if (!targetSelector || !targetTag || !position || !item) {
+  if (!(targetSourceId || (documentRootTarget && targetTemplateSourceId)) || !targetTag || !position || !item) {
     const reason = t("preview-drop-tera-invalid");
     host.setGlobalStatus(reason, "error");
     return blockedAction(reason);
@@ -105,7 +104,6 @@ export async function handlePreviewTeraInsertDrop(
   }
 
   const request: TeraDropRequest = {
-    targetSelector,
     targetSessionId,
     targetSourceId,
     targetTemplateSourceId,
@@ -113,17 +111,17 @@ export async function handlePreviewTeraInsertDrop(
     position,
     item,
   };
-  const fingerprint = JSON.stringify(request);
-  const existing = inFlightDrops.get(fingerprint);
+  const requestKey = JSON.stringify(request);
+  const existing = inFlightDrops.get(requestKey);
   if (existing) return await existing;
 
   const operation = Promise.resolve().then(() => host.insertTeraPaletteItemAtTarget(request));
-  inFlightDrops.set(fingerprint, operation);
+  inFlightDrops.set(requestKey, operation);
   try {
     return await operation;
   } finally {
-    if (inFlightDrops.get(fingerprint) === operation) {
-      inFlightDrops.delete(fingerprint);
+    if (inFlightDrops.get(requestKey) === operation) {
+      inFlightDrops.delete(requestKey);
     }
   }
 }

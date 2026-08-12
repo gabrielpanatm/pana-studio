@@ -284,7 +284,7 @@ pub fn build_taxonomy_catalog(
                 pages: term_accumulator.pages.into_values().collect(),
             });
         }
-        terms.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+        terms.sort_by_key(|left| left.name.to_lowercase());
         accumulator.entry.terms = terms;
         accumulator.entry.pages = accumulator.pages.into_values().collect();
         if accumulator.entry.declared && accumulator.entry.render {
@@ -333,6 +333,8 @@ pub fn build_taxonomy_catalog(
     }
 }
 
+// Taxonomy entries mirror the complete Zola definition before graph-derived enrichment.
+#[allow(clippy::too_many_arguments)]
 fn catalog_entry(
     graph: &SourceGraph,
     config: &Config,
@@ -476,7 +478,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::source_graph::build_source_graph;
+    use crate::source_graph::build_source_graph_from_integration_disk_boundary;
 
     fn fixture_root(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -519,7 +521,7 @@ taxonomies = [{ name = "etichete", paginate_by = 10 }]
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_source_graph_from_integration_disk_boundary(&root).unwrap();
         let catalog = build_taxonomy_catalog(&graph, "zola.toml", config);
         let tags = catalog
             .entries
@@ -550,7 +552,7 @@ taxonomies = [{ name = "etichete", paginate_by = 10 }]
         let root = fixture_root("invalid");
         fs::create_dir_all(root.join("content")).unwrap();
         fs::write(root.join("zola.toml"), "taxonomies = []\n").unwrap();
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_source_graph_from_integration_disk_boundary(&root).unwrap();
         let catalog = build_taxonomy_catalog(&graph, "zola.toml", "taxonomies = []\n");
         assert!(catalog.entries.is_empty());
         assert_eq!(catalog.diagnostics[0].code, "taxonomy_config_invalid");

@@ -53,6 +53,15 @@ pub(crate) struct AppliedTextChangeSet {
     pub applied: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FileBufferByteTextChange {
+    pub(crate) old_start: usize,
+    pub(crate) old_end: usize,
+    pub(crate) new_start: usize,
+    pub(crate) new_end: usize,
+    insert: String,
+}
+
 fn default_coordinate_space() -> FileBufferChangeCoordinateSpace {
     FileBufferChangeCoordinateSpace::Utf16
 }
@@ -72,30 +81,11 @@ pub(crate) fn apply_text_changes(
         });
     }
 
-    let mut ranges = changes
-        .iter()
-        .map(|change| byte_range_for_change(current_text, change, coordinate_space))
-        .collect::<Result<Vec<_>, _>>()?;
-    ranges.sort_by(|left, right| {
-        left.from
-            .cmp(&right.from)
-            .then_with(|| left.to.cmp(&right.to))
-    });
-
-    let mut previous_to = 0usize;
-    for range in &ranges {
-        if range.from < previous_to {
-            return Err(
-                "FileBufferStore a refuzat change-set-ul: range-urile text se suprapun."
-                    .to_string(),
-            );
-        }
-        previous_to = range.to;
-    }
+    let ranges = map_text_changes(current_text, changes, coordinate_space)?;
 
     let mut next_text = current_text.to_string();
     for range in ranges.iter().rev() {
-        next_text.replace_range(range.from..range.to, &range.insert);
+        next_text.replace_range(range.old_start..range.old_end, &range.insert);
     }
     let current_hash = hash_text(&next_text);
     let applied = current_hash != previous_hash;
@@ -108,17 +98,62 @@ pub(crate) fn apply_text_changes(
     })
 }
 
-struct ByteTextChange {
+struct InputByteTextChange {
     from: usize,
     to: usize,
     insert: String,
+}
+
+pub(crate) fn map_text_changes(
+    current_text: &str,
+    changes: &[FileBufferTextChange],
+    coordinate_space: FileBufferChangeCoordinateSpace,
+) -> Result<Vec<FileBufferByteTextChange>, String> {
+    let mut ranges = changes
+        .iter()
+        .map(|change| byte_range_for_change(current_text, change, coordinate_space))
+        .collect::<Result<Vec<_>, _>>()?;
+    ranges.sort_by(|left, right| {
+        left.from
+            .cmp(&right.from)
+            .then_with(|| left.to.cmp(&right.to))
+    });
+
+    let mut previous_to = 0usize;
+    let mut accumulated_delta = 0i128;
+    let mut mapped = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if range.from < previous_to {
+            return Err(
+                "FileBufferStore a refuzat change-set-ul: range-urile text se suprapun."
+                    .to_string(),
+            );
+        }
+        let new_start = usize::try_from(range.from as i128 + accumulated_delta).map_err(|_| {
+            "FileBufferStore a refuzat change-set-ul: maparea rezultată este invalidă.".to_string()
+        })?;
+        let new_end = new_start.checked_add(range.insert.len()).ok_or_else(|| {
+            "FileBufferStore a refuzat change-set-ul: maparea rezultată depășește documentul."
+                .to_string()
+        })?;
+        accumulated_delta += range.insert.len() as i128 - (range.to - range.from) as i128;
+        previous_to = range.to;
+        mapped.push(FileBufferByteTextChange {
+            old_start: range.from,
+            old_end: range.to,
+            new_start,
+            new_end,
+            insert: range.insert,
+        });
+    }
+    Ok(mapped)
 }
 
 fn byte_range_for_change(
     text: &str,
     change: &FileBufferTextChange,
     coordinate_space: FileBufferChangeCoordinateSpace,
-) -> Result<ByteTextChange, String> {
+) -> Result<InputByteTextChange, String> {
     if change.from > change.to {
         return Err(format!(
             "FileBufferStore a refuzat change-set-ul: range invalid {}..{}.",
@@ -130,7 +165,7 @@ fn byte_range_for_change(
         FileBufferChangeCoordinateSpace::Utf16 => {
             let from = utf16_offset_to_byte_index(text, change.from)?;
             let to = utf16_offset_to_byte_index(text, change.to)?;
-            Ok(ByteTextChange {
+            Ok(InputByteTextChange {
                 from,
                 to,
                 insert: change.insert.clone(),

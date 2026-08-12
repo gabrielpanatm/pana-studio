@@ -476,6 +476,8 @@ struct ReadState {
 }
 
 impl ReadState {
+    // ReadState construction mirrors independent query filters plus retention evidence.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         path: &Path,
         log_exists: bool,

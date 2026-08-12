@@ -33,8 +33,6 @@ diagnostic-disk-conflict-summary-clean =
         [one] { $count } tracked file is aligned with disk.
        *[other] { $count } tracked files are aligned with disk.
     }
-project-model-not-zola-project = The current project does not appear to be a valid Zola project.
-source-graph-output-root-failed = Source Graph cannot resolve output_dir for load_data: { $details }
 source-graph-not-zola-project = The current project does not appear to be a valid Zola project.
 source-graph-conventional-data-invalid = Source Graph could not catalog a conventional data file: { $details }
 source-graph-load-data-missing = Local Zola file referenced by load_data was not found: { $path }
@@ -48,7 +46,7 @@ source-graph-shortcode-syntax-invalid = The Markdown content has invalid Zola sh
 source-graph-page-template-missing = The page template was not found: { $template }
 source-graph-section-page-template-missing = The section page_template was not found: { $template }
 source-graph-frontmatter-invalid = Invalid { $format } front matter: { $details }
-source-graph-file-read-failed = The file could not be read: { $details }
+source-graph-projection-source-missing = The exact ProjectWorkspace projection did not contain the source text for this indexed file; Audit did not fall back to disk.
 source-graph-tera-syntax-invalid = The template does not follow the Tera grammar used by Zola: { $details }
 source-graph-partial-extends-invalid = Partials must not use extends. Create a page or layout template for Tera inheritance.
 source-graph-partial-block-invalid = Partial { $name } contains Tera block “{ $block }”. Partials must be included fragments without block/endblock.

@@ -61,7 +61,8 @@
     snapshot,
     loading = false,
     error = "",
-    selectedNodeId = null,
+    selectedNodeIds = [],
+    primaryNodeId = null,
     hoveredNodeId = null,
     openScopeId = null,
     selectNode,
@@ -81,10 +82,14 @@
     snapshot: EditorNavigationSnapshot | null;
     loading?: boolean;
     error?: string;
-    selectedNodeId?: string | null;
+    selectedNodeIds?: string[];
+    primaryNodeId?: string | null;
     hoveredNodeId?: string | null;
     openScopeId?: string | null;
-    selectNode: (node: EditorNavigationNode) => void;
+    selectNode: (
+      node: EditorNavigationNode,
+      options?: { toggle?: boolean; extendRange?: boolean; setPrimary?: boolean },
+    ) => void | Promise<unknown>;
     hoverNode: (node: EditorNavigationNode | null) => void;
     enterScope: (scopeId: string) => void | Promise<unknown>;
     exitScope: () => void;
@@ -103,7 +108,7 @@
       node: EditorNavigationNode,
       x: number,
       y: number,
-    ) => void;
+    ) => void | Promise<unknown>;
     openDocument: (
       documentPath: string,
       rememberCaller?: boolean,
@@ -220,10 +225,18 @@
   }
 
   function isSelected(node: EditorNavigationViewNode) {
-    if (!selectedNodeId) return false;
-    if (node.editorNodeId === selectedNodeId) return true;
+    if (selectedNodeIds.length === 0) return false;
+    if (node.editorNodeId && selectedNodeIds.includes(node.editorNodeId)) return true;
     return node.renderInstanceIds.some(
-      (renderInstanceId) => `editor_render:${renderInstanceId}` === selectedNodeId,
+      (renderInstanceId) => selectedNodeIds.includes(`editor_render:${renderInstanceId}`),
+    );
+  }
+
+  function isPrimary(node: EditorNavigationViewNode) {
+    if (!primaryNodeId) return false;
+    if (node.editorNodeId === primaryNodeId) return true;
+    return node.renderInstanceIds.some(
+      (renderInstanceId) => `editor_render:${renderInstanceId}` === primaryNodeId,
     );
   }
 
@@ -397,14 +410,22 @@
     return path.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? path;
   }
 
-  function selectViewNode(node: EditorNavigationViewNode) {
+  function selectViewNode(
+    node: EditorNavigationViewNode,
+    event?: MouseEvent | KeyboardEvent,
+  ) {
     if (node.kind === "relation") {
       const target = node.relation?.targetDocumentPath;
       if (target) void openDocument(target);
       return;
     }
     const resolved = editorNode(node);
-    if (resolved) selectNode(resolved);
+    if (resolved) {
+      void selectNode(resolved, {
+        toggle: Boolean(event && (event.ctrlKey || event.metaKey)),
+        extendRange: Boolean(event?.shiftKey),
+      });
+    }
   }
 
   function openViewNodeContextMenu(
@@ -416,7 +437,7 @@
     clearDrag();
     const resolved = editorNode(node);
     if (!resolved) return;
-    openContextMenu(resolved, event.clientX, event.clientY);
+    void openContextMenu(resolved, event.clientX, event.clientY);
   }
 
   function hoverViewNode(node: EditorNavigationViewNode | null) {
@@ -534,7 +555,7 @@
   ) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      selectViewNode(node);
+      selectViewNode(node, event);
       return;
     }
     if (!hasVisibleChildren(node)) return;
@@ -613,6 +634,7 @@
       onmouseleave={() => hoverViewNode(null)}
       role="tree"
       tabindex="0"
+      aria-multiselectable="true"
       aria-label={t("project-navigation-semantic-tree")}
     >
         <div style={`height:${topSpacer}px`} aria-hidden="true"></div>
@@ -621,6 +643,7 @@
           <div
           class="navigation-row ui-entity-selectable"
           class:selected={isSelected(row.node)}
+          class:primary={isPrimary(row.node)}
           class:coordinator-hover={isCoordinatorHovered(row.node)}
           data-ui-selected={isSelected(row.node) ? "true" : undefined}
           data-ui-hovered={isCoordinatorHovered(row.node) ? "true" : undefined}
@@ -637,7 +660,7 @@
           class:drop-invalid={dragTargetId === row.node.editorNodeId && (dragPlan?.allowed === false || Boolean(dragPlanError))}
           style={`--tree-depth:${row.depth}`}
           role="treeitem"
-          tabindex={isSelected(row.node) ? 0 : -1}
+          tabindex={isPrimary(row.node) ? 0 : -1}
           aria-level={row.depth + 1}
           aria-selected={isSelected(row.node)}
           aria-expanded={hasVisibleChildren(row.node)
@@ -649,7 +672,7 @@
           ondrop={(event) => { void dropOnNode(row.node, event); }}
           ondragend={clearDrag}
           onmouseenter={() => hoverViewNode(row.node)}
-          onclick={() => selectViewNode(row.node)}
+          onclick={(event) => selectViewNode(row.node, event)}
           oncontextmenu={(event) => openViewNodeContextMenu(row.node, event)}
           onkeydown={(event) => handleRowKeydown(row.node, event)}
           >
@@ -879,6 +902,10 @@
     color: var(--text);
     font-size: 11px;
     user-select: none;
+  }
+
+  .navigation-row.primary {
+    border-color: var(--brand);
   }
 
   .navigation-row.boundary,

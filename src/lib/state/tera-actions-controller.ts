@@ -37,7 +37,6 @@ export type TeraActionsControllerHost = PreviewStructuralCanonicalProjectionHost
   activeRenderedTemplatePath: string | null;
   source: string;
   sourceCache: Record<string, string>;
-  clearPreviewSelection: (options?: { clearCanvasOverlay?: boolean }) => void;
   refreshSourceGraph: (options?: { strict?: boolean }) => Promise<void>;
   selectDynamicWidgetSourceInstance?: (instanceId: string) => Promise<boolean>;
   setGlobalStatus: (text: string, kind: GlobalStatusKind) => void;
@@ -119,18 +118,11 @@ async function insertTeraPaletteItemAtTargetInLane(
   }
 
   const anchor = resolution.anchor;
-  const range = anchor.range;
-  if (!range) {
-    const message = t("tera-actions-insert-anchor-missing");
-    host.setGlobalStatus(message, "error");
-    return blockedAction(message);
-  }
 
   try {
     const receipt = await executePreviewTeraInsertDropIntent({
       intent: {
         messageType: "preview-tera-drop",
-        targetSelector: request.targetSelector,
         targetSourceId: request.targetSourceId,
         targetTemplateSourceId: request.targetTemplateSourceId,
         targetSessionId: request.targetSessionId,
@@ -141,14 +133,8 @@ async function insertTeraPaletteItemAtTargetInLane(
       },
       insertIntent: {
         targetSourceId: anchor.id,
-        targetLocation: {
-          file: anchor.file,
-          line: range.line,
-          column: range.column,
-        },
         targetKind: anchor.kind,
         targetTag: request.targetTag,
-        targetSelector: request.targetSelector,
         position: request.position,
         item: {
           kind: request.item.kind,
@@ -228,7 +214,7 @@ async function deleteSelectedTeraNodeInLane(
   lease: PreviewStructuralSessionLease,
 ): Promise<EditorActionOutcome> {
   const capability = deleteTeraNodeCapability(node);
-  if (!node || !capability.canRun || !node.range) {
+  if (!node || !capability.canRun) {
     host.setGlobalStatus(capability.reason, "error");
     return blockedAction(capability.reason);
   }
@@ -241,11 +227,6 @@ async function deleteSelectedTeraNodeInLane(
       },
       deleteIntent: {
         targetSourceId: node.id,
-        targetLocation: {
-          file: node.file,
-          line: node.range.line,
-          column: node.range.column,
-        },
         targetKind: node.kind,
         targetLabel: node.label,
       },
@@ -261,7 +242,6 @@ async function deleteSelectedTeraNodeInLane(
     );
     const settlement = await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
       projectCommittedTeraSource(host, patch);
-      host.clearPreviewSelection({ clearCanvasOverlay: true });
     });
     host.setGlobalStatus(
       settlement.warnings.length > 0

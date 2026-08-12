@@ -1025,13 +1025,6 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             ProjectModelFileKind::Style => (CommandCenterItemKind::Style, "Stil"),
             _ => (CommandCenterItemKind::File, "Fișier"),
         };
-        let surface = if matches!(file.kind, ProjectModelFileKind::Content)
-            && file.relative_path.to_lowercase().ends_with(".md")
-        {
-            WorkbenchSurface::Code
-        } else {
-            WorkbenchSurface::Code
-        };
         candidates.push(document_candidate(
             format!("file.{}", file.relative_path),
             kind,
@@ -1039,7 +1032,7 @@ fn append_project_candidates(candidates: &mut Vec<Candidate>, model: &ProjectMod
             format!("{label} · {}", file.relative_path),
             format!("file source {label} {}", file.relative_path),
             file.relative_path.clone(),
-            surface,
+            WorkbenchSurface::Code,
             460,
             None,
             Some(
@@ -1193,7 +1186,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        project_model::model::TeraGraph,
+        project_model::model::{ProjectModelFile, TeraGraph},
         source_graph::model::{SourceGraph, SourceGraphTemplate, SourceOrigin},
     };
 
@@ -1213,7 +1206,9 @@ mod tests {
             zola_root: PathBuf::from("/project"),
             revision: "model-revision".to_string(),
             files: Vec::new(),
+            workspace_paths: Default::default(),
             source_graph: SourceGraph {
+                node_index: Default::default(),
                 project_root: "/project".to_string(),
                 zola_root: "/project".to_string(),
                 active_theme: None,
@@ -1234,6 +1229,9 @@ mod tests {
                     internal_links: Vec::new(),
                     asset_urls: Vec::new(),
                     asset_hashes: Vec::new(),
+                    literal_asset_references: Vec::new(),
+                    asset_reference_eligible: 0,
+                    asset_reference_unanalysable: 0,
                     data_loads: Vec::new(),
                     image_metadata: Vec::new(),
                     image_resizes: Vec::new(),
@@ -1256,6 +1254,7 @@ mod tests {
                 markdown_projections: Vec::new(),
                 nodes: Vec::new(),
                 relations: Vec::new(),
+                asset_reference_coverage: Default::default(),
                 diagnostics: Vec::new(),
             },
             tera_graph: TeraGraph {
@@ -1417,6 +1416,35 @@ mod tests {
                 surface: WorkbenchSurface::Code,
             } if relative_path == "templates/index.html"
         ));
+    }
+
+    #[test]
+    fn fallback_markdown_resources_open_in_the_canonical_code_surface() {
+        let mut model = model_with_index_template();
+        model.files.push(ProjectModelFile {
+            relative_path: "content/notes.md".to_string(),
+            kind: ProjectModelFileKind::Content,
+            contents: "+++#\n+++#\n".to_string(),
+            size_bytes: 10,
+            revision: "notes-revision".to_string(),
+            from_draft: false,
+        });
+
+        let response = search_command_center_index(
+            request("notes", CommandCenterScope::Files),
+            Some("/project"),
+            Some("session"),
+            Some(&model),
+        )
+        .unwrap();
+
+        assert!(response.results.iter().any(|result| matches!(
+            &result.action,
+            CommandCenterAction::OpenDocument {
+                relative_path,
+                surface: WorkbenchSurface::Code,
+            } if relative_path == "content/notes.md"
+        )));
     }
 
     #[test]

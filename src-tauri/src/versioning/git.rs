@@ -220,6 +220,8 @@ impl GitRunner {
         Ok(helpers)
     }
 
+    // Security-sensitive Git execution keeps every sandbox/config/output policy explicit.
+    #[allow(clippy::too_many_arguments)]
     fn run_bounded<I, S>(
         &self,
         args: I,
@@ -459,10 +461,12 @@ fn read_capped(mut reader: impl Read, limit: usize) -> Result<(Vec<u8>, bool), S
     read_capped_with_progress(&mut reader, limit, None)
 }
 
+type GitProgressCallback = dyn Fn(&[u8]) + Send + Sync + 'static;
+
 fn read_capped_with_progress(
     mut reader: impl Read,
     limit: usize,
-    progress: Option<&(dyn Fn(&[u8]) + Send + Sync + 'static)>,
+    progress: Option<&GitProgressCallback>,
 ) -> Result<(Vec<u8>, bool), String> {
     let mut retained = Vec::with_capacity(limit.min(64 * 1024));
     let mut buffer = [0_u8; 16 * 1024];

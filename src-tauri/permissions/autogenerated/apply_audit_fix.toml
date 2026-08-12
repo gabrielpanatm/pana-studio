@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-audit-fix"
+description = "Enables the apply_audit_fix command without any pre-configured scope."
+commands.allow = ["apply_audit_fix"]
+
+[[permission]]
+identifier = "deny-apply-audit-fix"
+description = "Denies the apply_audit_fix command without any pre-configured scope."
+commands.deny = ["apply_audit_fix"]

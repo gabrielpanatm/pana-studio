@@ -6,6 +6,7 @@ use crate::{
         file_buffer_store::{hash_text, FileBufferEntry},
         preview_projection::CanvasPatchOperation,
     },
+    source_graph::identity::SourceTreeIdentity,
 };
 
 use super::model::{
@@ -60,6 +61,8 @@ pub(crate) struct WorkspaceHistoryEntry {
     pub binary_resources: Vec<WorkspaceBinaryResourceTransition>,
     pub page_js: Vec<WorkspacePageJsTransition>,
     #[serde(default)]
+    pub source_tree: Option<WorkspaceSourceTreeHistory>,
+    #[serde(default)]
     pub canvas_delta: Option<WorkspaceCanvasHistoryDelta>,
 }
 
@@ -69,6 +72,19 @@ pub(crate) struct WorkspaceCanvasHistoryDelta {
     pub after_model_revision: String,
     pub forward: CanvasPatchOperation,
     pub inverse: CanvasPatchOperation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WorkspaceSourceTreeHistoryAction {
+    Inserted,
+    Deleted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct WorkspaceSourceTreeHistory {
+    pub action: WorkspaceSourceTreeHistoryAction,
+    pub trees: Vec<SourceTreeIdentity>,
 }
 
 impl WorkspaceHistoryEntry {
@@ -166,10 +182,29 @@ impl WorkspaceHistoryEntry {
                         .unwrap_or_default()
             })
             .sum::<u64>();
+        let source_tree_bytes = self
+            .source_tree
+            .as_ref()
+            .map(|history| {
+                history
+                    .trees
+                    .iter()
+                    .map(|tree| {
+                        tree.file.len() as u64
+                            + tree
+                                .nodes
+                                .iter()
+                                .map(|node| node.source_node_id.len() as u64 + 32)
+                                .sum::<u64>()
+                    })
+                    .sum::<u64>()
+            })
+            .unwrap_or_default();
         document_bytes
             .saturating_add(resource_bytes)
             .saturating_add(binary_resource_bytes)
             .saturating_add(page_js_bytes)
+            .saturating_add(source_tree_bytes)
     }
 
     fn can_coalesce(&self, next: &Self) -> bool {
@@ -185,6 +220,8 @@ impl WorkspaceHistoryEntry {
             && next.resources.is_empty()
             && self.binary_resources.is_empty()
             && next.binary_resources.is_empty()
+            && self.source_tree.is_none()
+            && next.source_tree.is_none()
             && self.page_js.len() == next.page_js.len()
             && self
                 .documents
@@ -396,6 +433,7 @@ impl WorkspaceHistory {
             resources,
             binary_resources,
             page_js,
+            source_tree: None,
             canvas_delta: None,
         };
         self.undo.push(entry.clone());
@@ -473,6 +511,24 @@ impl WorkspaceHistory {
         } else {
             entry.canvas_delta = Some(delta);
         }
+        Ok(())
+    }
+
+    pub fn attach_latest_source_tree(
+        &mut self,
+        mutation_transaction_id: &str,
+        source_tree: WorkspaceSourceTreeHistory,
+    ) -> Result<(), String> {
+        let entry = self.undo.last_mut().ok_or_else(|| {
+            "ProjectWorkspace History nu are o intrare pentru identitatea SourceGraph.".to_string()
+        })?;
+        if entry.transaction_id != mutation_transaction_id {
+            return Err(
+                "ProjectWorkspace History a refuzat identitatea SourceGraph pentru altă tranzacție."
+                    .to_string(),
+            );
+        }
+        entry.source_tree = Some(source_tree);
         Ok(())
     }
 
@@ -582,7 +638,7 @@ fn history_entry_recovery_equivalent(
     right: &WorkspaceHistoryEntry,
 ) -> bool {
     // History mutates an existing entry only through coalescing (which changes
-    // transaction/timestamps/count) or Canvas delta attachment. Comparing
+    // transaction/timestamps/count) or derived identity/Canvas attachment. Comparing
     // those identities keeps the hot diff O(entries), without walking up to
     // 64 MiB of immutable transition payload on every source mutation.
     left.transaction_id == right.transaction_id
@@ -596,9 +652,12 @@ fn history_entry_recovery_equivalent(
         && left.resources.len() == right.resources.len()
         && left.binary_resources.len() == right.binary_resources.len()
         && left.page_js.len() == right.page_js.len()
+        && left.source_tree == right.source_tree
         && left.canvas_delta == right.canvas_delta
 }
 
+// This constructor mirrors the durable history entry payload and its four transition classes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn new_history_entry(
     transaction_id: String,
     label: String,
@@ -622,6 +681,7 @@ pub(crate) fn new_history_entry(
         resources,
         binary_resources,
         page_js,
+        source_tree: None,
         canvas_delta: None,
     }
 }
@@ -679,7 +739,7 @@ mod tests {
     }
 
     fn text_delta(before: &str, after: &str) -> WorkspaceCanvasHistoryDelta {
-        let target = CanvasPatchAnchor::source("source-title", None, Some("h1"));
+        let target = CanvasPatchAnchor::source("source-title", Some("h1"));
         WorkspaceCanvasHistoryDelta {
             before_model_revision: format!("model-{before}"),
             after_model_revision: format!("model-{after}"),

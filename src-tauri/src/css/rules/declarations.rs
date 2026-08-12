@@ -7,7 +7,7 @@ pub struct CssDeclaration {
 pub fn parse_declarations(content: &str) -> Vec<CssDeclaration> {
     declaration_fragments(content)
         .into_iter()
-        .filter_map(|fragment| parse_declaration_fragment(fragment))
+        .filter_map(parse_declaration_fragment)
         .collect()
 }
 

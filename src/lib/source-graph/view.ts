@@ -183,6 +183,7 @@ export function sourceRelationKindLabel(kind: SourceRelationKind): string {
     getsPage: "get_page",
     getsSection: "get_section",
     internalContentLink: t("source-view-relation-internal-link"),
+    assetReference: t("source-view-relation-asset-reference"),
     assetUrl: "asset URL",
     assetHash: "asset hash",
     dataLoad: "load_data",

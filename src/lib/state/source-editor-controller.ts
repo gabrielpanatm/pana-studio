@@ -14,6 +14,7 @@ import {
 import type { SelectionSnapshot, SourceLanguage } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { t } from "$lib/i18n/runtime.svelte";
+import { selectionCodeTarget } from "$lib/kernel/selection-read-model";
 
 export type SourceEditorControllerHost = {
   codeEditorHost: HTMLDivElement | undefined;
@@ -150,7 +151,7 @@ export function syncCodeSelectionHighlight(host: SourceEditorControllerHost, rev
 }
 
 function codeSelectionRangeForCoordinator(host: SourceEditorControllerHost) {
-  const projection = host.selectionSnapshot?.projections.code;
+  const projection = selectionCodeTarget(host.selectionSnapshot);
   if (
     !projection?.range
     || !["html", "css", "scss"].includes(host.sourceLanguage)

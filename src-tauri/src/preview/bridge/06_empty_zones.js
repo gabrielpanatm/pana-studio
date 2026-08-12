@@ -58,10 +58,10 @@
 
   function authoringRootForSurface(surface) {
     if (!surface) return null;
-    var sourceSelector = "[" + ACTIVE_DOCUMENT_ROOT_ATTR + "=\"" +
+    var rootQuery = "[" + ACTIVE_DOCUMENT_ROOT_ATTR + "=\"" +
       cssEscapeValue(surface.sourceNodeId) + "\"][" + SOURCE_ID_ATTR + "=\"" +
       cssEscapeValue(surface.sourceNodeId) + "\"]";
-    var dynamicElement = document.querySelector(sourceSelector);
+    var dynamicElement = document.querySelector(rootQuery);
     return dynamicElement instanceof Element && isActiveDocumentRoot(dynamicElement)
       ? dynamicElement
       : null;

@@ -38,7 +38,12 @@ use super::{
     ProjectWorkspace, WorkspaceBinaryResource,
 };
 
-const PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 4;
+// Version 5 persists opaque SourceNodeId subtree placement (parent + sibling
+// index) for exact structural undo/redo. Older location-derived history must
+// fail closed instead of being interpreted under the new identity contract.
+// v6 stores one or more contiguous SourceGraph roots for exact structural
+// Undo/Redo; older recovery payloads fail closed instead of inventing IDs.
+const PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION: u32 = 6;
 const PROJECT_WORKSPACE_RECOVERY_MAX_BYTES: u64 = 192 * 1024 * 1024;
 const PROJECT_WORKSPACE_RECOVERY_JOURNAL_SCHEMA_VERSION: u32 = 1;
 const PROJECT_WORKSPACE_RECOVERY_JOURNAL_MAX_BYTES: u64 = 192 * 1024 * 1024;
@@ -133,6 +138,51 @@ pub fn commit_project_workspace_session_mutation_with_projection_measured<R: Run
             total_ms: elapsed_ms(total_started),
         },
     ))
+}
+
+/// Publishes a candidate that was fully planned and validated without holding
+/// the live ProjectWorkspace mutex. The caller must hold that mutex only for
+/// this CAS + durable recovery barrier.
+#[allow(clippy::too_many_arguments)]
+pub fn publish_prepared_project_workspace_candidate<R: Runtime>(
+    app: &AppHandle<R>,
+    live_workspace: &mut ProjectWorkspace,
+    expected_base_revision: u64,
+    candidate: ProjectWorkspace,
+    preview_projection: ProjectWorkspacePreviewProjection,
+    candidate_clone_ms: u64,
+    mutation_ms: u64,
+    total_started: Instant,
+) -> Result<ProjectWorkspaceCommitTimings, String> {
+    if live_workspace.revision != expected_base_revision {
+        return Err(format!(
+            "ProjectWorkspace CAS a refuzat candidatul stale: baza {}, revizia activă {}.",
+            expected_base_revision, live_workspace.revision
+        ));
+    }
+    if live_workspace.session.project_root != candidate.session.project_root
+        || live_workspace.runtime_session_id() != candidate.runtime_session_id()
+        || live_workspace.accepted_disk != candidate.accepted_disk
+    {
+        return Err(
+            "ProjectWorkspace CAS a refuzat un candidat din altă autoritate de sesiune."
+                .to_string(),
+        );
+    }
+    let recovery_started = Instant::now();
+    persist_project_workspace_recovery_transaction(app, live_workspace, &candidate)?;
+    let recovery_persist_ms = elapsed_ms(recovery_started);
+    let publish_started = Instant::now();
+    *live_workspace = candidate;
+    emit_project_workspace_mutated(app, live_workspace, preview_projection);
+    let authority_publish_ms = elapsed_ms(publish_started);
+    Ok(ProjectWorkspaceCommitTimings {
+        candidate_clone_ms,
+        mutation_ms,
+        recovery_persist_ms,
+        authority_publish_ms,
+        total_ms: elapsed_ms(total_started),
+    })
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -385,7 +435,10 @@ fn persist_project_workspace_recovery_transaction<R: Runtime>(
     let checkpoint_exists =
         regular_file_len_if_exists(&checkpoint_path, "Checkpoint-ul ProjectWorkspace recovery")?
             .is_some();
-    if !checkpoint_exists || current.revision % PROJECT_WORKSPACE_RECOVERY_CHECKPOINT_INTERVAL == 0
+    if !checkpoint_exists
+        || current
+            .revision
+            .is_multiple_of(PROJECT_WORKSPACE_RECOVERY_CHECKPOINT_INTERVAL)
     {
         return persist_project_workspace_recovery_snapshot(app, current);
     }
@@ -598,6 +651,11 @@ pub fn emit_project_workspace_mutated<R: Runtime>(
     workspace: &ProjectWorkspace,
     preview_projection: ProjectWorkspacePreviewProjection,
 ) {
+    if let Some(state) = app.try_state::<AppState>() {
+        if let Err(error) = state.clear_publish_authorization() {
+            eprintln!("[Pană Studio] Autorizația Publish nu a putut fi invalidată: {error}");
+        }
+    }
     if let Err(error) = app.emit(
         PROJECT_WORKSPACE_MUTATED_EVENT,
         ProjectWorkspaceMutationEvent {
@@ -642,7 +700,7 @@ pub fn inspect_project_workspace_recovery_for_open<R: Runtime>(
             project_root,
             assessment_token: None,
             conflict_reason: None,
-            root_identity_changed: previous_root_identity_changed(app, &current_root_fingerprint)?,
+            root_identity_changed: previous_root_identity_changed(app, current_root_fingerprint)?,
             recovery_revision: None,
             dirty_document_count: 0,
             staged_binary_resource_count: 0,
@@ -1895,6 +1953,87 @@ mod tests {
         assert_eq!(after.revision, before.revision);
         assert_eq!(after.dirty, before.dirty);
         assert_eq!(after.history.undo_count, before.history.undo_count);
+        assert!(live
+            .documents
+            .text_for("templates/candidate.html")
+            .is_none());
+
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prepared_candidate_cas_never_overwrites_a_newer_workspace_revision() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "pana-project-workspace-prepared-cas-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let project = root.join("project");
+        fs::create_dir_all(project.join("templates")).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let project = project.canonicalize().unwrap();
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        ensure_app_home(app.handle()).unwrap();
+        let session_dir = root.join("session");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session = test_session(&project, &session_dir);
+        let mut live = workspace(&project, &session);
+        let base_revision = live.revision;
+        let mut candidate = live.clone();
+        candidate
+            .stage_resource_texts(
+                &identity(&candidate),
+                WorkspaceMutationMetadata {
+                    label: "Detached candidate".to_string(),
+                    source: "test.prepared_cas".to_string(),
+                    coalesce_key: None,
+                    transaction_id: None,
+                },
+                vec![super::super::WorkspaceResourceMutation {
+                    relative_path: "templates/candidate.html".to_string(),
+                    contents: "<main>candidate</main>".to_string(),
+                    create_only: true,
+                }],
+                41,
+            )
+            .unwrap();
+        live.stage_resource_texts(
+            &identity(&live),
+            WorkspaceMutationMetadata {
+                label: "Concurrent winner".to_string(),
+                source: "test.prepared_cas".to_string(),
+                coalesce_key: None,
+                transaction_id: None,
+            },
+            vec![super::super::WorkspaceResourceMutation {
+                relative_path: "templates/winner.html".to_string(),
+                contents: "<main>winner</main>".to_string(),
+                create_only: true,
+            }],
+            42,
+        )
+        .unwrap();
+        let winning_revision = live.revision;
+
+        let error = publish_prepared_project_workspace_candidate(
+            app.handle(),
+            &mut live,
+            base_revision,
+            candidate,
+            ProjectWorkspacePreviewProjection::Required,
+            0,
+            0,
+            Instant::now(),
+        )
+        .unwrap_err();
+        assert!(error.contains("CAS"));
+        assert_eq!(live.revision, winning_revision);
+        assert!(live.documents.text_for("templates/winner.html").is_some());
         assert!(live
             .documents
             .text_for("templates/candidate.html")

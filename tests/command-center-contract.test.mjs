@@ -53,9 +53,21 @@ function deleteEvent(key = "Delete") {
 }
 
 function selectionSnapshot(kind, focus = { kind: "element" }, resolution = "resolved") {
+  const memberId = "editor:test";
   return {
-    resolution,
-    subject: kind ? { kind, tag: kind === "htmlElement" ? "h1" : null, label: kind } : null,
+    schemaVersion: 2,
+    primaryMemberId: kind ? memberId : null,
+    members: kind ? [{
+      memberId,
+      resolution,
+      subject: { kind, tag: kind === "htmlElement" ? "h1" : null, label: kind },
+      anchor: {
+        editorNodeId: memberId,
+        sourceNodeId: "source:test",
+        renderInstanceId: "render:test",
+        renderInstanceIds: ["render:test"],
+      },
+    }] : [],
     focus,
   };
 }

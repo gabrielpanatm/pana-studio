@@ -581,7 +581,7 @@ fn validate_append_recovery_owner(
         .map(|component| decode_component_hex(component))
         .collect::<Result<Vec<_>, _>>()?;
     if parents.len() != 2
-        || parents[0] != OsString::from("sessions")
+        || parents[0] != "sessions"
         || parents[1].is_empty()
         || evidence.parent.existing_prefix_len != parents.len()
         || evidence.parent.parent_identity.is_none()

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::ai_coordination::AiCoordinationSnapshot;
 
-pub const UI_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 3;
+pub const UI_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 4;
 pub const CONTEXT_HUB_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -73,6 +73,10 @@ pub struct UiSelectionRect {
 #[serde(rename_all = "camelCase")]
 pub struct UiSelectionContext {
     pub has_selection: bool,
+    pub primary_member_id: Option<String>,
+    #[serde(default)]
+    pub member_ids: Vec<String>,
+    pub member_count: usize,
     pub selector: Option<String>,
     pub css_selector: Option<String>,
     pub tag: Option<String>,

@@ -39,10 +39,10 @@ use commands::{
         complete_ai_reconciliation_recovery_reload, read_ai_coordination_state,
     },
     app_home::read_app_home,
-    audit::read_project_audit,
+    audit::{apply_audit_fix, read_project_audit},
     blocks::{
         apply_native_block_contract, plan_native_block_contract, read_block_runtime_snapshot,
-        read_native_block_registry, read_ui_block_graph,
+        read_icon_catalog, read_native_block_registry, read_ui_block_graph, search_icon_catalog,
     },
     command_center::search_command_center,
     components::apply_component_mutation,
@@ -61,7 +61,9 @@ use commands::{
     },
     data::{apply_data_mutation, read_data_node_editor},
     deploy::{
-        cancel_publish_operation, deploy_to_bunny, zola_build, zola_check, zola_check_workspace,
+        build_for_publish, cancel_publish_operation, delete_deploy_credential, execute_deploy,
+        plan_deploy, read_deploy_configuration, save_deploy_credential, save_deploy_settings,
+        test_deploy_connection, zola_build, zola_check, zola_check_workspace,
     },
     design_system::{
         apply_theme_style_draft, create_design_class, preview_theme_style_draft,
@@ -81,8 +83,8 @@ use commands::{
         select_file_explorer_entry,
     },
     fonts::{
-        apply_local_font_import, assign_font_role, download_google_font_family, get_font_inventory,
-        get_font_manager, get_font_preview_asset, plan_font_family_removal, plan_local_font_import,
+        apply_local_font_import, assign_font_role, download_google_font_family, get_font_manager,
+        get_font_preview_asset, plan_font_family_removal, plan_local_font_import,
         remove_font_family, search_google_fonts, set_font_display, set_font_preload,
     },
     insert_catalog::read_insert_catalog,
@@ -94,10 +96,10 @@ use commands::{
         execute_preview_html_attributes_intent, execute_preview_html_delete_intent,
         execute_preview_html_duplicate_intent, execute_preview_html_insert_drop_intent,
         execute_preview_html_tag_intent, execute_preview_html_text_intent,
-        execute_preview_tera_delete_intent, execute_preview_tera_insert_drop_intent,
-        normalize_preview_projection_intent, publish_global_status, read_global_status,
-        read_kernel_disk_conflicts, read_kernel_observability_log,
-        read_kernel_project_transition_blocked_audit,
+        execute_preview_selection_batch_intent, execute_preview_tera_delete_intent,
+        execute_preview_tera_insert_drop_intent, normalize_preview_projection_intent,
+        publish_global_status, read_global_status, read_kernel_disk_conflicts,
+        read_kernel_observability_log, read_kernel_project_transition_blocked_audit,
         read_kernel_project_transition_decision_journal,
         read_kernel_project_transition_decision_recovery_ack_journal,
         read_kernel_project_transition_decision_retention_hot_journals,
@@ -128,8 +130,9 @@ use commands::{
         redo_project_workspace, save_project_workspace, scan_project, set_file_buffer_draft,
         start_project_disk_watch, stop_project_disk_watch, undo_project_workspace,
     },
-    project_model::{
-        read_project_model, read_project_model_with_drafts, resolve_template_workbench_plan,
+    project_model::{read_project_model, resolve_template_workbench_plan},
+    publish::{
+        current_publish_build_receipt, current_publish_preflight_receipt, run_publish_preflight,
     },
     source_graph::{
         create_site_archive_structure, create_site_page_structure, create_site_partial_structure,
@@ -313,20 +316,19 @@ fn start_mcp_context_server(app: &tauri::App) {
                 Err(_) => {
                     handle.stop();
                     eprintln!("[Pană Studio] Handle-ul MCP nu poate fi instalat în AppState.");
-                    let _ =
-                        mark_context_server_lifecycle(&app.handle(), false, "state_unavailable");
+                    let _ = mark_context_server_lifecycle(app.handle(), false, "state_unavailable");
                     return;
                 }
             }
             if let Err(error) =
-                mark_context_server_lifecycle(&app.handle(), true, "awaiting_ui_context")
+                mark_context_server_lifecycle(app.handle(), true, "awaiting_ui_context")
             {
                 eprintln!("[Pană Studio] Descriptorul MCP de startup nu a fost scris: {error}");
             }
             println!("[Pană Studio] MCP read-only server pornit pe http://127.0.0.1:48731/mcp");
         }
         Err(error) => {
-            let recorded_owner = recorded_server_process_id(&app.handle());
+            let recorded_owner = recorded_server_process_id(app.handle());
             if let Some(process_id) = recorded_owner {
                 eprintln!(
                     "[Pană Studio] Serverul MCP read-only nu a pornit: {error}. Descriptorul anterior indică procesul PID {process_id}; verifică /health înainte de a opri procesul."
@@ -335,7 +337,7 @@ fn start_mcp_context_server(app: &tauri::App) {
                 eprintln!("[Pană Studio] Serverul MCP read-only nu a pornit: {error}");
             }
             if let Err(lifecycle_error) =
-                mark_context_server_lifecycle(&app.handle(), false, "start_failed")
+                mark_context_server_lifecycle(app.handle(), false, "start_failed")
             {
                 eprintln!(
                     "[Pană Studio] Descriptorul MCP de eșec nu a fost scris: {lifecycle_error}"
@@ -441,51 +443,6 @@ fn edit_authority_requires_project_close_guard(authority: &EditAuthority) -> boo
     matches!(authority, EditAuthority::UserActive)
 }
 
-#[cfg(test)]
-mod desktop_lifecycle_tests {
-    use super::edit_authority_requires_project_close_guard;
-    use crate::kernel::ai_coordination::{EditAuthority, EditLease};
-
-    #[test]
-    fn only_user_authority_routes_close_through_project_transition() {
-        assert!(edit_authority_requires_project_close_guard(
-            &EditAuthority::UserActive
-        ));
-        assert!(!edit_authority_requires_project_close_guard(
-            &EditAuthority::AiActive {
-                lease: EditLease {
-                    id: "lease-close".to_string(),
-                    request_id: "request-close".to_string(),
-                    client_session_id: "client-close".to_string(),
-                    project_session_id: "project-close".to_string(),
-                    basis_project_revision: 1,
-                    intent: "test close escape".to_string(),
-                    granted_at_ms: 1,
-                    expires_at_ms: 2,
-                },
-            }
-        ));
-        assert!(!edit_authority_requires_project_close_guard(
-            &EditAuthority::AiOrphaned {
-                lease_id: "lease-close".to_string(),
-                client_session_id: "client-close".to_string(),
-                project_session_id: "project-close".to_string(),
-                basis_project_revision: 1,
-                expired_at_ms: 2,
-                reason: "test".to_string(),
-            }
-        ));
-        assert!(!edit_authority_requires_project_close_guard(
-            &EditAuthority::Conflict {
-                project_session_id: "project-close".to_string(),
-                detected_at_ms: 2,
-                files: vec!["content/test.md".to_string()],
-                reason: "test".to_string(),
-            }
-        ));
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -495,12 +452,12 @@ pub fn run() {
         .setup(|app| {
             localization::validate_embedded_catalogs()
                 .map_err(|error| format!("Catalogul de localizare este invalid: {error}"))?;
-            let app_home = app_home::ensure_app_home(&app.handle())?;
+            let app_home = app_home::ensure_app_home(app.handle())?;
             println!(
                 "[Pană Studio] Application Home: config={}, data={}, cache={}, logs={}",
                 app_home.config_dir, app_home.data_dir, app_home.cache_dir, app_home.log_dir
             );
-            kernel::boot(&app.handle())?;
+            kernel::boot(app.handle())?;
             apply_main_window_icon(app);
             #[cfg(target_os = "linux")]
             repair_wayland_native_window_controls(app);
@@ -509,7 +466,7 @@ pub fn run() {
                 .get_webview_window(MAIN_WINDOW_LABEL)
                 .and_then(|window| window.theme().ok())
             {
-                system_preferences::update_tauri_window_theme(&app.handle(), theme);
+                system_preferences::update_tauri_window_theme(app.handle(), theme);
             }
             system_preferences::start_linux_system_preferences_monitor(app.handle().clone());
             start_mcp_context_server(app);
@@ -581,4 +538,49 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod desktop_lifecycle_tests {
+    use super::edit_authority_requires_project_close_guard;
+    use crate::kernel::ai_coordination::{EditAuthority, EditLease};
+
+    #[test]
+    fn only_user_authority_routes_close_through_project_transition() {
+        assert!(edit_authority_requires_project_close_guard(
+            &EditAuthority::UserActive
+        ));
+        assert!(!edit_authority_requires_project_close_guard(
+            &EditAuthority::AiActive {
+                lease: EditLease {
+                    id: "lease-close".to_string(),
+                    request_id: "request-close".to_string(),
+                    client_session_id: "client-close".to_string(),
+                    project_session_id: "project-close".to_string(),
+                    basis_project_revision: 1,
+                    intent: "test close escape".to_string(),
+                    granted_at_ms: 1,
+                    expires_at_ms: 2,
+                },
+            }
+        ));
+        assert!(!edit_authority_requires_project_close_guard(
+            &EditAuthority::AiOrphaned {
+                lease_id: "lease-close".to_string(),
+                client_session_id: "client-close".to_string(),
+                project_session_id: "project-close".to_string(),
+                basis_project_revision: 1,
+                expired_at_ms: 2,
+                reason: "test".to_string(),
+            }
+        ));
+        assert!(!edit_authority_requires_project_close_guard(
+            &EditAuthority::Conflict {
+                project_session_id: "project-close".to_string(),
+                detected_at_ms: 2,
+                files: vec!["content/test.md".to_string()],
+                reason: "test".to_string(),
+            }
+        ));
+    }
 }

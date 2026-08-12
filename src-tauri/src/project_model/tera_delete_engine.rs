@@ -6,15 +6,14 @@ use crate::{
 };
 
 use super::move_engine::{
-    content_revision, line_number_at_offset, removal_range_for_span, resolve_conjunctive_anchor,
-    same_model_path, source_location_at_offset, ProjectSourceEditLocation, Span,
+    content_revision, line_number_at_offset, removal_range_for_span, same_model_path,
+    source_location_at_offset, ProjectSourceEditLocation, Span,
 };
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTeraDeleteIntent {
     pub target_source_id: Option<String>,
-    pub target_location: Option<ProjectSourceEditLocation>,
     pub target_kind: Option<String>,
     pub target_label: Option<String>,
 }
@@ -135,20 +134,10 @@ fn resolve_tera_node_for_anchor<'a>(
     model: &'a ProjectModel,
     intent: &ProjectTeraDeleteIntent,
 ) -> Option<&'a SourceNode> {
-    let id_node = intent
+    intent
         .target_source_id
         .as_deref()
-        .and_then(|id| resolve_tera_node(model, id, intent.target_kind.as_deref()));
-    let location_node = intent.target_location.as_ref().and_then(|location| {
-        resolve_tera_node_at_location(model, location, intent.target_kind.as_deref())
-    });
-
-    resolve_conjunctive_anchor(
-        intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-        id_node,
-        location_node,
-    )
+        .and_then(|id| resolve_tera_node(model, id, intent.target_kind.as_deref()))
 }
 
 fn resolve_tera_node<'a>(
@@ -156,47 +145,10 @@ fn resolve_tera_node<'a>(
     source_id: &str,
     kind: Option<&str>,
 ) -> Option<&'a SourceNode> {
-    model.source_graph.nodes.iter().find(|node| {
-        node.id == source_id
-            && is_tera_delete_anchor_kind(&node.kind)
-            && node_kind_matches(node, kind)
-    })
-}
-
-fn resolve_tera_node_at_location<'a>(
-    model: &'a ProjectModel,
-    location: &ProjectSourceEditLocation,
-    kind: Option<&str>,
-) -> Option<&'a SourceNode> {
-    if location.line == 0 || location.column == 0 {
-        return None;
-    }
-
-    let mut candidates: Vec<&SourceNode> = model
+    model
         .source_graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            is_tera_delete_anchor_kind(&node.kind)
-                && same_model_path(&node.file, &location.file)
-                && node_kind_matches(node, kind)
-                && node
-                    .range
-                    .as_ref()
-                    .is_some_and(|range| range.line == location.line)
-        })
-        .collect();
-
-    candidates.retain(|node| {
-        node.range
-            .as_ref()
-            .is_some_and(|range| range.column == location.column)
-    });
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
-    }
+        .node_by_id(source_id)
+        .filter(|node| is_tera_delete_anchor_kind(&node.kind) && node_kind_matches(node, kind))
 }
 
 fn validate_tera_delete_target(node: &SourceNode) -> Result<(), String> {
@@ -286,47 +238,37 @@ fn tera_kind_label(kind: &SourceNodeKind) -> &'static str {
     }
 }
 
-fn source_location_label(location: Option<&ProjectSourceEditLocation>) -> String {
-    match location {
-        Some(location) if location.column > 0 => {
-            format!("{}:{}:{}", location.file, location.line, location.column)
-        }
-        Some(location) => format!("{}:{}", location.file, location.line),
-        None => "fără locație".to_string(),
-    }
-}
-
 fn tera_source_missing_message(intent: &ProjectTeraDeleteIntent) -> String {
     let id = intent
         .target_source_id
         .as_deref()
         .unwrap_or("fără Source ID");
-    let loc = source_location_label(intent.target_location.as_ref());
     let kind = intent.target_kind.as_deref().unwrap_or("fără kind");
     let label = intent.target_label.as_deref().unwrap_or("fără label");
     format!(
-        "Nu am putut ancora nodul Tera în Project Model. Source ID: {id}; locație: {loc}; kind: {kind}; label: {label}."
+        "Nu am putut ancora nodul Tera în Project Model. SourceNodeId: {id}; kind: {kind}; label: {label}."
     )
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::{project_model::build_project_model, source_graph::model::SourceNodeKind};
+    use crate::{
+        project_model::test_support::ProjectModelTestFixture, source_graph::model::SourceNodeKind,
+    };
 
     use super::*;
 
     #[test]
     fn plan_tera_delete_removes_include_line() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<main>\n",
@@ -335,9 +277,8 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
-        let partial_path = root.join("templates/partials/card.html");
-        let partial_before = fs::read_to_string(&partial_path).unwrap();
+        let projection_before = fixture.projection();
+        let model = fixture.build_model().unwrap();
         let include = tera_node(
             &model,
             SourceNodeKind::Include,
@@ -348,7 +289,6 @@ mod tests {
             &model,
             &ProjectTeraDeleteIntent {
                 target_source_id: Some(include.id.clone()),
-                target_location: None,
                 target_kind: Some("include".to_string()),
                 target_label: Some(include.label.clone()),
             },
@@ -361,15 +301,15 @@ mod tests {
         assert_eq!(patch.source_start_line, 3);
         assert_eq!(patch.source_end_line, 3);
         assert_eq!(patch.line_shift, -1);
-        assert_eq!(fs::read_to_string(partial_path).unwrap(), partial_before);
+        assert_eq!(fixture.projection(), projection_before);
         fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn plan_tera_delete_removes_loop_with_set_prelude_from_source_graph_range() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "{% set cards = section.pages %}\n",
@@ -379,7 +319,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let loop_node = model
             .source_graph
             .nodes
@@ -391,11 +331,6 @@ mod tests {
             &model,
             &ProjectTeraDeleteIntent {
                 target_source_id: Some(loop_node.id.clone()),
-                target_location: Some(ProjectSourceEditLocation {
-                    file: loop_node.file.clone(),
-                    line: loop_node.range.as_ref().unwrap().line,
-                    column: loop_node.range.as_ref().unwrap().column,
-                }),
                 target_kind: Some("for".to_string()),
                 target_label: Some(loop_node.label.clone()),
             },
@@ -410,10 +345,10 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_delete_rejects_contradictory_or_stale_identity_for_include_siblings() {
+    fn plan_tera_delete_uses_only_exact_source_id_and_rejects_stale_identity() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "{% include \"partials/a.html\" %}\n",
@@ -421,30 +356,33 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let first = tera_node(&model, SourceNodeKind::Include, "include partials/a.html");
         let second = tera_node(&model, SourceNodeKind::Include, "include partials/b.html");
-        let second_range = second.range.as_ref().expect("include should have range");
-        let second_location = ProjectSourceEditLocation {
-            file: second.file.clone(),
-            line: second_range.line,
-            column: second_range.column,
-        };
+        let exact = plan_tera_delete(
+            &model,
+            &ProjectTeraDeleteIntent {
+                target_source_id: Some(first.id.clone()),
+                target_kind: Some("include".to_string()),
+                target_label: Some(second.label.clone()),
+            },
+        );
+        assert!(exact.allowed, "{:?}", exact.diagnostic);
+        let patch = exact.patch.expect("exact SourceNodeId delete patch");
+        assert_eq!(patch.resolved_target_id, first.id);
+        assert!(!patch.contents.contains("partials/a.html"));
+        assert!(patch.contents.contains("partials/b.html"));
 
-        for target_source_id in [Some(first.id.clone()), Some("stale-source-id".to_string())] {
-            let plan = plan_tera_delete(
-                &model,
-                &ProjectTeraDeleteIntent {
-                    target_source_id,
-                    target_location: Some(second_location.clone()),
-                    target_kind: Some("include".to_string()),
-                    target_label: Some(second.label.clone()),
-                },
-            );
-
-            assert!(!plan.allowed, "{:?}", plan.diagnostic);
-            assert!(plan.patch.is_none());
-        }
+        let stale = plan_tera_delete(
+            &model,
+            &ProjectTeraDeleteIntent {
+                target_source_id: Some("stale-source-id".to_string()),
+                target_kind: Some("include".to_string()),
+                target_label: Some(second.label.clone()),
+            },
+        );
+        assert!(!stale.allowed, "{:?}", stale.diagnostic);
+        assert!(stale.patch.is_none());
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -452,14 +390,16 @@ mod tests {
     #[test]
     fn plan_tera_delete_blocks_missing_anchor() {
         let root = unique_test_dir();
-        write_project(&root, "{% block content %}<main></main>{% endblock %}\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = project_fixture(
+            root.clone(),
+            "{% block content %}<main></main>{% endblock %}\n",
+        );
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_tera_delete(
             &model,
             &ProjectTeraDeleteIntent {
                 target_source_id: Some("missing".to_string()),
-                target_location: None,
                 target_kind: Some("include".to_string()),
                 target_label: Some("include missing.html".to_string()),
             },
@@ -476,8 +416,8 @@ mod tests {
     #[test]
     fn plan_tera_delete_blocks_template_level_directives() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% extends \"base.html\" %}\n",
                 "{% import \"macros.html\" as macros %}\n",
@@ -485,7 +425,7 @@ mod tests {
                 "{% block content %}<main></main>{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let cases = [
             (SourceNodeKind::Extends, "extends base.html", "extends"),
             (SourceNodeKind::Import, "import macros.html", "import"),
@@ -499,7 +439,6 @@ mod tests {
                 &model,
                 &ProjectTeraDeleteIntent {
                     target_source_id: Some(node.id.clone()),
-                    target_location: None,
                     target_kind: Some(kind_label.to_string()),
                     target_label: Some(node.label.clone()),
                 },
@@ -515,15 +454,15 @@ mod tests {
     #[test]
     fn plan_tera_delete_handles_filter_as_a_specialized_scope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "{% filter upper %}{{ title }}{% endfilter %}\n",
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let node = model
             .source_graph
             .nodes
@@ -535,7 +474,6 @@ mod tests {
             &model,
             &ProjectTeraDeleteIntent {
                 target_source_id: Some(node.id.clone()),
-                target_location: None,
                 target_kind: Some("filter".to_string()),
                 target_label: Some(node.label.clone()),
             },
@@ -553,8 +491,8 @@ mod tests {
     #[test]
     fn plan_tera_delete_blocks_raw_code_only_scope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "{% raw %}\n",
@@ -563,7 +501,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let node = model
             .source_graph
             .nodes
@@ -575,11 +513,6 @@ mod tests {
             &model,
             &ProjectTeraDeleteIntent {
                 target_source_id: Some(node.id.clone()),
-                target_location: Some(ProjectSourceEditLocation {
-                    file: node.file.clone(),
-                    line: node.range.as_ref().unwrap().line,
-                    column: node.range.as_ref().unwrap().column,
-                }),
                 target_kind: Some("raw".to_string()),
                 target_label: Some(node.label.clone()),
             },
@@ -599,25 +532,10 @@ mod tests {
             .unwrap()
     }
 
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates/partials")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
-        fs::write(
-            root.join("templates/partials/card.html"),
-            "<article></article>\n",
-        )
-        .unwrap();
+    fn project_fixture(root: PathBuf, template: &str) -> ProjectModelTestFixture {
+        let mut fixture = ProjectModelTestFixture::standard_zola(root, template).unwrap();
+        fixture.source("templates/partials/card.html", "<article></article>\n");
+        fixture
     }
 
     fn unique_test_dir() -> PathBuf {

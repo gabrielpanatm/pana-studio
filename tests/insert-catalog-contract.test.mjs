@@ -132,19 +132,20 @@ test("bridge-ul iframe păstrează identitatea tuturor blocurilor native până 
     "normalizedInsertElementPayload",
     "resetPreviewInsertDragState",
   );
-  for (const [blockId, tag] of [
-    ["counter", "span"],
-    ["accordion", "div"],
-    ["tabs", "div"],
-    ["dialog", "div"],
-    ["offcanvas", "div"],
-    ["nav-menu", "nav"],
+  for (const [blockId, tag, blockKind] of [
+    ["icon", "svg", "static"],
+    ["counter", "span", "js"],
+    ["accordion", "div", "js"],
+    ["tabs", "div", "js"],
+    ["dialog", "div", "js"],
+    ["offcanvas", "div", "js"],
+    ["nav-menu", "nav", "js"],
   ]) {
     const bridged = normalize({
       id: `block:${blockId}`,
       kind: "block",
       blockId,
-      blockKind: "js",
+      blockKind,
       tag,
       label: blockId,
       text: "",
@@ -154,7 +155,7 @@ test("bridge-ul iframe păstrează identitatea tuturor blocurilor native până 
 
     assert.equal(bridged.kind, "block");
     assert.equal(bridged.blockId, blockId);
-    assert.equal(bridged.blockKind, "js");
+    assert.equal(bridged.blockKind, blockKind);
 
     let request = null;
     await handlePreviewInsertDrop({
@@ -164,7 +165,6 @@ test("bridge-ul iframe păstrează identitatea tuturor blocurilor native până 
       },
       setGlobalStatus() {},
     }, {
-      targetSelector: "main",
       targetSessionId: "session-1",
       targetSourceId: "source-main",
       targetTag: "main",
@@ -174,7 +174,7 @@ test("bridge-ul iframe păstrează identitatea tuturor blocurilor native până 
 
     assert.equal(request?.element.kind, "block");
     assert.equal(request?.element.blockId, blockId);
-    assert.equal(request?.element.blockKind, "js");
+    assert.equal(request?.element.blockKind, blockKind);
   }
 });
 
@@ -253,7 +253,6 @@ test("același drop Tera aflat în curs produce o singură mutație Rust", async
     setGlobalStatus() {},
   };
   const payload = {
-    targetSelector: "article.listing-item",
     targetSessionId: "session-1",
     targetSourceId: "source-article",
     targetTag: "article",

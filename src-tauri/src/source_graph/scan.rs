@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fs,
     path::{Path, PathBuf},
 };
 use zola_config::Config;
@@ -21,8 +20,9 @@ mod template;
 use crate::{
     kernel::project_workspace::WorkspaceProjectionSnapshot,
     localization::LocalizedDiagnostic,
-    project::{is_zola_project, zola_project_root},
+    project::zola_project_root,
     source_graph::{
+        identity::initialize_runtime_source_node_ids,
         model::{
             SourceDiagnosticSeverity, SourceGraph, SourceGraphAsset, SourceGraphDataFile,
             SourceGraphScript, SourceGraphStyle, SourceGraphTemplate, SourcePageKind,
@@ -32,18 +32,17 @@ use crate::{
             builder::SourceGraphBuilder,
             data_file::{scan_data_file, ZOLA_DATA_FILE_EXTENSIONS},
             files::{
-                apply_virtual_file_projection, collect_all_files, collect_files_with_extension,
-                collect_files_with_extensions, relative_project_path,
+                apply_virtual_file_projection, relative_project_path,
                 require_safe_deleted_source_paths, require_safe_draft_source_paths,
                 require_safe_scan_root,
             },
             page::scan_content_page,
             relations::{
-                add_template_asset_relations, add_template_content_relations,
-                add_template_load_data_relations, add_template_relations,
-                add_template_script_relations, add_template_style_relations, asset_reference_map,
-                block_node_map, content_node_map, data_file_reference_map, template_node_map,
-                template_summary_map,
+                add_style_asset_relations, add_template_asset_relations,
+                add_template_content_relations, add_template_load_data_relations,
+                add_template_relations, add_template_script_relations,
+                add_template_style_relations, asset_reference_map, block_node_map,
+                content_node_map, data_file_reference_map, template_node_map, template_summary_map,
             },
             structured_document::scan_structured_toml_document,
             style::{scan_style, style_scope_for_file},
@@ -60,54 +59,39 @@ pub(crate) use incremental::{
     SourceGraphIncrementalTemplateReport,
 };
 
-pub fn build_source_graph(project_root: &Path) -> Result<SourceGraph, String> {
-    build_source_graph_with_drafts(project_root, &HashMap::new())
-}
-
-pub fn build_source_graph_with_drafts(
-    project_root: &Path,
-    draft_sources: &HashMap<String, String>,
-) -> Result<SourceGraph, String> {
-    build_source_graph_with_projection(project_root, draft_sources, &HashSet::new())
-}
-
-pub fn build_source_graph_with_projection(
-    project_root: &Path,
-    draft_sources: &HashMap<String, String>,
-    deleted_sources: &HashSet<String>,
-) -> Result<SourceGraph, String> {
-    build_source_graph_internal(project_root, draft_sources, deleted_sources, None)
-}
-
 pub fn build_source_graph_from_workspace_projection(
     project_root: &Path,
     projection: &WorkspaceProjectionSnapshot,
 ) -> Result<SourceGraph, String> {
-    build_source_graph_internal(
-        project_root,
-        &projection.source_texts,
-        &projection.deleted_sources,
-        Some(projection),
-    )
+    build_source_graph_internal(project_root, projection, true)
+}
+
+/// Audit needs a best-effort graph: project defects remain graph diagnostics
+/// and must not abort the complete provider run. Projection identity and path
+/// safety errors still return `Err` before any receipt can be produced.
+pub(crate) fn build_source_graph_for_audit_from_workspace_projection(
+    project_root: &Path,
+    projection: &WorkspaceProjectionSnapshot,
+) -> Result<SourceGraph, String> {
+    build_source_graph_internal(project_root, projection, false)
 }
 
 fn build_source_graph_internal(
     project_root: &Path,
-    draft_sources: &HashMap<String, String>,
-    deleted_sources: &HashSet<String>,
-    workspace_projection: Option<&WorkspaceProjectionSnapshot>,
+    projection: &WorkspaceProjectionSnapshot,
+    fail_on_source_error: bool,
 ) -> Result<SourceGraph, String> {
+    let draft_sources = &projection.source_texts;
+    let deleted_sources = &projection.deleted_sources;
     let root = project_root
         .canonicalize()
         .map_err(|error| format!("Nu am putut rezolva folderul proiectului: {}", error))?;
-    if let Some(projection) = workspace_projection {
-        if root != Path::new(&projection.project_root) {
-            return Err(format!(
-                "Source Graph a refuzat proiecția pentru alt root: {} != {}.",
-                root.display(),
-                projection.project_root
-            ));
-        }
+    if root != Path::new(&projection.project_root) {
+        return Err(format!(
+            "Source Graph a refuzat proiecția pentru alt root: {} != {}.",
+            root.display(),
+            projection.project_root
+        ));
     }
     let zola_root = zola_project_root(&root);
     let _ = require_safe_scan_root(&zola_root)?;
@@ -116,44 +100,18 @@ fn build_source_graph_internal(
     let projected_config = ["zola.toml", "config.toml"]
         .iter()
         .find_map(|path| draft_sources.get(*path));
-    let route_config_source = projected_config.cloned().or_else(|| {
-        ["zola.toml", "config.toml"]
-            .iter()
-            .find_map(|name| fs::read_to_string(zola_root.join(name)).ok())
-    });
+    let route_config_source = projected_config.cloned();
     let route_config = route_config_source
         .as_deref()
         .and_then(|source| Config::parse(source).ok());
-    let theme_resolver = match workspace_projection {
-        Some(_) => ZolaThemeResolver::new(
-            projected_config.and_then(|source| active_theme_from_source(source)),
-        ),
-        None => ZolaThemeResolver::for_root(&zola_root),
-    };
+    let theme_resolver = ZolaThemeResolver::new(
+        projected_config.and_then(|source| active_theme_from_source(source)),
+    );
     let active_theme = theme_resolver.active_theme().map(str::to_string);
     let mut builder = SourceGraphBuilder::new(&root, &zola_root, active_theme.clone());
-    let output_root = match crate::source_graph::zola::resolve_zola_output_root(
-        &root,
-        &zola_root,
-        projected_config.map(String::as_str),
-    ) {
-        Ok(path) => Some(path),
-        Err(error) => {
-            builder.add_diagnostic(
-                SourceDiagnosticSeverity::Warning,
-                LocalizedDiagnostic::new("source-graph-output-root-failed")
-                    .with_argument("details", error),
-                None,
-                None,
-            );
-            None
-        }
-    };
-
-    let is_zola = match workspace_projection {
-        Some(_) => projected_config.is_some(),
-        None => is_zola_project(&root),
-    };
+    // Generated output is outside the immutable editable workspace.
+    let output_root: Option<PathBuf> = None;
+    let is_zola = projected_config.is_some();
     if !is_zola {
         builder.add_diagnostic(
             SourceDiagnosticSeverity::Warning,
@@ -161,7 +119,7 @@ fn build_source_graph_internal(
             None,
             None,
         );
-        return Ok(builder.finish(
+        let mut graph = builder.finish(
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -169,56 +127,20 @@ fn build_source_graph_internal(
             Vec::new(),
             Vec::new(),
             Vec::new(),
-        ));
+        );
+        initialize_runtime_source_node_ids(&mut graph, &projection.runtime_session_id)?;
+        return Ok(graph);
     }
 
-    let mut content_files = if workspace_projection.is_some() {
-        Vec::new()
-    } else {
-        collect_files_with_extension(&zola_root.join("content"), "md")?
-    };
-    let mut template_files = if workspace_projection.is_some() {
-        Vec::new()
-    } else {
-        collect_files_with_extensions(&zola_root.join("templates"), &["html", "md"])?
-    };
-    let mut style_files = if workspace_projection.is_some() {
-        Vec::new()
-    } else {
-        let mut files = collect_files_with_extension(&zola_root.join("sass"), "scss")?;
-        files.extend(collect_files_with_extensions(
-            &zola_root.join("static"),
-            &["css", "scss"],
-        )?);
-        files
-    };
-    let mut asset_files = if workspace_projection.is_some() {
-        Vec::new()
-    } else {
-        collect_all_files(&zola_root.join("static"))?
-    };
-    let mut data_file_paths = if workspace_projection.is_some() {
-        Vec::new()
-    } else {
-        collect_files_with_extensions(&zola_root.join("date"), ZOLA_DATA_FILE_EXTENSIONS)?
-    };
+    let mut content_files = Vec::new();
+    let mut template_files = Vec::new();
+    let mut style_files = Vec::new();
+    let mut asset_files = Vec::new();
+    let mut data_file_paths = Vec::new();
 
     let mut theme_template_files = Vec::new();
     let mut theme_style_files = Vec::new();
     let mut theme_asset_files = Vec::new();
-    if let Some(theme) = active_theme.as_ref() {
-        let theme_root = zola_root.join("themes").join(theme);
-        if workspace_projection.is_none() {
-            theme_template_files =
-                collect_files_with_extensions(&theme_root.join("templates"), &["html", "md"])?;
-            theme_style_files = collect_files_with_extension(&theme_root.join("sass"), "scss")?;
-            theme_style_files.extend(collect_files_with_extensions(
-                &theme_root.join("static"),
-                &["css", "scss"],
-            )?);
-            theme_asset_files = collect_all_files(&theme_root.join("static"))?;
-        }
-    }
     apply_virtual_file_projection(
         &root,
         &zola_root.join("content"),
@@ -302,16 +224,14 @@ fn build_source_graph_internal(
             &mut theme_asset_files,
         )?;
     }
-    if let Some(projection) = workspace_projection {
-        add_workspace_manifest_only_paths(
-            &root,
-            active_theme.as_deref(),
-            projection,
-            &mut asset_files,
-            &mut theme_asset_files,
-            &mut data_file_paths,
-        )?;
-    }
+    add_workspace_manifest_only_paths(
+        &root,
+        active_theme.as_deref(),
+        projection,
+        &mut asset_files,
+        &mut theme_asset_files,
+        &mut data_file_paths,
+    )?;
 
     let mut templates = Vec::new();
     for path in template_files {
@@ -344,7 +264,7 @@ fn build_source_graph_internal(
         output_root: output_root.as_deref(),
         projected_sources: draft_sources,
         deleted_sources,
-        exact_workspace_projection: workspace_projection.is_some(),
+        exact_workspace_projection: true,
     };
     let mut resolved_data_files = BTreeMap::new();
     for path in data_file_paths {
@@ -411,6 +331,7 @@ fn build_source_graph_internal(
             &path,
             crate::source_graph::model::SourceOrigin::Local,
             None,
+            draft_sources,
             &mut builder,
         ));
     }
@@ -420,6 +341,7 @@ fn build_source_graph_internal(
             &path,
             crate::source_graph::model::SourceOrigin::Theme,
             active_theme.clone(),
+            draft_sources,
             &mut builder,
         ));
     }
@@ -495,6 +417,22 @@ fn build_source_graph_internal(
         &mut builder,
     );
     add_template_asset_relations(&templates, &asset_node_by_reference, &mut builder);
+    add_style_asset_relations(&styles, &asset_node_by_reference, &mut builder);
+
+    let asset_reference_eligible = templates
+        .iter()
+        .map(|template| template.asset_reference_eligible)
+        .chain(styles.iter().map(|style| style.asset_reference_eligible))
+        .sum::<usize>();
+    let asset_reference_unanalysable = templates
+        .iter()
+        .map(|template| template.asset_reference_unanalysable)
+        .chain(
+            styles
+                .iter()
+                .map(|style| style.asset_reference_unanalysable),
+        )
+        .sum::<usize>();
 
     let section_page_templates =
         collect_section_page_templates(&root, &zola_root, &content_files, draft_sources);
@@ -585,9 +523,7 @@ fn build_source_graph_internal(
     if let Some(config_path) = ["zola.toml", "config.toml"]
         .iter()
         .map(|name| root.join(name))
-        .find(|path| {
-            path.is_file() || draft_sources.contains_key(&relative_project_path(&root, path))
-        })
+        .find(|path| draft_sources.contains_key(&relative_project_path(&root, path)))
     {
         structured_documents.push(scan_structured_toml_document(
             &root,
@@ -599,9 +535,7 @@ fn build_source_graph_internal(
     }
     if let Some(theme) = active_theme.as_ref() {
         let theme_config = zola_root.join("themes").join(theme).join("theme.toml");
-        if theme_config.is_file()
-            || draft_sources.contains_key(&relative_project_path(&root, &theme_config))
-        {
+        if draft_sources.contains_key(&relative_project_path(&root, &theme_config)) {
             structured_documents.push(scan_structured_toml_document(
                 &root,
                 &theme_config,
@@ -621,36 +555,45 @@ fn build_source_graph_internal(
         graph_data_files,
         structured_documents,
     );
+    graph.asset_reference_coverage = crate::source_graph::model::SourceAssetReferenceCoverage {
+        eligible: asset_reference_eligible,
+        analyzed: asset_reference_eligible.saturating_sub(asset_reference_unanalysable),
+        unanalysable: asset_reference_unanalysable,
+    };
+    initialize_runtime_source_node_ids(&mut graph, &projection.runtime_session_id)?;
     graph.component_graph = crate::source_graph::component_graph::build_component_graph(&graph);
     graph.block_graph = crate::blocks::graph::build_block_graph(&graph);
     graph.content_models =
-        crate::kernel::content_models::build_content_model_catalog_with_deletions(
+        crate::kernel::content_models::build_content_model_catalog_from_workspace_projection(
             &root,
             draft_sources,
             deleted_sources,
             &graph,
         );
-    graph.listing_items = crate::kernel::listing_items::build_listing_item_catalog(
-        &root,
-        draft_sources,
-        deleted_sources,
-        &graph,
-    );
-    graph.dynamic_widget_graph = crate::kernel::dynamic_widgets::build_dynamic_widget_graph(
-        &root,
-        draft_sources,
-        deleted_sources,
-        &graph,
-    );
+    graph.listing_items =
+        crate::kernel::listing_items::build_listing_item_catalog_from_workspace_projection(
+            &root,
+            draft_sources,
+            deleted_sources,
+            &graph,
+        );
+    graph.dynamic_widget_graph =
+        crate::kernel::dynamic_widgets::build_dynamic_widget_graph_from_workspace_projection(
+            &root,
+            draft_sources,
+            deleted_sources,
+            &graph,
+        );
     graph.markdown_projections = crate::source_graph::markdown::build_markdown_projections(&graph);
-    let read_error = graph
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| matches!(diagnostic.severity, SourceDiagnosticSeverity::Error))
-        .next();
-    if let Some(read_error) = read_error {
-        return Err(serde_json::to_string(&read_error.diagnostic)
-            .unwrap_or_else(|_| read_error.diagnostic.code.clone()));
+    if fail_on_source_error {
+        let read_error = graph
+            .diagnostics
+            .iter()
+            .find(|diagnostic| matches!(diagnostic.severity, SourceDiagnosticSeverity::Error));
+        if let Some(read_error) = read_error {
+            return Err(serde_json::to_string(&read_error.diagnostic)
+                .unwrap_or_else(|_| read_error.diagnostic.code.clone()));
+        }
     }
     Ok(graph)
 }
@@ -672,6 +615,9 @@ fn graph_template_from_summary(template: TemplateSummary) -> SourceGraphTemplate
         internal_links: template.internal_links,
         asset_urls: template.asset_urls,
         asset_hashes: template.asset_hashes,
+        literal_asset_references: template.literal_asset_references,
+        asset_reference_eligible: template.asset_reference_eligible,
+        asset_reference_unanalysable: template.asset_reference_unanalysable,
         data_loads: template.data_loads,
         image_metadata: template.image_metadata,
         image_resizes: template.image_resizes,
@@ -709,10 +655,7 @@ fn collect_section_page_templates(
         })
         .filter_map(|path| {
             let file = relative_project_path(project_root, path);
-            let source = draft_sources
-                .get(&file)
-                .cloned()
-                .or_else(|| fs::read_to_string(path).ok())?;
+            let source = draft_sources.get(&file)?.clone();
             let template = parse_zola_content_frontmatter(&source).page_template?;
             Some(SectionPageTemplateBinding {
                 directory: content_directory(zola_root, path)?,
@@ -823,6 +766,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use crate::project_model::test_support::ProjectModelTestFixture;
     use crate::source_graph::model::{
         ComponentDefinitionKind, ComponentDependencyKind, SourceNodeKind, SourceOrigin,
         SourceRelationKind, SourceStyleScope,
@@ -846,12 +790,12 @@ mod tests {
             "{% block content %}<main></main>{% endblock %}\n",
         )
         .unwrap();
-        let drafts = HashMap::from([(
-            "templates/partials/hero.html".to_string(),
-            "<section class=\"hero\"></section>\n".to_string(),
-        )]);
-
-        let graph = build_source_graph_with_drafts(&root, &drafts).unwrap();
+        let mut fixture = ProjectModelTestFixture::from_integration_disk_boundary(&root).unwrap();
+        fixture.draft(
+            "templates/partials/hero.html",
+            "<section class=\"hero\"></section>\n",
+        );
+        let graph = fixture.build_source_graph().unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert!(graph
@@ -881,7 +825,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         let page = graph
             .templates
             .iter()
@@ -921,18 +865,14 @@ mod tests {
         fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
         fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
         fs::write(root.join("templates/index.html"), "<main>Inițial</main>").unwrap();
-        let drafts = HashMap::from([
-            (
-                "templates/index.html".to_string(),
-                r#"{% set site = load_data(path="content/site.toml") %}"#.to_string(),
-            ),
-            (
-                "content/site.toml".to_string(),
-                "titlu = \"Draft\"\n".to_string(),
-            ),
-        ]);
-
-        let graph = build_source_graph_with_drafts(&root, &drafts).unwrap();
+        let mut fixture = ProjectModelTestFixture::from_integration_disk_boundary(&root).unwrap();
+        fixture
+            .draft(
+                "templates/index.html",
+                r#"{% set site = load_data(path="content/site.toml") %}"#,
+            )
+            .draft("content/site.toml", "titlu = \"Draft\"\n");
+        let graph = fixture.build_source_graph().unwrap();
         let data_file = graph
             .data_files
             .iter()
@@ -957,10 +897,13 @@ mod tests {
         fs::create_dir_all(root.join("content")).unwrap();
         fs::create_dir_all(root.join("templates")).unwrap();
         fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
-        let drafts =
-            HashMap::from([("../outside.html".to_string(), "<main></main>\n".to_string())]);
+        let fixture = ProjectModelTestFixture::from_integration_disk_boundary(&root).unwrap();
+        let mut projection = fixture.projection();
+        projection
+            .source_texts
+            .insert("../outside.html".to_string(), "<main></main>\n".to_string());
 
-        let error = match build_source_graph_with_drafts(&root, &drafts) {
+        let error = match build_source_graph_from_workspace_projection(&root, &projection) {
             Ok(_) => panic!("unsafe draft path should be rejected"),
             Err(error) => error,
         };
@@ -980,7 +923,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = match build_source_graph(&root) {
+        let error = match build_graph_from_integration_disk(&root) {
             Ok(_) => panic!("invalid TOML frontmatter should return a diagnostic"),
             Err(error) => error,
         };
@@ -1042,7 +985,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert_eq!(graph.pages.len(), 1);
@@ -1184,7 +1127,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let routes = graph
@@ -1231,7 +1174,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let section = graph
@@ -1295,7 +1238,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let template = graph
@@ -1379,7 +1322,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let template = graph
@@ -1485,7 +1428,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let template = graph
@@ -1593,7 +1536,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
 
         let by_file = graph
             .data_files
@@ -1625,15 +1568,7 @@ mod tests {
             by_file["content/blog/tabel.csv"].location,
             crate::source_graph::model::SourceDataLocation::Content
         );
-        assert_eq!(
-            by_file["generated/site/cache.yaml"].location,
-            crate::source_graph::model::SourceDataLocation::Output
-        );
-        assert!(
-            !by_file["generated/site/cache.yaml"]
-                .capabilities
-                .can_open_in_code
-        );
+        assert!(!by_file.contains_key("generated/site/cache.yaml"));
         assert_eq!(
             by_file["themes/demo/static/data/tema.xml"].location,
             crate::source_graph::model::SourceDataLocation::Theme
@@ -1665,7 +1600,7 @@ mod tests {
                 .iter()
                 .filter(|relation| relation.kind == SourceRelationKind::DataFileLoad)
                 .count(),
-            6
+            5
         );
         assert!(graph
             .diagnostics
@@ -1683,7 +1618,12 @@ mod tests {
                     && diagnostic.diagnostic.arguments.get("path")
                         == Some(&serde_json::Value::String("missing.json".to_string()))
             ));
-        let stable_graph = build_source_graph(&root).unwrap();
+        assert!(graph.diagnostics.iter().any(|diagnostic| {
+            diagnostic.diagnostic.code == "source-graph-load-data-missing"
+                && diagnostic.diagnostic.arguments.get("path")
+                    == Some(&serde_json::Value::String("cache.yaml".to_string()))
+        }));
+        let stable_graph = build_graph_from_integration_disk(&root).unwrap();
         assert_eq!(
             stable_graph
                 .data_files
@@ -1697,7 +1637,7 @@ mod tests {
     }
 
     #[test]
-    fn load_data_catalog_marks_an_external_output_target_read_only() {
+    fn load_data_catalog_excludes_external_generated_output() {
         let root = unique_test_dir();
         let output_name = format!(
             "pana-source-graph-output-{}-{}",
@@ -1724,18 +1664,16 @@ mod tests {
         .unwrap();
         fs::write(output.join("cache.json"), r#"{"generated":true}"#).unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
-        let data_file = graph
+        let graph = build_graph_from_integration_disk(&root).unwrap();
+        assert!(!graph
             .data_files
             .iter()
-            .find(|data_file| data_file.file == "@output/cache.json")
-            .unwrap();
-        assert_eq!(
-            data_file.location,
-            crate::source_graph::model::SourceDataLocation::Output
-        );
-        assert!(!data_file.capabilities.can_open_in_code);
-        assert!(!data_file.capabilities.can_edit_visual);
+            .any(|data_file| data_file.file == "@output/cache.json"));
+        assert!(graph.diagnostics.iter().any(|diagnostic| {
+            diagnostic.diagnostic.code == "source-graph-load-data-missing"
+                && diagnostic.diagnostic.arguments.get("path")
+                    == Some(&serde_json::Value::String("cache.json".to_string()))
+        }));
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(output).unwrap();
@@ -1765,7 +1703,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let template = graph
@@ -1843,7 +1781,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         assert_eq!(graph.active_theme.as_deref(), Some("test-theme"));
@@ -1929,7 +1867,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let page = graph.pages.iter().find(|page| page.url == "/").unwrap();
@@ -1984,7 +1922,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let partial = graph
@@ -2036,7 +1974,7 @@ mod tests {
         )
         .unwrap();
 
-        let graph = build_source_graph(&root).unwrap();
+        let graph = build_graph_from_integration_disk(&root).unwrap();
         fs::remove_dir_all(&root).unwrap();
 
         let node = |label: &str| {
@@ -2066,10 +2004,76 @@ mod tests {
         let section = node("<section .outer>");
         let article = node("<article .card>");
         let heading = node("<h2>");
+        let conditional = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::If)
+            .unwrap();
+        let title = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::TeraVariable && node.label == "title")
+            .unwrap();
 
         assert_eq!(parent(section).kind, SourceNodeKind::Block);
+        assert_eq!(parent(conditional).id, section.id);
         assert_eq!(parent(article).kind, SourceNodeKind::If);
         assert_eq!(parent(heading).id, article.id);
+        assert_eq!(parent(title).id, heading.id);
+    }
+
+    #[test]
+    fn managed_icon_is_one_atomic_source_graph_block() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("content")).unwrap();
+        fs::create_dir_all(root.join("templates")).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        fs::write(root.join("content/_index.md"), "+++\n+++\n").unwrap();
+        fs::write(
+            root.join("templates/index.html"),
+            concat!(
+                "<main><svg class=\"icon ps-icon-test\" data-pana-block=\"icon\" ",
+                "data-pana-instance=\"icon-test\" data-pana-icon=\"tabler-outline:home\" ",
+                "viewBox=\"0 0 24 24\"><path d=\"M3 12h18\"></path>",
+                "<path d=\"M12 3v18\"></path></svg></main>\n",
+            ),
+        )
+        .unwrap();
+
+        let graph = build_graph_from_integration_disk(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+
+        let icon_root = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == SourceNodeKind::Html
+                    && node.file == "templates/index.html"
+                    && node.label.starts_with("<svg")
+            })
+            .expect("rădăcina iconului");
+        assert!(!graph.nodes.iter().any(|node| {
+            node.kind == SourceNodeKind::Html
+                && node.file == "templates/index.html"
+                && node.label.starts_with("<path")
+        }));
+        let marker = graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::BlockMarker && node.label == "icon")
+            .expect("marker icon");
+        assert_eq!(marker.parent.as_deref(), Some(icon_root.id.as_str()));
+        let instance = graph
+            .block_graph
+            .source_instances
+            .iter()
+            .find(|instance| instance.provider_id == "icon")
+            .expect("instanță icon");
+        assert_eq!(instance.definition_id.as_deref(), Some("native/icon"));
+    }
+
+    fn build_graph_from_integration_disk(root: &Path) -> Result<SourceGraph, String> {
+        ProjectModelTestFixture::from_integration_disk_boundary(root)?.build_source_graph()
     }
 
     fn unique_test_dir() -> PathBuf {

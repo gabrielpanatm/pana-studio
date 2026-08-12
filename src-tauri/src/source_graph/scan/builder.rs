@@ -6,7 +6,7 @@ use std::{
 use crate::{
     localization::LocalizedDiagnostic,
     source_graph::{
-        identity::{source_relation_id, SourceIdentityAssigner},
+        identity::{source_relation_id, ProvisionalSourceNodeIdAllocator},
         model::{
             SourceCapabilities, SourceDiagnosticSeverity, SourceGraph, SourceGraphAsset,
             SourceGraphDataFile, SourceGraphDiagnostic, SourceGraphPage, SourceGraphScript,
@@ -25,7 +25,7 @@ pub(super) struct SourceGraphBuilder {
     relations: Vec<SourceRelation>,
     relation_ids: HashSet<String>,
     diagnostics: Vec<SourceGraphDiagnostic>,
-    identities: SourceIdentityAssigner,
+    provisional_ids: ProvisionalSourceNodeIdAllocator,
 }
 
 impl SourceGraphBuilder {
@@ -39,10 +39,12 @@ impl SourceGraphBuilder {
             relations: Vec::new(),
             relation_ids: HashSet::new(),
             diagnostics: Vec::new(),
-            identities: SourceIdentityAssigner::default(),
+            provisional_ids: ProvisionalSourceNodeIdAllocator::default(),
         }
     }
 
+    // Nodes are appended as complete immutable Source Graph records; fields remain explicit.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn add_node(
         &mut self,
         kind: SourceNodeKind,
@@ -54,7 +56,7 @@ impl SourceGraphBuilder {
         parent: Option<String>,
         capabilities: SourceCapabilities,
     ) -> String {
-        let id = self.identities.next(&file, &kind, &label);
+        let id = self.provisional_ids.next();
 
         if let Some(parent_id) = parent.as_ref() {
             if let Some(parent_node) = self
@@ -134,8 +136,66 @@ impl SourceGraphBuilder {
         }
     }
 
+    pub(super) fn reparent_node(&mut self, node_id: &str, parent: &str) {
+        let Some(node_index) = self.node_indexes.get(node_id).copied() else {
+            return;
+        };
+        let previous_parent = self.nodes[node_index].parent.clone();
+        if previous_parent.as_deref() == Some(parent) {
+            return;
+        }
+        if let Some(previous_parent) = previous_parent {
+            if let Some(parent_node) = self
+                .node_indexes
+                .get(&previous_parent)
+                .and_then(|index| self.nodes.get_mut(*index))
+            {
+                parent_node.children.retain(|child| child != node_id);
+            }
+        }
+        if let Some(parent_node) = self
+            .node_indexes
+            .get(parent)
+            .and_then(|index| self.nodes.get_mut(*index))
+        {
+            if !parent_node.children.iter().any(|child| child == node_id) {
+                parent_node.children.push(node_id.to_string());
+            }
+            self.nodes[node_index].parent = Some(parent.to_string());
+        }
+    }
+
+    fn sort_node_children_by_source_order(&mut self) {
+        let positions = self
+            .nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.id.clone(),
+                    (
+                        node.file.clone(),
+                        node.range
+                            .as_ref()
+                            .map(|range| range.start)
+                            .unwrap_or(usize::MAX),
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        for node in &mut self.nodes {
+            node.children.sort_by(|left, right| {
+                positions
+                    .get(left)
+                    .cmp(&positions.get(right))
+                    .then_with(|| left.cmp(right))
+            });
+        }
+    }
+
+    // Finish receives each independently sorted Source Graph catalog exactly once.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finish(
-        self,
+        mut self,
         mut pages: Vec<SourceGraphPage>,
         mut templates: Vec<SourceGraphTemplate>,
         mut styles: Vec<SourceGraphStyle>,
@@ -144,6 +204,7 @@ impl SourceGraphBuilder {
         mut data_files: Vec<SourceGraphDataFile>,
         mut structured_documents: Vec<SourceStructuredDocument>,
     ) -> SourceGraph {
+        self.sort_node_children_by_source_order();
         pages.sort_by(|left, right| left.file.cmp(&right.file));
         templates.sort_by(|left, right| left.file.cmp(&right.file));
         styles.sort_by(|left, right| left.file.cmp(&right.file));
@@ -152,6 +213,7 @@ impl SourceGraphBuilder {
         data_files.sort_by(|left, right| left.file.cmp(&right.file));
         structured_documents.sort_by(|left, right| left.file.cmp(&right.file));
         SourceGraph {
+            node_index: Default::default(),
             project_root: self.project_root,
             zola_root: self.zola_root,
             active_theme: self.active_theme,
@@ -170,6 +232,7 @@ impl SourceGraphBuilder {
             markdown_projections: Vec::new(),
             nodes: self.nodes,
             relations: self.relations,
+            asset_reference_coverage: Default::default(),
             diagnostics: self.diagnostics,
         }
     }

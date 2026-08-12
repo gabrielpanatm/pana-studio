@@ -64,7 +64,7 @@ platforma pe care a fost construit și testat.
 
 - Linux x86-64;
 - Node.js `20.19` sau mai nou; Node.js 24 LTS este recomandat;
-- Rust stable și Cargo;
+- Rust/Cargo `1.96.1` (instalat automat din `rust-toolchain.toml`);
 - Git;
 - [dependențele de sistem Tauri 2 pentru Linux](https://v2.tauri.app/start/prerequisites/).
 

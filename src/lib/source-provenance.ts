@@ -7,6 +7,7 @@ import type {
   SourceNodeKind,
   SourceRange,
 } from "$lib/types";
+import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
 
 export type WorkbenchSourceRole = "html" | "css" | "js";
 
@@ -20,6 +21,9 @@ export type WorkbenchSourceStatus = {
   openable: boolean;
   definition: EditorSourceReference | null;
   composition: EditorSourceReference | null;
+  primaryMemberId: string | null;
+  selectionMemberIds: string[];
+  selectionMemberCount: number;
 };
 
 function sourceRangeDisplay(file: string, range: SourceRange | null | undefined) {
@@ -53,9 +57,15 @@ function stylesheetLabel(file: string) {
 export function workbenchSourceStatusFromSelection(
   selection: SelectionSnapshot | null,
 ): WorkbenchSourceStatus | null {
-  if (!selection || selection.resolution === "cleared") return null;
+  if (!selection || selectionResolution(selection) === "cleared") return null;
 
-  const { focus, provenance } = selection.projections.status;
+  const focus = selection.focus;
+  const provenance = primarySelectionEntry(selection)?.provenance ?? null;
+  const selectionSet = {
+    primaryMemberId: selection.primaryMemberId,
+    selectionMemberIds: selection.members.map((member) => member.memberId),
+    selectionMemberCount: selection.members.length,
+  };
   if (focus.kind === "cssRule" || focus.kind === "cssProperty") {
     const file = focus.file.trim();
     if (!file) return null;
@@ -69,6 +79,7 @@ export function workbenchSourceStatusFromSelection(
       openable: Boolean(focus.selector),
       definition: provenance?.definition ?? null,
       composition: provenance?.composition ?? null,
+      ...selectionSet,
     };
   }
 
@@ -85,6 +96,7 @@ export function workbenchSourceStatusFromSelection(
       openable: true,
       definition: provenance?.definition ?? null,
       composition: provenance?.composition ?? null,
+      ...selectionSet,
     };
   }
 
@@ -102,6 +114,7 @@ export function workbenchSourceStatusFromSelection(
     openable: source.canOpenInCode,
     definition,
     composition,
+    ...selectionSet,
   };
 }
 

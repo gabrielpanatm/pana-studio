@@ -47,7 +47,7 @@
     DesignTokenCatalogSnapshot,
     DesignTokenSnapshot,
     FileBufferRequestIdentity,
-    FontInventory,
+    FontFaceGraph,
     FontDeliveryDiagnostic,
     FontFamilyRemovalPlan,
     FontRoleAssignment,
@@ -81,7 +81,7 @@
   let selectedClassName = $state("");
   let selectedFontKey = $state("");
   let detailMode = $state<DetailMode>("info");
-  let fontInventory = $state<FontInventory | null>(null);
+  let fontGraph = $state<FontFaceGraph | null>(null);
   let fontRoles = $state<FontRoleAssignment[]>([]);
   let fontDiagnostics = $state<FontDeliveryDiagnostic[]>([]);
   let fontRemovalPlan = $state<FontFamilyRemovalPlan | null>(null);
@@ -161,14 +161,14 @@
       ?? null,
   );
   const visibleFonts = $derived(
-    (fontInventory?.families ?? []).filter((family) => (
+    (fontGraph?.families ?? []).filter((family) => (
       !normalizedQuery
-      || `${family.family} ${family.directory}`.toLocaleLowerCase(l10n.locale).includes(normalizedQuery)
+      || `${family.family} ${family.directories.join(" ")}`.toLocaleLowerCase(l10n.locale).includes(normalizedQuery)
     )),
   );
   const selectedFont = $derived(
-    (fontInventory?.families ?? []).find(
-      (family) => `${family.origin}:${family.directory}` === selectedFontKey,
+    (fontGraph?.families ?? []).find(
+      (family) => family.id === selectedFontKey,
     )
       ?? visibleFonts[0]
       ?? null,
@@ -184,12 +184,18 @@
   const selectedFontPreviewFile = $derived.by(() => {
     if (!selectedFont) return null;
     return [...selectedFont.files].sort((left, right) => {
+      const leftStyle = left.declaredStyle ?? left.style;
+      const leftWeight = left.declaredWeight ?? left.weight;
+      const leftRange = left.declaredWeightRange ?? left.weightRange;
+      const rightStyle = right.declaredStyle ?? right.style;
+      const rightWeight = right.declaredWeight ?? right.weight;
+      const rightRange = right.declaredWeightRange ?? right.weightRange;
       const leftScore = (left.extension === "woff2" ? 0 : 20)
-        + (left.style === "normal" ? 0 : 5)
-        + (left.weight === 400 || (left.weightRange && left.weightRange.start <= 400 && left.weightRange.end >= 400) ? 0 : 2);
+        + (leftStyle === "normal" ? 0 : 5)
+        + (leftWeight === 400 || (leftRange && leftRange.start <= 400 && leftRange.end >= 400) ? 0 : 2);
       const rightScore = (right.extension === "woff2" ? 0 : 20)
-        + (right.style === "normal" ? 0 : 5)
-        + (right.weight === 400 || (right.weightRange && right.weightRange.start <= 400 && right.weightRange.end >= 400) ? 0 : 2);
+        + (rightStyle === "normal" ? 0 : 5)
+        + (rightWeight === 400 || (rightRange && rightRange.start <= 400 && rightRange.end >= 400) ? 0 : 2);
       return leftScore - rightScore;
     })[0] ?? null;
   });
@@ -370,7 +376,7 @@
         || app.kernelProjectSessionId !== runtimeSessionId
         || app.projectWorkspaceSnapshot?.revision !== workspaceRevision
       ) return;
-      fontInventory = manager.inventory;
+      fontGraph = manager.graph;
       fontRoles = manager.roles;
       fontDiagnostics = manager.diagnostics;
     } catch (cause) {
@@ -458,8 +464,8 @@
     resetPanel();
   }
 
-  function selectFont(origin: string, directory: string) {
-    selectedFontKey = `${origin}:${directory}`;
+  function selectFont(id: string) {
+    selectedFontKey = id;
     resetPanel();
   }
 
@@ -688,7 +694,7 @@
           );
           await reloadFontManager();
           const installed = receipt.plan.families[0];
-          if (installed) selectedFontKey = `local:${installed.directory}`;
+          if (installed) selectedFontKey = installed.id;
           app.setGlobalStatus(
             settlement.warnings.length > 0
               ? t("design-local-files-warning", { count: receipt.plan.files.length })
@@ -721,7 +727,7 @@
           { warningLabel: t("design-operation-google-font-install") },
         );
         await reloadFontManager();
-        selectedFontKey = `${receipt.result.family.origin}:${receipt.result.family.directory}`;
+        selectedFontKey = receipt.result.family.id;
         app.setGlobalStatus(
           settlement.warnings.length > 0
             ? t("design-google-font-warning", { family: formName.trim() })
@@ -794,7 +800,7 @@
     try {
       const receipt = await assignFontRole(
         roleId,
-        selectedFont.family,
+        selectedFont.id,
         workspaceIdentity(),
       );
       const settlement = await settleProjectWorkspaceMutation(
@@ -802,7 +808,7 @@
         workspaceMutationAuthorityReceipt(receipt.mutation, receipt.workspace),
         { warningLabel: t("design-operation-font-assignment") },
       );
-      fontInventory = receipt.manager.inventory;
+      fontGraph = receipt.manager.graph;
       fontRoles = receipt.manager.roles;
       fontDiagnostics = receipt.manager.diagnostics;
       app.setGlobalStatus(
@@ -832,13 +838,13 @@
     mutating = true;
     try {
       const family = selectedFont.family;
-      const receipt = await setFontDisplay(family, display, workspaceIdentity());
+      const receipt = await setFontDisplay(selectedFont.id, display, workspaceIdentity());
       const settlement = await settleProjectWorkspaceMutation(
         app,
         workspaceMutationAuthorityReceipt(receipt.mutation, receipt.workspace),
         { warningLabel: t("design-operation-font-display") },
       );
-      fontInventory = receipt.manager.inventory;
+      fontGraph = receipt.manager.graph;
       fontRoles = receipt.manager.roles;
       fontDiagnostics = receipt.manager.diagnostics;
       app.setGlobalStatus(
@@ -865,7 +871,7 @@
         workspaceMutationAuthorityReceipt(receipt.mutation, receipt.workspace),
         { warningLabel: t("design-operation-font-preload") },
       );
-      fontInventory = receipt.manager.inventory;
+      fontGraph = receipt.manager.graph;
       fontRoles = receipt.manager.roles;
       fontDiagnostics = receipt.manager.diagnostics;
       const state = enabled ? t("design-preload-enabled") : t("design-preload-disabled");
@@ -884,7 +890,7 @@
 
   async function planSelectedFontRemoval() {
     if (mutating || fontRemovalPlanning || !selectedFont) return;
-    const selectedKey = `${selectedFont.origin}:${selectedFont.directory}`;
+    const selectedKey = selectedFont.id;
     const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
     if (workspaceRevision === undefined) return;
     formError = "";
@@ -892,12 +898,11 @@
     fontRemovalPlanning = true;
     try {
       const plan = await planFontFamilyRemoval(
-        selectedFont.family,
-        selectedFont.directory,
+        selectedFont.id,
         workspaceIdentity(),
       );
       if (
-        `${selectedFont?.origin}:${selectedFont?.directory}` !== selectedKey
+        selectedFont?.id !== selectedKey
         || app.projectWorkspaceSnapshot?.revision !== workspaceRevision
       ) return;
       fontRemovalPlan = plan;
@@ -915,8 +920,7 @@
     try {
       const family = selectedFont.family;
       const receipt = await removeFontFamily(
-        fontRemovalPlan.family,
-        fontRemovalPlan.directory,
+        fontRemovalPlan.familyId,
         fontRemovalPlan.planToken,
         workspaceIdentity(),
       );
@@ -925,7 +929,7 @@
         workspaceMutationAuthorityReceipt(receipt.mutation, receipt.workspace),
         { warningLabel: t("design-operation-font-remove") },
       );
-      fontInventory = receipt.manager.inventory;
+      fontGraph = receipt.manager.graph;
       fontRoles = receipt.manager.roles;
       fontDiagnostics = receipt.manager.diagnostics;
       selectedFontKey = "";
@@ -979,7 +983,7 @@
       <div><dt>{t("design-view-tokens")}</dt><dd>{l10n.formatNumber(designTokenCatalog?.tokens.length ?? 0)}</dd></div>
       <div><dt>{t("design-view-classes")}</dt><dd>{l10n.formatNumber(app.designClassInventory?.classes.length ?? 0)}</dd></div>
       <div><dt>{t("design-view-stylesheets")}</dt><dd>{l10n.formatNumber(app.sourceGraph?.styles.length ?? 0)}</dd></div>
-      <div><dt>{t("design-view-fonts")}</dt><dd>{l10n.formatNumber(fontInventory?.families.length ?? 0)}</dd></div>
+      <div><dt>{t("design-view-fonts")}</dt><dd>{l10n.formatNumber(fontGraph?.families.length ?? 0)}</dd></div>
     </dl>
   </header>
 
@@ -1119,7 +1123,7 @@
         {/each}
       {:else if fontError}
         <div class="workspace-state error" role="alert">{fontError}</div>
-      {:else if fontInventory}
+      {:else if fontGraph}
         <section class="font-role-overview" aria-label={t("design-font-roles-label")}>
           <header>
             <strong>{t("design-semantic-use")}</strong>
@@ -1134,16 +1138,19 @@
             {/each}
           </div>
         </section>
-        {#each visibleFonts as family (`${family.origin}:${family.directory}`)}
+        {#each visibleFonts as family (family.id)}
           <button
             type="button"
             class="font-row ui-entity-selectable"
-            data-ui-selected={selectedFont?.directory === family.directory && selectedFont?.origin === family.origin ? "true" : undefined}
-            aria-pressed={selectedFont?.directory === family.directory && selectedFont?.origin === family.origin}
-            onclick={() => selectFont(family.origin, family.directory)}
+            data-ui-selected={selectedFont?.id === family.id ? "true" : undefined}
+            aria-pressed={selectedFont?.id === family.id}
+            onclick={() => selectFont(family.id)}
           >
             <span class="resource-icon"><IconTypography size={16} stroke={1.8} /></span>
-            <div><strong>{family.family}</strong><small>{family.directory}</small></div>
+            <div>
+              <strong>{family.family}</strong>
+              <small>{family.directories.join(", ") || family.faces[0]?.url || "—"}</small>
+            </div>
             <span>{t("design-files-count", { count: family.files.length })}</span>
             <span
               class="font-registration"
@@ -1152,7 +1159,13 @@
                 ? t("design-font-registered-in", { stylesheets: family.registration.stylesheets.join(", ") })
                 : t("design-font-unregistered-help")}
             >
-              {family.origin === "local" ? t("design-origin-local") : t("design-origin-theme")} ·
+              {family.delivery === "system"
+                ? t("design-delivery-system")
+                : family.origin === "local"
+                  ? t("design-origin-local")
+                  : family.origin === "theme"
+                    ? t("design-origin-theme")
+                    : t("design-origin-external")} ·
               {family.registration.registered
                 ? (family.registration.managed ? t("design-font-managed") : t("design-font-registered"))
                 : t("design-font-unregistered")}
@@ -1507,8 +1520,19 @@
           <p class="font-preview-error"><IconAlertTriangle size={13} /> {t("design-font-preview-error", { message: fontPreviewError })}</p>
         {/if}
         <dl class="info-grid">
-          <div><dt>{t("design-origin")}</dt><dd>{selectedFont.origin === "local" ? t("design-origin-local") : selectedFont.themeName ?? t("design-origin-theme")}</dd></div>
+          <div><dt>{t("design-origin")}</dt><dd>{selectedFont.origin === "local"
+            ? t("design-origin-local")
+            : selectedFont.origin === "theme"
+              ? selectedFont.themeName ?? t("design-origin-theme")
+              : t("design-origin-external")}</dd></div>
           <div><dt>{t("design-files")}</dt><dd>{l10n.formatNumber(selectedFont.files.length)}</dd></div>
+          <div><dt>{t("design-delivery")}</dt><dd>{selectedFont.delivery === "local"
+            ? t("design-delivery-local")
+            : selectedFont.delivery === "system"
+              ? t("design-delivery-system")
+              : selectedFont.delivery === "external"
+                ? t("design-delivery-external")
+                : t("design-delivery-missing")}</dd></div>
           <div>
             <dt>{t("design-css-registration")}</dt>
             <dd>{selectedFont.registration.registered
@@ -1519,9 +1543,16 @@
           </div>
           <div><dt>{t("design-font-display-policy")}</dt><dd>{selectedFont.registration.displayModes.join(", ") || "—"}</dd></div>
           <div><dt>{t("design-font-variable")}</dt><dd>{selectedFont.files.some((file) => file.axes.length > 0) ? t("design-yes") : t("design-no")}</dd></div>
+          <div><dt>{t("design-romanian-coverage")}</dt><dd>{selectedFont.romanianSupported === null
+            ? "—"
+            : selectedFont.romanianSupported
+              ? t("design-yes")
+              : t("design-no")}</dd></div>
           <div><dt>{t("design-license")}</dt><dd>{selectedFont.license.description || selectedFont.license.url ? t("design-license-metadata") : t("design-license-undeclared")}</dd></div>
         </dl>
-        <div class="source-card"><span>{t("design-directory")}</span><code>{selectedFont.directory}</code></div>
+        {#if selectedFont.directories.length}
+          <div class="source-card"><span>{t("design-directory")}</span><code>{selectedFont.directories.join(", ")}</code></div>
+        {/if}
         {#if selectedFont.registration.stylesheets.length}
           <div class="source-card">
             <span>{t("design-font-face-declarations")}</span>
@@ -1576,7 +1607,10 @@
               <button
                 type="button"
                 class:active={role.family === selectedFont.family}
-                disabled={mutating || !role.assignable || !selectedFont.registration.registered}
+                disabled={mutating
+                  || !role.assignable
+                  || !selectedFont.registration.registered
+                  || selectedFont.delivery === "missing"}
                 title={role.diagnostic ?? t("design-assign-role", {
                   family: selectedFont.family,
                   role: role.label,
@@ -1605,8 +1639,12 @@
           {#each selectedFont.files as file (file.file)}
             <div>
               <span>
-                <strong>{file.subfamily ?? (file.weightRange ? `${file.weightRange.start}–${file.weightRange.end}` : file.weight ?? 400)}</strong>
-                {file.style ?? "normal"}
+                <strong>{file.declaredWeightRange
+                  ? `${file.declaredWeightRange.start}–${file.declaredWeightRange.end}`
+                  : file.declaredWeight
+                    ?? file.subfamily
+                    ?? (file.weightRange ? `${file.weightRange.start}–${file.weightRange.end}` : file.weight ?? 400)}</strong>
+                {file.declaredStyle ?? file.style ?? "normal"}
               </span>
               <small>
                 {file.format.toUpperCase()} · {Math.max(1, Math.round(file.sizeBytes / 1024))} KB

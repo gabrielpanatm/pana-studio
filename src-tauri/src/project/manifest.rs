@@ -170,7 +170,7 @@ pub(crate) fn project_disk_metadata_version_token(metadata: &fs::Metadata) -> St
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        return format!(
+        format!(
             "unix:{}:{}:{}:{}:{}:{}:{}:{}",
             metadata.dev(),
             metadata.ino(),
@@ -180,7 +180,7 @@ pub(crate) fn project_disk_metadata_version_token(metadata: &fs::Metadata) -> St
             metadata.ctime(),
             metadata.ctime_nsec(),
             metadata.mode(),
-        );
+        )
     }
 
     #[cfg(not(unix))]

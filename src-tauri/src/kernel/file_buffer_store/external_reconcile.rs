@@ -252,8 +252,14 @@ impl KernelExternalDiskReconcileReceipt {
 
 #[derive(Clone, Debug)]
 pub(crate) enum CleanExternalReconcilePlanResult {
-    Ready(CleanExternalReconcilePlan),
-    Terminal(KernelExternalDiskReconcileReceipt),
+    Ready(Box<CleanExternalReconcilePlan>),
+    Terminal(Box<KernelExternalDiskReconcileReceipt>),
+}
+
+impl CleanExternalReconcilePlanResult {
+    fn terminal(receipt: KernelExternalDiskReconcileReceipt) -> Self {
+        Self::Terminal(Box::new(receipt))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -349,7 +355,7 @@ pub(crate) fn plan_clean_external_reconcile(
     let requested_paths = match normalize_requested_paths(&input.relative_paths) {
         Ok(paths) => paths,
         Err(message) => {
-            return CleanExternalReconcilePlanResult::Terminal(terminal_receipt(
+            return CleanExternalReconcilePlanResult::terminal(terminal_receipt(
                 operation_id,
                 runtime_session_id.clone(),
                 store.project_root.clone(),
@@ -371,7 +377,7 @@ pub(crate) fn plan_clean_external_reconcile(
             "Reconcilierea a refuzat un proiect stale: request={}, manifest={}, sesiune={}.",
             input.expected_project_root, input.observed_manifest.root, store.project_root
         );
-        return CleanExternalReconcilePlanResult::Terminal(terminal_receipt(
+        return CleanExternalReconcilePlanResult::terminal(terminal_receipt(
             operation_id,
             runtime_session_id.clone(),
             store.project_root.clone(),
@@ -397,7 +403,7 @@ pub(crate) fn plan_clean_external_reconcile(
 
     if input.observed_manifest.truncated {
         let message = "Manifestul extern este trunchiat; reconcilierea automată nu poate demonstra batch-ul complet.".to_string();
-        return CleanExternalReconcilePlanResult::Terminal(terminal_receipt(
+        return CleanExternalReconcilePlanResult::terminal(terminal_receipt(
             operation_id,
             runtime_session_id.clone(),
             store.project_root.clone(),
@@ -428,7 +434,7 @@ pub(crate) fn plan_clean_external_reconcile(
             requested_paths.len(),
             max_paths
         );
-        return CleanExternalReconcilePlanResult::Terminal(terminal_receipt(
+        return CleanExternalReconcilePlanResult::terminal(terminal_receipt(
             operation_id,
             runtime_session_id.clone(),
             store.project_root.clone(),
@@ -454,7 +460,7 @@ pub(crate) fn plan_clean_external_reconcile(
             "FileBufferStore are {} draft(uri); auto-reconcile este all-or-nothing și rămâne blocat.",
             dirty_paths.len()
         );
-        return CleanExternalReconcilePlanResult::Terminal(terminal_receipt(
+        return CleanExternalReconcilePlanResult::terminal(terminal_receipt(
             operation_id,
             runtime_session_id.clone(),
             store.project_root.clone(),
@@ -506,7 +512,7 @@ pub(crate) fn plan_clean_external_reconcile(
 
     if !reload_paths.is_empty() {
         let message = "Schimbarea externă adaugă, șterge sau atinge fișiere text neurmărite; este necesar full reload autoritar.".to_string();
-        return CleanExternalReconcilePlanResult::Terminal(terminal_receipt(
+        return CleanExternalReconcilePlanResult::terminal(terminal_receipt(
             operation_id,
             runtime_session_id.clone(),
             store.project_root.clone(),
@@ -533,7 +539,7 @@ pub(crate) fn plan_clean_external_reconcile(
     let baseline_total_bytes = store.files.values().fold(0u64, |total, entry| {
         total.saturating_add(entry.baseline_text.len() as u64)
     });
-    CleanExternalReconcilePlanResult::Ready(CleanExternalReconcilePlan {
+    CleanExternalReconcilePlanResult::Ready(Box::new(CleanExternalReconcilePlan {
         operation_id,
         session_id: runtime_session_id,
         store_session_id: store.session_id.clone(),
@@ -547,7 +553,7 @@ pub(crate) fn plan_clean_external_reconcile(
         store_loaded_at_ms: store.loaded_at_ms,
         limits: store.limits.clone(),
         baseline_total_bytes,
-    })
+    }))
 }
 
 pub(crate) fn read_clean_external_reconcile_plan(
@@ -1436,7 +1442,7 @@ mod tests {
 
     fn ready(result: CleanExternalReconcilePlanResult) -> CleanExternalReconcilePlan {
         match result {
-            CleanExternalReconcilePlanResult::Ready(plan) => plan,
+            CleanExternalReconcilePlanResult::Ready(plan) => *plan,
             CleanExternalReconcilePlanResult::Terminal(receipt) => {
                 panic!("expected ready plan, got {:?}", receipt.status)
             }
@@ -1445,7 +1451,7 @@ mod tests {
 
     fn terminal(result: CleanExternalReconcilePlanResult) -> KernelExternalDiskReconcileReceipt {
         match result {
-            CleanExternalReconcilePlanResult::Terminal(receipt) => receipt,
+            CleanExternalReconcilePlanResult::Terminal(receipt) => *receipt,
             CleanExternalReconcilePlanResult::Ready(_) => panic!("expected terminal receipt"),
         }
     }

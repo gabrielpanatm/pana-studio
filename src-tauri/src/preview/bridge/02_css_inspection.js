@@ -244,18 +244,19 @@
         className !== EMPTY_TERA_SLOT_CLASS &&
         className !== ACTIVE_DOCUMENT_ROOT_CLASS;
     });
+    var managedIcon = tag === "svg" && element.getAttribute("data-pana-block") === "icon";
     var parentElement =
       element.parentElement && element.parentElement.tagName.toLowerCase() !== "html"
         ? element.parentElement
         : null;
-    var childNodes = Array.prototype.slice
+    var childNodes = managedIcon ? [] : Array.prototype.slice
       .call(element.children)
       .filter(function (child) {
         return child instanceof Element && !isEmptyTeraSlot(child) && !isActiveDocumentRoot(child);
       })
       .slice(0, 24)
       .map(createDomNodeLink);
-    var hasChildElements = Array.prototype.some.call(element.children, function (child) {
+    var hasChildElements = !managedIcon && Array.prototype.some.call(element.children, function (child) {
       return child instanceof Element && !isEmptyTeraSlot(child) && !isActiveDocumentRoot(child);
     });
 
@@ -269,8 +270,8 @@
       title: element.getAttribute("title") || "",
       alt: element.getAttribute("alt") || "",
       classes: classes,
-      text: summarizeElementText(element.textContent),
-      rawText: element.textContent || "",
+      text: managedIcon ? "" : summarizeElementText(element.textContent),
+      rawText: managedIcon ? "" : (element.textContent || ""),
       hasChildElements: hasChildElements,
       rect: {
         width: Math.round(rect.width) + "px",

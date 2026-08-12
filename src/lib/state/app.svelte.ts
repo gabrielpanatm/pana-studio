@@ -19,7 +19,6 @@ import {
 } from "$lib/editor-runtime/preview-runtime";
 import {
   captureCanvasElementObservation,
-  htmlTargetFromPageSection,
   htmlTargetFromCoordinatedSelection,
   type EditorHtmlTarget,
   type EditorTeraTarget,
@@ -46,6 +45,10 @@ import {
   applySelectionIntent as applySelectionIntentInRust,
   deleteDynamicWidget as deleteDynamicWidgetInRust,
   readEditorNavigationSnapshot,
+  runPublishPreflight as runPublishPreflightInRust,
+  currentPublishPreflightReceipt as currentPublishPreflightReceiptInRust,
+  currentPublishBuildReceipt as currentPublishBuildReceiptInRust,
+  buildForPublish as buildForPublishInRust,
   readSelectionSnapshot,
   readStartupFlow,
   stopVersionPreview,
@@ -76,6 +79,12 @@ import {
   requireCurrentPreviewStructuralSession,
   runInPreviewStructuralLane,
 } from "$lib/kernel/preview-structural-lane";
+import {
+  primarySelectionEditorNodeId,
+  primarySelectionEntry,
+  primarySelectionRenderInstanceId,
+  selectionResolution,
+} from "$lib/kernel/selection-read-model";
 import {
   applyTagChange as applyHtmlTagChange,
   changeElementTag as changeHtmlElementTag,
@@ -113,6 +122,9 @@ import {
   applyImageSourceToHtml as applyImageSourceToHtmlFromController,
   applyZolaImageProcessingToHtml as applyZolaImageProcessingToHtmlFromController,
   applyNativeBlockOptionToHtml as applyNativeBlockOptionToHtmlFromController,
+  applyNativeIconToHtml as applyNativeIconToHtmlFromController,
+  mutateNativeBlockSlotStructure as mutateNativeBlockSlotStructureFromController,
+  moveSelectedHtmlElements,
   applyTextContentToCapturedHtmlTarget,
   captureHtmlActionTarget,
   insertPaletteElementAtTarget as insertPaletteElementAtTargetFromController,
@@ -121,6 +133,7 @@ import {
   type HtmlActionTarget,
   type HtmlActionsControllerHost,
   type ApplyNativeBlockOptionRequest,
+  type ApplyNativeIconRequest,
 } from "$lib/state/html-actions-controller";
 import type { HtmlPaletteElement } from "$lib/project/html-palette";
 import type { ResizeKind } from "$lib/ui/resize";
@@ -164,9 +177,15 @@ import type {
   FileExplorerSnapshot,
   PageSection,
   ProjectDiskManifest,
-  ProjectAuditSnapshot,
+  AuditRefreshResult,
+  AuditFinding,
+  AuditRunMode,
+  AuditRunReceipt,
+  PublishBuildReceipt,
+  PublishPreflightReceipt,
   ProjectFile,
   ProjectBootstrapSourceLocation,
+  SourceRange,
   ProjectMovePosition,
   ProjectLifecycleSnapshot,
   ProjectScan,
@@ -194,6 +213,8 @@ import type {
   InsertCatalogItem,
   InsertCatalogSnapshot,
   BlockSelectionContext,
+  NativeBlockSlotMutationContext,
+  NativeBlockSlotMutationRequest,
   DynamicWidgetProperties,
   DynamicWidgetSelectionContext,
   DynamicWidgetSnapshot,
@@ -206,6 +227,11 @@ import type {
   SourceGraph,
   TemplateWorkbenchPlan,
   SourceGraphNode,
+} from "$lib/types";
+import {
+  AUDIT_FIX_APPLY_SCHEMA_VERSION,
+  AUDIT_RULESET_VERSION,
+  AUDIT_RUN_SCHEMA_VERSION,
 } from "$lib/types";
 import {
   commitFileExplorerOperation as commitFileExplorerOperationInRust,
@@ -420,6 +446,7 @@ import { projectLatestProjectWorkspacePreview } from "$lib/kernel/project-worksp
 import type { ProjectDiskChangeNotice } from "$lib/kernel/project-disk-events";
 import {
   createDesignClass as createDesignClassCommand,
+  applyAuditFix as applyAuditFixInRust,
   createScssVariable,
   createCssRequestIdentity,
   getScssVariables,
@@ -434,6 +461,8 @@ import {
   type PreviewStylesheetPromotionMetrics,
 } from "$lib/project/io";
 import { scannedCacheKey, zolaRelativePath } from "$lib/project/files";
+import { codeSelectionRangeForSourceRange } from "$lib/editor/source-ranges";
+import { auditReceiptIsCurrent } from "$lib/audit/model";
 import {
   cssRuleContextFromSource,
   type CssViewport,
@@ -457,7 +486,6 @@ import {
   clearPreviewSelection as clearPreviewSelectionFromController,
   openSelectedMarkdownContent as openSelectedMarkdownContentFromController,
   openSelectedTeraSource as openSelectedTeraSourceFromController,
-  selectTeraLayerSource as selectTeraLayerSourceFromController,
   setPreviewTeraSelection as setPreviewTeraSelectionFromController,
 } from "$lib/state/app-selection-controller";
 import {
@@ -497,7 +525,6 @@ import {
   deriveCurrentSourcePath,
   deriveCurrentSourceRelativePath,
   deriveHtmlSourceMutationBlockedReason,
-  deriveHtmlSourceNodes,
   deriveIsActiveRenderedPreviewPage,
   deriveIsActivePreviewHtmlSource,
   deriveScannedFilesByRole,
@@ -734,14 +761,16 @@ export class AppState {
   globalStatusExpiryTimer: number | null = null;
   globalStatusKernelTail: Promise<void> = Promise.resolve();
   projectWorkspaceSnapshot = $state<ProjectWorkspaceSnapshot | null>(null);
-  projectAuditSnapshot = $state<ProjectAuditSnapshot | null>(null);
+  projectAuditSnapshot = $state<AuditRunReceipt | null>(null);
+  publishPreflightSnapshot = $state<PublishPreflightReceipt | null>(null);
+  publishBuildSnapshot = $state<PublishBuildReceipt | null>(null);
   projectAuditLoading = $state(false);
   projectAuditError = $state("");
   auditWorkspaceView = $state<"overview" | "runtime">("overview");
   auditObservabilityFocusSerial = $state(0);
   private projectAuditRequestSerial = 0;
   private projectAuditRequestKey = "";
-  private projectAuditRequest: Promise<ProjectAuditSnapshot | null> | null = null;
+  private projectAuditRequest: Promise<AuditRefreshResult> | null = null;
   designClassInventory = $state<DesignClassInventorySnapshot | null>(null);
   designClassInventoryLoading = $state(false);
   designClassInventoryError = $state("");
@@ -841,6 +870,7 @@ export class AppState {
   pendingBootstrapDiagnosticReveal = $state<({
     relativePath: string;
   } & ProjectBootstrapSourceLocation) | null>(null);
+  pendingSourceRangeReveal = $state<{ relativePath: string; range: SourceRange } | null>(null);
   previewDevice = $state<"desktop" | "tablet" | "mobile">("desktop");
   previewZoom = $state(DEFAULT_PREVIEW_ZOOM);
   previewCanvasMode = $state<WorkbenchCanvasMode>("fit");
@@ -941,7 +971,6 @@ export class AppState {
   currentSourceCacheKey = $derived(deriveCurrentSourceCacheKey(this));
   currentHtmlRelativePath = $derived(deriveCurrentHtmlRelativePath(this));
   currentSourceRelativePath = $derived(deriveCurrentSourceRelativePath(this));
-  htmlSourceNodes = $derived(deriveHtmlSourceNodes(this));
 
   // ── Derived: project ──
   scannedPages = $derived(deriveScannedFilesByRole(this, "page"));
@@ -963,39 +992,40 @@ export class AppState {
   coordinatedElementSelection = $derived.by<CoordinatedElementSelection | null>(() => {
     const accepted = this.acceptedSelectionObservation;
     const semantic = this.selectionSnapshot;
+    const primary = primarySelectionEntry(semantic);
     if (
       !accepted
       || !semantic
-      || semantic.resolution !== "resolved"
+      || selectionResolution(semantic) !== "resolved"
       || (
-        semantic.subject?.kind !== "htmlElement"
-        && semantic.subject?.kind !== "runtimeElement"
+        primary?.subject.kind !== "htmlElement"
+        && primary?.subject.kind !== "runtimeElement"
       )
       || accepted.selectionRevision !== semantic.selectionRevision
       || !canvasIdentityEquals(accepted.canvasIdentity, semantic.canvasIdentity)
       || !canvasIdentityEquals(this.activeCanvasIdentity, semantic.canvasIdentity)
-      || accepted.renderInstanceId !== semantic.anchor?.renderInstanceId
+      || accepted.renderInstanceId !== primary?.anchor.renderInstanceId
     ) return null;
     const sourceReference =
-      semantic.provenance?.definition
-      ?? semantic.provenance?.composition
+      primary.provenance.definition
+      ?? primary.provenance.composition
       ?? null;
     return {
       snapshot: semantic,
       documentEpoch: accepted.documentEpoch,
       renderInstanceId: accepted.renderInstanceId,
-      sourceNodeId: semantic.anchor?.sourceNodeId ?? null,
+      sourceNodeId: primary.anchor.sourceNodeId ?? null,
       sourceLocation: sourceReference?.range
         ? {
             file: sourceReference.file,
             line: sourceReference.range.line,
             column: sourceReference.range.column,
           }
-        : semantic.anchor?.file && semantic.anchor.range
+        : primary.anchor.file && primary.anchor.range
           ? {
-              file: semantic.anchor.file,
-              line: semantic.anchor.range.line,
-              column: semantic.anchor.range.column,
+              file: primary.anchor.file,
+              line: primary.anchor.range.line,
+              column: primary.anchor.range.column,
             }
         : null,
       observation: accepted.observation,
@@ -1826,6 +1856,8 @@ export class AppState {
       this.projectAuditRequestKey = "";
       this.projectAuditRequest = null;
       this.projectAuditSnapshot = null;
+      this.publishPreflightSnapshot = null;
+      this.publishBuildSnapshot = null;
       this.projectAuditLoading = false;
       this.projectAuditError = "";
       this.designClassInventorySerial += 1;
@@ -1838,25 +1870,121 @@ export class AppState {
     this.sessionProjectRoot = projectRoot;
   }
 
-  async refreshProjectAudit(force = false): Promise<ProjectAuditSnapshot | null> {
+  isProjectAuditCurrent(receipt: AuditRunReceipt | null = this.projectAuditSnapshot) {
+    return auditReceiptIsCurrent(receipt, {
+      projectRoot: this.sessionProjectRoot,
+      runtimeSessionId: this.kernelProjectSessionId,
+      workspaceRevision: this.projectWorkspaceSnapshot?.revision ?? null,
+    });
+  }
+
+  currentProjectAuditReceipt() {
+    return this.isProjectAuditCurrent() ? this.projectAuditSnapshot : null;
+  }
+
+  isPublishPreflightCurrent(
+    receipt: PublishPreflightReceipt | null = this.publishPreflightSnapshot,
+  ) {
+    const workspace = this.projectWorkspaceSnapshot;
+    return Boolean(
+      receipt
+      && workspace
+      && receipt.projectRoot === this.sessionProjectRoot.trim()
+      && receipt.runtimeSessionId === this.kernelProjectSessionId.trim()
+      && receipt.workspaceRevision === workspace.revision
+      && receipt.diskGeneration === workspace.diskGeneration
+      && receipt.workspaceDirty === this.globalDirtyState.dirty,
+    );
+  }
+
+  currentPublishPreflightReceipt() {
+    return this.isPublishPreflightCurrent() ? this.publishPreflightSnapshot : null;
+  }
+
+  currentPublishBuildReceipt() {
+    const preflight = this.currentPublishPreflightReceipt();
+    const build = this.publishBuildSnapshot;
+    return Boolean(
+      preflight
+      && preflight.status === "ready"
+      && build
+      && build.projectRoot === preflight.projectRoot
+      && build.runtimeSessionId === preflight.runtimeSessionId
+      && build.workspaceRevision === preflight.workspaceRevision
+      && build.diskGeneration === preflight.diskGeneration
+      && build.projectModelRevision === preflight.projectModelRevision
+      && build.deploySettingsRevision === preflight.deploySettingsRevision
+      && build.deploySettingsFingerprint === preflight.deploySettingsFingerprint
+      && build.preflightToken === preflight.preflightToken
+      && build.targetId === preflight.activeTarget?.targetId
+    ) ? build : null;
+  }
+
+  invalidatePublishAuthorization() {
+    this.publishPreflightSnapshot = null;
+    this.publishBuildSnapshot = null;
+  }
+
+  async refreshPublishAuthorization() {
+    const preflight = await currentPublishPreflightReceiptInRust();
+    this.publishPreflightSnapshot = preflight;
+    this.projectAuditSnapshot = preflight?.auditReceipt ?? this.projectAuditSnapshot;
+    this.publishBuildSnapshot = preflight?.status === "ready"
+      ? await currentPublishBuildReceiptInRust()
+      : null;
+    return preflight;
+  }
+
+  async runPublishPreflight() {
+    const receipt = await runPublishPreflightInRust();
+    if (!this.isPublishPreflightCurrent(receipt)) {
+      this.invalidatePublishAuthorization();
+      throw new Error(t("publish-preflight-stale-result"));
+    }
+    this.publishPreflightSnapshot = receipt;
+    this.publishBuildSnapshot = null;
+    this.projectAuditSnapshot = receipt.auditReceipt;
+    this.projectAuditError = "";
+    return receipt;
+  }
+
+  async buildForPublish() {
+    const preflight = this.currentPublishPreflightReceipt();
+    if (!preflight || preflight.status !== "ready") {
+      throw new Error(t("publish-build-requires-preflight"));
+    }
+    const receipt = await buildForPublishInRust(preflight.preflightToken);
+    this.publishBuildSnapshot = receipt;
+    if (!this.currentPublishBuildReceipt()) {
+      this.publishBuildSnapshot = null;
+      throw new Error(t("publish-build-stale-result"));
+    }
+    return receipt;
+  }
+
+  async refreshProjectAudit(
+    force = false,
+    mode: AuditRunMode = "quick",
+  ): Promise<AuditRefreshResult> {
     const projectRoot = this.sessionProjectRoot.trim();
     const runtimeSessionId = this.kernelProjectSessionId.trim();
     const workspaceRevision = this.projectWorkspaceSnapshot?.revision ?? null;
     if (!projectRoot || !runtimeSessionId || workspaceRevision === null) {
       this.projectAuditSnapshot = null;
       this.projectAuditError = "";
-      return null;
+      return { ok: false, error: t("workbench-audit-session-mismatch"), stale: true };
     }
 
-    const requestKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}`;
+    const requestKey = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision}\u0000${mode}`;
     const current = this.projectAuditSnapshot;
     if (
       !force
       && current?.projectRoot === projectRoot
       && current.runtimeSessionId === runtimeSessionId
       && current.workspaceRevision === workspaceRevision
+      && (current.mode === mode || current.mode === "full")
     ) {
-      return current;
+      return { ok: true, receipt: current };
     }
     if (!force && this.projectAuditRequest && this.projectAuditRequestKey === requestKey) {
       return await this.projectAuditRequest;
@@ -1868,13 +1996,18 @@ export class AppState {
     this.projectAuditError = "";
     const request = (async () => {
       try {
-        const snapshot = await readProjectAudit();
+        const snapshot = await readProjectAudit({
+          mode,
+          scope: { kind: "project" },
+          policyOverrides: [],
+          suppressions: [],
+        });
         if (
           serial !== this.projectAuditRequestSerial
           || this.sessionProjectRoot !== projectRoot
           || this.kernelProjectSessionId !== runtimeSessionId
           || this.projectWorkspaceSnapshot?.revision !== workspaceRevision
-        ) return null;
+        ) return { ok: false, error: "", stale: true } as const;
         if (
           snapshot.projectRoot !== projectRoot
           || snapshot.runtimeSessionId !== runtimeSessionId
@@ -1883,11 +2016,14 @@ export class AppState {
           throw new Error(t("workbench-audit-session-mismatch"));
         }
         this.projectAuditSnapshot = snapshot;
-        return snapshot;
+        return { ok: true, receipt: snapshot } as const;
       } catch (error) {
-        if (serial !== this.projectAuditRequestSerial) return null;
-        this.projectAuditError = errorMessage(error);
-        return null;
+        const message = errorMessage(error);
+        if (serial !== this.projectAuditRequestSerial) {
+          return { ok: false, error: message, stale: true } as const;
+        }
+        this.projectAuditError = message;
+        return { ok: false, error: message, stale: false } as const;
       } finally {
         if (serial === this.projectAuditRequestSerial) {
           this.projectAuditLoading = false;
@@ -1898,6 +2034,54 @@ export class AppState {
     })();
     this.projectAuditRequest = request;
     return await request;
+  }
+
+  async applySafeAuditFix(finding: AuditFinding, fixId: string): Promise<boolean> {
+    const snapshot = this.currentProjectAuditReceipt();
+    if (
+      !snapshot
+      || !finding.fixes.some((fix) => fix.id === fixId && fix.applicability === "safe")
+    ) {
+      throw new Error(t("audit-fix-stale"));
+    }
+    const outcome = await runInPreviewStructuralLane(this, async (lease) => {
+      if (
+        lease.projectRoot !== snapshot.projectRoot
+        || lease.sessionId !== snapshot.runtimeSessionId
+        || this.projectWorkspaceSnapshot?.revision !== snapshot.workspaceRevision
+      ) throw new Error(t("audit-fix-stale"));
+      const receipt = await applyAuditFixInRust({
+        schemaVersion: AUDIT_FIX_APPLY_SCHEMA_VERSION,
+        expectedAuditSchemaVersion: AUDIT_RUN_SCHEMA_VERSION,
+        expectedRulesetVersion: AUDIT_RULESET_VERSION,
+        expectedProjectRoot: snapshot.projectRoot,
+        expectedSessionId: snapshot.runtimeSessionId,
+        expectedWorkspaceRevision: snapshot.workspaceRevision,
+        expectedProjectModelRevision: snapshot.projectModelRevision,
+        findingFingerprint: finding.fingerprint,
+        fixId,
+      });
+      requireCurrentPreviewStructuralSession(this, lease);
+      await settleProjectWorkspaceMutation(this, {
+        projectRoot: receipt.workspace.projectRoot,
+        runtimeSessionId: receipt.workspace.runtimeSessionId,
+        mutation: receipt.mutation,
+        workspace: receipt.workspace,
+      }, {
+        preferredRelativePath: finding.primaryLocation?.file ?? this.activeScannedPath,
+        warningLabel: t("audit-fix-operation"),
+      });
+      requireCurrentPreviewStructuralSession(this, lease);
+      this.projectAuditRequestSerial += 1;
+      this.projectAuditRequest = null;
+      this.projectAuditRequestKey = "";
+      this.projectAuditSnapshot = receipt.audit;
+      this.projectAuditError = "";
+      this.invalidatePublishAuthorization();
+      this.setGlobalStatus(t("audit-fix-applied"), "unsaved");
+      return true;
+    });
+    return outcome ?? false;
   }
 
   async refreshDesignClassInventory(
@@ -2820,7 +3004,7 @@ export class AppState {
       identity,
       route,
       this.activeScannedPath,
-      this.selectionSnapshot?.anchor?.renderInstanceId
+      primarySelectionRenderInstanceId(this.selectionSnapshot)
         ?? this.coordinatedElementSelection?.renderInstanceId
         ?? null,
       intent,
@@ -2854,7 +3038,7 @@ export class AppState {
       identity,
       route,
       this.activeScannedPath,
-      this.selectionSnapshot?.anchor?.renderInstanceId
+      primarySelectionRenderInstanceId(this.selectionSnapshot)
         ?? this.coordinatedElementSelection?.renderInstanceId
         ?? null,
       intent,
@@ -2898,7 +3082,7 @@ export class AppState {
       identity,
       route,
       this.activeScannedPath,
-      this.selectionSnapshot?.anchor?.renderInstanceId
+      primarySelectionRenderInstanceId(this.selectionSnapshot)
         ?? this.coordinatedElementSelection?.renderInstanceId
         ?? null,
     );
@@ -2948,24 +3132,25 @@ export class AppState {
     hover: HoverSnapshot | null,
     inspectorSummary: InspectorSelectionSummarySnapshot,
   ) {
-    const previousRenderInstanceId = this.selectionSnapshot?.anchor?.renderInstanceId ?? null;
+    const previousRenderInstanceId = primarySelectionRenderInstanceId(this.selectionSnapshot);
     this.selectionSnapshot = selection;
     this.inspectorSelectionSummary = inspectorSummary;
     this.hoverSnapshot = hover;
 
-    if (selection.resolution === "cleared" || !selection.subject) {
+    const primary = primarySelectionEntry(selection);
+    if (selectionResolution(selection) === "cleared" || !primary) {
       this.acceptedSelectionObservation = null;
       return;
     }
 
     if (
-      selection.subject.kind === "teraBoundary"
-      || selection.subject.kind === "markdownBoundary"
+      primary.subject.kind === "teraBoundary"
+      || primary.subject.kind === "markdownBoundary"
     ) {
       this.acceptedSelectionObservation = null;
     } else {
       const accepted = this.acceptedSelectionObservation;
-      const renderInstanceId = selection.anchor?.renderInstanceId ?? null;
+      const renderInstanceId = primarySelectionRenderInstanceId(selection);
       if (
         !accepted
         || previousRenderInstanceId !== renderInstanceId
@@ -3598,7 +3783,7 @@ export class AppState {
         expectedWorkspaceRevision !== null
         && this.activeCanvasIdentity?.workspaceRevision !== expectedWorkspaceRevision
       ) {
-        const previousAnchor = this.selectionSnapshot?.anchor ?? null;
+        const previousAnchor = primarySelectionEntry(this.selectionSnapshot)?.anchor ?? null;
         const outcome = await projectLatestProjectWorkspacePreview(this, {
           reason: "manual",
           minimumWorkspaceRevision: expectedWorkspaceRevision,
@@ -3615,10 +3800,10 @@ export class AppState {
           { strict: true },
         );
         const currentSelection = this.selectionSnapshot;
-        const currentAnchor = currentSelection?.anchor ?? null;
+        const currentAnchor = primarySelectionEntry(currentSelection)?.anchor ?? null;
         if (
           !currentSelection
-          || currentSelection.resolution !== "resolved"
+          || selectionResolution(currentSelection) !== "resolved"
           || !previousAnchor
           || !currentAnchor
         ) return false;
@@ -3630,11 +3815,6 @@ export class AppState {
           || (
             previousAnchor.sourceNodeId
             && currentAnchor.sourceNodeId === previousAnchor.sourceNodeId
-          )
-          || (
-            previousAnchor.bindingKey
-            && currentAnchor.bindingKey === previousAnchor.bindingKey
-            && currentAnchor.bindingPath === previousAnchor.bindingPath
           ),
         );
         if (!stableAnchorMatches) return false;
@@ -3736,9 +3916,10 @@ export class AppState {
       return;
     }
     if (tab !== "js") return;
+    const provenance = primarySelectionEntry(this.selectionSnapshot)?.provenance;
     const templatePath =
-      this.selectionSnapshot?.provenance?.definition?.file
-      ?? this.selectionSnapshot?.provenance?.composition?.file
+      provenance?.definition?.file
+      ?? provenance?.composition?.file
       ?? this.activeRenderedTemplatePath;
     if (templatePath) {
       this.selectJsBehaviorFromCode({ file: pageJsRelativePath(templatePath) });
@@ -3808,6 +3989,34 @@ export class AppState {
     ) return false;
     this.codeEditorController.revealLineColumn(target.line, target.column);
     this.pendingBootstrapDiagnosticReveal = null;
+    return true;
+  }
+
+  revealSourceRange(relativePath: string, range: SourceRange) {
+    if (!relativePath || !Number.isSafeInteger(range.start) || !Number.isSafeInteger(range.end)) {
+      return;
+    }
+    this.pendingSourceRangeReveal = { relativePath, range };
+    this.applyPendingSourceRangeReveal();
+  }
+
+  applyPendingSourceRangeReveal() {
+    const target = this.pendingSourceRangeReveal;
+    if (!target) return false;
+    if (this.activeScannedPath !== target.relativePath) {
+      this.pendingSourceRangeReveal = null;
+      return false;
+    }
+    if (
+      !this.codeEditorController
+      || this.source === SOURCE_LOADING_SENTINEL
+      || this.codeEditorController.getDoc() !== this.source
+    ) return false;
+    this.codeEditorController.setSelectedRange(
+      codeSelectionRangeForSourceRange(this.source, target.range),
+      true,
+    );
+    this.pendingSourceRangeReveal = null;
     return true;
   }
 
@@ -3884,7 +4093,7 @@ export class AppState {
         {
           id: "reveal-current-selection",
           label: t("workbench-reveal-selection-code"),
-          disabled: !this.selectionSnapshot?.subject,
+          disabled: !primarySelectionEntry(this.selectionSnapshot),
           action: () => this.syncCodeSelectionHighlight(true),
         },
         {
@@ -3942,10 +4151,6 @@ export class AppState {
     await openSelectedMarkdownContentFromController(this);
   }
 
-  selectTeraLayerSource(section: PageSection, sourceId: string) {
-    selectTeraLayerSourceFromController(this, section, sourceId);
-  }
-
   selectPreviewElement(element: Element, options: { revealCode?: boolean } = {}) {
     this.setHtmlCodeRevealTarget();
     if (!selectCanvasPreviewElement(this, element, options)) {
@@ -3955,12 +4160,8 @@ export class AppState {
 
   selectHtmlTarget(target: EditorHtmlTarget, options: { revealCode?: boolean } = {}) {
     this.setHtmlCodeRevealTarget();
-    const renderInstanceId = target.renderInstanceId
-      ?? target.selector.match(/data-pana-render-instance-id=["']([^"']+)["']/)?.[1]
-      ?? null;
-    const sourceNodeId = target.sourceId
-      ?? target.section?.sourceId
-      ?? null;
+    const renderInstanceId = target.renderInstanceId ?? null;
+    const sourceNodeId = target.sourceId ?? null;
     const candidates = this.editorNavigationSnapshot?.nodes.filter((node) =>
       node.kind === "htmlElement"
       && (
@@ -4012,9 +4213,8 @@ export class AppState {
       type: "apply-live-text-draft",
       editSessionId: session.id,
       target: {
-        selector: session.target.selector,
         sourceId: session.target.sourceId ?? null,
-        sessionId: session.target.sessionId ?? null,
+        renderInstanceId: session.target.renderInstanceId ?? null,
         expectedTag: session.target.tag,
       },
       text: value,
@@ -4026,21 +4226,15 @@ export class AppState {
   }
 
   private htmlDraftTargetIdentity(target: HtmlActionTarget) {
-    return target.sourceId
-      ?? target.sessionId
-      ?? (target.sourceLocation
-        ? `${target.sourceLocation.file}:${target.sourceLocation.line}:${target.sourceLocation.column ?? 0}`
-        : target.selector);
+    return target.sourceId ?? null;
   }
 
   private htmlAssetEditContextKey(target: HtmlActionTarget) {
     return [
-      target.sourceId ?? "",
       target.sessionId ?? "",
-      target.sourceLocation?.file ?? "",
-      target.sourceLocation?.line ?? "",
-      target.sourceLocation?.column ?? "",
-      target.selector,
+      target.selectionRevision ?? "",
+      target.sourceId ?? "",
+      target.renderInstanceId ?? "",
       target.tag,
     ].join("::");
   }
@@ -4050,8 +4244,9 @@ export class AppState {
     const target = captureHtmlActionTarget(selection);
     const projectRoot = this.sessionProjectRoot;
     const runtimeSessionId = this.kernelProjectSessionId;
-    if (!selection || !target || !projectRoot || !runtimeSessionId) return null;
-    const key = `${projectRoot}\u0000${runtimeSessionId}\u0000attributes\u0000${this.htmlDraftTargetIdentity(target)}`;
+    const targetIdentity = target ? this.htmlDraftTargetIdentity(target) : null;
+    if (!selection || !target || !targetIdentity || !projectRoot || !runtimeSessionId) return null;
+    const key = `${projectRoot}\u0000${runtimeSessionId}\u0000attributes\u0000${targetIdentity}`;
     const current = this.activeHtmlAttributeEditSession;
     if (
       current
@@ -4092,9 +4287,8 @@ export class AppState {
       editSessionId: session.id,
       draftEpoch,
       target: {
-        selector: session.target.selector,
         sourceId: session.target.sourceId ?? null,
-        sessionId: session.target.sessionId ?? null,
+        renderInstanceId: session.target.renderInstanceId ?? null,
         expectedTag: session.target.tag,
       },
       attributes: projection.attributes,
@@ -4247,6 +4441,7 @@ export class AppState {
       || !runtimeSessionId
     ) return null;
     const key = htmlTextSelectionKey(selection);
+    if (!key || !target.sourceId) return null;
     const current = this.activeHtmlTextEditSession;
     if (
       current
@@ -4513,8 +4708,19 @@ export class AppState {
     return true;
   }
 
-  selectEditorNavigationNode(node: EditorNavigationNode) {
-    selectEditorNavigationNodeFromController(this.editorNavigationControllerHost(), node);
+  selectEditorNavigationNode(
+    node: EditorNavigationNode,
+    options: {
+      toggle?: boolean;
+      extendRange?: boolean;
+      setPrimary?: boolean;
+    } = {},
+  ) {
+    return selectEditorNavigationNodeFromController(
+      this.editorNavigationControllerHost(),
+      node,
+      options,
+    );
   }
 
   hoverEditorNavigationNode(node: EditorNavigationNode | null) {
@@ -4536,12 +4742,14 @@ export class AppState {
     sourceNodeId: string,
     targetNodeId: string,
     position: ProjectMovePosition,
+    nativeBlockSlot: NativeBlockSlotMutationContext | null = null,
   ): Promise<EditorMovePlan> {
     return await previewEditorNavigationMoveFromController(
       this.editorNavigationControllerHost(),
       sourceNodeId,
       targetNodeId,
       position,
+      nativeBlockSlot,
     );
   }
 
@@ -4551,7 +4759,28 @@ export class AppState {
     position: ProjectMovePosition,
     preplanned: EditorMovePlan | null = null,
     inputEmittedAtMs = 0,
+    nativeBlockSlot: NativeBlockSlotMutationContext | null = null,
   ) {
+    const multiSelection = this.selectionSnapshot?.members ?? [];
+    if (
+      multiSelection.length > 1
+      && !nativeBlockSlot
+      && multiSelection.some((member) => member.anchor.editorNodeId === sourceNodeId)
+    ) {
+      const target = this.editorNavigationSnapshot?.nodes.find(
+        (node) => node.id === targetNodeId,
+      );
+      if (!target?.sourceNodeId) {
+        return blockedAction(t("editor-navigation-snapshot-stale"));
+      }
+      await this.flushInteractiveEditorDrafts("snapshot");
+      return await moveSelectedHtmlElements(
+        this.htmlActionsControllerHost(),
+        target.sourceNodeId,
+        target.tag,
+        position,
+      );
+    }
     return await moveEditorNavigationNodeFromController(
       this.editorNavigationControllerHost(),
       sourceNodeId,
@@ -4559,10 +4788,11 @@ export class AppState {
       position,
       preplanned,
       inputEmittedAtMs,
+      nativeBlockSlot,
     );
   }
 
-  openEditorNavigationContextMenu(
+  async openEditorNavigationContextMenu(
     requestedNode: EditorNavigationNode,
     x: number,
     y: number,
@@ -4581,17 +4811,33 @@ export class AppState {
       && requiredScopeId === this.editorEditScopeId;
     const sourceIsEditable = node.origin !== "theme"
       && (!node.capabilities.readOnly || scopeAllowsEdit);
-    this.selectEditorNavigationNode(node);
+    const alreadySelected = this.selectionSnapshot?.members.some(
+      (member) => member.anchor.editorNodeId === node.id,
+    ) === true;
+    const selection = await selectEditorNavigationNodeFromController(
+      this.editorNavigationControllerHost(),
+      node,
+      alreadySelected ? { setPrimary: true } : {},
+    );
+    if (
+      !selection
+      || selectionResolution(selection) !== "resolved"
+      || primarySelectionEditorNodeId(selection) !== node.id
+    ) {
+      contextMenu.close();
+      this.setGlobalStatus(t("editor-navigation-snapshot-stale"), "error");
+      return;
+    }
 
     if (node.kind === "htmlElement") {
       const canMutate = sourceIsEditable
-        && Boolean(node.sourceNodeId && node.tag && selector);
+        && Boolean(node.sourceNodeId && node.tag);
       const target: EditorHtmlTarget = {
         kind: "html",
-        selector,
         tag: node.tag ?? "",
         label: node.label,
         renderInstanceId: node.renderInstanceId,
+        selectionRevision: selection.selectionRevision,
         sourceLocation: node.file && node.range
           ? {
               file: node.file,
@@ -4638,7 +4884,6 @@ export class AppState {
         kind: "tera",
         editorNodeId: node.id,
         sourceId,
-        selector: selector || null,
         label: node.label,
         kindLabel: node.sourceKind ?? "Tera",
         file: node.file,
@@ -4676,16 +4921,27 @@ export class AppState {
   }
 
   async deleteEditorNavigationNode(node: EditorNavigationNode) {
-    const selector = editorNavigationNodeSelector(node) ?? "";
+    const selection = await selectEditorNavigationNodeFromController(
+      this.editorNavigationControllerHost(),
+      node,
+    );
+    if (
+      !selection
+      || selectionResolution(selection) !== "resolved"
+      || primarySelectionEditorNodeId(selection) !== node.id
+    ) {
+      this.setGlobalStatus(t("editor-navigation-snapshot-stale"), "error");
+      return;
+    }
     if (node.kind === "htmlElement") {
       return await this.editorRuntime.dispatch({
         type: "delete-html",
         surface: "layers",
         target: {
           kind: "html",
-          selector,
           tag: node.tag ?? "",
           label: node.label,
+          selectionRevision: selection.selectionRevision,
           renderInstanceId: node.renderInstanceId,
           sourceLocation: node.file && node.range
             ? {
@@ -4711,7 +4967,6 @@ export class AppState {
       target: {
         kind: "tera",
         sourceId: node.sourceNodeId ?? "",
-        selector: selector || null,
         label: node.label,
         kindLabel: node.sourceKind ?? undefined,
         file: node.file,
@@ -4726,20 +4981,16 @@ export class AppState {
     });
   }
 
-  async deleteHtmlElement(selector?: string | null) {
-    const section = selector ? this.pageSections.find((item) => item.selector === selector) : null;
-    const target = section
-      ? htmlTargetFromPageSection(section)
-      : this.coordinatedElementSelection
-        ? htmlTargetFromCoordinatedSelection(this.coordinatedElementSelection)
-        : null;
+  async deleteHtmlElement() {
+    const target = this.coordinatedElementSelection
+      ? htmlTargetFromCoordinatedSelection(this.coordinatedElementSelection)
+      : null;
     if (!target) {
       return await this.editorRuntime.dispatch({
         type: "delete-html",
         surface: "runtime",
         target: {
           kind: "html",
-          selector: selector ?? "",
           tag: "",
         },
       });
@@ -4747,20 +4998,16 @@ export class AppState {
     return await this.editorRuntime.dispatch({ type: "delete-html", surface: "runtime", target });
   }
 
-  async duplicateHtmlElement(selector?: string | null) {
-    const section = selector ? this.pageSections.find((item) => item.selector === selector) : null;
-    const target = section
-      ? htmlTargetFromPageSection(section)
-      : this.coordinatedElementSelection
-        ? htmlTargetFromCoordinatedSelection(this.coordinatedElementSelection)
-        : null;
+  async duplicateHtmlElement() {
+    const target = this.coordinatedElementSelection
+      ? htmlTargetFromCoordinatedSelection(this.coordinatedElementSelection)
+      : null;
     if (!target) {
       return await this.editorRuntime.dispatch({
         type: "duplicate-html",
         surface: "runtime",
         target: {
           kind: "html",
-          selector: selector ?? "",
           tag: "",
         },
       });
@@ -4793,6 +5040,44 @@ export class AppState {
     return await applyNativeBlockOptionToHtmlFromController(
       this.htmlActionsControllerHost(),
       request,
+    );
+  }
+
+  async applyNativeIcon(request: ApplyNativeIconRequest) {
+    return await applyNativeIconToHtmlFromController(
+      this.htmlActionsControllerHost(),
+      request,
+    );
+  }
+
+  async applyNativeBlockSlotMutation(request: NativeBlockSlotMutationRequest) {
+    if (request.operation !== "move") {
+      return await mutateNativeBlockSlotStructureFromController(
+        this.htmlActionsControllerHost(),
+        request,
+      );
+    }
+    const sourceId = request.item?.sourceNodeId;
+    const targetId = request.targetItem?.sourceNodeId;
+    const snapshot = this.editorNavigationSnapshot;
+    if (!sourceId || !targetId || !snapshot || snapshot.modelRevision !== request.context.expectedModelRevision) {
+      return blockedAction("EditorNavigationSnapshot nu mai corespunde slotului Slider selectat.");
+    }
+    const source = snapshot.nodes.find((node) => node.sourceNodeId === sourceId);
+    const target = snapshot.nodes.find((node) =>
+      node.sourceNodeId === targetId && node.parentId === source?.parentId
+    );
+    if (!source || !target) {
+      return blockedAction("Slide-ul nu mai are o proiecție Editor Navigation stabilă.");
+    }
+    return await moveEditorNavigationNodeFromController(
+      this.editorNavigationControllerHost(),
+      source.id,
+      target.id,
+      request.position ?? "before",
+      null,
+      0,
+      request.context,
     );
   }
 

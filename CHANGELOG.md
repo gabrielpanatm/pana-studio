@@ -5,6 +5,49 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-12
+
+### Added
+
+- audit de proiect Rust-first cu provideri expliciți, dovezi, filtre și remedieri
+  autorizate, legate de identitatea exactă a sesiunii și reviziei;
+- flux complet de preflight, build și publicare, plus deploy tipizat către Bunny,
+  Cloudflare Pages, S3/R2, SFTP și FTP/FTPS, cu credențiale protejate, planuri
+  stale-safe și receipt-uri parțiale pentru operațiile remote;
+- blocuri native Rust pentru iconuri și slider, catalog Tabler inclus local și
+  contracte tipizate pentru sloturi, limite și proprietăți;
+- selecție multiplă și operații batch validate de nucleul Rust, cu identitate
+  primară stabilă și reconciliere coordonată în Canvas și Inspector;
+- `FontFaceGraph`, model canonic pentru familii CSS, declarații `@font-face`,
+  fișiere locale sau de temă, metadate OpenType, roluri și livrare în browser.
+
+### Changed
+
+- editarea structurală HTML/Tera, navigarea și selecția folosesc sursa și
+  ancorele autoritative Rust; parserul și identitățile HTML legacy din frontend
+  au fost eliminate;
+- inserarea, mutarea, duplicarea și ștergerea păstrează nesting-ul, indentarea,
+  identitatea sursei și istoricul într-o singură cale ProjectWorkspace;
+- auditul, publicarea, deploy-ul, blocurile și Font Manager-ul folosesc contracte
+  Rust-first, cu proiecții frontend fără resolvere sau modele paralele;
+- temele incluse au declarații și binare Inter/Poppins aliniate cu greutățile,
+  subseturile Latin/Latin-ext, licențele și caracterele românești;
+- CI și release folosesc toolchain-ul Rust 1.96.1 fixat, `clippy -D warnings`,
+  verificarea catalogului de iconuri și bugetul bundle-ului frontend.
+
+### Fixed
+
+- generarea unei clase unice nu mai aplică modificarea altui element după
+  schimbarea selecției sau reconcilierea Canvas-ului;
+- mutările și inserările repetate nu mai degradează indentarea sau ierarhia
+  HTML, iar ștergerea ultimului container structural este planificată corect;
+- familiile CSS alias precum `Primary` și `Display` sunt legate de fonturile
+  OpenType reale fără diagnosticul fals „neînregistrat” sau `font_face_missing`;
+- fonturile system/external/missing, overlay-ul local peste temă, preload-ul și
+  eliminarea controlată sunt clasificate și mutate prin aceeași identitate;
+- auditul nu mai raportează utilizări necunoscute pentru resurse demonstrate și
+  poate remedia determinist drift-ul structural fără a altera zonele vecine.
+
 ## [0.1.5] - 2026-08-04
 
 ### Added
@@ -295,7 +338,8 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 - documentația publică, politica de securitate și atribuirea componentelor terțe
   completate.
 
-[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/gabrielpanatm/pana-studio/compare/v0.1.2...v0.1.3

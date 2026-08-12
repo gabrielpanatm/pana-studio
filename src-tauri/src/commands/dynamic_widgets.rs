@@ -15,7 +15,10 @@ use crate::{
         observability::now_ms,
         project_workspace::WorkspaceResourceMutation,
     },
-    project_model::build_project_model_from_workspace_projection,
+    project_model::cache::{
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
+    },
     state::AppState,
 };
 
@@ -154,7 +157,7 @@ fn resolve_source_context(
     request: &DynamicWidgetSnapshotRequest,
     state: &AppState,
 ) -> Result<DynamicWidgetSourceContext, String> {
-    let (root, projection, project_root, runtime_session_id, workspace_revision) = {
+    let (bound_root, project_root, runtime_session_id, workspace_revision) = {
         let (root, slot) = require_bound_workspace(state, &request.identity)?;
         let workspace = slot.as_ref().ok_or_else(|| {
             "ProjectWorkspace nu este inițializat pentru widgeturile dinamice.".to_string()
@@ -162,13 +165,20 @@ fn resolve_source_context(
         require_workspace_revision(request.expected_workspace_revision, workspace.revision)?;
         (
             root,
-            workspace.capture_projection_snapshot()?,
             workspace.session.project_root.clone(),
             workspace.runtime_session_id(),
             workspace.revision,
         )
     };
-    let model = build_project_model_from_workspace_projection(&root, &projection)?;
+    let (root, session, context) = capture_project_model_build_context(state)?;
+    if root != bound_root
+        || session.runtime_instance_id() != runtime_session_id
+        || context.projection().revision != workspace_revision
+    {
+        return Err("[dynamic_widget_stale_model] ProjectModel a devenit stale.".to_string());
+    }
+    let model = build_project_model_from_context(&root, &context)?;
+    publish_project_model_if_current(state, &context, model.clone())?;
     if model.revision != request.expected_model_revision {
         return Err(format!(
             "[dynamic_widget_stale_model] Inspectorul aștepta ProjectModel {}, dar Rust a proiectat {}.",
@@ -188,7 +198,8 @@ fn resolve_source_context(
                 request.source_instance_id
             )
         })?;
-    let source = projection
+    let source = context
+        .projection()
         .source_texts
         .get(&source_instance.file)
         .cloned()

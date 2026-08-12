@@ -6506,40 +6506,44 @@ mod linux {
         let (coordinator, intent, plan, record) = fixture.prepare(&operation_id, payload);
         let mut guard = coordinator.begin(record).unwrap();
         let mut plan = Some(plan);
-        let mut execute = || {
-            capability::append_wal(
-                &intent.target,
-                payload,
-                plan.take().expect("Append v2 plan consumed once"),
-                &mut guard,
-            )
-        };
         let crash = || panic!("simulated Append v2 crash");
-        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match checkpoint {
-            AppendV2CrashCheckpoint::Checkpoint => {
-                capability::with_after_append_v2_checkpoint_hook_for_test(crash, &mut execute)
-            }
-            AppendV2CrashCheckpoint::EffectBeforePhase if with_target => {
-                capability::with_after_append_v2_write_before_phase_hook_for_test(
-                    crash,
-                    &mut execute,
+        let crashed = {
+            let mut execute = || {
+                capability::append_wal(
+                    &intent.target,
+                    payload,
+                    plan.take().expect("Append v2 plan consumed once"),
+                    &mut guard,
                 )
-            }
-            AppendV2CrashCheckpoint::EffectBeforePhase => {
-                capability::with_after_append_v2_link_before_phase_hook_for_test(
-                    crash,
-                    &mut execute,
-                )
-            }
-            AppendV2CrashCheckpoint::TargetFsync => {
-                capability::with_after_append_v2_target_fsync_hook_for_test(crash, &mut execute)
-            }
-            AppendV2CrashCheckpoint::TargetDurable => {
-                capability::with_after_append_v2_target_durable_hook_for_test(crash, &mut execute)
-            }
-        }));
+            };
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match checkpoint {
+                AppendV2CrashCheckpoint::Checkpoint => {
+                    capability::with_after_append_v2_checkpoint_hook_for_test(crash, &mut execute)
+                }
+                AppendV2CrashCheckpoint::EffectBeforePhase if with_target => {
+                    capability::with_after_append_v2_write_before_phase_hook_for_test(
+                        crash,
+                        &mut execute,
+                    )
+                }
+                AppendV2CrashCheckpoint::EffectBeforePhase => {
+                    capability::with_after_append_v2_link_before_phase_hook_for_test(
+                        crash,
+                        &mut execute,
+                    )
+                }
+                AppendV2CrashCheckpoint::TargetFsync => {
+                    capability::with_after_append_v2_target_fsync_hook_for_test(crash, &mut execute)
+                }
+                AppendV2CrashCheckpoint::TargetDurable => {
+                    capability::with_after_append_v2_target_durable_hook_for_test(
+                        crash,
+                        &mut execute,
+                    )
+                }
+            }))
+        };
         assert!(crashed.is_err(), "{label}");
-        drop(execute);
         let expected_phase = match checkpoint {
             AppendV2CrashCheckpoint::Checkpoint | AppendV2CrashCheckpoint::EffectBeforePhase => {
                 WalPhase::AuxiliaryDurable
@@ -6812,53 +6816,55 @@ mod linux {
         let temp = fixture.parent.join(plan.temp_leaf().unwrap());
         let mut guard = coordinator.begin(record).unwrap();
         let mut plan = Some(plan);
-        let mut execute = || {
-            capability::copy_file_wal(
-                &intent.target,
-                &source,
-                replace_policy,
-                plan.take().expect("Copy v2 plan is consumed once"),
-                &mut guard,
-            )
+        let crashed = {
+            let mut execute = || {
+                capability::copy_file_wal(
+                    &intent.target,
+                    &source,
+                    replace_policy,
+                    plan.take().expect("Copy v2 plan is consumed once"),
+                    &mut guard,
+                )
+            };
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match checkpoint {
+                CopyV2CrashCheckpoint::AnonymousStageCheckpoint => {
+                    capability::with_after_copy_anonymous_stage_checkpoint_hook_for_test(
+                        copy_v2_crash_now,
+                        &mut execute,
+                    )
+                }
+                CopyV2CrashCheckpoint::TemporaryLinkBeforePhase => {
+                    capability::with_after_copy_temporary_link_before_phase_hook_for_test(
+                        copy_v2_crash_now,
+                        &mut execute,
+                    )
+                }
+                CopyV2CrashCheckpoint::TargetLinkBeforePhase => {
+                    capability::with_after_copy_target_link_before_phase_hook_for_test(
+                        copy_v2_crash_now,
+                        &mut execute,
+                    )
+                }
+                CopyV2CrashCheckpoint::RenameBeforePhase => {
+                    capability::with_after_copy_rename_before_phase_hook_for_test(
+                        copy_v2_crash_now,
+                        &mut execute,
+                    )
+                }
+                CopyV2CrashCheckpoint::TargetFsync => {
+                    capability::with_after_copy_target_fsync_hook_for_test(
+                        copy_v2_crash_now,
+                        &mut execute,
+                    )
+                }
+                CopyV2CrashCheckpoint::TargetDurable => {
+                    capability::with_after_copy_target_durable_hook_for_test(
+                        copy_v2_crash_now,
+                        &mut execute,
+                    )
+                }
+            }))
         };
-        let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match checkpoint {
-            CopyV2CrashCheckpoint::AnonymousStageCheckpoint => {
-                capability::with_after_copy_anonymous_stage_checkpoint_hook_for_test(
-                    copy_v2_crash_now,
-                    &mut execute,
-                )
-            }
-            CopyV2CrashCheckpoint::TemporaryLinkBeforePhase => {
-                capability::with_after_copy_temporary_link_before_phase_hook_for_test(
-                    copy_v2_crash_now,
-                    &mut execute,
-                )
-            }
-            CopyV2CrashCheckpoint::TargetLinkBeforePhase => {
-                capability::with_after_copy_target_link_before_phase_hook_for_test(
-                    copy_v2_crash_now,
-                    &mut execute,
-                )
-            }
-            CopyV2CrashCheckpoint::RenameBeforePhase => {
-                capability::with_after_copy_rename_before_phase_hook_for_test(
-                    copy_v2_crash_now,
-                    &mut execute,
-                )
-            }
-            CopyV2CrashCheckpoint::TargetFsync => {
-                capability::with_after_copy_target_fsync_hook_for_test(
-                    copy_v2_crash_now,
-                    &mut execute,
-                )
-            }
-            CopyV2CrashCheckpoint::TargetDurable => {
-                capability::with_after_copy_target_durable_hook_for_test(
-                    copy_v2_crash_now,
-                    &mut execute,
-                )
-            }
-        }));
         assert!(crashed.is_err(), "{label}: hookul nu a simulat crash-ul");
         let expected_phase = match checkpoint {
             CopyV2CrashCheckpoint::AnonymousStageCheckpoint
@@ -6868,7 +6874,6 @@ mod linux {
             CopyV2CrashCheckpoint::TargetFsync => WalPhase::EffectVisible,
             CopyV2CrashCheckpoint::TargetDurable => WalPhase::TargetDurable,
         };
-        drop(execute);
         assert_eq!(guard.phase(), expected_phase, "{label}");
         drop(guard);
         drop(coordinator);

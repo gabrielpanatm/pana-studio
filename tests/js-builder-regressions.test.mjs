@@ -623,6 +623,8 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
   assert.match(canvasPatch, /reapplyLiveTextDraft/);
   assert.match(canvasPatch, /activeLiveAttributeDraft/);
   assert.match(canvasPatch, /reapplyLiveAttributeDraft/);
+  assert.match(canvasPatch, /CANVAS_RENDER_INSTANCE_ATTR/);
+  assert.doesNotMatch(canvasPatch, /target\.selector|SESSION_ID_ATTR, String\(target\.sessionId/);
   assert.match(app, /deferCanonicalProjection:\s*true/);
   assert.match(app, /HTML_TEXT_HISTORY_IDLE_MS/);
   assert.match(app, /finishActiveHtmlAttributeEditSession/);
@@ -630,8 +632,10 @@ test("HTML persistence stays in ProjectWorkspace while live drafts are explicit 
   assert.match(previewSelectionSource, /attr\.name\.startsWith\("data-pana-"\)/);
   assert.match(
     selection,
-    /activeHtmlTextEditKey === htmlTextSelectionKey\(host\.coordinatedElementSelection\)/,
+    /activeSelectionKey !== null[\s\S]*activeHtmlTextEditKey === activeSelectionKey/,
   );
+  assert.match(draft, /if \(!selection\.sourceNodeId\) return null/);
+  assert.doesNotMatch(draft, /formatSourceEditLocation|observation\.domPath/);
 });
 
 test("Canvas document commit waits for styledReady and never replaces head/body via innerHTML", () => {

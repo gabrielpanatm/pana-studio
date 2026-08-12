@@ -4,17 +4,31 @@
     IconCircleCheck,
     IconCloudUpload,
     IconDeviceFloppy,
-    IconHammer,
     IconRefresh,
     IconRocket,
     IconSettings,
     IconShieldCheck,
   } from "@tabler/icons-svelte";
   import DeployPane from "$lib/components/DeployPane.svelte";
-  import { l10n, t } from "$lib/i18n/runtime.svelte";
+  import { t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
+  import type {
+    PublishPreflightGate,
+    PublishPreflightRemediation,
+    WorkspaceSourceOpenOptions,
+  } from "$lib/types";
+  import { errorMessage } from "$lib/util";
 
-  let { app }: { app: AppState } = $props();
+  let {
+    app,
+    openWorkspaceSource,
+  }: {
+    app: AppState;
+    openWorkspaceSource: (
+      path: string,
+      options?: WorkspaceSourceOpenOptions,
+    ) => void | Promise<void>;
+  } = $props();
 
   type PublishView = "release" | "configuration";
   const views = $derived([
@@ -24,36 +38,50 @@
 
   let activeView = $state<PublishView>("release");
   let preflightRunning = $state(false);
+  let authorityLoadKey = $state("");
 
-  const audit = $derived(app.projectAuditSnapshot);
-  const auditCurrent = $derived(Boolean(
-    audit
-    && audit.projectRoot === app.sessionProjectRoot
-    && audit.runtimeSessionId === app.kernelProjectSessionId
-    && audit.workspaceRevision === app.projectWorkspaceSnapshot?.revision,
-  ));
-  const auditErrors = $derived(auditCurrent ? (audit?.summary.errors ?? 0) : 0);
-  const auditWarnings = $derived(auditCurrent ? (audit?.summary.warnings ?? 0) : 0);
-  const validationValid = $derived(app.controlledPreview.validation === "valid");
-  const sourceSaved = $derived(!app.globalDirtyState.dirty);
-  const releaseReady = $derived(sourceSaved && auditCurrent && auditErrors === 0 && validationValid);
+  const preflight = $derived(app.currentPublishPreflightReceipt());
+  const releaseReady = $derived(preflight?.status === "ready");
 
   $effect(() => {
     const projectRoot = app.sessionProjectRoot;
     const runtimeSessionId = app.kernelProjectSessionId;
     const workspaceRevision = app.projectWorkspaceSnapshot?.revision;
-    if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined) return;
-    void app.refreshProjectAudit();
+    const diskGeneration = app.projectWorkspaceSnapshot?.diskGeneration;
+    const diskWatchRevision = app.externalDiskWatchRevision;
+    const key = `${projectRoot}\u0000${runtimeSessionId}\u0000${workspaceRevision ?? ""}\u0000${diskGeneration ?? ""}\u0000${diskWatchRevision}`;
+    if (!projectRoot || !runtimeSessionId || workspaceRevision === undefined || key === authorityLoadKey) return;
+    authorityLoadKey = key;
+    app.invalidatePublishAuthorization();
+    void app.refreshPublishAuthorization().catch((error) => {
+      app.setGlobalStatus(t("publish-authorization-refresh-failed", { error: errorMessage(error) }), "error");
+    });
   });
 
-  function validationLabel() {
-    switch (app.controlledPreview.validation) {
-      case "valid": return t("publish-validation-valid");
-      case "invalid": return t("publish-validation-invalid");
-      case "error": return t("publish-validation-error");
-      case "queued": return t("publish-validation-queued");
-      case "running": return t("publish-validation-running");
-      default: return t("publish-validation-none");
+  function statusLabel() {
+    if (!preflight) return t("publish-preflight-not-run");
+    switch (preflight.status) {
+      case "ready": return t("publish-preflight-status-ready");
+      case "blocked": return t("publish-preflight-status-blocked");
+      case "failed": return t("publish-preflight-status-failed");
+    }
+  }
+
+  function gateOutcomeLabel(gate: PublishPreflightGate) {
+    switch (gate.outcome) {
+      case "passed": return t("publish-preflight-outcome-passed");
+      case "blocked": return t("publish-preflight-outcome-blocked");
+      case "advisory": return t("publish-preflight-outcome-advisory");
+      case "skipped": return t("publish-preflight-outcome-skipped");
+      case "engine_error": return t("publish-preflight-outcome-engine-error");
+    }
+  }
+
+  function preflightResultLabel(status: "ready" | "blocked" | "failed") {
+    switch (status) {
+      case "ready": return t("publish-preflight-result-ready");
+      case "blocked": return t("publish-preflight-result-blocked");
+      case "failed": return t("publish-preflight-result-failed");
     }
   }
 
@@ -61,9 +89,11 @@
     if (preflightRunning) return;
     preflightRunning = true;
     try {
-      await app.runZolaValidation("manual");
-      await app.refreshProjectAudit(true);
-      app.setGlobalStatus(t("publish-preflight-updated"), "saved");
+      const receipt = await app.runPublishPreflight();
+      app.setGlobalStatus(
+        preflightResultLabel(receipt.status),
+        receipt.status === "ready" ? "saved" : receipt.status === "blocked" ? "unsaved" : "error",
+      );
     } catch (error) {
       app.setGlobalStatus(
         t("publish-preflight-failed", { error: error instanceof Error ? error.message : String(error) }),
@@ -75,8 +105,47 @@
   }
 
   async function saveSession() {
-    const saved = await app.saveActiveFile();
-    if (saved) await app.refreshProjectAudit(true);
+    await app.saveActiveFile();
+    app.invalidatePublishAuthorization();
+  }
+
+  async function openAuditFinding(fingerprint: string) {
+    const finding = preflight?.auditReceipt.findings.find((item) => item.fingerprint === fingerprint);
+    const location = finding?.primaryLocation;
+    if (!location) {
+      await app.setWorkbenchActivity("audit");
+      return;
+    }
+    await openWorkspaceSource(location.file, { surface: "code" });
+    if (location.range) app.revealSourceRange(location.file, location.range);
+  }
+
+  async function runRemediation(remediation: PublishPreflightRemediation) {
+    switch (remediation.kind) {
+      case "save_workspace":
+        await saveSession();
+        return;
+      case "open_audit":
+        await app.setWorkbenchActivity("audit");
+        return;
+      case "open_source":
+        if (remediation.location) {
+          await openWorkspaceSource(remediation.location.file, { surface: "code" });
+          if (remediation.location.range) {
+            app.revealSourceRange(remediation.location.file, remediation.location.range);
+          }
+        }
+        return;
+      case "configure_deploy":
+      case "configure_credentials":
+        selectView("configuration");
+        return;
+      case "reconcile_disk":
+        app.setGlobalStatus(t("publish-reconcile-disk-guidance"), "unsaved");
+        return;
+      case "retry":
+        await runPreflight();
+    }
   }
 
   function selectView(view: PublishView) {
@@ -107,7 +176,7 @@
     </div>
     <div class="release-state" class:ready={releaseReady} class:blocked={!releaseReady}>
       {#if releaseReady}<IconCircleCheck size={19} stroke={1.9} />{:else}<IconAlertTriangle size={19} stroke={1.9} />{/if}
-      <div><span>{t("publish-state")}</span><strong>{releaseReady ? t("publish-ready") : t("publish-needs-check")}</strong></div>
+      <div><span>{t("publish-state")}</span><strong>{statusLabel()}</strong></div>
     </div>
   </header>
 
@@ -144,33 +213,41 @@
           </button>
         </header>
         <div class="gate-list">
-          <article class:passed={sourceSaved} class:failed={!sourceSaved}>
-            <span class="gate-icon">{#if sourceSaved}<IconCircleCheck size={17} />{:else}<IconAlertTriangle size={17} />{/if}</span>
-            <div><strong>{t("publish-sources-saved")}</strong><p>{sourceSaved
-              ? t("publish-sources-synced")
-              : t("publish-unsaved-areas", { count: app.globalDirtyState.areas.length })}</p></div>
-            {#if !sourceSaved}<button class="ui-button toolbar" type="button" disabled={!app.globalDirtyState.canSave} onclick={() => { void saveSession(); }}><IconDeviceFloppy size={13} /> {t("publish-save")}</button>{/if}
-          </article>
-          <article class:passed={auditCurrent && auditErrors === 0} class:failed={!auditCurrent || auditErrors > 0}>
-            <span class="gate-icon">{#if auditCurrent && auditErrors === 0}<IconCircleCheck size={17} />{:else}<IconAlertTriangle size={17} />{/if}</span>
-            <div><strong>{t("publish-project-audit")}</strong><p>{auditCurrent
-              ? t("publish-audit-summary", {
-                errors: l10n.formatNumber(auditErrors),
-                warnings: l10n.formatNumber(auditWarnings),
-              })
-              : t("publish-audit-stale")}</p></div>
-            <button class="ui-button toolbar" type="button" onclick={() => { void app.setWorkbenchActivity("audit"); }}>{t("publish-open-audit")}</button>
-          </article>
-          <article class:passed={validationValid} class:failed={!validationValid}>
-            <span class="gate-icon">{#if validationValid}<IconCircleCheck size={17} />{:else}<IconHammer size={17} />{/if}</span>
-            <div><strong>{validationLabel()}</strong><p>{app.controlledPreview.validationMessage || t("publish-validation-help")}</p></div>
-            <button class="ui-button toolbar" type="button" disabled={preflightRunning} onclick={() => { void runPreflight(); }}>{t("publish-check")}</button>
-          </article>
-          <article class="target-gate">
-            <span class="gate-icon"><IconCloudUpload size={17} /></span>
-            <div><strong>{t("publish-bunny-target")}</strong><p>{t("publish-bunny-description")}</p></div>
-            <button class="ui-button toolbar" type="button" onclick={() => selectView("configuration")}>{t("publish-configure")}</button>
-          </article>
+          {#if preflight}
+            {#each preflight.gates as gate (gate.id)}
+              <article
+                class:passed={gate.outcome === "passed"}
+                class:failed={gate.outcome === "blocked" || gate.outcome === "engine_error"}
+                class:advisory={gate.outcome === "advisory" || gate.outcome === "skipped"}
+              >
+                <span class="gate-icon">{#if gate.outcome === "passed"}<IconCircleCheck size={17} />{:else if gate.id === "deploy_target" || gate.id === "deploy_credentials"}<IconCloudUpload size={17} />{:else}<IconAlertTriangle size={17} />{/if}</span>
+                <div class="gate-copy">
+                  <strong>{errorMessage(gate.diagnostic)}</strong>
+                  <p>{gateOutcomeLabel(gate)}</p>
+                  {#each gate.evidence as item (`${gate.id}-${item.kind}-${item.diagnostic.code}`)}
+                    <small>{errorMessage(item.diagnostic)}{item.value ? `: ${item.value}` : ""}</small>
+                  {/each}
+                  {#if gate.auditFingerprints.length}
+                    <div class="finding-links">
+                      {#each gate.auditFingerprints as fingerprint}
+                        <button type="button" onclick={() => { void openAuditFinding(fingerprint); }}>{t("publish-open-finding")}</button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <div class="gate-actions">
+                  {#each gate.remediations as remediation (`${gate.id}-${remediation.kind}`)}
+                    <button class="ui-button toolbar" type="button" onclick={() => { void runRemediation(remediation); }}>
+                      {#if remediation.kind === "save_workspace"}<IconDeviceFloppy size={13} />{/if}
+                      {errorMessage(remediation.diagnostic)}
+                    </button>
+                  {/each}
+                </div>
+              </article>
+            {/each}
+          {:else}
+            <div class="preflight-empty"><IconShieldCheck size={18} /><p>{t("publish-preflight-empty")}</p></div>
+          {/if}
         </div>
       </section>
 
@@ -184,6 +261,7 @@
           <div class="release-warning" role="status"><IconAlertTriangle size={15} /><span>{t("publish-gates-warning")}</span></div>
         {/if}
         <DeployPane
+          {app}
           scannedProject={!!app.scannedProject}
           cachebustAssets={app.cachebustAssets}
           projectRoot={app.sessionProjectRoot}
@@ -203,6 +281,7 @@
       </header>
       <div class="configuration-scroll">
         <DeployPane
+          {app}
           scannedProject={!!app.scannedProject}
           cachebustAssets={app.cachebustAssets}
           projectRoot={app.sessionProjectRoot}
@@ -235,12 +314,20 @@
   .gate-list article:last-child { border-bottom: 0; }
   .gate-list article.passed { border-left-color: var(--success); }
   .gate-list article.failed { border-left-color: var(--wb-warning); }
+  .gate-list article.advisory { border-left-color: var(--wb-accent); }
   .gate-icon { width: 28px; height: 28px; justify-content: center; border-radius: 7px; color: var(--wb-text-muted); background: var(--surface-4); }
   article.passed .gate-icon { color: var(--success); background: color-mix(in srgb, var(--success) 9%, var(--wb-surface-document)); }
   article.failed .gate-icon { color: var(--wb-warning); background: color-mix(in srgb, var(--wb-warning) 9%, var(--wb-surface-document)); }
+  article.advisory .gate-icon { color: var(--wb-accent); background: color-mix(in srgb, var(--wb-accent) 9%, var(--wb-surface-document)); }
   .gate-list article > div { min-width: 0; }
   .gate-list strong { color: var(--text-strong); font-size: 12px; }
   .gate-list p { margin: 4px 0 0; color: var(--wb-text-muted); font-size: 12px; line-height: 1.35; }
+  .gate-copy small { display: block; margin-top: 4px; color: var(--wb-text-muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+  .gate-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+  .finding-links { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .finding-links button { padding: 0; border: 0; color: var(--wb-accent); background: transparent; font: inherit; font-size: 11px; text-decoration: underline; }
+  .preflight-empty { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 108px; padding: 16px; color: var(--wb-text-muted); }
+  .preflight-empty p { margin: 0; }
   .release-actions { align-self: start; padding: 15px; background: var(--wb-surface-chrome); }
   .release-copy { display: grid; gap: 5px; margin-bottom: 12px; }
   .release-copy h2 { font-size: 16px; }

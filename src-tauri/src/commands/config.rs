@@ -58,6 +58,25 @@ pub(crate) fn read_project_app_config_for_bootstrap(
     app_config::read_project_app_config_for_root(app, root)
 }
 
+pub(crate) fn save_deploy_settings_for_root(
+    app: &AppHandle,
+    root: &std::path::Path,
+    mut settings: crate::deploy::DeploySettings,
+) -> Result<crate::deploy::DeploySettings, String> {
+    let mut config = app_config::read_project_app_config_for_root(app, root)?;
+    if settings.revision != config.deploy.revision {
+        return Err(format!(
+            "Configurația deploy este stale: revizia așteptată {}, revizia curentă {}.",
+            settings.revision, config.deploy.revision
+        ));
+    }
+    settings.validate()?;
+    settings.revision = settings.revision.saturating_add(1);
+    config.deploy = settings.clone();
+    app_config::write_project_app_config_for_root(app, root, config)?;
+    Ok(settings)
+}
+
 #[tauri::command]
 pub fn save_project_app_config(
     app: AppHandle,
@@ -73,7 +92,8 @@ fn save_project_app_config_impl(
     state: &State<AppState>,
 ) -> Result<ProjectAppConfig, String> {
     let root = require_current_project_root(state)?;
-    let stored = app_config::project_app_config_from_input(&root, config);
+    let existing = app_config::read_project_app_config_for_root(app, &root)?;
+    let stored = app_config::project_app_config_from_input(&root, config, existing.deploy);
     let cachebust_assets = stored.cachebust_assets;
     execute_config_workspace_mutation(app, state, |project_root, zola_root, store| {
         let changes = plan_project_asset_link_rewrite_changes(

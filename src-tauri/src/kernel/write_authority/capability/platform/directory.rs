@@ -18,7 +18,7 @@ const DIRECTORY_V2_MODE_BITS: u32 = 0o755;
 pub(super) enum ObservedDirectoryLeaf {
     Absent,
     Other,
-    Directory(ObservedDirectory),
+    Directory(Box<ObservedDirectory>),
 }
 
 #[derive(Debug)]
@@ -581,14 +581,16 @@ pub(super) fn observe_directory_leaf(
     }
     validate_named_directory_identity(parent, leaf, &descriptor, public_label, role)?;
     let state_digest = directory_state_digest(&stat, &identity_digest, empty);
-    Ok(ObservedDirectoryLeaf::Directory(ObservedDirectory {
-        descriptor,
-        version_token: version_token_for_stat(&stat),
-        stat,
-        identity_digest,
-        state_digest,
-        empty,
-    }))
+    Ok(ObservedDirectoryLeaf::Directory(Box::new(
+        ObservedDirectory {
+            descriptor,
+            version_token: version_token_for_stat(&stat),
+            stat,
+            identity_digest,
+            state_digest,
+            empty,
+        },
+    )))
 }
 
 pub(super) fn directory_is_empty(

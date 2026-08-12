@@ -14,9 +14,10 @@ use crate::{
     },
     project::{strip_zola_root_prefix, zola_project_root},
     project_model::{
-        model::ProjectModel, rebuild_project_model_after_workspace_change,
+        model::ProjectModel, rebuild_project_model_after_workspace_change_with_source_changes,
         ProjectModelIncrementalBuildReport, ProjectModelIncrementalIntent,
     },
+    source_graph::identity::SourceChangeSet,
 };
 
 pub(crate) struct PreviewStructuralWrite {
@@ -25,6 +26,7 @@ pub(crate) struct PreviewStructuralWrite {
     pub(crate) contents: String,
     pub(crate) coalesce_key: Option<String>,
     pub(crate) project_model_incremental_intent: ProjectModelIncrementalIntent,
+    pub(crate) source_changes: Option<Vec<SourceChangeSet>>,
 }
 
 impl PreviewStructuralWrite {
@@ -39,6 +41,7 @@ impl PreviewStructuralWrite {
             contents: contents.into(),
             coalesce_key: None,
             project_model_incremental_intent: ProjectModelIncrementalIntent::Unsupported,
+            source_changes: None,
         }
     }
 
@@ -54,6 +57,14 @@ impl PreviewStructuralWrite {
         self.project_model_incremental_intent = intent;
         self
     }
+
+    pub(crate) fn with_source_changes(
+        mut self,
+        source_changes: Option<Vec<SourceChangeSet>>,
+    ) -> Self {
+        self.source_changes = source_changes;
+        self
+    }
 }
 
 pub(crate) struct PreviewStructuralWriteCommit {
@@ -62,6 +73,18 @@ pub(crate) struct PreviewStructuralWriteCommit {
     pub(crate) primary_contents: String,
     pub(crate) timings: PreviewStructuralWriteTimings,
     pub(crate) project_model_build: ProjectModelIncrementalBuildReport,
+}
+
+pub(crate) struct PreviewStructuralBatchWrite {
+    pub(crate) label: String,
+    pub(crate) documents: Vec<WorkspaceDocumentMutation>,
+    pub(crate) project_model_incremental_intent: ProjectModelIncrementalIntent,
+    pub(crate) source_changes: Option<Vec<SourceChangeSet>>,
+}
+
+pub(crate) struct PreviewStructuralBatchWriteCommit {
+    pub(crate) workspace_mutation: ProjectWorkspaceMutationReceipt,
+    pub(crate) after_model: ProjectModel,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -106,6 +129,7 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
     let previous_model = workspace.project_model.clone();
     let previous_model_source_revision = workspace.project_model_source_revision;
     let project_model_incremental_intent = write.project_model_incremental_intent;
+    let source_changes = write.source_changes;
     let identity = ProjectWorkspaceIdentity {
         expected_project_root: workspace.session.project_root.clone(),
         expected_session_id: workspace.runtime_session_id(),
@@ -150,13 +174,14 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
     } = stage;
     let projection = workspace.capture_projection_snapshot()?;
     let after_project_model_started = Instant::now();
-    let model_build = rebuild_project_model_after_workspace_change(
+    let model_build = rebuild_project_model_after_workspace_change_with_source_changes(
         project_root,
         previous_model.as_ref(),
         previous_model_source_revision,
         &projection,
         &workspace_mutation.touched_files,
         project_model_incremental_intent,
+        source_changes,
     )?;
     let after_project_model_build_ms = elapsed_ms(after_project_model_started);
     let after_model = model_build.model;
@@ -176,6 +201,47 @@ pub(crate) fn stage_preview_structural_write_in_transaction(
             after_project_model_build_ms,
         },
         project_model_build: model_build.report,
+    })
+}
+
+/// Commits a prevalidated set of independent document rewrites as one
+/// ProjectWorkspace mutation and rebuilds ProjectModel exactly once.
+pub(crate) fn stage_preview_structural_batch_write_in_transaction(
+    project_root: &Path,
+    workspace: &mut ProjectWorkspace,
+    write: PreviewStructuralBatchWrite,
+) -> Result<PreviewStructuralBatchWriteCommit, String> {
+    if write.documents.is_empty() || write.documents.len() > 256 {
+        return Err("Mutația structurală batch cere între 1 și 256 de documente.".to_string());
+    }
+    let previous_model = workspace.project_model.clone();
+    let previous_model_source_revision = workspace.project_model_source_revision;
+    let identity = ProjectWorkspaceIdentity {
+        expected_project_root: workspace.session.project_root.clone(),
+        expected_session_id: workspace.runtime_session_id(),
+        expected_revision: workspace.revision,
+    };
+    let metadata = WorkspaceMutationMetadata {
+        label: write.label,
+        source: "preview.structural.batch".to_string(),
+        coalesce_key: None,
+        transaction_id: None,
+    };
+    let workspace_mutation =
+        workspace.stage_document_texts(&identity, metadata, write.documents, now_ms())?;
+    let projection = workspace.capture_projection_snapshot()?;
+    let model_build = rebuild_project_model_after_workspace_change_with_source_changes(
+        project_root,
+        previous_model.as_ref(),
+        previous_model_source_revision,
+        &projection,
+        &workspace_mutation.touched_files,
+        write.project_model_incremental_intent,
+        write.source_changes,
+    )?;
+    Ok(PreviewStructuralBatchWriteCommit {
+        workspace_mutation,
+        after_model: model_build.model,
     })
 }
 
@@ -313,7 +379,6 @@ fn stage_structural_write_with_native_block_contract(
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         sync::atomic::{AtomicU64, Ordering},
     };
@@ -334,7 +399,7 @@ mod tests {
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
         project_model::{
             attribute_engine::{plan_html_attributes, ProjectHtmlAttributeIntent},
-            build_project_model,
+            test_support::ProjectModelTestFixture,
             zola_image_engine::{
                 apply_zola_image_contract, ProjectZolaImageIntent, ZolaImageFormat,
                 ZolaImageOperation,
@@ -472,7 +537,7 @@ mod tests {
             "model-before",
             &receipt.after_model.revision,
             CanvasPatchOperation::SetText {
-                target: CanvasPatchAnchor::source("sg_0123456789abcdef", None, Some("main")),
+                target: CanvasPatchAnchor::source("sg_0123456789abcdef", Some("main")),
                 text: "after".to_string(),
             },
         )
@@ -574,7 +639,10 @@ mod tests {
         let relative_path = "templates/index.html";
         let before = "<img src=\"/images/hero.jpg\" alt=\"Hero\">\n";
         fs::write(root.join(relative_path), before).unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = ProjectModelTestFixture::from_integration_disk_boundary(&root)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let contract = apply_zola_image_contract(
             &model,
             relative_path,
@@ -743,7 +811,10 @@ mod tests {
         let page_js = PageJsDraftStore::new(&session);
         let mut workspace =
             ProjectWorkspace::new(session, accepted.unwrap(), documents, page_js).unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = ProjectModelTestFixture::from_integration_disk_boundary(&root)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let block_marker = model
             .source_graph
             .nodes
@@ -760,9 +831,7 @@ mod tests {
             &model,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(block_root.id.clone()),
-                target_location: None,
                 target_tag: Some("div".to_string()),
-                target_selector: Some(".offcanvas".to_string()),
                 attributes: Vec::new(),
                 zola_image: None,
                 native_block_option: Some(NativeBlockOptionIntent {
@@ -770,8 +839,9 @@ mod tests {
                     option_id: "side".to_string(),
                     value: BlockOptionValue::Text("start".to_string()),
                 }),
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let patch = plan.patch.expect("native option patch");

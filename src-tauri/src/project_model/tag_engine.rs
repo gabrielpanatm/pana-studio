@@ -1,26 +1,22 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
+    project_model::model::{ProjectModel, ProjectModelFileKind},
     source_graph::model::SourceNode,
 };
 
 use super::html_editor_schema::tag_transition_diagnostic;
 use super::move_engine::{
-    content_revision, direct_location_without_source_id, html_tag_at, offset_for_source_location,
-    parse_html_tag_at, resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
-    source_location_at_offset, source_missing_message, HtmlTag, ProjectSourceEditLocation, Span,
+    content_revision, html_tag_at, parse_html_tag_at, resolve_html_element_span,
+    resolve_html_node_for_anchor, same_model_path, source_location_at_offset,
+    source_missing_message, HtmlTag, ProjectSourceEditLocation, Span,
 };
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHtmlTagIntent {
     pub target_source_id: Option<String>,
-    pub target_location: Option<ProjectSourceEditLocation>,
     pub target_tag: Option<String>,
-    pub target_selector: Option<String>,
     pub new_tag: String,
 }
 
@@ -55,12 +51,8 @@ struct TagApplication {
     source_start_line: usize,
 }
 
-pub fn plan_html_tag(
-    model: &ProjectModel,
-    intent: &ProjectHtmlTagIntent,
-    aliases: &HashMap<String, String>,
-) -> ProjectHtmlTagPlan {
-    match plan_html_tag_inner(model, intent, aliases) {
+pub fn plan_html_tag(model: &ProjectModel, intent: &ProjectHtmlTagIntent) -> ProjectHtmlTagPlan {
+    match plan_html_tag_inner(model, intent) {
         Ok(patch) => ProjectHtmlTagPlan {
             allowed: true,
             diagnostic: None,
@@ -79,32 +71,20 @@ pub fn plan_html_tag(
 fn plan_html_tag_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlTagIntent,
-    aliases: &HashMap<String, String>,
 ) -> Result<ProjectHtmlTagPatch, String> {
     let new_tag = normalize_new_tag(&intent.new_tag)?;
 
     if let Some(target_node) = resolve_html_node_for_anchor(
         model,
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
         intent.target_tag.as_deref(),
-        aliases,
     ) {
         return plan_html_tag_from_source_node(model, intent, target_node, new_tag);
-    }
-
-    if let Some(location) = direct_location_without_source_id(
-        intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-    ) {
-        return plan_html_tag_from_direct_location(model, intent, location, new_tag);
     }
 
     Err(source_missing_message(
         "țintă de tag",
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-        intent.target_selector.as_deref(),
     ))
 }
 
@@ -160,54 +140,6 @@ fn plan_html_tag_from_source_node(
         line_shift_start: applied.source_start_line,
         line_shift: 0,
         old_tag,
-        new_tag,
-    })
-}
-
-fn plan_html_tag_from_direct_location(
-    model: &ProjectModel,
-    intent: &ProjectHtmlTagIntent,
-    location: &ProjectSourceEditLocation,
-    new_tag: String,
-) -> Result<ProjectHtmlTagPatch, String> {
-    let file = model
-        .files
-        .iter()
-        .find(|file| same_model_path(&file.relative_path, &location.file))
-        .ok_or_else(|| format!("Nu am găsit fișierul {} în Project Model.", location.file))?;
-
-    if !is_direct_html_tag_file(file) {
-        return Err(
-            "Schimbarea tag-ului prin locație directă este activă doar pentru fișiere HTML 1:1 din proiect, nu pentru template-uri Tera.".to_string(),
-        );
-    }
-
-    let offset = offset_for_source_location(&file.contents, location)?;
-    let tag = parse_html_tag_at(&file.contents, offset)
-        .ok_or_else(|| "Locația nu indică începutul unui tag HTML pentru schimbare.".to_string())?;
-    if tag.is_closing {
-        return Err("Locația indică un tag de închidere, nu un element mutabil.".to_string());
-    }
-    validate_current_tag(intent, &tag.tag)?;
-    let applied = apply_html_tag(&file.contents, &file.relative_path, tag.start, &new_tag)?;
-    let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
-        format!(
-            "location:{}:{}:{}",
-            location.file, location.line, location.column
-        )
-    });
-
-    Ok(ProjectHtmlTagPatch {
-        file: file.relative_path.clone(),
-        resolved_target_id,
-        before_revision: file.revision.clone(),
-        after_revision: content_revision(&applied.contents),
-        contents: applied.contents,
-        target_location: applied.target_location,
-        source_start_line: applied.source_start_line,
-        line_shift_start: applied.source_start_line,
-        line_shift: 0,
-        old_tag: tag.tag,
         new_tag,
     })
 }
@@ -416,18 +348,6 @@ fn is_protected_tag(tag: &str) -> bool {
     )
 }
 
-fn is_direct_html_tag_file(file: &ProjectModelFile) -> bool {
-    matches!(
-        file.kind,
-        ProjectModelFileKind::StaticText | ProjectModelFileKind::OtherText
-    ) && is_html_path(&file.relative_path)
-}
-
-fn is_html_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.ends_with(".html") || lower.ends_with(".htm")
-}
-
 fn is_void_tag(tag: &str) -> bool {
     matches!(
         tag,
@@ -474,26 +394,25 @@ fn skip_tera_token(bytes: &[u8], index: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use crate::project_model::{
-        build_project_model,
-        move_engine::ProjectSourceEditLocation,
         tag_engine::{plan_html_tag, ProjectHtmlTagIntent},
+        test_support::ProjectModelTestFixture,
     };
 
     #[test]
     fn plan_html_tag_updates_template_anchor() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             "<main>\n  <section class=\"hero\"><p>Text</p></section>\n</main>\n",
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let section = model
             .source_graph
             .nodes
@@ -505,12 +424,9 @@ mod tests {
             &model,
             &ProjectHtmlTagIntent {
                 target_source_id: Some(section.id.clone()),
-                target_location: None,
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 new_tag: "article".to_string(),
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -526,12 +442,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_tag_resolves_active_html_by_direct_location() {
+    fn plan_html_tag_rejects_location_without_source_id() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("static")).unwrap();
-        fs::write(
-            root.join("static/plain.html"),
+        let mut fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
+        fixture.source(
+            "static/plain.html",
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -540,41 +456,32 @@ mod tests {
                 "</body>\n",
                 "</html>\n",
             ),
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_tag(
             &model,
             &ProjectHtmlTagIntent {
                 target_source_id: None,
-                target_location: Some(ProjectSourceEditLocation {
-                    file: "static/plain.html".to_string(),
-                    line: 4,
-                    column: 3,
-                }),
                 target_tag: Some("div".to_string()),
-                target_selector: Some("body:nth-of-type(1) > div:nth-of-type(1)".to_string()),
                 new_tag: "section".to_string(),
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "static/plain.html");
-        assert_eq!(patch.resolved_target_id, "location:static/plain.html:4:3");
-        assert!(patch
-            .contents
-            .contains("<section id=\"card\"><span>Text</span></section>"));
+        assert!(!plan.allowed);
+        assert!(plan.patch.is_none());
     }
 
     #[test]
     fn plan_html_tag_blocks_void_conversion() {
         let root = unique_test_dir();
-        write_project(&root, "<main>\n  <div>Text</div>\n</main>\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<main>\n  <div>Text</div>\n</main>\n",
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let div = model
             .source_graph
             .nodes
@@ -586,12 +493,9 @@ mod tests {
             &model,
             &ProjectHtmlTagIntent {
                 target_source_id: Some(div.id.clone()),
-                target_location: None,
                 target_tag: Some("div".to_string()),
-                target_selector: Some("div".to_string()),
                 new_tag: "img".to_string(),
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -602,8 +506,12 @@ mod tests {
     #[test]
     fn plan_html_tag_blocks_structurally_incompatible_conversion() {
         let root = unique_test_dir();
-        write_project(&root, "<main>\n  <ul><li>Text</li></ul>\n</main>\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<main>\n  <ul><li>Text</li></ul>\n</main>\n",
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let list = model
             .source_graph
             .nodes
@@ -615,12 +523,9 @@ mod tests {
             &model,
             &ProjectHtmlTagIntent {
                 target_source_id: Some(list.id.clone()),
-                target_location: None,
                 target_tag: Some("ul".to_string()),
-                target_selector: Some("ul".to_string()),
                 new_tag: "section".to_string(),
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -631,8 +536,12 @@ mod tests {
     #[test]
     fn plan_html_tag_blocks_destination_missing_from_design_safe_preview() {
         let root = unique_test_dir();
-        write_project(&root, "<main>\n  <div>Text</div>\n</main>\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<main>\n  <div>Text</div>\n</main>\n",
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let div = model
             .source_graph
             .nodes
@@ -644,12 +553,9 @@ mod tests {
             &model,
             &ProjectHtmlTagIntent {
                 target_source_id: Some(div.id.clone()),
-                target_location: None,
                 target_tag: Some("div".to_string()),
-                target_selector: Some("div".to_string()),
                 new_tag: "iframe".to_string(),
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -658,22 +564,6 @@ mod tests {
             .diagnostic
             .unwrap_or_default()
             .contains("Editare sigură"));
-    }
-
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

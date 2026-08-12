@@ -34,8 +34,8 @@ pub(super) fn summarize_reuse_contexts(
     }
 
     let mut contexts = grouped
-        .into_iter()
-        .filter_map(|(_, records)| summarize_reuse_context(&records))
+        .into_values()
+        .filter_map(|records| summarize_reuse_context(&records))
         .collect::<Vec<_>>();
     contexts.sort_by(|left, right| {
         right

@@ -94,6 +94,7 @@ mod tests {
 
     fn graph_with_marker(provider_id: &str) -> SourceGraph {
         SourceGraph {
+            node_index: Default::default(),
             project_root: "/tmp/project".to_string(),
             zola_root: "/tmp/project".to_string(),
             active_theme: None,
@@ -125,6 +126,7 @@ mod tests {
                 ),
             }],
             relations: Vec::new(),
+            asset_reference_coverage: Default::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -133,7 +135,7 @@ mod tests {
     fn native_registry_and_source_instances_are_separate_from_component_graph() {
         let graph = build_block_graph(&graph_with_marker("accordion"));
 
-        assert_eq!(graph.definitions.len(), 6);
+        assert_eq!(graph.definitions.len(), 8);
         assert_eq!(graph.source_instances.len(), 1);
         assert_eq!(
             graph.source_instances[0].definition_id.as_deref(),
@@ -152,7 +154,7 @@ mod tests {
         assert!(accordion.capabilities.supports_slots);
         assert_eq!(
             accordion.scale,
-            crate::source_graph::model::BlockScale::Section
+            crate::source_graph::model::BlockScale::Composition
         );
         assert_eq!(accordion.options.len(), 1);
     }

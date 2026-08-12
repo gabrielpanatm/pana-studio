@@ -134,13 +134,12 @@ impl CssBackground {
 
         let opaque_properties = property_lists
             .iter()
-            .filter_map(|(_, property, _, list)| {
-                list.is_none().then(|| {
-                    (
-                        (*property).to_string(),
-                        declarations.get(*property).cloned().unwrap_or_default(),
-                    )
-                })
+            .filter(|(_, _, _, list)| list.is_none())
+            .map(|(_, property, _, _)| {
+                (
+                    (*property).to_string(),
+                    declarations.get(*property).cloned().unwrap_or_default(),
+                )
             })
             .collect::<BTreeMap<_, _>>();
         let lists_editable = opaque_properties.is_empty();
@@ -203,6 +202,7 @@ impl CssBackground {
         }
     }
 
+    #[cfg(test)]
     pub fn to_longhands(&self) -> BTreeMap<String, String> {
         let mut values = BTreeMap::new();
         values.insert(
@@ -448,9 +448,11 @@ pub fn parse_gradient(value: &str) -> Option<CssGradient> {
     let has_prelude = parts
         .first()
         .is_some_and(|part| is_gradient_prelude(kind, part));
-    let prelude = has_prelude
-        .then(|| parts[0].trim().to_string())
-        .unwrap_or_default();
+    let prelude = if has_prelude {
+        parts[0].trim().to_string()
+    } else {
+        String::new()
+    };
     let item_parts = &parts[usize::from(has_prelude)..];
     let items = item_parts
         .iter()

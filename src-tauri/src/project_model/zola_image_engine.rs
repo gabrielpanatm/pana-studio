@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::path::Path;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -441,38 +441,13 @@ fn validate_local_image_source(
         return Err("Formatul sursei nu este suportat de acest contract resize_image.".to_string());
     }
 
-    let full = model.zola_root.join(path);
-    reject_symlink_components(&model.zola_root, path)?;
-    let metadata =
-        fs::metadata(&full).map_err(|_| format!("Imaginea locală {path} nu mai există."))?;
-    if !metadata.is_file() {
-        return Err(format!("Sursa Zola {path} nu este un fișier obișnuit."));
-    }
-    let canonical_root = model
-        .zola_root
-        .canonicalize()
-        .map_err(|error| format!("Nu am putut valida root-ul Zola: {error}"))?;
-    let canonical_file = full
-        .canonicalize()
-        .map_err(|error| format!("Nu am putut valida imaginea locală: {error}"))?;
-    if !canonical_file.starts_with(&canonical_root) {
-        return Err("Imaginea locală iese din root-ul Zola.".to_string());
+    if !model.workspace_paths.contains(path) {
+        return Err(format!(
+            "Imaginea locală {path} nu există în proiecția ProjectWorkspace."
+        ));
     }
 
     validate_public_url_mapping(model, presentation)?;
-    Ok(())
-}
-
-fn reject_symlink_components(zola_root: &Path, relative: &str) -> Result<(), String> {
-    let mut current = zola_root.to_path_buf();
-    for segment in relative.split('/') {
-        current.push(segment);
-        let metadata = fs::symlink_metadata(&current)
-            .map_err(|_| format!("Nu am putut valida componenta {segment} a imaginii."))?;
-        if metadata.file_type().is_symlink() {
-            return Err("Procesarea Zola refuză imaginile accesate prin symlink.".to_string());
-        }
-    }
     Ok(())
 }
 
@@ -491,14 +466,9 @@ fn validate_public_url_mapping(
 
     if let Some(theme) = model.source_graph.active_theme.as_deref() {
         let logical = expected.trim_start_matches('/');
-        let local = model.zola_root.join("static").join(logical);
-        let themed = model
-            .zola_root
-            .join("themes")
-            .join(theme)
-            .join("static")
-            .join(logical);
-        if local.is_file() && themed.is_file() {
+        let local = format!("static/{logical}");
+        let themed = format!("themes/{theme}/static/{logical}");
+        if model.workspace_paths.contains(&local) && model.workspace_paths.contains(&themed) {
             return Err(format!(
                 "URL-ul {expected} este ambiguu între static local și tema {theme}."
             ));
@@ -636,27 +606,26 @@ fn replace_range(source: &str, start: usize, end: usize, replacement: &str) -> S
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
-        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use crate::project_model::{
-        build_project_model,
         delete_engine::{plan_html_delete, ProjectHtmlDeleteIntent},
         duplicate_engine::{plan_html_duplicate, ProjectHtmlDuplicateIntent},
         move_engine::{plan_html_move, ProjectHtmlMoveIntent, ProjectMovePosition},
+        test_support::ProjectModelTestFixture,
     };
 
     use super::*;
 
     #[test]
     fn enables_updates_and_disables_reversible_contract() {
-        let root = test_project("reversible");
+        let mut fixture = test_project("reversible");
+        let root = fixture.root().to_path_buf();
         let source = "<img class=\"hero\" src='/images/hero.jpg' width=\"900\" alt=\"Hero\">\n";
-        fs::write(root.join("templates/index.html"), source).unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        fixture.source("templates/index.html", source);
+        let model = fixture.build_model().unwrap();
         let intent = enabled_intent(1200, ZolaImageOperation::FitWidth, None);
         let enabled =
             apply_zola_image_contract(&model, "templates/index.html", source, 0, &intent).unwrap();
@@ -719,13 +688,13 @@ mod tests {
 
     #[test]
     fn refuses_external_dynamic_missing_and_ambiguous_sources() {
-        let root = test_project("refusals");
-        fs::write(root.join("zola.toml"), "base_url = '/'\ntheme = \"demo\"\n").unwrap();
-        fs::create_dir_all(root.join("themes/demo/static/images")).unwrap();
-        fs::write(root.join("themes/demo/static/images/hero.jpg"), b"theme").unwrap();
+        let mut fixture = test_project("refusals");
+        let root = fixture.root().to_path_buf();
+        fixture.source("zola.toml", "base_url = '/'\ntheme = \"demo\"\n");
+        fixture.accepted_resource("themes/demo/static/images/hero.jpg", 5);
         let source = "<img src=\"/images/hero.jpg\">";
-        fs::write(root.join("templates/index.html"), source).unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        fixture.source("templates/index.html", source);
+        let model = fixture.build_model().unwrap();
 
         let ambiguous = apply_zola_image_contract(
             &model,
@@ -757,10 +726,11 @@ mod tests {
 
     #[test]
     fn refuses_manually_modified_managed_contract() {
-        let root = test_project("tamper");
+        let mut fixture = test_project("tamper");
+        let root = fixture.root().to_path_buf();
         let source = "<img src=\"/images/hero.jpg\">";
-        fs::write(root.join("templates/index.html"), source).unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        fixture.source("templates/index.html", source);
+        let model = fixture.build_model().unwrap();
         let enabled = apply_zola_image_contract(
             &model,
             "templates/index.html",
@@ -779,29 +749,27 @@ mod tests {
 
     #[test]
     fn structural_delete_move_and_duplicate_keep_contract_attached() {
-        let root = test_project("structural");
+        let mut fixture = test_project("structural");
+        let root = fixture.root().to_path_buf();
         let source = concat!(
             "<main>\n",
             "  <img src=\"/images/hero.jpg\" alt=\"Hero\">\n",
             "  <p class=\"target\">Țintă</p>\n",
             "</main>\n",
         );
-        fs::write(root.join("templates/index.html"), source).unwrap();
-        let disk_model = build_project_model(&root, &HashMap::new()).unwrap();
+        fixture.source("templates/index.html", source);
+        let workspace_model = fixture.build_model().unwrap();
         let opening = source.find("<img").unwrap();
         let enabled = apply_zola_image_contract(
-            &disk_model,
+            &workspace_model,
             "templates/index.html",
             source,
             opening,
             &enabled_intent(800, ZolaImageOperation::FitWidth, None),
         )
         .unwrap();
-        let projected = build_project_model(
-            &root,
-            &HashMap::from([("templates/index.html".to_string(), enabled.contents.clone())]),
-        )
-        .unwrap();
+        fixture.draft("templates/index.html", enabled.contents.clone());
+        let projected = fixture.build_model().unwrap();
         let image_id = node_id(&projected, "<img>");
         let target_id = node_id(&projected, "<p .target>");
 
@@ -809,11 +777,10 @@ mod tests {
             &projected,
             &ProjectHtmlDeleteIntent {
                 target_source_id: Some(image_id.clone()),
-                target_location: None,
+                target_render_instance_id: None,
                 target_tag: Some("img".to_string()),
-                target_selector: None,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
         assert!(deleted.allowed, "{:?}", deleted.diagnostic);
         assert!(!deleted.patch.unwrap().contents.contains(MARKER_PREFIX));
@@ -823,15 +790,11 @@ mod tests {
             &ProjectHtmlMoveIntent {
                 source_source_id: Some(image_id.clone()),
                 target_source_id: Some(target_id.clone()),
-                source_location: None,
-                target_location: None,
                 source_tag: Some("img".to_string()),
                 target_tag: Some("p".to_string()),
-                source_selector: None,
-                target_selector: None,
                 position: ProjectMovePosition::After,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
         assert!(moved_image.allowed, "{:?}", moved_image.diagnostic);
         let moved_contents = moved_image.patch.unwrap().contents;
@@ -845,15 +808,11 @@ mod tests {
             &ProjectHtmlMoveIntent {
                 source_source_id: Some(target_id),
                 target_source_id: Some(image_id.clone()),
-                source_location: None,
-                target_location: None,
                 source_tag: Some("p".to_string()),
                 target_tag: Some("img".to_string()),
-                source_selector: None,
-                target_selector: None,
                 position: ProjectMovePosition::Before,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
         assert!(
             moved_before_image.allowed,
@@ -871,11 +830,9 @@ mod tests {
             &projected,
             &ProjectHtmlDuplicateIntent {
                 source_source_id: Some(image_id),
-                source_location: None,
                 source_tag: Some("img".to_string()),
-                source_selector: None,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
         assert!(duplicated.allowed, "{:?}", duplicated.diagnostic);
         let duplicate_patch = duplicated.patch.unwrap();
@@ -911,7 +868,7 @@ mod tests {
         }
     }
 
-    fn test_project(label: &str) -> PathBuf {
+    fn test_project(label: &str) -> ProjectModelTestFixture {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -920,17 +877,14 @@ mod tests {
             "pana-zola-image-{label}-{}-{nonce}",
             std::process::id()
         ));
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("static/images")).unwrap();
-        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
-        fs::write(
-            root.join("content/_index.md"),
+        let mut fixture = ProjectModelTestFixture::new(root).unwrap();
+        fixture.source("zola.toml", "base_url = '/'\n");
+        fixture.source(
+            "content/_index.md",
             "+++\ntitle = 'Test'\ntemplate = 'index.html'\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("static/images/hero.jpg"), b"image").unwrap();
-        root
+        );
+        fixture.accepted_resource("static/images/hero.jpg", 5);
+        fixture
     }
 
     fn node_id(model: &ProjectModel, label: &str) -> String {

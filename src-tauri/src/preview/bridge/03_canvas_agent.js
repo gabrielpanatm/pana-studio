@@ -3,6 +3,7 @@
   var CANVAS_AGENT_RENDER_ATTR = "data-pana-render-instance-id";
   var CANVAS_AGENT_HOVER_ID = "pana-studio-canvas-agent-hover";
   var CANVAS_AGENT_SELECTION_ID = "pana-studio-canvas-agent-selection";
+  var CANVAS_AGENT_SELECTION_MEMBER_ATTR = "data-pana-selection-member";
   var CANVAS_AGENT_DRAG_ID = "pana-studio-canvas-agent-drag";
   var CANVAS_AGENT_GRID_ID = "pana-studio-canvas-agent-grid";
   var CANVAS_AGENT_ACTION_ATTR = "data-pana-canvas-agent-action";
@@ -919,7 +920,7 @@
         if (!isTrustedPreviewGesture(event)) return;
         event.preventDefault();
         event.stopPropagation();
-        var request = canvasAgentOverlayRequests.selection;
+        var request = canvasAgentPrimarySelectionRequest();
         if (
           !request
           || request.targetKind !== "teraBoundary"
@@ -943,7 +944,7 @@
 
   function emitCanvasAgentSelectionAction(action) {
     if (!canvasAgentSelectionActive()) return false;
-    var request = canvasAgentOverlayRequests.selection;
+    var request = canvasAgentPrimarySelectionRequest();
     if (
       !request
       || typeof request.editorNodeId !== "string"
@@ -962,6 +963,109 @@
     return true;
   }
 
+  function canvasAgentPrimarySelectionRequest() {
+    var request = canvasAgentOverlayRequests.selection;
+    if (!request || !Array.isArray(request.members)) return request;
+    var primaryMemberId = typeof request.primaryMemberId === "string"
+      ? request.primaryMemberId
+      : "";
+    return request.members.find(function (member) {
+      return member && member.memberId === primaryMemberId;
+    }) || null;
+  }
+
+  function ensureCanvasAgentSelectionMemberOverlay(memberId, primary) {
+    if (primary) {
+      var primaryOverlay = ensureCanvasAgentOverlay("selection");
+      primaryOverlay.setAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR, memberId);
+      return primaryOverlay;
+    }
+    var overlays = document.querySelectorAll("[" + CANVAS_AGENT_SELECTION_MEMBER_ATTR + "]");
+    for (var index = 0; index < overlays.length; index += 1) {
+      if (
+        overlays[index].id !== CANVAS_AGENT_SELECTION_ID
+        && overlays[index].getAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR) === memberId
+      ) {
+        return overlays[index];
+      }
+    }
+    var overlay = document.createElement("div");
+    overlay.setAttribute("data-pana-canvas-agent-overlay", "selection-member");
+    overlay.setAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR, memberId);
+    overlay.style.cssText = [
+      "position: fixed",
+      "z-index: 2147483645",
+      "display: none",
+      "border: 1px solid var(--pana-studio-accent, #1d7f6a)",
+      "background: color-mix(in srgb, var(--pana-studio-accent, #1d7f6a) 4%, transparent)",
+      "box-shadow: none",
+      "pointer-events: none",
+      "box-sizing: border-box"
+    ].join(";");
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function positionCanvasAgentSelectionMember(overlay, member, primary) {
+    var elements = canvasAgentProjectionElements(member.projection);
+    var rect = boundsForElements(elements);
+    if (!rect) {
+      overlay.style.display = "none";
+      return;
+    }
+    var isTera = member.targetKind === "teraBoundary";
+    var isMarkdown = member.targetKind === "markdownBoundary";
+    overlay.style.display = "block";
+    overlay.style.borderStyle = primary ? "solid" : "dashed";
+    overlay.style.borderWidth = primary ? "2px" : "1px";
+    overlay.style.borderColor = isTera
+      ? "#3b82f6"
+      : isMarkdown
+        ? "var(--pana-studio-markdown, #f59e0b)"
+        : "var(--pana-studio-accent, #1d7f6a)";
+    overlay.style.left = Math.round(rect.left) + "px";
+    overlay.style.top = Math.round(rect.top) + "px";
+    overlay.style.width = Math.round(rect.width) + "px";
+    overlay.style.height = Math.round(rect.height) + "px";
+    overlay.style.borderRadius = borderRadiusForElements(elements);
+    if (primary) renderCanvasAgentAction(overlay, member, rect);
+  }
+
+  function renderCanvasAgentSelectionSet(data) {
+    var renderStartedAt = performance.now();
+    canvasAgentOverlayRequests.selection = data;
+    var activeMemberIds = [];
+    var primaryMemberId = typeof data.primaryMemberId === "string"
+      ? data.primaryMemberId
+      : "";
+    data.members.slice(0, 256).forEach(function (member) {
+      if (!member || typeof member.memberId !== "string" || !member.memberId) return;
+      var primary = member.memberId === primaryMemberId;
+      activeMemberIds.push(member.memberId);
+      var overlay = ensureCanvasAgentSelectionMemberOverlay(member.memberId, primary);
+      positionCanvasAgentSelectionMember(overlay, member, primary);
+    });
+    document.querySelectorAll("[" + CANVAS_AGENT_SELECTION_MEMBER_ATTR + "]").forEach(function (overlay) {
+      var memberId = overlay.getAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR) || "";
+      if (activeMemberIds.indexOf(memberId) >= 0) return;
+      if (overlay.id === CANVAS_AGENT_SELECTION_ID) {
+        overlay.removeAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR);
+        overlay.style.display = "none";
+      } else {
+        overlay.remove();
+      }
+    });
+    updateCanvasAgentGridOverlay();
+    if (typeof data.measurementId === "string" && data.measurementId) {
+      postCanvasAgent("selectionOverlayRendered", {
+        documentEpoch: canvasAgentDocumentEpoch,
+        measurementId: data.measurementId,
+        memberCount: activeMemberIds.length,
+        renderDurationMs: Math.max(0, performance.now() - renderStartedAt)
+      });
+    }
+  }
+
   function renderCanvasAgentOverlay(data) {
     if (!canvasAgentSelectionActive()) return;
     if (!data || data.agentInstanceId !== canvasAgentInstanceId) return;
@@ -975,6 +1079,17 @@
       renderCanvasAgentHover(data);
       return;
     }
+    if (Array.isArray(data.members)) {
+      renderCanvasAgentSelectionSet(data);
+      return;
+    }
+    document.querySelectorAll("[" + CANVAS_AGENT_SELECTION_MEMBER_ATTR + "]").forEach(function (overlay) {
+      if (overlay.id === CANVAS_AGENT_SELECTION_ID) {
+        overlay.removeAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR);
+      } else {
+        overlay.remove();
+      }
+    });
     canvasAgentOverlayRequests[channel] = data;
     var overlay = ensureCanvasAgentOverlay(channel);
     var elements = canvasAgentProjectionElements(data.projection);
@@ -1121,7 +1236,7 @@
       overlay.style.display = "none";
       return;
     }
-    var request = canvasAgentOverlayRequests.selection;
+    var request = canvasAgentPrimarySelectionRequest();
     var elements = request ? canvasAgentProjectionElements(request.projection) : [];
     var element = canvasAgentPrimaryProjectionElement(request && request.projection, elements);
     if (!(element instanceof Element)) { overlay.style.display = "none"; return; }
@@ -1180,6 +1295,13 @@
     [CANVAS_AGENT_HOVER_ID, CANVAS_AGENT_SELECTION_ID, CANVAS_AGENT_DRAG_ID, CANVAS_AGENT_GRID_ID].forEach(function (overlayId) {
       var overlay = document.getElementById(overlayId);
       if (overlay) overlay.style.display = "none";
+    });
+    document.querySelectorAll("[" + CANVAS_AGENT_SELECTION_MEMBER_ATTR + "]").forEach(function (overlay) {
+      if (overlay.id === CANVAS_AGENT_SELECTION_ID) {
+        overlay.removeAttribute(CANVAS_AGENT_SELECTION_MEMBER_ATTR);
+      } else {
+        overlay.remove();
+      }
     });
   }
 

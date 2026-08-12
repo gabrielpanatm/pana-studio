@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Mutex,
 };
 
@@ -12,12 +12,12 @@ use crate::{
         EditorNavigationOrigin, EditorNavigationSnapshot, EditorSourceProvenance,
         EditorSourceReference, EditorSourceResolution,
     },
-    kernel::project_workspace::SourceIdentityAliasTransition,
     preview::CanvasProjectionIdentity,
     source_graph::model::{SourceGraph, SourceNode, SourceNodeKind, SourceOrigin, SourceRange},
 };
 
-pub const SELECTION_COORDINATOR_SCHEMA_VERSION: u32 = 1;
+pub const SELECTION_COORDINATOR_SCHEMA_VERSION: u32 = 2;
+pub const MAX_SELECTION_MEMBERS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,51 +94,45 @@ pub struct SelectionAnchor {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SelectionPreviewProjection {
-    pub editor_node_id: Option<String>,
-    pub target_kind: Option<SelectionSubjectKind>,
-    pub primary_render_instance_id: Option<String>,
-    pub render_instance_ids: Vec<String>,
-    pub boundary_instance_id: Option<String>,
+pub struct SelectionEntry {
+    pub member_id: String,
+    pub resolution: SelectionResolution,
+    pub subject: SelectionSubject,
+    pub anchor: SelectionAnchor,
+    pub provenance: EditorSourceProvenance,
+    pub capabilities: EditorNavigationCapabilities,
+    pub diagnostics: Vec<String>,
+    #[serde(skip)]
+    pub(crate) source_html_attributes: Option<BTreeMap<String, Option<String>>>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SelectionLayersProjection {
-    pub editor_node_id: Option<String>,
+pub struct SelectionAggregateHtmlFacts {
+    pub complete: bool,
+    pub common_classes: Vec<String>,
+    pub mixed_classes: Vec<String>,
+    pub common_attributes: BTreeMap<String, Option<String>>,
+    pub mixed_attribute_names: Vec<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SelectionCodeProjection {
-    pub file: Option<String>,
-    pub range: Option<SourceRange>,
-    pub focus: SelectionFocus,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectionInspectorProjection {
-    pub editor_node_id: Option<String>,
-    pub subject_kind: Option<SelectionSubjectKind>,
-    pub can_inspect: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectionStatusProjection {
-    pub provenance: Option<EditorSourceProvenance>,
-    pub focus: SelectionFocus,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelectionUiProjections {
-    pub preview: SelectionPreviewProjection,
-    pub layers: SelectionLayersProjection,
-    pub code: SelectionCodeProjection,
-    pub inspector: SelectionInspectorProjection,
-    pub status: SelectionStatusProjection,
+pub struct SelectionAggregateCapabilities {
+    pub member_count: usize,
+    pub all_resolved: bool,
+    pub all_source_backed: bool,
+    pub same_file: bool,
+    pub same_parent: bool,
+    pub has_ancestor_descendant: bool,
+    pub has_duplicate_source_targets: bool,
+    pub can_batch_attributes: bool,
+    pub can_batch_duplicate: bool,
+    pub can_batch_delete: bool,
+    pub can_batch_move: bool,
+    pub primary_only_edits_allowed: bool,
+    pub primary_only_reason_code: Option<String>,
+    pub reasons: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -151,13 +145,12 @@ pub struct SelectionSnapshot {
     pub canvas_identity: CanvasProjectionIdentity,
     pub route: String,
     pub active_document_path: Option<String>,
-    pub resolution: SelectionResolution,
-    pub subject: Option<SelectionSubject>,
+    pub primary_member_id: Option<String>,
+    pub range_origin_member_id: Option<String>,
+    pub members: Vec<SelectionEntry>,
+    pub aggregate_capabilities: SelectionAggregateCapabilities,
+    pub aggregate_html_facts: SelectionAggregateHtmlFacts,
     pub focus: SelectionFocus,
-    pub anchor: Option<SelectionAnchor>,
-    pub provenance: Option<EditorSourceProvenance>,
-    pub capabilities: Option<EditorNavigationCapabilities>,
-    pub projections: SelectionUiProjections,
     pub diagnostics: Vec<String>,
 }
 
@@ -193,6 +186,15 @@ pub struct SelectionCoordinatorSnapshot {
 )]
 pub enum SelectionIntent {
     SelectEditorNode {
+        editor_node_id: String,
+    },
+    ToggleEditorNode {
+        editor_node_id: String,
+    },
+    ExtendRangeToEditorNode {
+        editor_node_id: String,
+    },
+    SetPrimaryEditorNode {
         editor_node_id: String,
     },
     SelectSourcePosition {
@@ -321,6 +323,16 @@ pub struct SelectionObservationReceipt {
 #[serde(rename_all = "camelCase")]
 pub struct SelectionMutationIdentity {
     pub selection_revision: u64,
+    pub workspace_revision: u64,
+    #[serde(default)]
+    pub primary_member_id: Option<String>,
+    pub members: Vec<SelectionMutationMemberIdentity>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectionMutationMemberIdentity {
+    pub member_id: String,
     #[serde(default)]
     pub editor_node_id: Option<String>,
     #[serde(default)]
@@ -360,6 +372,47 @@ enum SelectionRevisionPolicy {
 }
 
 impl SelectionCoordinatorRuntime {
+    /// Returns the bounded, ordered opaque selection set owned by Rust for
+    /// publication surfaces such as Code, status and AI context. Callers must
+    /// provide the active ProjectSession; a foreign session is rejected rather
+    /// than silently publishing stale member identities.
+    pub fn current_opaque_selection(
+        &self,
+        runtime_session_id: Option<&str>,
+    ) -> Result<(Option<String>, Vec<String>), String> {
+        let Some(runtime_session_id) = runtime_session_id else {
+            return Ok((None, Vec::new()));
+        };
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
+        let Some(selection) = state.selection.as_ref() else {
+            return Ok((None, Vec::new()));
+        };
+        if selection.runtime_session_id != runtime_session_id {
+            return Err(
+                "Selecția opacă aparține altei sesiuni de proiect și nu poate fi publicată."
+                    .to_string(),
+            );
+        }
+        let member_ids = selection
+            .members
+            .iter()
+            .map(|member| member.member_id.clone())
+            .collect::<Vec<_>>();
+        if selection
+            .primary_member_id
+            .as_ref()
+            .is_some_and(|primary| !member_ids.contains(primary))
+        {
+            return Err(
+                "SelectionCoordinator deține un primary care nu aparține setului opac.".to_string(),
+            );
+        }
+        Ok((selection.primary_member_id.clone(), member_ids))
+    }
+
     pub fn bind_inspector_document(
         &self,
         identity: CanvasInteractionIdentity,
@@ -379,58 +432,207 @@ impl SelectionCoordinatorRuntime {
     pub fn require_mutation_target(
         &self,
         runtime_session_id: &str,
-        selection_revision: u64,
-        editor_node_id: Option<&str>,
-        source_node_id: Option<&str>,
-        render_instance_id: Option<&str>,
+        expected: &SelectionMutationIdentity,
     ) -> Result<(), String> {
-        self.with_mutation_target(
-            runtime_session_id,
-            selection_revision,
-            editor_node_id,
-            source_node_id,
-            render_instance_id,
-            || Ok(()),
-        )
+        self.with_mutation_target(runtime_session_id, expected, || Ok(()))
     }
 
     pub fn with_mutation_target<R>(
         &self,
         runtime_session_id: &str,
-        selection_revision: u64,
-        editor_node_id: Option<&str>,
-        source_node_id: Option<&str>,
-        render_instance_id: Option<&str>,
+        expected: &SelectionMutationIdentity,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
         self.with_resolved_target(
             "Mutația",
             runtime_session_id,
-            selection_revision,
-            editor_node_id,
-            source_node_id,
-            render_instance_id,
+            expected,
             SelectionRevisionPolicy::Exact,
             execute,
         )
     }
 
+    /// Clears a selection only when it is still the exact target that guarded
+    /// a committed destructive mutation. A newer user selection wins and is
+    /// never cleared by an older delete receipt.
+    pub fn clear_mutation_target_if_current(
+        &self,
+        runtime_session_id: &str,
+        expected: &SelectionMutationIdentity,
+    ) -> Result<bool, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
+        let Some(current) = state.selection.as_ref() else {
+            return Ok(false);
+        };
+        if current.runtime_session_id != runtime_session_id
+            || current.selection_revision != expected.selection_revision
+            || aggregate_selection_resolution(&current.members) != SelectionResolution::Resolved
+            || !mutation_identity_matches(current, expected)
+        {
+            return Ok(false);
+        }
+
+        let current = current.clone();
+        let revision = next_selection_revision(&mut state)?;
+        state.selection = Some(SelectionSnapshot {
+            schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
+            selection_revision: revision,
+            project_root: current.project_root,
+            runtime_session_id: current.runtime_session_id,
+            canvas_identity: current.canvas_identity,
+            route: current.route,
+            active_document_path: current.active_document_path,
+            primary_member_id: None,
+            range_origin_member_id: None,
+            members: Vec::new(),
+            aggregate_capabilities: SelectionAggregateCapabilities::default(),
+            aggregate_html_facts: SelectionAggregateHtmlFacts::default(),
+            focus: SelectionFocus::Element,
+            diagnostics: Vec::new(),
+        });
+        state.hover = None;
+        state.inspector_facts = None;
+        Ok(true)
+    }
+
+    /// Atomically replaces the exact selection that guarded a committed
+    /// duplicate with the SourceNodeIds allocated by the authoritative
+    /// after-model. The source-only entries are intentionally re-resolved by
+    /// the next canonical navigation snapshot; no DOM or similarity fallback
+    /// participates in the handoff.
+    pub fn replace_mutation_target_with_sources_if_current(
+        &self,
+        runtime_session_id: &str,
+        expected: &SelectionMutationIdentity,
+        source_graph: &SourceGraph,
+        source_node_ids: &[String],
+        primary_source_node_id: Option<&str>,
+    ) -> Result<bool, String> {
+        if source_node_ids.is_empty() || source_node_ids.len() > MAX_SELECTION_MEMBERS {
+            return Err(
+                "Înlocuirea selecției cere între 1 și 256 de SourceNodeId-uri.".to_string(),
+            );
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
+        let Some(current) = state.selection.as_ref() else {
+            return Ok(false);
+        };
+        if current.runtime_session_id != runtime_session_id
+            || current.selection_revision != expected.selection_revision
+            || aggregate_selection_resolution(&current.members) != SelectionResolution::Resolved
+            || !mutation_identity_matches(current, expected)
+        {
+            return Ok(false);
+        }
+
+        let mut seen = HashSet::with_capacity(source_node_ids.len());
+        let mut entries = Vec::with_capacity(source_node_ids.len());
+        for source_node_id in source_node_ids {
+            if !seen.insert(source_node_id.as_str()) {
+                return Err("Înlocuirea selecției a primit SourceNodeId-uri duplicate.".to_string());
+            }
+            let source = source_graph.node_by_id(source_node_id).ok_or_else(|| {
+                format!(
+                    "Înlocuirea selecției nu găsește SourceNodeId {source_node_id} în after-model."
+                )
+            })?;
+            entries.push(selection_entry_from_source_node(
+                source,
+                SelectionResolution::NotRendered,
+                "Copia este confirmată în sursă și așteaptă proiecția canonică.",
+            ));
+        }
+        let primary_member_id = primary_source_node_id
+            .and_then(|source_id| {
+                entries
+                    .iter()
+                    .find(|entry| entry.anchor.source_node_id.as_deref() == Some(source_id))
+            })
+            .or_else(|| entries.first())
+            .map(|entry| entry.member_id.clone());
+        let previous_capabilities = current.aggregate_capabilities.clone();
+        let mut replacement = current.clone();
+        let revision = next_selection_revision(&mut state)?;
+        replacement.selection_revision = revision;
+        replacement.primary_member_id = primary_member_id.clone();
+        replacement.range_origin_member_id = primary_member_id;
+        replacement.aggregate_capabilities =
+            conservative_filtered_capabilities(&previous_capabilities, &entries);
+        replacement.aggregate_html_facts = aggregate_selection_html_facts(&entries);
+        replacement.members = entries;
+        replacement.focus = SelectionFocus::Element;
+        replacement.diagnostics =
+            vec!["Selecția a fost mutată atomic pe copiile confirmate de after-model.".to_string()];
+        state.selection = Some(replacement);
+        state.hover = None;
+        state.inspector_facts = None;
+        Ok(true)
+    }
+
+    /// Invalidates a semantic selection after a Code transaction only when
+    /// its opaque SourceNodeId no longer exists in the committed after-model.
+    /// No range, selector, label or sibling is allowed to replace it.
+    pub fn invalidate_missing_source_target(
+        &self,
+        runtime_session_id: &str,
+        retained_source_node_ids: &HashSet<String>,
+    ) -> Result<bool, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
+        let Some(current) = state.selection.as_ref() else {
+            return Ok(false);
+        };
+        if current.runtime_session_id != runtime_session_id {
+            return Ok(false);
+        }
+
+        let members = current
+            .members
+            .iter()
+            .filter(|member| {
+                member
+                    .anchor
+                    .source_node_id
+                    .as_ref()
+                    .is_none_or(|source_node_id| retained_source_node_ids.contains(source_node_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if members.len() == current.members.len() {
+            return Ok(false);
+        }
+
+        let current = current.clone();
+        let revision = next_selection_revision(&mut state)?;
+        state.selection = Some(selection_after_external_member_filter(
+            revision,
+            current,
+            members,
+            "Selecția a fost actualizată deoarece unul sau mai multe SourceNodeId nu mai există după editarea Cod.",
+        ));
+        state.hover = None;
+        state.inspector_facts = None;
+        Ok(true)
+    }
+
     pub fn with_stable_semantic_mutation_target<R>(
         &self,
         runtime_session_id: &str,
-        selection_revision: u64,
-        editor_node_id: Option<&str>,
-        source_node_id: Option<&str>,
-        render_instance_id: Option<&str>,
+        expected: &SelectionMutationIdentity,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
         self.with_resolved_target(
             "Mutația CSS",
             runtime_session_id,
-            selection_revision,
-            editor_node_id,
-            source_node_id,
-            render_instance_id,
+            expected,
             SelectionRevisionPolicy::StableSemanticAnchor,
             execute,
         )
@@ -439,19 +641,13 @@ impl SelectionCoordinatorRuntime {
     pub fn with_selection_target<R>(
         &self,
         runtime_session_id: &str,
-        selection_revision: u64,
-        editor_node_id: Option<&str>,
-        source_node_id: Option<&str>,
-        render_instance_id: Option<&str>,
+        expected: &SelectionMutationIdentity,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
         self.with_resolved_target(
             "Operația dependentă de selecție",
             runtime_session_id,
-            selection_revision,
-            editor_node_id,
-            source_node_id,
-            render_instance_id,
+            expected,
             SelectionRevisionPolicy::Exact,
             execute,
         )
@@ -461,71 +657,59 @@ impl SelectionCoordinatorRuntime {
         &self,
         operation: &str,
         runtime_session_id: &str,
-        selection_revision: u64,
-        editor_node_id: Option<&str>,
-        source_node_id: Option<&str>,
-        render_instance_id: Option<&str>,
+        expected: &SelectionMutationIdentity,
         revision_policy: SelectionRevisionPolicy,
         execute: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
-        if selection_revision == 0
-            || (editor_node_id.is_none()
-                && source_node_id.is_none()
-                && render_instance_id.is_none())
-        {
+        if expected.selection_revision == 0 || expected.members.is_empty() {
             return Err(format!(
                 "SelectionCoordinator a refuzat {operation}: amprenta selecției este incompletă."
             ));
         }
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
-        let selection = state.selection.as_ref().ok_or_else(|| {
-            format!("{operation} a fost anulată deoarece selecția semantică nu mai există.")
-        })?;
-        if selection.runtime_session_id != runtime_session_id {
-            return Err(format!(
-                "{operation} a fost anulată deoarece ProjectSession-ul selecției s-a schimbat."
-            ));
-        }
-        let requires_exact_revision = matches!(revision_policy, SelectionRevisionPolicy::Exact);
-        if selection.selection_revision < selection_revision
-            || (requires_exact_revision && selection.selection_revision != selection_revision)
         {
-            return Err(format!(
-                "{operation} a fost anulată deoarece selecția s-a schimbat (revizia capturată {selection_revision}, revizia activă {}).",
-                selection.selection_revision
-            ));
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "SelectionCoordinator este indisponibil.".to_string())?;
+            let selection = state.selection.as_ref().ok_or_else(|| {
+                format!("{operation} a fost anulată deoarece selecția semantică nu mai există.")
+            })?;
+            if selection.runtime_session_id != runtime_session_id {
+                return Err(format!(
+                    "{operation} a fost anulată deoarece ProjectSession-ul selecției s-a schimbat."
+                ));
+            }
+            if selection.canvas_identity.workspace_revision != expected.workspace_revision {
+                return Err(format!(
+                    "{operation} a fost anulată deoarece ProjectWorkspace s-a schimbat (revizia capturată {}, revizia selecției {}).",
+                    expected.workspace_revision,
+                    selection.canvas_identity.workspace_revision
+                ));
+            }
+            let requires_exact_revision = matches!(revision_policy, SelectionRevisionPolicy::Exact);
+            if selection.selection_revision < expected.selection_revision
+                || (requires_exact_revision
+                    && selection.selection_revision != expected.selection_revision)
+            {
+                return Err(format!(
+                    "{operation} a fost anulată deoarece selecția s-a schimbat (revizia capturată {}, revizia activă {}).",
+                    expected.selection_revision,
+                    selection.selection_revision
+                ));
+            }
+            if aggregate_selection_resolution(&selection.members) != SelectionResolution::Resolved {
+                return Err(format!(
+                    "{operation} a fost anulată deoarece selecția nu mai are o rezoluție unică."
+                ));
+            }
+            if !mutation_identity_matches(selection, expected) {
+                return Err(format!(
+                    "{operation} a fost anulată deoarece setul de ancore al selecției s-a schimbat."
+                ));
+            }
         }
-        if selection.resolution != SelectionResolution::Resolved {
-            return Err(format!(
-                "{operation} a fost anulată deoarece selecția nu mai are o rezoluție unică."
-            ));
-        }
-        let anchor = selection.anchor.as_ref().ok_or_else(|| {
-            format!(
-                "{operation} a fost anulată deoarece selecția activă nu mai are ancoră semantică."
-            )
-        })?;
-        require_optional_identity(
-            operation,
-            "EditorNavigation",
-            editor_node_id,
-            anchor.editor_node_id.as_deref(),
-        )?;
-        require_optional_identity(
-            operation,
-            "SourceGraph",
-            source_node_id,
-            anchor.source_node_id.as_deref(),
-        )?;
-        require_optional_identity(
-            operation,
-            "render",
-            render_instance_id,
-            anchor.render_instance_id.as_deref(),
-        )?;
+        // Nu ținem mutexul SelectionCoordinator peste parse, I/O sau commit.
+        // ProjectWorkspace face al doilea CAS folosind revizia capturată.
         execute()
     }
 
@@ -534,23 +718,6 @@ impl SelectionCoordinatorRuntime {
         snapshot: &EditorNavigationSnapshot,
         active_document_path: Option<&str>,
         source_graph: Option<&SourceGraph>,
-        intent: SelectionIntent,
-    ) -> Result<SelectionCoordinatorSnapshot, String> {
-        self.apply_with_source_alias_transition(
-            snapshot,
-            active_document_path,
-            source_graph,
-            None,
-            intent,
-        )
-    }
-
-    pub(crate) fn apply_with_source_alias_transition(
-        &self,
-        snapshot: &EditorNavigationSnapshot,
-        active_document_path: Option<&str>,
-        source_graph: Option<&SourceGraph>,
-        source_identity_alias_transition: Option<&SourceIdentityAliasTransition>,
         intent: SelectionIntent,
     ) -> Result<SelectionCoordinatorSnapshot, String> {
         let mut state = self
@@ -576,6 +743,25 @@ impl SelectionCoordinatorRuntime {
                     node,
                     SelectionFocus::Element,
                     Vec::new(),
+                )?;
+            }
+            SelectionIntent::ToggleEditorNode { editor_node_id } => {
+                toggle_editor_node(&mut state, snapshot, active_document_path, &editor_node_id)?;
+            }
+            SelectionIntent::ExtendRangeToEditorNode { editor_node_id } => {
+                extend_range_to_editor_node(
+                    &mut state,
+                    snapshot,
+                    active_document_path,
+                    &editor_node_id,
+                )?;
+            }
+            SelectionIntent::SetPrimaryEditorNode { editor_node_id } => {
+                set_primary_editor_node(
+                    &mut state,
+                    snapshot,
+                    active_document_path,
+                    &editor_node_id,
                 )?;
             }
             SelectionIntent::SelectSourcePosition {
@@ -608,13 +794,7 @@ impl SelectionCoordinatorRuntime {
                 clear_selection(&mut state, snapshot, active_document_path)?;
             }
             SelectionIntent::Rebase => {
-                rebase_selection(
-                    &mut state,
-                    snapshot,
-                    active_document_path,
-                    source_graph,
-                    source_identity_alias_transition,
-                )?;
+                rebase_selection(&mut state, snapshot, active_document_path)?;
             }
             SelectionIntent::SetHover {
                 editor_node_id,
@@ -696,10 +876,8 @@ impl SelectionCoordinatorRuntime {
         if selection.canvas_identity != input.canvas_identity {
             return Err("Observația DOM aparține altei identități Canvas.".to_string());
         }
-        if selection
-            .anchor
-            .as_ref()
-            .and_then(|anchor| anchor.render_instance_id.as_deref())
+        if primary_selection_entry(selection)
+            .and_then(|entry| entry.anchor.render_instance_id.as_deref())
             != Some(input.render_instance_id.as_str())
         {
             return Err("Observația DOM nu aparține instanței semantice selectate.".to_string());
@@ -713,7 +891,7 @@ impl SelectionCoordinatorRuntime {
         {
             return Err("Observația DOM nu aparține documentului CanvasAgent activ.".to_string());
         }
-        if !selection.projections.inspector.can_inspect {
+        if !primary_selection_entry(selection).is_some_and(|entry| entry.capabilities.can_inspect) {
             return Err("Selecția semantică nu permite inspecția DOM.".to_string());
         }
         let inspector_facts = validate_inspector_facts(selection, input.inspector_facts)?;
@@ -744,21 +922,25 @@ impl SelectionCoordinatorRuntime {
     }
 }
 
-fn require_optional_identity(
-    operation: &str,
-    label: &str,
-    expected: Option<&str>,
-    actual: Option<&str>,
-) -> Result<(), String> {
-    let Some(expected) = expected else {
-        return Ok(());
-    };
-    if expected.trim().is_empty() || actual != Some(expected) {
-        return Err(format!(
-            "{operation} a fost anulată deoarece identitatea {label} a selecției s-a schimbat."
-        ));
-    }
-    Ok(())
+fn mutation_members(selection: &SelectionSnapshot) -> Vec<SelectionMutationMemberIdentity> {
+    selection
+        .members
+        .iter()
+        .map(|member| SelectionMutationMemberIdentity {
+            member_id: member.member_id.clone(),
+            editor_node_id: member.anchor.editor_node_id.clone(),
+            source_node_id: member.anchor.source_node_id.clone(),
+            render_instance_id: member.anchor.render_instance_id.clone(),
+        })
+        .collect()
+}
+
+fn mutation_identity_matches(
+    selection: &SelectionSnapshot,
+    expected: &SelectionMutationIdentity,
+) -> bool {
+    expected.primary_member_id == selection.primary_member_id
+        && expected.members == mutation_members(selection)
 }
 
 fn ensure_session(
@@ -809,6 +991,180 @@ fn commit_node(
     Ok(())
 }
 
+fn require_selectable_node<'a>(
+    snapshot: &'a EditorNavigationSnapshot,
+    editor_node_id: &str,
+) -> Result<&'a EditorNavigationNode, String> {
+    let node = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id == editor_node_id)
+        .ok_or_else(|| {
+            "SelectionCoordinator nu găsește nodul EditorNavigation solicitat.".to_string()
+        })?;
+    if !node.capabilities.can_select {
+        return Err("SelectionCoordinator a refuzat un nod care nu poate fi selectat.".to_string());
+    }
+    Ok(node)
+}
+
+fn toggle_editor_node(
+    state: &mut SelectionCoordinatorState,
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+    editor_node_id: &str,
+) -> Result<(), String> {
+    let node = require_selectable_node(snapshot, editor_node_id)?;
+    let current = state.selection.clone().ok_or_else(|| {
+        "SelectionCoordinator nu are o stare de selecție inițializată.".to_string()
+    })?;
+    let mut members = current.members;
+    let existing = members
+        .iter()
+        .position(|member| member.anchor.editor_node_id.as_deref() == Some(editor_node_id));
+    let (primary_member_id, range_origin_member_id) = if let Some(index) = existing {
+        let removed = members.remove(index);
+        let primary = if current.primary_member_id.as_deref() == Some(removed.member_id.as_str()) {
+            members.last().map(|member| member.member_id.clone())
+        } else {
+            current.primary_member_id
+        };
+        let range_origin =
+            if current.range_origin_member_id.as_deref() == Some(removed.member_id.as_str()) {
+                primary.clone()
+            } else {
+                current.range_origin_member_id
+            };
+        (primary, range_origin)
+    } else {
+        if members.len() >= MAX_SELECTION_MEMBERS {
+            return Err(format!(
+                "Selecția multiplă este limitată la {MAX_SELECTION_MEMBERS} de elemente."
+            ));
+        }
+        let entry = selection_entry_from_node(node, SelectionResolution::Resolved, Vec::new());
+        let member_id = entry.member_id.clone();
+        members.push(entry);
+        (Some(member_id.clone()), Some(member_id))
+    };
+    let revision = next_selection_revision(state)?;
+    state.selection = Some(selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        members,
+        primary_member_id,
+        range_origin_member_id,
+        SelectionFocus::Element,
+        Vec::new(),
+    ));
+    state.inspector_facts = None;
+    Ok(())
+}
+
+fn extend_range_to_editor_node(
+    state: &mut SelectionCoordinatorState,
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+    editor_node_id: &str,
+) -> Result<(), String> {
+    let target = require_selectable_node(snapshot, editor_node_id)?;
+    let current = state.selection.as_ref().ok_or_else(|| {
+        "SelectionCoordinator nu are o stare de selecție inițializată.".to_string()
+    })?;
+    let origin_editor_node_id = current
+        .range_origin_member_id
+        .as_deref()
+        .or(current.primary_member_id.as_deref())
+        .and_then(|member_id| {
+            current
+                .members
+                .iter()
+                .find(|member| member.member_id == member_id)
+        })
+        .and_then(|member| member.anchor.editor_node_id.as_deref())
+        .unwrap_or(target.id.as_str());
+
+    let mut selectable = snapshot
+        .nodes
+        .iter()
+        .filter(|node| node.capabilities.can_select)
+        .collect::<Vec<_>>();
+    selectable.sort_by(|left, right| {
+        left.order
+            .cmp(&right.order)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let origin_index = selectable
+        .iter()
+        .position(|node| node.id == origin_editor_node_id)
+        .ok_or_else(|| "Originea intervalului nu mai există în EditorNavigation.".to_string())?;
+    let target_index = selectable
+        .iter()
+        .position(|node| node.id == target.id)
+        .ok_or_else(|| "Ținta intervalului nu mai există în EditorNavigation.".to_string())?;
+    let start = origin_index.min(target_index);
+    let end = origin_index.max(target_index);
+    let count = end - start + 1;
+    if count > MAX_SELECTION_MEMBERS {
+        return Err(format!(
+            "Intervalul depășește limita de {MAX_SELECTION_MEMBERS} de elemente selectate."
+        ));
+    }
+    let members = selectable[start..=end]
+        .iter()
+        .map(|node| selection_entry_from_node(node, SelectionResolution::Resolved, Vec::new()))
+        .collect::<Vec<_>>();
+    let primary_member_id = target.id.clone();
+    let origin_member_id = selectable[origin_index].id.clone();
+    let revision = next_selection_revision(state)?;
+    state.selection = Some(selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        members,
+        Some(primary_member_id),
+        Some(origin_member_id),
+        SelectionFocus::Element,
+        Vec::new(),
+    ));
+    state.inspector_facts = None;
+    Ok(())
+}
+
+fn set_primary_editor_node(
+    state: &mut SelectionCoordinatorState,
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+    editor_node_id: &str,
+) -> Result<(), String> {
+    let current = state.selection.clone().ok_or_else(|| {
+        "SelectionCoordinator nu are o stare de selecție inițializată.".to_string()
+    })?;
+    let member_id = current
+        .members
+        .iter()
+        .find(|member| member.anchor.editor_node_id.as_deref() == Some(editor_node_id))
+        .map(|member| member.member_id.clone())
+        .ok_or_else(|| "Elementul primar trebuie să aparțină selecției active.".to_string())?;
+    if current.primary_member_id.as_deref() == Some(member_id.as_str()) {
+        return Ok(());
+    }
+    let revision = next_selection_revision(state)?;
+    state.selection = Some(selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        current.members,
+        Some(member_id),
+        current.range_origin_member_id,
+        SelectionFocus::Element,
+        current.diagnostics,
+    ));
+    state.inspector_facts = None;
+    Ok(())
+}
+
 fn set_focus(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
@@ -832,11 +1188,10 @@ fn set_focus(
         }
     }
     if !matches!(&focus, SelectionFocus::Element)
-        && !state.selection.as_ref().is_some_and(|selection| {
-            selection.subject.is_some()
-                && selection.anchor.is_some()
-                && selection.resolution != SelectionResolution::Cleared
-        })
+        && state
+            .selection
+            .as_ref()
+            .is_none_or(|selection| primary_selection_entry(selection).is_none())
     {
         return Err("Focusul CSS/JS necesită mai întâi un subiect semantic selectat.".to_string());
     }
@@ -847,20 +1202,10 @@ fn set_focus(
     let retained_inspector_facts = state.inspector_facts.take().filter(|facts| {
         facts.selection_revision == current.selection_revision
             && facts.canvas_identity == snapshot.identity
-            && current
-                .anchor
-                .as_ref()
-                .and_then(|anchor| anchor.render_instance_id.as_deref())
+            && primary_selection_entry(&current)
+                .and_then(|entry| entry.anchor.render_instance_id.as_deref())
                 == Some(facts.render_instance_id.as_str())
     });
-    let projections = projections(
-        current.resolution,
-        current.subject.as_ref(),
-        current.anchor.as_ref(),
-        current.provenance.as_ref(),
-        current.capabilities.as_ref(),
-        &focus,
-    );
     state.selection = Some(SelectionSnapshot {
         schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
         selection_revision: revision,
@@ -870,7 +1215,6 @@ fn set_focus(
         route: snapshot.route.clone(),
         active_document_path: active_document_path.map(str::to_string),
         focus,
-        projections,
         ..current
     });
     state.inspector_facts = retained_inspector_facts.map(|mut facts| {
@@ -901,13 +1245,11 @@ fn rebase_selection(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
     active_document_path: Option<&str>,
-    source_graph: Option<&SourceGraph>,
-    source_identity_alias_transition: Option<&SourceIdentityAliasTransition>,
 ) -> Result<(), String> {
     let Some(current) = state.selection.clone() else {
         return ensure_session(state, snapshot, active_document_path);
     };
-    let Some(anchor) = current.anchor.as_ref() else {
+    if current.members.is_empty() {
         let revision = next_selection_revision(state)?;
         state.selection = Some(empty_selection(
             revision,
@@ -918,87 +1260,63 @@ fn rebase_selection(
         state.inspector_facts = None;
         state.hover = None;
         return Ok(());
-    };
-    let source_identity_aliases = source_identity_alias_transition
-        .filter(|transition| {
-            transition.revision_before == current.canvas_identity.workspace_revision
-                && transition.revision_after == snapshot.identity.workspace_revision
-        })
-        .map(|transition| &transition.aliases);
-
-    match rebase_candidate(
-        snapshot,
-        anchor,
-        current.provenance.as_ref(),
-        source_graph,
-        source_identity_aliases,
-    ) {
-        RebaseCandidate::Resolved(node) => {
-            commit_node(
-                state,
-                snapshot,
-                active_document_path,
-                node,
-                current.focus,
-                Vec::new(),
-            )?;
-        }
-        RebaseCandidate::NotRendered => {
-            preserve_unresolved(
-                state,
-                snapshot,
-                active_document_path,
-                current,
-                SelectionResolution::NotRendered,
-                "Selecția semantică nu este randată în Canvas-ul curent.",
-            )?;
-        }
-        RebaseCandidate::Ambiguous => {
-            preserve_unresolved(
-                state,
-                snapshot,
-                active_document_path,
-                current,
-                SelectionResolution::Ambiguous,
-                "Selecția semantică are mai multe instanțe posibile în Canvas-ul curent.",
-            )?;
-        }
     }
-    state.hover = None;
-    Ok(())
-}
 
-fn preserve_unresolved(
-    state: &mut SelectionCoordinatorState,
-    snapshot: &EditorNavigationSnapshot,
-    active_document_path: Option<&str>,
-    current: SelectionSnapshot,
-    resolution: SelectionResolution,
-    diagnostic: &str,
-) -> Result<(), String> {
+    let mut members = Vec::with_capacity(current.members.len());
+    let mut primary_member_id = None;
+    let mut range_origin_member_id = None;
+    let mut diagnostics = Vec::new();
+    for member in &current.members {
+        let (rebased, diagnostic) = match rebase_candidate(snapshot, &member.anchor) {
+            RebaseCandidate::Resolved(node) => (
+                selection_entry_from_node(node, SelectionResolution::Resolved, Vec::new()),
+                None,
+            ),
+            RebaseCandidate::NotRendered => {
+                let message = format!(
+                    "Membrul {} nu este randat în Canvas-ul curent.",
+                    member.member_id
+                );
+                let mut unresolved = member.clone();
+                unresolved.resolution = SelectionResolution::NotRendered;
+                unresolved.diagnostics = vec![message.clone()];
+                (unresolved, Some(message))
+            }
+            RebaseCandidate::Ambiguous => {
+                let message = format!(
+                    "Membrul {} are mai multe instanțe exacte posibile în Canvas-ul curent.",
+                    member.member_id
+                );
+                let mut unresolved = member.clone();
+                unresolved.resolution = SelectionResolution::Ambiguous;
+                unresolved.diagnostics = vec![message.clone()];
+                (unresolved, Some(message))
+            }
+        };
+        if current.primary_member_id.as_deref() == Some(member.member_id.as_str()) {
+            primary_member_id = Some(rebased.member_id.clone());
+        }
+        if current.range_origin_member_id.as_deref() == Some(member.member_id.as_str()) {
+            range_origin_member_id = Some(rebased.member_id.clone());
+        }
+        if let Some(diagnostic) = diagnostic {
+            diagnostics.push(diagnostic);
+        }
+        members.push(rebased);
+    }
     let revision = next_selection_revision(state)?;
-    let projections = projections(
-        resolution,
-        current.subject.as_ref(),
-        current.anchor.as_ref(),
-        current.provenance.as_ref(),
-        current.capabilities.as_ref(),
-        &current.focus,
-    );
-    state.selection = Some(SelectionSnapshot {
-        schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
-        selection_revision: revision,
-        project_root: snapshot.identity.project_root.clone(),
-        runtime_session_id: snapshot.identity.runtime_session_id.clone(),
-        canvas_identity: snapshot.identity.clone(),
-        route: snapshot.route.clone(),
-        active_document_path: active_document_path.map(str::to_string),
-        resolution,
-        projections,
-        diagnostics: vec![diagnostic.to_string()],
-        ..current
-    });
+    state.selection = Some(selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        members,
+        primary_member_id,
+        range_origin_member_id,
+        current.focus,
+        diagnostics,
+    ));
     state.inspector_facts = None;
+    state.hover = None;
     Ok(())
 }
 
@@ -1103,8 +1421,8 @@ fn select_source_position(
     if let Some(current_id) = state
         .selection
         .as_ref()
-        .and_then(|selection| selection.anchor.as_ref())
-        .and_then(|anchor| anchor.editor_node_id.as_deref())
+        .and_then(primary_selection_entry)
+        .and_then(|entry| entry.anchor.editor_node_id.as_deref())
     {
         if let Some(current) = candidates
             .iter()
@@ -1127,7 +1445,7 @@ fn select_source_position(
         );
     };
     let revision = next_selection_revision(state)?;
-    let mut selection = selection_from_node(
+    let selection = selection_from_node(
         revision,
         snapshot,
         active_document_path,
@@ -1135,14 +1453,6 @@ fn select_source_position(
         SelectionFocus::Element,
         SelectionResolution::Ambiguous,
         vec!["Poziția din cod corespunde mai multor instanțe randate.".to_string()],
-    );
-    selection.projections = projections(
-        SelectionResolution::Ambiguous,
-        selection.subject.as_ref(),
-        selection.anchor.as_ref(),
-        selection.provenance.as_ref(),
-        selection.capabilities.as_ref(),
-        &selection.focus,
     );
     state.selection = Some(selection);
     state.inspector_facts = None;
@@ -1178,8 +1488,8 @@ fn select_source_node(
         if let Some(current_id) = state
             .selection
             .as_ref()
-            .and_then(|selection| selection.anchor.as_ref())
-            .and_then(|anchor| anchor.editor_node_id.as_deref())
+            .and_then(primary_selection_entry)
+            .and_then(|entry| entry.anchor.editor_node_id.as_deref())
         {
             if let Some(current) = rendered.iter().find(|node| node.id == current_id) {
                 return commit_node(
@@ -1271,71 +1581,71 @@ enum RebaseCandidate<'a> {
 fn rebase_candidate<'a>(
     snapshot: &'a EditorNavigationSnapshot,
     anchor: &SelectionAnchor,
-    provenance: Option<&EditorSourceProvenance>,
-    source_graph: Option<&SourceGraph>,
-    source_identity_aliases: Option<&HashMap<String, String>>,
 ) -> RebaseCandidate<'a> {
-    if let Some(source_identity_aliases) = source_identity_aliases {
-        if let Some(source_node_id) = anchor.source_node_id.as_deref() {
-            match resolve_rebase_source_alias(
-                snapshot,
-                source_graph,
-                source_identity_aliases,
-                source_node_id,
-            ) {
-                SourceAliasResolution::Resolved(resolved_source_id) => {
-                    return rebase_candidate_for_source_id(snapshot, anchor, resolved_source_id);
-                }
-                SourceAliasResolution::Unresolved => {
-                    // A Rust-published transition is authoritative. Falling back
-                    // to a reused physical identity could select a sibling, so an
-                    // unresolved alias fails closed as not rendered.
-                    return RebaseCandidate::NotRendered;
-                }
-                SourceAliasResolution::NotAliased => {}
-            }
-        }
-    }
-
     if let Some(editor_node_id) = anchor.editor_node_id.as_deref() {
-        if let Some(node) = snapshot.nodes.iter().find(|node| node.id == editor_node_id) {
-            return RebaseCandidate::Resolved(node);
+        let matches = snapshot
+            .nodes
+            .iter()
+            .filter(|node| node.id == editor_node_id)
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [node] => return RebaseCandidate::Resolved(node),
+            [] => {}
+            _ => return RebaseCandidate::Ambiguous,
         }
     }
     if let Some(render_instance_id) = anchor.render_instance_id.as_deref() {
-        if let Some(node) = snapshot
+        let matches = snapshot
             .nodes
             .iter()
-            .find(|node| node.render_instance_id.as_deref() == Some(render_instance_id))
-        {
-            return RebaseCandidate::Resolved(node);
+            .filter(|node| node.render_instance_id.as_deref() == Some(render_instance_id))
+            .collect::<Vec<_>>();
+        return match matches.as_slice() {
+            [node] => RebaseCandidate::Resolved(node),
+            [] => RebaseCandidate::NotRendered,
+            _ => RebaseCandidate::Ambiguous,
+        };
+    }
+
+    for boundary_render_id in &anchor.render_instance_ids {
+        let matches = snapshot
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.boundary.as_ref().is_some_and(|boundary| {
+                    boundary
+                        .root_render_instance_ids
+                        .iter()
+                        .any(|candidate| candidate == boundary_render_id)
+                })
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [node] => return RebaseCandidate::Resolved(node),
+            [] => {}
+            _ => return RebaseCandidate::Ambiguous,
         }
     }
 
-    let semantic: Vec<&EditorNavigationNode> = snapshot
-        .nodes
-        .iter()
-        .filter(|node| {
-            provenance.is_some_and(|expected| &node.source_provenance == expected)
-                && node.component_invocation_ids == anchor.component_invocation_ids
-                && node.block_source_instance_ids == anchor.block_source_instance_ids
-                && node.dynamic_widget_source_instance_ids
-                    == anchor.dynamic_widget_source_instance_ids
-                && optional_anchor_matches(
-                    anchor.binding_path.as_deref(),
-                    node.binding_path.as_deref(),
-                )
-                && optional_anchor_matches(
-                    anchor.binding_key.as_deref(),
-                    node.binding_key.as_deref(),
-                )
-        })
-        .collect();
-    if semantic.len() == 1 {
-        return RebaseCandidate::Resolved(semantic[0]);
+    if let Some(boundary_instance_id) = anchor.boundary_instance_id.as_deref() {
+        let matches = snapshot
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.boundary
+                    .as_ref()
+                    .is_some_and(|boundary| boundary.boundary_instance_id == boundary_instance_id)
+            })
+            .collect::<Vec<_>>();
+        return match matches.as_slice() {
+            [node] => RebaseCandidate::Resolved(node),
+            [] => RebaseCandidate::NotRendered,
+            _ => RebaseCandidate::Ambiguous,
+        };
     }
-    if semantic.len() > 1 {
-        return RebaseCandidate::Ambiguous;
+
+    if anchor.editor_node_id.is_some() || !anchor.render_instance_ids.is_empty() {
+        return RebaseCandidate::NotRendered;
     }
 
     let Some(source_node_id) = anchor.source_node_id.as_deref() else {
@@ -1353,84 +1663,6 @@ fn rebase_candidate<'a>(
     }
 }
 
-fn rebase_candidate_for_source_id<'a>(
-    snapshot: &'a EditorNavigationSnapshot,
-    anchor: &SelectionAnchor,
-    source_node_id: &str,
-) -> RebaseCandidate<'a> {
-    let source_matches: Vec<&EditorNavigationNode> = snapshot
-        .nodes
-        .iter()
-        .filter(|node| {
-            node.source_node_id.as_deref() == Some(source_node_id)
-                && node.component_invocation_ids == anchor.component_invocation_ids
-                && node.block_source_instance_ids == anchor.block_source_instance_ids
-                && node.dynamic_widget_source_instance_ids
-                    == anchor.dynamic_widget_source_instance_ids
-                && optional_anchor_matches(
-                    anchor.binding_path.as_deref(),
-                    node.binding_path.as_deref(),
-                )
-                && optional_anchor_matches(
-                    anchor.binding_key.as_deref(),
-                    node.binding_key.as_deref(),
-                )
-        })
-        .collect();
-    match source_matches.as_slice() {
-        [node] => RebaseCandidate::Resolved(node),
-        [] => RebaseCandidate::NotRendered,
-        _ => RebaseCandidate::Ambiguous,
-    }
-}
-
-enum SourceAliasResolution<'a> {
-    NotAliased,
-    Resolved(&'a str),
-    Unresolved,
-}
-
-fn resolve_rebase_source_alias<'a>(
-    snapshot: &EditorNavigationSnapshot,
-    source_graph: Option<&SourceGraph>,
-    aliases: &'a HashMap<String, String>,
-    source_node_id: &str,
-) -> SourceAliasResolution<'a> {
-    let Some(first) = aliases.get(source_node_id) else {
-        return SourceAliasResolution::NotAliased;
-    };
-    if first.trim().is_empty() || first == source_node_id {
-        return SourceAliasResolution::Unresolved;
-    }
-
-    let mut current = first.as_str();
-    let mut visited = HashSet::from([source_node_id.to_string()]);
-    loop {
-        if current.trim().is_empty() || !visited.insert(current.to_string()) {
-            return SourceAliasResolution::Unresolved;
-        }
-
-        let live_in_source_graph =
-            source_graph.is_some_and(|graph| graph.nodes.iter().any(|node| node.id == current));
-        let live_in_snapshot = snapshot
-            .nodes
-            .iter()
-            .any(|node| node.source_node_id.as_deref() == Some(current));
-        if live_in_source_graph || live_in_snapshot {
-            return SourceAliasResolution::Resolved(current);
-        }
-
-        let Some(next) = aliases.get(current).map(String::as_str) else {
-            return SourceAliasResolution::Unresolved;
-        };
-        current = next;
-    }
-}
-
-fn optional_anchor_matches(expected: Option<&str>, actual: Option<&str>) -> bool {
-    expected.map_or(true, |expected| actual == Some(expected))
-}
-
 fn selection_from_node(
     revision: u64,
     snapshot: &EditorNavigationSnapshot,
@@ -1440,6 +1672,25 @@ fn selection_from_node(
     resolution: SelectionResolution,
     diagnostics: Vec<String>,
 ) -> SelectionSnapshot {
+    let entry = selection_entry_from_node(node, resolution, diagnostics.clone());
+    let member_id = entry.member_id.clone();
+    selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        vec![entry],
+        Some(member_id.clone()),
+        Some(member_id),
+        focus,
+        diagnostics,
+    )
+}
+
+fn selection_entry_from_node(
+    node: &EditorNavigationNode,
+    resolution: SelectionResolution,
+    diagnostics: Vec<String>,
+) -> SelectionEntry {
     let subject = SelectionSubject {
         kind: subject_kind(node.kind),
         tag: node.tag.clone(),
@@ -1467,32 +1718,15 @@ fn selection_from_node(
         binding_key: node.binding_key.clone(),
         binding_path: node.binding_path.clone(),
     };
-    let provenance = Some(node.source_provenance.clone());
-    let capabilities = Some(node.capabilities.clone());
-    let projections = projections(
+    SelectionEntry {
+        member_id: selection_member_id(&anchor),
         resolution,
-        Some(&subject),
-        Some(&anchor),
-        provenance.as_ref(),
-        capabilities.as_ref(),
-        &focus,
-    );
-    SelectionSnapshot {
-        schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
-        selection_revision: revision,
-        project_root: snapshot.identity.project_root.clone(),
-        runtime_session_id: snapshot.identity.runtime_session_id.clone(),
-        canvas_identity: snapshot.identity.clone(),
-        route: snapshot.route.clone(),
-        active_document_path: active_document_path.map(str::to_string),
-        resolution,
-        subject: Some(subject),
-        focus,
-        anchor: Some(anchor),
-        provenance,
-        capabilities,
-        projections,
+        subject,
+        anchor,
+        provenance: node.source_provenance.clone(),
+        capabilities: node.capabilities.clone(),
         diagnostics,
+        source_html_attributes: node.source_html_attributes.clone(),
     }
 }
 
@@ -1504,6 +1738,25 @@ fn selection_from_source_node(
     resolution: SelectionResolution,
     diagnostic: &str,
 ) -> SelectionSnapshot {
+    let entry = selection_entry_from_source_node(source, resolution, diagnostic);
+    let member_id = entry.member_id.clone();
+    selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        vec![entry],
+        Some(member_id.clone()),
+        Some(member_id),
+        SelectionFocus::Element,
+        vec![diagnostic.to_string()],
+    )
+}
+
+fn selection_entry_from_source_node(
+    source: &SourceNode,
+    resolution: SelectionResolution,
+    diagnostic: &str,
+) -> SelectionEntry {
     let subject = SelectionSubject {
         kind: source_subject_kind(&source.kind),
         tag: None,
@@ -1555,31 +1808,15 @@ fn selection_from_source_node(
         requires_edit_scope_id: None,
         reason_code: source.capabilities.reason_code,
     };
-    let focus = SelectionFocus::Element;
-    let projections = projections(
+    SelectionEntry {
+        member_id: selection_member_id(&anchor),
         resolution,
-        Some(&subject),
-        Some(&anchor),
-        Some(&provenance),
-        Some(&capabilities),
-        &focus,
-    );
-    SelectionSnapshot {
-        schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
-        selection_revision: revision,
-        project_root: snapshot.identity.project_root.clone(),
-        runtime_session_id: snapshot.identity.runtime_session_id.clone(),
-        canvas_identity: snapshot.identity.clone(),
-        route: snapshot.route.clone(),
-        active_document_path: active_document_path.map(str::to_string),
-        resolution,
-        subject: Some(subject),
-        focus,
-        anchor: Some(anchor),
-        provenance: Some(provenance),
-        capabilities: Some(capabilities),
-        projections,
+        subject,
+        anchor,
+        provenance,
+        capabilities,
         diagnostics: vec![diagnostic.to_string()],
+        source_html_attributes: None,
     }
 }
 
@@ -1589,6 +1826,61 @@ fn empty_selection(
     active_document_path: Option<&str>,
     focus: SelectionFocus,
 ) -> SelectionSnapshot {
+    selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        Vec::new(),
+        None,
+        None,
+        focus,
+        Vec::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn selection_from_members(
+    revision: u64,
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+    mut members: Vec<SelectionEntry>,
+    primary_member_id: Option<String>,
+    range_origin_member_id: Option<String>,
+    focus: SelectionFocus,
+    diagnostics: Vec<String>,
+) -> SelectionSnapshot {
+    let order_by_editor_id = snapshot
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node.order))
+        .collect::<std::collections::HashMap<_, _>>();
+    members.sort_by(|left, right| {
+        let left_order = left
+            .anchor
+            .editor_node_id
+            .as_deref()
+            .and_then(|id| order_by_editor_id.get(id).copied())
+            .unwrap_or(usize::MAX);
+        let right_order = right
+            .anchor
+            .editor_node_id
+            .as_deref()
+            .and_then(|id| order_by_editor_id.get(id).copied())
+            .unwrap_or(usize::MAX);
+        left_order
+            .cmp(&right_order)
+            .then_with(|| left.member_id.cmp(&right.member_id))
+    });
+    members.dedup_by(|left, right| left.member_id == right.member_id);
+
+    let primary_member_id = primary_member_id
+        .filter(|id| members.iter().any(|member| member.member_id == *id))
+        .or_else(|| members.first().map(|member| member.member_id.clone()));
+    let range_origin_member_id = range_origin_member_id
+        .filter(|id| members.iter().any(|member| member.member_id == *id))
+        .or_else(|| primary_member_id.clone());
+    let aggregate_capabilities = aggregate_selection_capabilities(snapshot, &members);
+    let aggregate_html_facts = aggregate_selection_html_facts(&members);
     SelectionSnapshot {
         schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
         selection_revision: revision,
@@ -1597,85 +1889,372 @@ fn empty_selection(
         canvas_identity: snapshot.identity.clone(),
         route: snapshot.route.clone(),
         active_document_path: active_document_path.map(str::to_string),
-        resolution: SelectionResolution::Cleared,
-        subject: None,
-        focus: focus.clone(),
-        anchor: None,
-        provenance: None,
-        capabilities: None,
-        projections: projections(SelectionResolution::Cleared, None, None, None, None, &focus),
-        diagnostics: Vec::new(),
+        primary_member_id,
+        range_origin_member_id,
+        members,
+        aggregate_capabilities,
+        aggregate_html_facts,
+        focus,
+        diagnostics,
     }
 }
 
-fn projections(
-    resolution: SelectionResolution,
-    subject: Option<&SelectionSubject>,
-    anchor: Option<&SelectionAnchor>,
-    provenance: Option<&EditorSourceProvenance>,
-    capabilities: Option<&EditorNavigationCapabilities>,
-    focus: &SelectionFocus,
-) -> SelectionUiProjections {
-    let resolved = resolution == SelectionResolution::Resolved;
-    let (primary, render_instance_ids, boundary_instance_id) = if resolved {
-        anchor.map_or((None, Vec::new(), None), |anchor| {
-            (
-                anchor
-                    .render_instance_id
-                    .clone()
-                    .or_else(|| anchor.render_instance_ids.first().cloned()),
-                anchor.render_instance_ids.clone(),
-                anchor.boundary_instance_id.clone(),
-            )
-        })
+fn selection_after_external_member_filter(
+    revision: u64,
+    current: SelectionSnapshot,
+    members: Vec<SelectionEntry>,
+    diagnostic: &str,
+) -> SelectionSnapshot {
+    let primary_member_id = current
+        .primary_member_id
+        .filter(|id| members.iter().any(|member| member.member_id == *id))
+        .or_else(|| members.first().map(|member| member.member_id.clone()));
+    let range_origin_member_id = current
+        .range_origin_member_id
+        .filter(|id| members.iter().any(|member| member.member_id == *id))
+        .or_else(|| primary_member_id.clone());
+    let focus = if members.is_empty() {
+        SelectionFocus::Element
     } else {
-        (None, Vec::new(), None)
+        current.focus
     };
-    let editor_node_id = resolved
-        .then(|| anchor.and_then(|anchor| anchor.editor_node_id.clone()))
-        .flatten();
-    let (code_file, code_range) = focus_code_target(focus)
-        .map(|(file, range)| (Some(file.to_string()), range.cloned()))
-        .unwrap_or_else(|| {
-            (
-                anchor.and_then(|anchor| anchor.file.clone()),
-                anchor.and_then(|anchor| anchor.range.clone()),
-            )
-        });
-    SelectionUiProjections {
-        preview: SelectionPreviewProjection {
-            editor_node_id: editor_node_id.clone(),
-            target_kind: subject.map(|subject| subject.kind),
-            primary_render_instance_id: primary,
-            render_instance_ids,
-            boundary_instance_id,
-        },
-        layers: SelectionLayersProjection {
-            editor_node_id: editor_node_id.clone(),
-        },
-        code: SelectionCodeProjection {
-            file: code_file,
-            range: code_range,
-            focus: focus.clone(),
-        },
-        inspector: SelectionInspectorProjection {
-            editor_node_id,
-            subject_kind: subject.map(|subject| subject.kind),
-            can_inspect: capabilities.is_some_and(|capabilities| capabilities.can_inspect),
-        },
-        status: SelectionStatusProjection {
-            provenance: provenance.cloned(),
-            focus: focus.clone(),
-        },
+    let aggregate_capabilities =
+        conservative_filtered_capabilities(&current.aggregate_capabilities, &members);
+    let aggregate_html_facts = aggregate_selection_html_facts(&members);
+    SelectionSnapshot {
+        schema_version: SELECTION_COORDINATOR_SCHEMA_VERSION,
+        selection_revision: revision,
+        project_root: current.project_root,
+        runtime_session_id: current.runtime_session_id,
+        canvas_identity: current.canvas_identity,
+        route: current.route,
+        active_document_path: current.active_document_path,
+        primary_member_id,
+        range_origin_member_id,
+        members,
+        aggregate_capabilities,
+        aggregate_html_facts,
+        focus,
+        diagnostics: vec![diagnostic.to_string()],
     }
 }
 
-fn focus_code_target(focus: &SelectionFocus) -> Option<(&str, Option<&SourceRange>)> {
-    match focus {
-        SelectionFocus::Element => None,
-        SelectionFocus::CssRule { file, range, .. }
-        | SelectionFocus::CssProperty { file, range, .. } => Some((file, range.as_ref())),
-        SelectionFocus::JsBehavior { file, .. } => Some((file, None)),
+fn conservative_filtered_capabilities(
+    previous: &SelectionAggregateCapabilities,
+    members: &[SelectionEntry],
+) -> SelectionAggregateCapabilities {
+    if members.is_empty() {
+        return SelectionAggregateCapabilities::default();
+    }
+    let all_resolved = members
+        .iter()
+        .all(|member| member.resolution == SelectionResolution::Resolved);
+    let all_source_backed = members
+        .iter()
+        .all(|member| member.anchor.source_node_id.is_some());
+    let same_file = members
+        .first()
+        .and_then(|member| member.anchor.file.as_deref())
+        .is_some_and(|file| {
+            members
+                .iter()
+                .all(|member| member.anchor.file.as_deref() == Some(file))
+        });
+    let mut source_ids = HashSet::with_capacity(members.len());
+    let has_duplicate_source_targets = members.iter().any(|member| {
+        member
+            .anchor
+            .source_node_id
+            .as_deref()
+            .is_some_and(|id| !source_ids.insert(id))
+    });
+    let all_mutable = members.iter().all(|member| !member.capabilities.read_only);
+    let all_structural = members.iter().all(|member| {
+        matches!(
+            member.subject.kind,
+            SelectionSubjectKind::HtmlElement | SelectionSubjectKind::TeraBoundary
+        )
+    });
+    let base_batch = all_resolved
+        && all_source_backed
+        && all_mutable
+        && all_structural
+        && !has_duplicate_source_targets;
+    let same_parent = previous.same_parent;
+    let has_ancestor_descendant = previous.has_ancestor_descendant;
+    let can_batch_attributes = base_batch
+        && members.iter().all(|member| {
+            member.subject.kind == SelectionSubjectKind::HtmlElement
+                && member.capabilities.can_edit_attributes
+        });
+    let can_batch_duplicate = base_batch && !has_ancestor_descendant;
+    let can_batch_delete = can_batch_duplicate;
+    let can_batch_move = base_batch
+        && same_file
+        && same_parent
+        && !has_ancestor_descendant
+        && members.iter().all(|member| member.capabilities.can_move);
+    let primary_only_edits_allowed = members.len() == 1 && all_resolved;
+    SelectionAggregateCapabilities {
+        member_count: members.len(),
+        all_resolved,
+        all_source_backed,
+        same_file,
+        same_parent,
+        has_ancestor_descendant,
+        has_duplicate_source_targets,
+        can_batch_attributes,
+        can_batch_duplicate,
+        can_batch_delete,
+        can_batch_move,
+        primary_only_edits_allowed,
+        primary_only_reason_code: (!primary_only_edits_allowed)
+            .then(|| "selection_primary_only_operations".to_string()),
+        reasons: vec!["selection_requires_navigation_rebase".to_string()],
+    }
+}
+
+fn selection_member_id(anchor: &SelectionAnchor) -> String {
+    if let Some(editor_node_id) = anchor.editor_node_id.as_deref() {
+        return editor_node_id.to_string();
+    }
+    if let Some(source_node_id) = anchor.source_node_id.as_deref() {
+        return format!("source:{source_node_id}");
+    }
+    if let Some(render_instance_id) = anchor.render_instance_id.as_deref() {
+        return format!("render:{render_instance_id}");
+    }
+    "selection:unresolved".to_string()
+}
+
+fn aggregate_selection_resolution(members: &[SelectionEntry]) -> SelectionResolution {
+    if members.is_empty() {
+        return SelectionResolution::Cleared;
+    }
+    if members
+        .iter()
+        .any(|member| member.resolution == SelectionResolution::Ambiguous)
+    {
+        return SelectionResolution::Ambiguous;
+    }
+    if members
+        .iter()
+        .any(|member| member.resolution == SelectionResolution::NotRendered)
+    {
+        return SelectionResolution::NotRendered;
+    }
+    SelectionResolution::Resolved
+}
+
+fn primary_selection_entry(selection: &SelectionSnapshot) -> Option<&SelectionEntry> {
+    let primary_member_id = selection.primary_member_id.as_deref()?;
+    selection
+        .members
+        .iter()
+        .find(|member| member.member_id == primary_member_id)
+}
+
+fn aggregate_selection_html_facts(members: &[SelectionEntry]) -> SelectionAggregateHtmlFacts {
+    let attribute_sets = members
+        .iter()
+        .map(|member| member.source_html_attributes.as_ref())
+        .collect::<Option<Vec<_>>>();
+    let Some(attribute_sets) = attribute_sets else {
+        return SelectionAggregateHtmlFacts::default();
+    };
+    let Some(first) = attribute_sets.first() else {
+        return SelectionAggregateHtmlFacts::default();
+    };
+
+    let class_sets = attribute_sets
+        .iter()
+        .map(|attributes| {
+            attributes
+                .get("class")
+                .and_then(|value| value.as_deref())
+                .unwrap_or_default()
+                .split_ascii_whitespace()
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>()
+        })
+        .collect::<Vec<_>>();
+    let common_class_set = class_sets
+        .iter()
+        .skip(1)
+        .fold(class_sets[0].clone(), |common, classes| {
+            common.intersection(classes).cloned().collect()
+        });
+    let all_class_set = class_sets
+        .iter()
+        .flat_map(|classes| classes.iter().cloned())
+        .collect::<BTreeSet<_>>();
+
+    let attribute_names = attribute_sets
+        .iter()
+        .flat_map(|attributes| attributes.keys())
+        .filter(|name| name.as_str() != "class")
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut common_attributes = BTreeMap::new();
+    let mut mixed_attribute_names = Vec::new();
+    for name in attribute_names {
+        let first_value = first.get(&name);
+        if first_value.is_some()
+            && attribute_sets
+                .iter()
+                .skip(1)
+                .all(|attributes| attributes.get(&name) == first_value)
+        {
+            common_attributes.insert(name, first_value.cloned().unwrap_or(None));
+        } else {
+            mixed_attribute_names.push(name);
+        }
+    }
+
+    SelectionAggregateHtmlFacts {
+        complete: true,
+        common_classes: common_class_set.iter().cloned().collect(),
+        mixed_classes: all_class_set
+            .difference(&common_class_set)
+            .cloned()
+            .collect(),
+        common_attributes,
+        mixed_attribute_names,
+    }
+}
+
+fn aggregate_selection_capabilities(
+    snapshot: &EditorNavigationSnapshot,
+    members: &[SelectionEntry],
+) -> SelectionAggregateCapabilities {
+    if members.is_empty() {
+        return SelectionAggregateCapabilities::default();
+    }
+    let nodes_by_id = snapshot
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<std::collections::HashMap<_, _>>();
+    let selected_editor_ids = members
+        .iter()
+        .filter_map(|member| member.anchor.editor_node_id.as_deref())
+        .collect::<HashSet<_>>();
+    let all_resolved = members
+        .iter()
+        .all(|member| member.resolution == SelectionResolution::Resolved);
+    let all_source_backed = members
+        .iter()
+        .all(|member| member.anchor.source_node_id.is_some());
+    let same_file = members
+        .first()
+        .and_then(|member| member.anchor.file.as_deref())
+        .is_some_and(|file| {
+            members
+                .iter()
+                .all(|member| member.anchor.file.as_deref() == Some(file))
+        });
+    let editor_nodes = members
+        .iter()
+        .filter_map(|member| {
+            member
+                .anchor
+                .editor_node_id
+                .as_deref()
+                .and_then(|id| nodes_by_id.get(id).copied())
+        })
+        .collect::<Vec<_>>();
+    let same_parent = editor_nodes.len() == members.len()
+        && editor_nodes.first().is_some_and(|first| {
+            editor_nodes
+                .iter()
+                .all(|node| node.parent_id == first.parent_id)
+        });
+    let has_ancestor_descendant = editor_nodes.iter().any(|node| {
+        let mut parent_id = node.parent_id.as_deref();
+        while let Some(parent) = parent_id {
+            if selected_editor_ids.contains(parent) {
+                return true;
+            }
+            parent_id = nodes_by_id
+                .get(parent)
+                .and_then(|candidate| candidate.parent_id.as_deref());
+        }
+        false
+    });
+    let mut source_ids = HashSet::with_capacity(members.len());
+    let has_duplicate_source_targets = members.iter().any(|member| {
+        member
+            .anchor
+            .source_node_id
+            .as_deref()
+            .is_some_and(|source_node_id| !source_ids.insert(source_node_id))
+    });
+    let all_mutable = members.iter().all(|member| !member.capabilities.read_only);
+    let all_structural = members.iter().all(|member| {
+        matches!(
+            member.subject.kind,
+            SelectionSubjectKind::HtmlElement | SelectionSubjectKind::TeraBoundary
+        )
+    });
+    let base_batch = all_resolved
+        && all_source_backed
+        && all_mutable
+        && all_structural
+        && !has_duplicate_source_targets;
+    let can_batch_attributes = base_batch
+        && members.iter().all(|member| {
+            member.subject.kind == SelectionSubjectKind::HtmlElement
+                && member.capabilities.can_edit_attributes
+        });
+    let can_batch_duplicate = base_batch && !has_ancestor_descendant;
+    let can_batch_delete = base_batch && !has_ancestor_descendant;
+    let can_batch_move = base_batch
+        && same_file
+        && same_parent
+        && !has_ancestor_descendant
+        && members.iter().all(|member| member.capabilities.can_move);
+    let primary_only_edits_allowed = members.len() == 1 && all_resolved;
+    let mut reasons = Vec::new();
+    if !all_resolved {
+        reasons.push("selection_members_unresolved".to_string());
+    }
+    if !all_source_backed {
+        reasons.push("selection_members_without_source".to_string());
+    }
+    if !all_mutable {
+        reasons.push("selection_members_read_only".to_string());
+    }
+    if has_duplicate_source_targets {
+        reasons.push("selection_duplicate_source_targets".to_string());
+    }
+    if has_ancestor_descendant {
+        reasons.push("selection_ancestor_descendant_conflict".to_string());
+    }
+    if !same_file {
+        reasons.push("selection_multiple_files".to_string());
+    }
+    if !same_parent {
+        reasons.push("selection_multiple_parents".to_string());
+    }
+    if !primary_only_edits_allowed {
+        reasons.push("selection_primary_only_operations".to_string());
+    }
+    SelectionAggregateCapabilities {
+        member_count: members.len(),
+        all_resolved,
+        all_source_backed,
+        same_file,
+        same_parent,
+        has_ancestor_descendant,
+        has_duplicate_source_targets,
+        can_batch_attributes,
+        can_batch_duplicate,
+        can_batch_delete,
+        can_batch_move,
+        primary_only_edits_allowed,
+        primary_only_reason_code: (!primary_only_edits_allowed)
+            .then(|| "selection_primary_only_operations".to_string()),
+        reasons,
     }
 }
 
@@ -1757,10 +2336,8 @@ fn validate_inspector_facts(
     mut facts: InspectorSelectionPhysicalFacts,
 ) -> Result<InspectorSelectionPhysicalFacts, String> {
     facts.observed_tag = normalize_observed_tag(&facts.observed_tag)?;
-    if selection
-        .subject
-        .as_ref()
-        .and_then(|subject| subject.tag.as_deref())
+    if primary_selection_entry(selection)
+        .and_then(|entry| entry.subject.tag.as_deref())
         .is_some_and(|tag| tag.to_ascii_lowercase() != facts.observed_tag)
     {
         return Err("Faptele inspectorului descriu alt tag decât selecția semantică.".to_string());
@@ -1882,8 +2459,9 @@ fn inspector_summary(
         .selection
         .as_ref()
         .ok_or_else(|| "SelectionCoordinator nu are context de sesiune.".to_string())?;
-    let subject = selection.subject.as_ref();
-    let can_inspect = selection.projections.inspector.can_inspect;
+    let primary = primary_selection_entry(selection);
+    let subject = primary.map(|entry| &entry.subject);
+    let can_inspect = primary.is_some_and(|entry| entry.capabilities.can_inspect);
     let active_document = state
         .active_inspector_document
         .as_ref()
@@ -1893,10 +2471,7 @@ fn inspector_summary(
             && facts.canvas_identity == selection.canvas_identity
             && active_document
                 .is_some_and(|identity| identity.document_epoch == facts.document_epoch)
-            && selection
-                .anchor
-                .as_ref()
-                .and_then(|anchor| anchor.render_instance_id.as_deref())
+            && primary.and_then(|entry| entry.anchor.render_instance_id.as_deref())
                 == Some(facts.render_instance_id.as_str())
     });
 
@@ -1909,7 +2484,7 @@ fn inspector_summary(
     let mut classes = Vec::new();
     let mut block_context = None;
 
-    match selection.resolution {
+    match aggregate_selection_resolution(&selection.members) {
         SelectionResolution::Cleared => {
             state_value = InspectorSelectionSummaryState::Empty;
             reason = Some(InspectorSelectionSummaryReason::NoSelection);
@@ -1939,10 +2514,8 @@ fn inspector_summary(
             reason = None;
         }
         SelectionResolution::Resolved
-            if selection
-                .anchor
-                .as_ref()
-                .and_then(|anchor| anchor.render_instance_id.as_ref())
+            if primary
+                .and_then(|entry| entry.anchor.render_instance_id.as_ref())
                 .is_none() =>
         {
             state_value = InspectorSelectionSummaryState::Uninspectable;
@@ -1982,10 +2555,7 @@ fn inspector_summary(
         selection_revision: selection.selection_revision,
         canvas_identity: selection.canvas_identity.clone(),
         document_epoch: active_document.map(|identity| identity.document_epoch),
-        render_instance_id: selection
-            .anchor
-            .as_ref()
-            .and_then(|anchor| anchor.render_instance_id.clone()),
+        render_instance_id: primary.and_then(|entry| entry.anchor.render_instance_id.clone()),
         state: state_value,
         subject_kind: subject.map(|subject| subject.kind),
         tag: subject.and_then(|subject| subject.tag.clone()),
@@ -2038,6 +2608,8 @@ fn coordinator_snapshot(
 
 #[cfg(test)]
 mod tests {
+    use std::{hint::black_box, time::Instant};
+
     use super::*;
     use crate::{
         kernel::editor_navigation::{
@@ -2120,6 +2692,7 @@ mod tests {
                 requires_edit_scope_id: None,
                 reason_code: None,
             },
+            source_html_attributes: None,
         }
     }
 
@@ -2132,6 +2705,18 @@ mod tests {
             Vec::new(),
             nodes,
         )
+    }
+
+    fn mutation_identity(
+        selection: &SelectionSnapshot,
+        workspace_revision: u64,
+    ) -> SelectionMutationIdentity {
+        SelectionMutationIdentity {
+            selection_revision: selection.selection_revision,
+            workspace_revision,
+            primary_member_id: selection.primary_member_id.clone(),
+            members: mutation_members(selection),
+        }
     }
 
     fn range(start: usize, end: usize) -> SourceRange {
@@ -2226,26 +2811,76 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            focused.selection.subject, selected.selection.subject,
+            primary_selection_entry(&focused.selection).map(|entry| &entry.subject),
+            primary_selection_entry(&selected.selection).map(|entry| &entry.subject),
             "focusul CSS nu trebuie să înlocuiască elementul"
         );
         assert_eq!(
-            focused
-                .selection
-                .projections
-                .layers
-                .editor_node_id
-                .as_deref(),
+            primary_selection_entry(&focused.selection)
+                .and_then(|entry| entry.anchor.editor_node_id.as_deref()),
             Some("editor_render:a")
         );
-        assert_eq!(
-            focused.selection.projections.code.file.as_deref(),
-            Some("sass/index.scss")
-        );
+        assert!(matches!(
+            &focused.selection.focus,
+            SelectionFocus::CssRule { file, .. } if file == "sass/index.scss"
+        ));
         assert!(focused.selection.selection_revision > selected.selection.selection_revision);
         assert_eq!(
             focused.inspector_summary.state,
             InspectorSelectionSummaryState::Resolved
+        );
+    }
+
+    #[test]
+    fn opaque_publication_set_is_ordered_primary_bound_and_session_exact() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-opaque-publication",
+            vec![
+                node("editor_render:a", "source:h1-a", "a", None, range(10, 30)),
+                node("editor_render:b", "source:h1-b", "b", None, range(31, 50)),
+            ],
+        );
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:b".to_string(),
+                },
+            )
+            .unwrap();
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ToggleEditorNode {
+                    editor_node_id: "editor_render:a".to_string(),
+                },
+            )
+            .unwrap();
+
+        let (primary, member_ids) = runtime
+            .current_opaque_selection(Some(&snapshot.identity.runtime_session_id))
+            .unwrap();
+        assert_eq!(primary, selected.selection.primary_member_id);
+        assert_eq!(
+            member_ids,
+            selected
+                .selection
+                .members
+                .iter()
+                .map(|member| member.member_id.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(runtime
+            .current_opaque_selection(Some("session:foreign"))
+            .is_err());
+        assert_eq!(
+            runtime.current_opaque_selection(None).unwrap(),
+            (None, vec![])
         );
     }
 
@@ -2282,7 +2917,7 @@ mod tests {
     }
 
     #[test]
-    fn rebase_uses_binding_identity_and_refuses_ambiguous_source_fallback() {
+    fn rebase_refuses_binding_and_ambiguous_source_fallbacks() {
         let runtime = SelectionCoordinatorRuntime::default();
         let original = snapshot(
             "tx-1",
@@ -2331,9 +2966,16 @@ mod tests {
                 SelectionIntent::Rebase,
             )
             .unwrap();
-        assert_eq!(receipt.selection.resolution, SelectionResolution::Resolved);
         assert_eq!(
-            receipt.selection.anchor.unwrap().binding_key.as_deref(),
+            aggregate_selection_resolution(&receipt.selection.members),
+            SelectionResolution::NotRendered
+        );
+        assert_eq!(
+            primary_selection_entry(&receipt.selection)
+                .unwrap()
+                .anchor
+                .binding_key
+                .as_deref(),
             Some("second")
         );
 
@@ -2352,240 +2994,15 @@ mod tests {
                 SelectionIntent::Rebase,
             )
             .unwrap();
-        assert_eq!(receipt.selection.resolution, SelectionResolution::Ambiguous);
-        assert!(receipt
-            .selection
-            .projections
-            .preview
-            .render_instance_ids
-            .is_empty());
-    }
-
-    #[test]
-    fn rebase_prefers_source_alias_over_a_physical_identity_reused_by_the_next_sibling() {
-        let runtime = SelectionCoordinatorRuntime::default();
-        let original = snapshot(
-            "tx-before-class",
-            vec![
-                node(
-                    "editor_render:first",
-                    "source:plain-span-0",
-                    "render:first",
-                    None,
-                    range(10, 20),
-                ),
-                node(
-                    "editor_render:selected",
-                    "source:plain-span-1",
-                    "render:selected",
-                    None,
-                    range(21, 31),
-                ),
-                node(
-                    "editor_render:third",
-                    "source:plain-span-2",
-                    "render:third",
-                    None,
-                    range(32, 42),
-                ),
-            ],
-        );
-        runtime
-            .apply(
-                &original,
-                Some("templates/index.html"),
-                None,
-                SelectionIntent::SelectEditorNode {
-                    editor_node_id: "editor_render:selected".to_string(),
-                },
-            )
-            .unwrap();
-
-        // Adăugarea clasei schimbă label-ul semantic al span-ului selectat.
-        // Al treilea span preia astfel occurrence-ul, source ID-ul și ID-urile
-        // fizice pe care le avea înainte al doilea span.
-        let mut projected = snapshot(
-            "tx-after-class",
-            vec![
-                node(
-                    "editor_render:first",
-                    "source:plain-span-0",
-                    "render:first",
-                    None,
-                    range(10, 20),
-                ),
-                node(
-                    "editor_render:generated-class",
-                    "source:class-span-0",
-                    "render:generated-class",
-                    None,
-                    range(21, 50),
-                ),
-                node(
-                    "editor_render:selected",
-                    "source:plain-span-1",
-                    "render:selected",
-                    None,
-                    range(51, 61),
-                ),
-            ],
-        );
-        projected.identity.workspace_revision = 8;
-        let transition = SourceIdentityAliasTransition {
-            revision_before: 7,
-            revision_after: 8,
-            aliases: HashMap::from([
-                (
-                    "source:plain-span-1".to_string(),
-                    "source:class-span-0".to_string(),
-                ),
-                (
-                    "source:plain-span-2".to_string(),
-                    "source:plain-span-1".to_string(),
-                ),
-            ]),
-        };
-        let receipt = runtime
-            .apply_with_source_alias_transition(
-                &projected,
-                Some("templates/index.html"),
-                None,
-                Some(&transition),
-                SelectionIntent::Rebase,
-            )
-            .unwrap();
-
-        let anchor = receipt.selection.anchor.unwrap();
-        assert_eq!(receipt.selection.resolution, SelectionResolution::Resolved);
         assert_eq!(
-            anchor.source_node_id.as_deref(),
-            Some("source:class-span-0")
-        );
-        assert_eq!(
-            anchor.editor_node_id.as_deref(),
-            Some("editor_render:generated-class")
-        );
-        assert_eq!(
-            anchor.render_instance_id.as_deref(),
-            Some("render:generated-class")
-        );
-
-        runtime
-            .apply(
-                &projected,
-                Some("templates/index.html"),
-                None,
-                SelectionIntent::SelectEditorNode {
-                    editor_node_id: "editor_render:selected".to_string(),
-                },
-            )
-            .unwrap();
-        let same_revision = runtime
-            .apply_with_source_alias_transition(
-                &projected,
-                Some("templates/index.html"),
-                None,
-                Some(&transition),
-                SelectionIntent::Rebase,
-            )
-            .unwrap();
-        let anchor = same_revision.selection.anchor.unwrap();
-        assert_eq!(
-            anchor.source_node_id.as_deref(),
-            Some("source:plain-span-1")
-        );
-        assert_eq!(
-            anchor.editor_node_id.as_deref(),
-            Some("editor_render:selected")
-        );
-
-        let mut unrelated_revision = projected.clone();
-        unrelated_revision.identity.workspace_revision = 9;
-        unrelated_revision.identity.transaction_id = "tx-unrelated-change".to_string();
-        unrelated_revision.identity.preview_revision = "preview-unrelated-change".to_string();
-        let after_unrelated_change = runtime
-            .apply_with_source_alias_transition(
-                &unrelated_revision,
-                Some("templates/index.html"),
-                None,
-                Some(&transition),
-                SelectionIntent::Rebase,
-            )
-            .unwrap();
-        let anchor = after_unrelated_change.selection.anchor.unwrap();
-        assert_eq!(
-            anchor.source_node_id.as_deref(),
-            Some("source:plain-span-1")
-        );
-        assert_eq!(
-            anchor.editor_node_id.as_deref(),
-            Some("editor_render:selected")
-        );
-    }
-
-    #[test]
-    fn an_unresolved_published_alias_cannot_fall_back_to_a_reused_physical_identity() {
-        let runtime = SelectionCoordinatorRuntime::default();
-        let original = snapshot(
-            "tx-before-transition",
-            vec![node(
-                "editor_render:reused",
-                "source:before",
-                "render:reused",
-                None,
-                range(10, 20),
-            )],
-        );
-        runtime
-            .apply(
-                &original,
-                Some("templates/index.html"),
-                None,
-                SelectionIntent::SelectEditorNode {
-                    editor_node_id: "editor_render:reused".to_string(),
-                },
-            )
-            .unwrap();
-
-        let mut projected = snapshot(
-            "tx-after-transition",
-            vec![node(
-                "editor_render:reused",
-                "source:before",
-                "render:reused",
-                None,
-                range(30, 40),
-            )],
-        );
-        projected.identity.workspace_revision = 8;
-        let transition = SourceIdentityAliasTransition {
-            revision_before: 7,
-            revision_after: 8,
-            aliases: HashMap::from([(
-                "source:before".to_string(),
-                "source:not-rendered".to_string(),
-            )]),
-        };
-        let receipt = runtime
-            .apply_with_source_alias_transition(
-                &projected,
-                Some("templates/index.html"),
-                None,
-                Some(&transition),
-                SelectionIntent::Rebase,
-            )
-            .unwrap();
-
-        assert_eq!(
-            receipt.selection.resolution,
+            aggregate_selection_resolution(&receipt.selection.members),
             SelectionResolution::NotRendered
         );
         assert!(receipt
             .selection
-            .projections
-            .preview
-            .render_instance_ids
-            .is_empty());
+            .members
+            .iter()
+            .all(|member| member.resolution == SelectionResolution::NotRendered));
     }
 
     #[test]
@@ -3017,7 +3434,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             ambiguous.inspector_summary.state,
-            InspectorSelectionSummaryState::Ambiguous
+            InspectorSelectionSummaryState::NotRendered
         );
     }
 
@@ -3042,15 +3459,9 @@ mod tests {
             )
             .unwrap()
             .selection;
-        let captured_anchor = captured.anchor.as_ref().unwrap();
+        let captured_identity = mutation_identity(&captured, snapshot.identity.workspace_revision);
         runtime
-            .require_mutation_target(
-                &snapshot.identity.runtime_session_id,
-                captured.selection_revision,
-                captured_anchor.editor_node_id.as_deref(),
-                captured_anchor.source_node_id.as_deref(),
-                captured_anchor.render_instance_id.as_deref(),
-            )
+            .require_mutation_target(&snapshot.identity.runtime_session_id, &captured_identity)
             .unwrap();
 
         runtime
@@ -3064,15 +3475,143 @@ mod tests {
             )
             .unwrap();
         let error = runtime
-            .require_mutation_target(
-                &snapshot.identity.runtime_session_id,
-                captured.selection_revision,
-                captured_anchor.editor_node_id.as_deref(),
-                captured_anchor.source_node_id.as_deref(),
-                captured_anchor.render_instance_id.as_deref(),
-            )
+            .require_mutation_target(&snapshot.identity.runtime_session_id, &captured_identity)
             .unwrap_err();
         assert!(error.contains("selecția s-a schimbat"));
+    }
+
+    #[test]
+    fn committed_delete_clears_only_the_exact_captured_target() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-delete",
+            vec![
+                node(
+                    "editor_render:child",
+                    "source:child",
+                    "render:child",
+                    None,
+                    range(10, 30),
+                ),
+                node(
+                    "editor_render:parent",
+                    "source:parent",
+                    "render:parent",
+                    None,
+                    range(5, 40),
+                ),
+            ],
+        );
+        let child = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:child".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let child_identity = mutation_identity(&child, snapshot.identity.workspace_revision);
+
+        assert!(runtime
+            .clear_mutation_target_if_current(
+                &snapshot.identity.runtime_session_id,
+                &child_identity,
+            )
+            .unwrap());
+        let cleared = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::Rebase,
+            )
+            .unwrap()
+            .selection;
+        assert_eq!(
+            aggregate_selection_resolution(&cleared.members),
+            SelectionResolution::Cleared
+        );
+        assert!(cleared.members.is_empty());
+
+        let parent = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:parent".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        assert!(!runtime
+            .clear_mutation_target_if_current(
+                &snapshot.identity.runtime_session_id,
+                &child_identity,
+            )
+            .unwrap());
+        assert_eq!(
+            runtime
+                .state
+                .lock()
+                .unwrap()
+                .selection
+                .as_ref()
+                .unwrap()
+                .selection_revision,
+            parent.selection_revision,
+        );
+    }
+
+    #[test]
+    fn code_edit_never_retargets_a_missing_source_id_to_a_similar_node() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-code-delete",
+            vec![
+                node(
+                    "editor_render:first",
+                    "source:first",
+                    "render:first",
+                    None,
+                    range(10, 20),
+                ),
+                node(
+                    "editor_render:second",
+                    "source:second",
+                    "render:second",
+                    None,
+                    range(21, 31),
+                ),
+            ],
+        );
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor_render:first".to_string(),
+                },
+            )
+            .unwrap();
+
+        assert!(runtime
+            .invalidate_missing_source_target(
+                &snapshot.identity.runtime_session_id,
+                &HashSet::from(["source:second".to_string()]),
+            )
+            .unwrap());
+        let selection = runtime.state.lock().unwrap().selection.clone().unwrap();
+        assert_eq!(
+            aggregate_selection_resolution(&selection.members),
+            SelectionResolution::Cleared
+        );
+        assert!(selection.members.is_empty());
+        assert!(selection.diagnostics[0].contains("SourceNodeId"));
     }
 
     #[test]
@@ -3099,7 +3638,7 @@ mod tests {
             )
             .unwrap()
             .selection;
-        let captured_anchor = captured.anchor.as_ref().unwrap();
+        let captured_identity = mutation_identity(&captured, snapshot.identity.workspace_revision);
 
         let focused = runtime
             .apply(
@@ -3124,10 +3663,7 @@ mod tests {
         runtime
             .with_stable_semantic_mutation_target(
                 &snapshot.identity.runtime_session_id,
-                captured.selection_revision,
-                captured_anchor.editor_node_id.as_deref(),
-                captured_anchor.source_node_id.as_deref(),
-                captured_anchor.render_instance_id.as_deref(),
+                &captured_identity,
                 || Ok(()),
             )
             .unwrap();
@@ -3154,7 +3690,7 @@ mod tests {
             )
             .unwrap()
             .selection;
-        let captured_anchor = captured.anchor.as_ref().unwrap();
+        let captured_identity = mutation_identity(&captured, snapshot.identity.workspace_revision);
 
         runtime
             .apply(
@@ -3170,14 +3706,11 @@ mod tests {
         let error = runtime
             .with_stable_semantic_mutation_target(
                 &snapshot.identity.runtime_session_id,
-                captured.selection_revision,
-                captured_anchor.editor_node_id.as_deref(),
-                captured_anchor.source_node_id.as_deref(),
-                captured_anchor.render_instance_id.as_deref(),
+                &captured_identity,
                 || Ok(()),
             )
             .unwrap_err();
-        assert!(error.contains("EditorNavigation"));
+        assert!(error.contains("setul de ancore"));
     }
 
     #[test]
@@ -3240,7 +3773,11 @@ mod tests {
             .unwrap();
         assert!(cleared.hover.is_none());
         assert_eq!(
-            cleared.selection.anchor.unwrap().editor_node_id.as_deref(),
+            primary_selection_entry(&cleared.selection)
+                .unwrap()
+                .anchor
+                .editor_node_id
+                .as_deref(),
             Some("editor_render:a")
         );
     }
@@ -3319,10 +3856,8 @@ mod tests {
         let after_hover = state.selection.as_ref().unwrap();
         assert_eq!(after_hover.selection_revision, selection_revision);
         assert_eq!(
-            after_hover
-                .anchor
-                .as_ref()
-                .and_then(|anchor| anchor.editor_node_id.as_deref()),
+            primary_selection_entry(after_hover)
+                .and_then(|entry| entry.anchor.editor_node_id.as_deref()),
             Some("editor_render:a")
         );
     }
@@ -3352,9 +3887,16 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(selected.selection.resolution, SelectionResolution::Resolved);
         assert_eq!(
-            selected.selection.anchor.unwrap().editor_node_id.as_deref(),
+            aggregate_selection_resolution(&selected.selection.members),
+            SelectionResolution::Resolved
+        );
+        assert_eq!(
+            primary_selection_entry(&selected.selection)
+                .unwrap()
+                .anchor
+                .editor_node_id
+                .as_deref(),
             Some("editor_render:title")
         );
 
@@ -3391,15 +3933,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            ambiguous.selection.resolution,
+            aggregate_selection_resolution(&ambiguous.selection.members),
             SelectionResolution::Ambiguous
         );
         assert!(ambiguous
             .selection
-            .projections
-            .preview
-            .render_instance_ids
-            .is_empty());
+            .members
+            .iter()
+            .any(|member| member.resolution == SelectionResolution::Ambiguous));
     }
 
     #[test]
@@ -3437,11 +3978,420 @@ mod tests {
                 SelectionIntent::Rebase,
             )
             .unwrap();
-        assert_eq!(receipt.selection.resolution, SelectionResolution::Cleared);
-        assert!(receipt.selection.subject.is_none());
+        assert_eq!(
+            aggregate_selection_resolution(&receipt.selection.members),
+            SelectionResolution::Cleared
+        );
+        assert!(receipt.selection.members.is_empty());
         assert_eq!(
             receipt.selection.runtime_session_id,
             "session:runtime-2".to_string()
         );
+    }
+
+    #[test]
+    fn toggle_keeps_canonical_order_and_an_explicit_primary_member() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let mut a = node("editor:a", "source:a", "render:a", None, range(10, 20));
+        let mut b = node("editor:b", "source:b", "render:b", None, range(30, 40));
+        a.order = 1;
+        b.order = 2;
+        let snapshot = snapshot("tx-multi-toggle", vec![b, a]);
+
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor:b".to_string(),
+                },
+            )
+            .unwrap();
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ToggleEditorNode {
+                    editor_node_id: "editor:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        assert_eq!(selected.schema_version, 2);
+        assert_eq!(
+            selected
+                .members
+                .iter()
+                .map(|member| member.member_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["editor:a", "editor:b"]
+        );
+        assert_eq!(selected.primary_member_id.as_deref(), Some("editor:a"));
+
+        let removed = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ToggleEditorNode {
+                    editor_node_id: "editor:a".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        assert_eq!(removed.members.len(), 1);
+        assert_eq!(removed.primary_member_id.as_deref(), Some("editor:b"));
+    }
+
+    #[test]
+    fn range_selection_is_inclusive_and_uses_editor_navigation_order() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let mut nodes = [
+            ("editor:a", "source:a", "render:a"),
+            ("editor:b", "source:b", "render:b"),
+            ("editor:c", "source:c", "render:c"),
+            ("editor:d", "source:d", "render:d"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(order, (id, source, render))| {
+            let mut node = node(id, source, render, None, range(order * 20, order * 20 + 10));
+            node.order = order;
+            node
+        })
+        .collect::<Vec<_>>();
+        nodes.reverse();
+        let snapshot = snapshot("tx-multi-range", nodes);
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor:b".to_string(),
+                },
+            )
+            .unwrap();
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ExtendRangeToEditorNode {
+                    editor_node_id: "editor:d".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        assert_eq!(
+            selected
+                .members
+                .iter()
+                .map(|member| member.member_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["editor:b", "editor:c", "editor:d"]
+        );
+        assert_eq!(selected.primary_member_id.as_deref(), Some("editor:d"));
+        assert_eq!(selected.range_origin_member_id.as_deref(), Some("editor:b"));
+    }
+
+    #[test]
+    fn aggregate_capabilities_detect_identity_and_tree_conflicts() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let mut parent = node(
+            "editor:parent",
+            "source:shared",
+            "render:parent",
+            None,
+            range(10, 80),
+        );
+        let mut child = node(
+            "editor:child",
+            "source:shared",
+            "render:child",
+            None,
+            range(20, 40),
+        );
+        parent.order = 0;
+        parent.children = vec![child.id.clone()];
+        child.order = 1;
+        child.parent_id = Some(parent.id.clone());
+        let snapshot = snapshot("tx-multi-conflicts", vec![parent, child]);
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor:parent".to_string(),
+                },
+            )
+            .unwrap();
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ToggleEditorNode {
+                    editor_node_id: "editor:child".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        assert!(selected.aggregate_capabilities.has_ancestor_descendant);
+        assert!(selected.aggregate_capabilities.has_duplicate_source_targets);
+        assert!(!selected.aggregate_capabilities.can_batch_delete);
+        assert!(!selected.aggregate_capabilities.can_batch_move);
+    }
+
+    #[test]
+    fn aggregate_html_facts_are_source_derived_common_and_mixed_values() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let mut first = node(
+            "editor:first",
+            "source:first",
+            "render:first",
+            None,
+            range(10, 20),
+        );
+        first.order = 0;
+        first.source_html_attributes = Some(BTreeMap::from([
+            (
+                "class".to_string(),
+                Some("card featured shared".to_string()),
+            ),
+            ("aria-label".to_string(), Some("Card".to_string())),
+            ("hidden".to_string(), None),
+        ]));
+        let mut second = node(
+            "editor:second",
+            "source:second",
+            "render:second",
+            None,
+            range(30, 40),
+        );
+        second.order = 1;
+        second.source_html_attributes = Some(BTreeMap::from([
+            ("class".to_string(), Some("card shared quiet".to_string())),
+            ("aria-label".to_string(), Some("Card".to_string())),
+            ("hidden".to_string(), Some("hidden".to_string())),
+        ]));
+        let snapshot = snapshot("tx-multi-html-facts", vec![first, second]);
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor:first".to_string(),
+                },
+            )
+            .unwrap();
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ToggleEditorNode {
+                    editor_node_id: "editor:second".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+
+        assert!(selected.aggregate_html_facts.complete);
+        assert_eq!(
+            selected.aggregate_html_facts.common_classes,
+            vec!["card", "shared"]
+        );
+        assert_eq!(
+            selected.aggregate_html_facts.mixed_classes,
+            vec!["featured", "quiet"]
+        );
+        assert_eq!(
+            selected
+                .aggregate_html_facts
+                .common_attributes
+                .get("aria-label"),
+            Some(&Some("Card".to_string()))
+        );
+        assert_eq!(
+            selected.aggregate_html_facts.mixed_attribute_names,
+            vec!["hidden"]
+        );
+    }
+
+    #[test]
+    fn mutation_token_guards_the_complete_set_and_primary_member() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot(
+            "tx-multi-token",
+            vec![
+                node("editor:a", "source:a", "render:a", None, range(10, 20)),
+                node("editor:b", "source:b", "render:b", None, range(30, 40)),
+            ],
+        );
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor:a".to_string(),
+                },
+            )
+            .unwrap();
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::ToggleEditorNode {
+                    editor_node_id: "editor:b".to_string(),
+                },
+            )
+            .unwrap()
+            .selection;
+        let token = mutation_identity(&selected, 7);
+        runtime
+            .apply(
+                &snapshot,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SetPrimaryEditorNode {
+                    editor_node_id: "editor:a".to_string(),
+                },
+            )
+            .unwrap();
+        let error = runtime
+            .with_stable_semantic_mutation_target("session:runtime-1", &token, || Ok(()))
+            .unwrap_err();
+        assert!(error.contains("setul de ancore"));
+    }
+
+    #[test]
+    fn rebase_never_substitutes_a_new_node_that_only_shares_the_source() {
+        let runtime = SelectionCoordinatorRuntime::default();
+        let before = snapshot(
+            "tx-before-exact-rebase",
+            vec![node(
+                "editor:old",
+                "source:stable",
+                "render:old",
+                None,
+                range(10, 20),
+            )],
+        );
+        runtime
+            .apply(
+                &before,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::SelectEditorNode {
+                    editor_node_id: "editor:old".to_string(),
+                },
+            )
+            .unwrap();
+        let after = snapshot(
+            "tx-after-exact-rebase",
+            vec![node(
+                "editor:new",
+                "source:stable",
+                "render:new",
+                None,
+                range(10, 20),
+            )],
+        );
+        let rebased = runtime
+            .apply(
+                &after,
+                Some("templates/index.html"),
+                None,
+                SelectionIntent::Rebase,
+            )
+            .unwrap()
+            .selection;
+        assert_eq!(
+            aggregate_selection_resolution(&rebased.members),
+            SelectionResolution::NotRendered
+        );
+        assert_eq!(rebased.primary_member_id.as_deref(), Some("editor:old"));
+    }
+
+    #[test]
+    #[ignore = "release performance budget"]
+    fn selection_update_for_1_to_256_members_has_warm_p95_below_four_milliseconds() {
+        for universe_size in [1_000usize, 10_000] {
+            let nodes = (0..universe_size)
+                .map(|index| {
+                    let mut benchmark_node = node(
+                        &format!("editor:{index}"),
+                        &format!("source:{index}"),
+                        &format!("render:{index}"),
+                        None,
+                        range(index * 10, index * 10 + 5),
+                    );
+                    benchmark_node.order = index;
+                    benchmark_node.source_html_attributes = Some(BTreeMap::from([
+                        (
+                            "class".to_string(),
+                            Some(format!("shared cohort-{}", index % 4)),
+                        ),
+                        ("aria-label".to_string(), Some("Card".to_string())),
+                        ("data-index".to_string(), Some(index.to_string())),
+                    ]));
+                    benchmark_node
+                })
+                .collect::<Vec<_>>();
+            let snapshot = snapshot(&format!("tx-benchmark-{universe_size}"), nodes);
+
+            for member_count in [1usize, 10, 100, 256] {
+                let runtime = SelectionCoordinatorRuntime::default();
+                let mut samples = Vec::with_capacity(64);
+                for sample in 0..72 {
+                    runtime
+                        .apply(
+                            &snapshot,
+                            Some("templates/index.html"),
+                            None,
+                            SelectionIntent::SelectEditorNode {
+                                editor_node_id: "editor:0".to_string(),
+                            },
+                        )
+                        .unwrap();
+                    let started = Instant::now();
+                    let selected = runtime
+                        .apply(
+                            &snapshot,
+                            Some("templates/index.html"),
+                            None,
+                            SelectionIntent::ExtendRangeToEditorNode {
+                                editor_node_id: format!("editor:{}", member_count - 1),
+                            },
+                        )
+                        .unwrap()
+                        .selection;
+                    let elapsed = started.elapsed().as_nanos();
+                    assert_eq!(selected.members.len(), member_count);
+                    black_box(selected.selection_revision);
+                    black_box(selected.aggregate_html_facts);
+                    if sample >= 8 {
+                        samples.push(elapsed);
+                    }
+                }
+                samples.sort_unstable();
+                let p95 = samples[(samples.len() * 95).div_ceil(100).saturating_sub(1)];
+                eprintln!(
+                    "selection_update universe={universe_size} members={member_count} p95_ns={p95}"
+                );
+                assert!(
+                    p95 < 4_000_000,
+                    "Selection update p95 {} ms depășește bugetul de 4 ms pentru {member_count}/{universe_size}",
+                    p95 as f64 / 1_000_000.0
+                );
+            }
+        }
     }
 }

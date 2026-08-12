@@ -1,4 +1,3 @@
-import { createCssSelector } from "$lib/html/parser";
 import { t } from "$lib/i18n/runtime.svelte";
 import type { MessageId } from "$lib/i18n/generated/catalog";
 import type {
@@ -21,6 +20,14 @@ function normalizeText(text: string | null) {
 
 function escapeCssIdentifier(value: string) {
   return value.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);
+}
+
+function createCssSelector(tag: string, id: string, classes: string[]) {
+  if (id) return `#${escapeCssIdentifier(id)}`;
+  if (classes.length > 0) {
+    return `${tag}${classes.map((className) => `.${escapeCssIdentifier(className)}`).join("")}`;
+  }
+  return tag;
 }
 
 const SEMANTIC_TAG_LABEL_IDS: Record<string, MessageId> = {
@@ -128,6 +135,12 @@ export function domNodeLabelFor(element: Element) {
     element.hasAttribute("data-pana-active-document-root")
   ) {
     return element.getAttribute("data-pana-empty-label") ?? semanticTagLabel(tag);
+  }
+
+  if (tag === "svg" && element.getAttribute("data-pana-block") === "icon") {
+    const identity = element.getAttribute("data-pana-icon") ?? "";
+    const iconId = identity.includes(":") ? identity.slice(identity.indexOf(":") + 1) : identity;
+    return iconId ? `Icon · ${iconId}` : "Icon";
   }
 
   const ariaLabel = shortenLabel(element.getAttribute("aria-label"));
@@ -353,7 +366,8 @@ export function collectDomTree(document: Document): PageSection[] {
     if (result.length >= MAX_TREE_NODES) return;
     if (depth > MAX_TREE_DEPTH) return;
     const tag = element.tagName.toLowerCase();
-    if (SKIP_TAGS.has(tag) || SVG_TAGS.has(tag)) return;
+    const managedIcon = tag === "svg" && element.getAttribute("data-pana-block") === "icon";
+    if (SKIP_TAGS.has(tag) || (SVG_TAGS.has(tag) && !managedIcon)) return;
     if (STUDIO_OVERLAY_IDS.has(element.id)) return;
     if (isEmptyTeraSlot(element) || isActiveDocumentRoot(element)) return;
 
@@ -367,6 +381,8 @@ export function collectDomTree(document: Document): PageSection[] {
       templateSourceId: inheritedTemplateSourceId(element),
       sessionId: element.getAttribute(SESSION_ID_ATTR),
     });
+
+    if (managedIcon) return;
 
     for (const child of Array.from(element.children)) {
       traverse(child, depth + 1);

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-icon-catalog"
+description = "Enables the read_icon_catalog command without any pre-configured scope."
+commands.allow = ["read_icon_catalog"]
+
+[[permission]]
+identifier = "deny-read-icon-catalog"
+description = "Denies the read_icon_catalog command without any pre-configured scope."
+commands.deny = ["read_icon_catalog"]

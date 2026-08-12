@@ -161,6 +161,8 @@ fn choice(
     }
 }
 
+// Declarative theme targets mirror the complete immutable TargetDefinition schema.
+#[allow(clippy::too_many_arguments)]
 fn target(
     id: &'static str,
     category_id: &'static str,

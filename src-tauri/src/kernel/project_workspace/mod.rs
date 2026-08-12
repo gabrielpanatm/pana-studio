@@ -6,7 +6,9 @@ mod save;
 mod save_journal;
 mod workspace;
 
-pub(crate) use history::WorkspaceCanvasHistoryDelta;
+pub(crate) use history::{
+    WorkspaceCanvasHistoryDelta, WorkspaceSourceTreeHistory, WorkspaceSourceTreeHistoryAction,
+};
 pub use model::{
     ProjectWorkspaceHistoryIdentity, ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt,
     ProjectWorkspaceSaveError, ProjectWorkspaceSaveReceipt, ProjectWorkspaceSaveStatus,
@@ -18,8 +20,8 @@ pub use model::{
     PROJECT_WORKSPACE_SCHEMA_VERSION,
 };
 pub(crate) use model::{
-    SourceIdentityAliasTransition, WorkspaceBinaryRestoreChange,
-    PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES,
+    WorkspaceBinaryRestoreChange, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
+    PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES,
 };
 pub use recovery::{
     clear_project_open_recovery_decision, clear_project_workspace_recovery,
@@ -28,6 +30,7 @@ pub use recovery::{
     commit_project_workspace_session_mutation_with_projection_measured,
     emit_project_workspace_mutated, inspect_project_workspace_recovery_for_open,
     persist_project_open_recovery_abandonment, persist_project_workspace_recovery,
+    publish_prepared_project_workspace_candidate,
     require_project_open_recovery_assessment_unchanged, resolve_project_open_recovery,
     restore_project_workspace_recovery, save_project_workspace_with_recovery,
     ProjectOpenRecoveryAssessment, ProjectOpenRecoveryConflictReason,

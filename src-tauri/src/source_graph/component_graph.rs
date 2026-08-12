@@ -518,8 +518,6 @@ impl<'a> ComponentGraphBuilder<'a> {
                 });
                 let status = if resolved_definition_id.is_some() {
                     ComponentResolutionStatus::Resolved
-                } else if target_template.is_none() {
-                    ComponentResolutionStatus::Unresolved
                 } else {
                     ComponentResolutionStatus::Unresolved
                 };
@@ -1001,7 +999,7 @@ fn dependencies_for_template(
         .relations
         .iter()
         .filter(|relation| relation.from == template.node_id)
-        .filter_map(|relation| {
+        .map(|relation| {
             let kind = match relation.kind {
                 SourceRelationKind::PageTemplate
                 | SourceRelationKind::SectionPageTemplate
@@ -1021,16 +1019,17 @@ fn dependencies_for_template(
                 SourceRelationKind::UsesScript => ComponentDependencyKind::Script,
                 SourceRelationKind::AssetUrl
                 | SourceRelationKind::AssetHash
+                | SourceRelationKind::AssetReference
                 | SourceRelationKind::ImageMetadata
                 | SourceRelationKind::ImageResize => ComponentDependencyKind::Asset,
             };
-            Some(ComponentDependency {
+            ComponentDependency {
                 kind,
                 reference: relation.label.clone(),
                 source_node_id: Some(relation.from.clone()),
                 target_node_id: Some(relation.to.clone()),
                 resolved: true,
-            })
+            }
         })
         .collect::<Vec<_>>();
     if let Some(document) = template.semantics.as_ref() {
@@ -1658,10 +1657,7 @@ fn static_string_expression(expression: &TeraSemanticExpression) -> Option<Strin
 }
 
 fn root_identifier(identifier: &str) -> &str {
-    identifier
-        .split(|character| matches!(character, '.' | '['))
-        .next()
-        .unwrap_or(identifier)
+    identifier.split(['.', '[']).next().unwrap_or(identifier)
 }
 
 fn component_diagnostic(
@@ -1727,6 +1723,8 @@ mod tests {
 {% include ["partials/card.html", "partials/fallback.html"] %}
 {% for item in items %}
 {{ cards::render(item=item) }}
+{{ cards::missing() }}
+{{ missing::render() }}
 {% endfor %}
 <div data-pana-component="tabs"></div>
 "#
@@ -1809,6 +1807,21 @@ mod tests {
                 && invocation.status
                     == crate::source_graph::model::ComponentResolutionStatus::Resolved
         }));
+        for reference in ["cards::missing", "missing::render"] {
+            let unresolved = components
+                .invocations
+                .iter()
+                .find(|invocation| invocation.target_reference == reference)
+                .expect("unresolved macro invocation");
+            assert_eq!(
+                unresolved.status,
+                crate::source_graph::model::ComponentResolutionStatus::Unresolved
+            );
+            assert!(unresolved
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "unresolved_macro_call"));
+        }
         assert!(components
             .invocations
             .iter()

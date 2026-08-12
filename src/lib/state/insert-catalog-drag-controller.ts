@@ -49,7 +49,7 @@ function htmlElementForItem(item: InsertCatalogItem): HtmlPaletteElement | null 
       id: item.id,
       kind: "block",
       blockId: item.payload.blockId,
-      blockKind: "js",
+      blockKind: item.payload.blockKind,
       tag: item.payload.tag,
       label: item.label,
       description: item.description,

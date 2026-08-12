@@ -113,6 +113,7 @@ pub enum InsertCatalogPayload {
     },
     Block {
         block_id: String,
+        block_kind: String,
         tag: String,
         class_name: String,
         text: String,
@@ -522,6 +523,7 @@ fn block_group(graph: &SourceGraph, base: &InsertCatalogCapabilities) -> InsertC
                 ),
                 payload: InsertCatalogPayload::Block {
                     block_id: block.id.to_string(),
+                    block_kind: block.kind.code().to_string(),
                     tag: block.tag.to_string(),
                     class_name: block.class_name.to_string(),
                     text: block.text.to_string(),
@@ -1356,6 +1358,7 @@ mod tests {
             capabilities: draggable(),
             payload: InsertCatalogPayload::Block {
                 block_id: "counter".into(),
+                block_kind: "js".into(),
                 tag: "span".into(),
                 class_name: "counter".into(),
                 text: "0".into(),

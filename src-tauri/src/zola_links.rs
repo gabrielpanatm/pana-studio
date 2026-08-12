@@ -188,7 +188,7 @@ fn locate_quoted_attribute_value(content: &str, after_attr_pos: usize) -> Option
         if let Some(end_expression) = content[value_start..].find("}}") {
             let expression_end = value_start + end_expression + 2;
             let after_expression = skip_ascii_whitespace(content, expression_end);
-            if content[after_expression..].chars().next() == Some(quote) {
+            if content[after_expression..].starts_with(quote) {
                 return Some((value_start, expression_end));
             }
         }

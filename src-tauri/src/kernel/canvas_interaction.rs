@@ -1253,7 +1253,7 @@ mod tests {
         },
         kernel::selection_coordinator::{SelectionCoordinatorRuntime, SelectionIntent},
         preview::CanvasGraph,
-        project_model::build_project_model,
+        project_model::test_support::ProjectModelTestFixture,
         source_graph::model::{SourceCapabilityReason, SourceNodeKind},
     };
 
@@ -1368,6 +1368,7 @@ mod tests {
                 empty: false,
             }),
             capabilities: capabilities(Some("editor_boundary:boundary-1"), true),
+            source_html_attributes: None,
         }
     }
 
@@ -1403,6 +1404,7 @@ mod tests {
             binding_path: Some("cards[0]".to_string()),
             boundary: None,
             capabilities: capabilities(Some("editor_boundary:boundary-1"), false),
+            source_html_attributes: None,
         }
     }
 
@@ -1438,6 +1440,7 @@ mod tests {
             binding_path: None,
             boundary: None,
             capabilities: capabilities(None, false),
+            source_html_attributes: None,
         }
     }
 
@@ -1789,7 +1792,10 @@ mod tests {
         )
         .unwrap();
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = ProjectModelTestFixture::from_integration_disk_boundary(&root)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let content_block = model
             .source_graph
             .nodes
@@ -1861,7 +1867,10 @@ mod tests {
             ),
         )
         .unwrap();
-        let nonempty_model = build_project_model(&root, &HashMap::new()).unwrap();
+        let nonempty_model = ProjectModelTestFixture::from_integration_disk_boundary(&root)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let nonempty_block = nonempty_model
             .source_graph
             .nodes

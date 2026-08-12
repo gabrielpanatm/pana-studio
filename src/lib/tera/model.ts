@@ -45,7 +45,6 @@ export type TeraPaletteGroup = {
 };
 
 export type TeraDropRequest = {
-  targetSelector: string;
   targetSessionId: string | null;
   targetSourceId: string | null;
   targetTemplateSourceId: string | null;
@@ -60,7 +59,6 @@ export type TeraDropResolution =
       anchor: SourceGraphNode;
       position: DropPosition;
       item: TeraPaletteItem;
-      snippet: string;
       label: string;
     }
   | {

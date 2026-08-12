@@ -143,7 +143,7 @@
     var blockId = typeof data.blockId === "string"
       ? data.blockId
       : legacyComponent && typeof data.componentId === "string" ? data.componentId : "";
-    var blockKind = data.blockKind === "js" || data.blockKind === "css"
+    var blockKind = data.blockKind === "js" || data.blockKind === "css" || data.blockKind === "static"
       ? data.blockKind
       : data.componentKind === "js" || data.componentKind === "css" ? data.componentKind : "";
     return {
@@ -248,12 +248,10 @@
     if (!drop.target || !drop.position) return;
     post("preview-insert-drop", {
       targetRenderInstanceId: closestPreviewSourceAttribute(drop.target, CANVAS_AGENT_RENDER_ATTR),
-      targetSelector: createDomPathSelector(drop.target),
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),
       targetSourceId: closestPreviewSourceAttribute(drop.target, SOURCE_ID_ATTR),
       targetTemplateSourceId: closestPreviewSourceAttribute(drop.target, TEMPLATE_SOURCE_ID_ATTR),
       targetBoundaryInstanceId: closestPreviewSourceAttribute(drop.target, ACTIVE_AUTHORING_ATTR),
-      targetSourceLocation: null,
       targetTag: drop.target.tagName.toLowerCase(),
       targetKind: isActiveDocumentRoot(drop.target)
         ? "active-document-root"
@@ -284,7 +282,6 @@
     if (!drop.target || !drop.position) return;
     post("preview-tera-drop", {
       targetRenderInstanceId: closestPreviewSourceAttribute(drop.target, CANVAS_AGENT_RENDER_ATTR),
-      targetSelector: createDomPathSelector(drop.target),
       targetSessionId: closestPreviewSourceAttribute(drop.target, SESSION_ID_ATTR),
       targetSourceId: closestPreviewSourceAttribute(drop.target, SOURCE_ID_ATTR),
       targetTemplateSourceId: closestPreviewSourceAttribute(drop.target, TEMPLATE_SOURCE_ID_ATTR),

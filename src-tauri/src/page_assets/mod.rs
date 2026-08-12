@@ -473,7 +473,7 @@ fn data_anim_ids_in_selector(selector: &str) -> BTreeSet<String> {
         let attr_pos = cursor + relative_attr + 1;
         let mut after_name = attr_pos + "data-anim".len();
         after_name = skip_ascii_whitespace(selector, after_name);
-        if selector[after_name..].chars().next() != Some('=') {
+        if !selector[after_name..].starts_with('=') {
             cursor = after_name;
             continue;
         }

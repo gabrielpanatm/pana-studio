@@ -263,10 +263,11 @@ fn next_invocation(counts: &mut HashMap<String, usize>, name: &str) -> usize {
 }
 
 fn markdown_content_start(source: &str) -> usize {
-    let bom_len = source
-        .starts_with('\u{feff}')
-        .then_some('\u{feff}'.len_utf8())
-        .unwrap_or_default();
+    let bom_len = if source.starts_with('\u{feff}') {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    };
     let without_bom = &source[bom_len..];
     let Some(marker) = ["+++", "---"]
         .iter()

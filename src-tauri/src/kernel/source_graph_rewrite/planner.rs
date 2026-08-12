@@ -12,10 +12,7 @@ use crate::{
         project_path::normalize_project_relative_path,
         project_workspace::{WorkspaceTextChange, WorkspaceTextMutationInput},
     },
-    source_graph::{
-        build_source_graph,
-        model::{SourceDiagnosticSeverity, SourceGraph, SourceRelationKind},
-    },
+    source_graph::model::{SourceDiagnosticSeverity, SourceGraph, SourceRelationKind},
 };
 
 use replacements::{
@@ -32,7 +29,8 @@ use super::model::{
     SOURCE_GRAPH_REWRITE_WORKSPACE_TARGET,
 };
 
-pub fn plan_template_reference_workspace_mutation(
+#[cfg(test)]
+fn plan_reference_rewrite_from_integration_boundary(
     project_root: &Path,
     store: &FileBufferStore,
     operation: SourceGraphRewriteOperation,
@@ -46,9 +44,11 @@ pub fn plan_template_reference_workspace_mutation(
         return Err("SourceGraphRewrite blocat: sursa și destinația sunt identice.".to_string());
     }
 
-    let graph = build_source_graph(project_root).map_err(|error| {
-        format!("SourceGraphRewrite blocat: Source Graph nu a putut fi construit: {error}.")
-    })?;
+    let graph =
+        crate::source_graph::build_source_graph_from_integration_disk_boundary(project_root)
+            .map_err(|error| {
+                format!("SourceGraphRewrite blocat: Source Graph nu a putut fi construit: {error}.")
+            })?;
     plan_template_reference_workspace_mutation_with_graph(
         store,
         &graph,
@@ -61,9 +61,8 @@ pub fn plan_template_reference_workspace_mutation(
 
 /// Plans a reference rewrite against the current ProjectWorkspace projection.
 ///
-/// Unlike the disk-only planner above, this variant deliberately reads the
-/// current text of draft files. The supplied graph and the FileBufferStore
-/// therefore describe the same in-memory revision and can be staged as one
+/// The supplied graph and the FileBufferStore describe the same immutable
+/// workspace revision, including current drafts, and can be staged as one
 /// atomic ProjectWorkspace mutation.
 pub fn plan_template_reference_workspace_mutation_from_graph(
     project_root: &Path,
@@ -111,13 +110,13 @@ fn plan_template_reference_workspace_mutation_with_graph(
     });
     let store = projected_store.as_ref().unwrap_or(store);
 
-    let mut diagnostics = source_graph_diagnostics(&graph);
+    let mut diagnostics = source_graph_diagnostics(graph);
     if let Some(blocker) = first_blocker(&diagnostics) {
         return Err(blocker.message.clone());
     }
 
     let rewrite_targets =
-        rewrite_targets_for_entry(&graph, &source_relative_path, &destination_relative_path)?;
+        rewrite_targets_for_entry(graph, &source_relative_path, &destination_relative_path)?;
     if rewrite_targets.is_empty() {
         diagnostics.push(SourceGraphRewriteDiagnostic::info(
             "no_template_targets",
@@ -160,7 +159,7 @@ fn plan_template_reference_workspace_mutation_with_graph(
 
         let replacements = match relation.kind {
             SourceRelationKind::PageTemplate => plan_frontmatter_template_replacements(
-                &graph,
+                graph,
                 store,
                 from_node,
                 target,
@@ -170,7 +169,7 @@ fn plan_template_reference_workspace_mutation_with_graph(
                 &mut diagnostics,
             )?,
             SourceRelationKind::SectionPageTemplate => plan_frontmatter_template_replacements(
-                &graph,
+                graph,
                 store,
                 from_node,
                 target,
@@ -225,6 +224,7 @@ fn plan_template_reference_workspace_mutation_with_graph(
             )?,
             SourceRelationKind::DefinesBlock
             | SourceRelationKind::OverridesBlock
+            | SourceRelationKind::AssetReference
             | SourceRelationKind::UsesStyle
             | SourceRelationKind::UsesScript => Vec::new(),
         };
@@ -431,23 +431,21 @@ fn validate_replacements_do_not_overlap(
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{HashMap, HashSet},
         fs,
         path::{Path, PathBuf},
         time::{SystemTime, UNIX_EPOCH},
     };
 
+    use super::{
+        plan_reference_rewrite_from_integration_boundary,
+        plan_template_reference_workspace_mutation_from_graph, SourceGraphRewriteOperation,
+        SourceGraphRewriteStatus,
+    };
     use crate::kernel::file_buffer_store::{
         hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStore, FileBufferStoreLimits,
         TextBufferLanguage, TextBufferRole,
     };
-    use crate::source_graph::build_source_graph_with_projection;
-
-    use super::{
-        plan_template_reference_workspace_mutation,
-        plan_template_reference_workspace_mutation_from_graph, SourceGraphRewriteOperation,
-        SourceGraphRewriteStatus,
-    };
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     #[test]
     fn planner_rewrites_tera_references_for_renamed_partial() {
@@ -477,7 +475,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -518,7 +516,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -561,7 +559,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -608,7 +606,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -655,7 +653,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -702,7 +700,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -751,7 +749,7 @@ mod tests {
             ],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -801,7 +799,7 @@ mod tests {
             )],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -851,7 +849,7 @@ mod tests {
             )],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -891,7 +889,7 @@ mod tests {
             )],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -922,7 +920,7 @@ mod tests {
             )],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -962,7 +960,7 @@ mod tests {
             )],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -1002,7 +1000,7 @@ mod tests {
             )],
         );
 
-        let plan = plan_template_reference_workspace_mutation(
+        let plan = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -1038,7 +1036,7 @@ mod tests {
             ],
         );
 
-        let error = plan_template_reference_workspace_mutation(
+        let error = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -1081,7 +1079,7 @@ mod tests {
             )
             .unwrap();
 
-        let error = plan_template_reference_workspace_mutation(
+        let error = plan_reference_rewrite_from_integration_boundary(
             &root,
             &store,
             SourceGraphRewriteOperation::Rename,
@@ -1120,12 +1118,9 @@ mod tests {
         store
             .set_draft("templates/base.html", draft.to_string(), 2)
             .unwrap();
-        let graph = build_source_graph_with_projection(
-            &root,
-            &HashMap::from([("templates/base.html".to_string(), draft.to_string())]),
-            &HashSet::new(),
-        )
-        .unwrap();
+        let mut fixture = ProjectModelTestFixture::from_integration_disk_boundary(&root).unwrap();
+        fixture.draft("templates/base.html", draft);
+        let graph = fixture.build_source_graph().unwrap();
 
         let plan = plan_template_reference_workspace_mutation_from_graph(
             &root,

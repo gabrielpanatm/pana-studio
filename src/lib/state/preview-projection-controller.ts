@@ -67,9 +67,6 @@ function previewProjectionIntentInputFromMessage(
   return {
     messageType: typeof data.type === "string" ? data.type : "",
     previewRevision: numberField(data.previewRevision),
-    sourceSelector: stringField(data.sourceSelector),
-    targetSelector: stringField(data.targetSelector),
-    selector: stringField(data.selector),
     sourceId: stringField(data.sourceId),
     targetSourceId: stringField(data.targetSourceId),
     sourceTemplateSourceId: stringField(data.sourceTemplateSourceId),

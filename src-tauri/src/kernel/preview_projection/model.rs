@@ -13,7 +13,9 @@ use crate::{
     },
     localization::LocalizedDiagnostic,
     project_model::{
-        attribute_engine::{ProjectHtmlAttributeIntent, ProjectHtmlAttributePatch},
+        attribute_engine::{
+            ProjectHtmlAttributeIntent, ProjectHtmlAttributeMutation, ProjectHtmlAttributePatch,
+        },
         delete_engine::{ProjectHtmlDeleteIntent, ProjectHtmlDeletePatch},
         duplicate_engine::{ProjectHtmlDuplicateIntent, ProjectHtmlDuplicatePatch},
         insert_engine::{ProjectHtmlInsertIntent, ProjectHtmlInsertPatch},
@@ -33,6 +35,7 @@ pub const PREVIEW_HTML_DUPLICATE_EXECUTION_SCHEMA_VERSION: u32 = 2;
 pub const PREVIEW_HTML_DELETE_EXECUTION_SCHEMA_VERSION: u32 = 2;
 pub const PREVIEW_TERA_INSERT_DROP_EXECUTION_SCHEMA_VERSION: u32 = 2;
 pub const PREVIEW_TERA_DELETE_EXECUTION_SCHEMA_VERSION: u32 = 2;
+pub const PREVIEW_SELECTION_BATCH_EXECUTION_SCHEMA_VERSION: u32 = 1;
 pub const CANVAS_PATCH_SCHEMA_VERSION: u32 = 1;
 const MAX_CANVAS_PATCH_BYTES: usize = 2 * 1024 * 1024;
 
@@ -47,18 +50,64 @@ pub struct PreviewStructuralCommandIdentity {
 
 pub type PreviewStructuralSelectionIdentity = SelectionMutationIdentity;
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PreviewSelectionBatchAction {
+    SetAttributes {
+        #[serde(default)]
+        attributes: Vec<ProjectHtmlAttributeMutation>,
+    },
+    MutateClasses {
+        #[serde(default)]
+        add: Vec<String>,
+        #[serde(default)]
+        remove: Vec<String>,
+    },
+    GenerateSharedClass,
+    Duplicate,
+    Delete,
+    Move {
+        target_source_id: String,
+        #[serde(default)]
+        target_tag: Option<String>,
+        position: ProjectMovePosition,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSelectionBatchExecutionInput {
+    pub schema_version: u32,
+    pub action: PreviewSelectionBatchAction,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewSelectionBatchExecutionStatus {
+    Committed,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewSelectionBatchExecutionReceipt {
+    pub schema_version: u32,
+    pub status: PreviewSelectionBatchExecutionStatus,
+    pub model_revision: Option<String>,
+    pub affected_source_ids: Vec<String>,
+    pub primary_affected_source_id: Option<String>,
+    pub generated_class: Option<String>,
+    pub canvas_patch: Option<CanvasPatch>,
+    pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
+    pub diagnostics: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewProjectionIntentInput {
     pub message_type: String,
     #[serde(default)]
     pub preview_revision: Option<u64>,
-    #[serde(default)]
-    pub source_selector: Option<String>,
-    #[serde(default)]
-    pub target_selector: Option<String>,
-    #[serde(default)]
-    pub selector: Option<String>,
     #[serde(default)]
     pub source_id: Option<String>,
     #[serde(default)]
@@ -177,31 +226,21 @@ pub struct PreviewProjectionIntentReceipt {
 }
 
 /// A source-backed anchor for a one-shot optimistic Canvas patch. Source IDs
-/// are authoritative; selector data is only a guarded fallback for the exact
-/// currently mounted document. Render instance IDs are populated when the
-/// active CanvasGraph can disambiguate a repeated source occurrence.
+/// are authoritative. Render instance IDs are populated when the active
+/// CanvasGraph can disambiguate a repeated source occurrence.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CanvasPatchAnchor {
     pub source_id: String,
-    #[serde(default)]
-    pub alternate_source_ids: Vec<String>,
     pub render_instance_id: Option<String>,
-    pub selector_fallback: Option<String>,
     pub expected_tag: Option<String>,
 }
 
 impl CanvasPatchAnchor {
-    pub(crate) fn source(
-        source_id: impl Into<String>,
-        selector_fallback: Option<&str>,
-        expected_tag: Option<&str>,
-    ) -> Self {
+    pub(crate) fn source(source_id: impl Into<String>, expected_tag: Option<&str>) -> Self {
         Self {
             source_id: source_id.into(),
-            alternate_source_ids: Vec::new(),
             render_instance_id: None,
-            selector_fallback: bounded_optional(selector_fallback, 4_096),
             expected_tag: bounded_optional(expected_tag, 128),
         }
     }
@@ -209,39 +248,22 @@ impl CanvasPatchAnchor {
     pub(crate) fn source_instance(
         source_id: impl Into<String>,
         render_instance_id: Option<&str>,
-        selector_fallback: Option<&str>,
         expected_tag: Option<&str>,
     ) -> Self {
         Self {
             source_id: source_id.into(),
-            alternate_source_ids: Vec::new(),
             render_instance_id: bounded_optional(render_instance_id, 512),
-            selector_fallback: bounded_optional(selector_fallback, 4_096),
             expected_tag: bounded_optional(expected_tag, 128),
         }
-    }
-
-    pub(crate) fn with_alternate_source_ids(
-        mut self,
-        source_ids: impl IntoIterator<Item = String>,
-    ) -> Self {
-        self.alternate_source_ids = source_ids
-            .into_iter()
-            .map(|source_id| source_id.trim().to_string())
-            .filter(|source_id| {
-                !source_id.is_empty() && source_id.len() <= 512 && source_id != &self.source_id
-            })
-            .take(4)
-            .collect();
-        self.alternate_source_ids.sort();
-        self.alternate_source_ids.dedup();
-        self
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CanvasPatchOperation {
+    Batch {
+        operations: Vec<CanvasPatchOperation>,
+    },
     SetAttributes {
         target: CanvasPatchAnchor,
         attributes: BTreeMap<String, Option<String>>,
@@ -252,6 +274,13 @@ pub enum CanvasPatchOperation {
         option_id: String,
         attribute: String,
         value: Option<String>,
+    },
+    SetIcon {
+        target: CanvasPatchAnchor,
+        provider_id: String,
+        icon_identity: String,
+        attributes: BTreeMap<String, Option<String>>,
+        children_html: String,
     },
     SetText {
         target: CanvasPatchAnchor,
@@ -343,6 +372,7 @@ impl CanvasPatch {
                 "CanvasPatch a refuzat o mutație fără identitate sau revizie validă.".to_string(),
             );
         }
+        require_canvas_patch_operation(&operation)?;
         let canonical = serde_json::to_vec(&(
             CANVAS_PATCH_SCHEMA_VERSION,
             project_root,
@@ -374,6 +404,8 @@ impl CanvasPatch {
         })
     }
 
+    // The signed history identity keeps every canonicalized field explicit and ordered.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn issued_for_history(
         project_root: &str,
         runtime_session_id: &str,
@@ -397,6 +429,7 @@ impl CanvasPatch {
                 "CanvasPatch History a refuzat o identitate sau revizie invalidă.".to_string(),
             );
         }
+        require_canvas_patch_operation(&operation)?;
         let canonical = serde_json::to_vec(&(
             CANVAS_PATCH_SCHEMA_VERSION,
             project_root,
@@ -434,6 +467,21 @@ impl CanvasPatch {
     pub(crate) fn mark_issued_now(&mut self) {
         self.issued_at_ms = Self::current_time_ms();
     }
+}
+
+fn require_canvas_patch_operation(operation: &CanvasPatchOperation) -> Result<(), String> {
+    if let CanvasPatchOperation::Batch { operations } = operation {
+        if operations.is_empty() || operations.len() > 256 {
+            return Err("CanvasPatch batch cere între 1 și 256 de operații.".to_string());
+        }
+        if operations
+            .iter()
+            .any(|operation| matches!(operation, CanvasPatchOperation::Batch { .. }))
+        {
+            return Err("CanvasPatch batch nu permite batch-uri imbricate.".to_string());
+        }
+    }
+    Ok(())
 }
 
 fn bounded_optional(value: Option<&str>, max_len: usize) -> Option<String> {
@@ -681,4 +729,130 @@ pub struct PreviewTeraDeleteExecutionReceipt {
     pub workspace_mutation: Option<ProjectWorkspaceMutationReceipt>,
     pub touched_files: Vec<String>,
     pub diagnostics: Vec<PreviewProjectionDiagnostic>,
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use std::{collections::BTreeMap, hint::black_box, time::Instant};
+
+    use super::{CanvasPatch, CanvasPatchAnchor, CanvasPatchOperation};
+
+    fn batch_attribute_operation(index: usize) -> CanvasPatchOperation {
+        CanvasPatchOperation::SetAttributes {
+            target: CanvasPatchAnchor::source(format!("sgn_batch_{index}"), Some("div")),
+            attributes: BTreeMap::from([("class".to_string(), Some("selected".to_string()))]),
+        }
+    }
+
+    fn issue_batch(operations: Vec<CanvasPatchOperation>) -> Result<CanvasPatch, String> {
+        CanvasPatch::issued_for_history(
+            "/project",
+            "session",
+            1,
+            2,
+            "transaction",
+            "before",
+            "after",
+            CanvasPatchOperation::Batch { operations },
+        )
+    }
+
+    #[test]
+    fn canvas_batch_contract_is_bounded_and_non_recursive() {
+        assert!(issue_batch(Vec::new()).is_err());
+        assert!(issue_batch(vec![CanvasPatchOperation::Batch {
+            operations: vec![batch_attribute_operation(0)],
+        }])
+        .is_err());
+        assert!(issue_batch((0..=256).map(batch_attribute_operation).collect()).is_err());
+        assert!(issue_batch((0..256).map(batch_attribute_operation).collect()).is_ok());
+    }
+
+    #[test]
+    #[ignore = "release performance budget"]
+    fn canvas_patch_warm_p95_is_below_sixteen_milliseconds() {
+        let payload = "x".repeat(256 * 1024);
+        let mut samples = Vec::with_capacity(256);
+        for sample in 0..264u64 {
+            let operation = CanvasPatchOperation::SetAttributes {
+                target: CanvasPatchAnchor::source_instance(
+                    "sgn_benchmark_target",
+                    Some("render_benchmark_target"),
+                    Some("div"),
+                ),
+                attributes: BTreeMap::from([
+                    ("data-payload".to_string(), Some(payload.clone())),
+                    ("aria-label".to_string(), Some("benchmark".to_string())),
+                ]),
+            };
+            let started = Instant::now();
+            let patch = CanvasPatch::issued_for_history(
+                "/benchmark/project",
+                "benchmark-session",
+                sample + 1,
+                sample + 2,
+                &format!("benchmark-transaction-{sample}"),
+                "model-before",
+                "model-after",
+                operation,
+            )
+            .unwrap();
+            let elapsed = started.elapsed().as_nanos();
+            black_box(patch.patch_id);
+            if sample >= 8 {
+                samples.push(elapsed);
+            }
+        }
+        samples.sort_unstable();
+        let percentile =
+            |percent: usize| samples[(samples.len() * percent).div_ceil(100).saturating_sub(1)];
+        let p50 = percentile(50);
+        let p95 = percentile(95);
+        let p99 = percentile(99);
+        eprintln!(
+            "canvas_patch payload_bytes={} p50_ns={p50} p95_ns={p95} p99_ns={p99}",
+            payload.len()
+        );
+        assert!(
+            p95 < 16_000_000,
+            "CanvasPatch warm p95 {} ms depășește bugetul de 16 ms",
+            p95 as f64 / 1_000_000.0
+        );
+    }
+
+    #[test]
+    #[ignore = "release performance budget"]
+    fn canvas_batch_patch_warm_p95_is_below_fifty_milliseconds() {
+        let operations = (0..256).map(batch_attribute_operation).collect::<Vec<_>>();
+        let mut samples = Vec::with_capacity(128);
+        for sample in 0..136u64 {
+            let started = Instant::now();
+            let patch = CanvasPatch::issued_for_history(
+                "/benchmark/project",
+                "benchmark-session",
+                sample + 1,
+                sample + 2,
+                &format!("benchmark-batch-{sample}"),
+                "model-before",
+                "model-after",
+                CanvasPatchOperation::Batch {
+                    operations: operations.clone(),
+                },
+            )
+            .unwrap();
+            let elapsed = started.elapsed().as_nanos();
+            black_box(patch.patch_id);
+            if sample >= 8 {
+                samples.push(elapsed);
+            }
+        }
+        samples.sort_unstable();
+        let p95 = samples[(samples.len() * 95).div_ceil(100).saturating_sub(1)];
+        eprintln!("canvas_batch_patch members=256 p95_ns={p95}");
+        assert!(
+            p95 < 50_000_000,
+            "CanvasPatch batch warm p95 {} ms depășește bugetul de 50 ms",
+            p95 as f64 / 1_000_000.0
+        );
+    }
 }

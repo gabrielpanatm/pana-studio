@@ -14,7 +14,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_runtime_owns_all_six_native_providers_and_legacy_selectors() {
+    fn canonical_runtime_owns_all_native_providers_and_structural_lifecycle() {
         for provider in [
             "counter",
             "accordion",
@@ -22,6 +22,7 @@ mod tests {
             "dialog",
             "offcanvas",
             "nav-menu",
+            "slider",
         ] {
             assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains(&format!("register(\"{provider}\"")));
         }
@@ -29,9 +30,13 @@ mod tests {
         assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("data-pana-component"));
         assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("PanaBlockRuntime"));
         assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("optionSignature"));
+        assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("structureSignature"));
+        assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("remount-structure"));
         assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("data-default-tab"));
         assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("data-close-outside"));
         assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("data-close-on-select"));
+        assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("prefers-reduced-motion"));
+        assert!(NATIVE_BLOCK_RUNTIME_SCRIPT.contains("visibilitychange"));
         assert!(!NATIVE_BLOCK_RUNTIME_SCRIPT.contains("PanaInteractiveRuntime"));
     }
 

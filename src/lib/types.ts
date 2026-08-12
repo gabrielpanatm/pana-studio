@@ -186,7 +186,13 @@ export type CssPropertySuggestion = ScssVariable & {
   directValue?: boolean;
 };
 
-export type FontOrigin = "local" | "theme";
+export type FontOrigin = "local" | "theme" | "external";
+
+export type FontDeliveryKind = "local" | "system" | "external" | "missing";
+
+export type FontRoleDeliveryKind = FontDeliveryKind;
+
+export type FontOwnership = "managed" | "detected";
 
 export type FontRoot = {
   relativePath: string;
@@ -202,6 +208,7 @@ export type LocalFontFile = {
   extension: string;
   format: string;
   textOptimized: boolean;
+  contentHash: string;
   internalFamily: string | null;
   subfamily: string | null;
   weight: number | null;
@@ -210,6 +217,10 @@ export type LocalFontFile = {
   axes: FontVariationAxis[];
   license: FontLicenseMetadata;
   unicodeRange: string | null;
+  romanianGlyphs: string[];
+  declaredWeight: number | null;
+  declaredWeightRange: FontWeightRange | null;
+  declaredStyle: string | null;
   preload: FontPreloadRegistration;
 };
 
@@ -247,19 +258,52 @@ export type FontCssRegistration = {
   displayModes: string[];
 };
 
-export type LocalFontFamily = {
+export type FontFaceIssueSeverity = "info" | "warning" | "error";
+
+export type FontFaceIssue = {
+  code: string;
+  severity: FontFaceIssueSeverity;
+  message: string;
+  file: string | null;
+  stylesheet: string | null;
+};
+
+export type FontFaceSource = {
+  stylesheet: string;
+  url: string;
+  resolvedFile: string | null;
+  delivery: FontDeliveryKind;
+  ownership: FontOwnership;
+  external: boolean;
+  dynamic: boolean;
+  weight: number | null;
+  weightRange: FontWeightRange | null;
+  style: string;
+  display: string | null;
+  unicodeRange: string | null;
+  managed: boolean;
+};
+
+export type FontFaceFamily = {
+  id: string;
   family: string;
-  directory: string;
+  directories: string[];
   origin: FontOrigin;
   themeName: string | null;
+  delivery: FontDeliveryKind;
+  ownership: FontOwnership;
+  romanianSupported: boolean | null;
   files: LocalFontFile[];
+  faces: FontFaceSource[];
+  issues: FontFaceIssue[];
   license: FontLicenseMetadata;
   registration: FontCssRegistration;
 };
 
-export type FontInventory = {
+export type FontFaceGraph = {
+  schemaVersion: number;
   roots: FontRoot[];
-  families: LocalFontFamily[];
+  families: FontFaceFamily[];
 };
 
 export type FontRoleId = "text" | "titles" | "ui" | "mono";
@@ -271,6 +315,7 @@ export type FontRoleAssignment = {
   value: string | null;
   family: string | null;
   sourcePath: string | null;
+  delivery: FontRoleDeliveryKind;
   installed: boolean;
   assignable: boolean;
   diagnostic: string | null;
@@ -278,7 +323,7 @@ export type FontRoleAssignment = {
 
 export type FontManagerSnapshot = {
   schemaVersion: number;
-  inventory: FontInventory;
+  graph: FontFaceGraph;
   roles: FontRoleAssignment[];
   diagnostics: FontDeliveryDiagnostic[];
 };
@@ -309,8 +354,9 @@ export type FontDeliveryMutationReceipt = {
 export type FontFamilyRemovalPlan = {
   schemaVersion: number;
   planToken: string;
+  familyId: string;
   family: string;
-  directory: string;
+  directories: string[];
   files: string[];
   stylesheetPaths: string[];
   licenseFiles: string[];
@@ -335,7 +381,7 @@ export type FontPreviewAsset = {
 };
 
 export type GoogleFontDownloadResult = {
-  family: LocalFontFamily;
+  family: FontFaceFamily;
   fontFaceCss: string;
   cssUrl: string;
   licenseFile: string;
@@ -366,6 +412,7 @@ export type LocalFontImportFilePlan = {
 };
 
 export type LocalFontImportFamilyPlan = {
+  id: string;
   family: string;
   directory: string;
   fileCount: number;
@@ -589,6 +636,254 @@ export type SitePartialIncludeReceipt = {
 export type ProjectAppConfig = {
   projectPath: string;
   cachebustAssets: boolean;
+  deploy: DeploySettings;
+};
+
+export type DeployProviderKind = "bunny" | "ftp" | "sftp" | "s3" | "cloudflare_pages";
+export type DeployCleanupPolicy = "managed_only" | "mirror_destination";
+
+export type BunnyTargetConfig = {
+  storageZone: string;
+  storageRegion: string;
+  pullZoneId: string;
+  remotePrefix: string;
+};
+
+export type FtpSecurityMode = "ftps_explicit" | "plain";
+
+export type FtpTargetConfig = {
+  host: string;
+  port: number;
+  remoteRoot: string;
+  security: FtpSecurityMode;
+  allowInsecureFtp: boolean;
+};
+
+export type SftpTargetConfig = {
+  host: string;
+  port: number;
+  remoteRoot: string;
+  expectedHostKeySha256: string;
+};
+
+export type S3TargetConfig = {
+  bucket: string;
+  prefix: string;
+  region: string;
+  endpoint: string | null;
+  forcePathStyle: boolean;
+  allowInsecureEndpoint: boolean;
+  cacheControl: string | null;
+};
+
+export type CloudflarePagesTargetConfig = {
+  accountId: string;
+  projectName: string;
+  branch: string | null;
+};
+
+export type DeployTargetProvider =
+  | { provider: "bunny"; config: BunnyTargetConfig }
+  | { provider: "ftp"; config: FtpTargetConfig }
+  | { provider: "sftp"; config: SftpTargetConfig }
+  | { provider: "s3"; config: S3TargetConfig }
+  | { provider: "cloudflare_pages"; config: CloudflarePagesTargetConfig };
+
+export type DeployTarget = {
+  id: string;
+  name: string;
+  credentialRef: string;
+  cleanupPolicy: DeployCleanupPolicy;
+} & DeployTargetProvider;
+
+export type DeploySettings = {
+  schemaVersion: number;
+  revision: number;
+  activeTargetId: string | null;
+  targets: DeployTarget[];
+};
+
+export type ProviderCapabilities = {
+  remoteInventory: boolean;
+  deleteStale: boolean;
+  atomicActivation: boolean;
+  cacheInvalidation: boolean;
+  metadataHeaders: boolean;
+  connectionTest: boolean;
+};
+
+export type DeployCredentialKind =
+  | "bunny"
+  | "ftp"
+  | "sftp_password"
+  | "sftp_private_key"
+  | "s3"
+  | "cloudflare_pages";
+
+export type DeployCredentialStatus = {
+  schemaVersion: number;
+  credentialRef: string;
+  kind: DeployCredentialKind;
+  configured: boolean;
+};
+
+export type DeployTargetCapabilitySnapshot = {
+  targetId: string;
+  provider: DeployProviderKind;
+  capabilities: ProviderCapabilities;
+};
+
+export type DeployConfigurationSnapshot = {
+  schemaVersion: number;
+  settings: DeploySettings;
+  credentialStatuses: DeployCredentialStatus[];
+  targetCapabilities: DeployTargetCapabilitySnapshot[];
+  legacyBunnyFallback: boolean;
+};
+
+export type DeployCredentialWriteInput =
+  | { credentialRef: string; kind: "bunny"; storageKey: string; cdnApiKey: string }
+  | { credentialRef: string; kind: "ftp"; username: string; password: string }
+  | { credentialRef: string; kind: "sftp_password"; username: string; password: string }
+  | {
+      credentialRef: string;
+      kind: "sftp_private_key";
+      username: string;
+      privateKeyPem: string;
+      passphrase: string | null;
+    }
+  | {
+      credentialRef: string;
+      kind: "s3";
+      accessKeyId: string;
+      secretAccessKey: string;
+      sessionToken: string | null;
+    }
+  | { credentialRef: string; kind: "cloudflare_pages"; apiToken: string };
+
+export type DeployActionKind = "upload" | "skip" | "delete";
+export type DeployDeleteOrigin = "managed" | "unmanaged";
+
+export type DeployAction = {
+  kind: DeployActionKind;
+  path: string;
+  sizeBytes: number;
+  sha256?: string;
+  deleteOrigin?: DeployDeleteOrigin;
+};
+
+export type DeployPlan = {
+  schemaVersion: number;
+  planToken: string;
+  settingsRevision: number;
+  targetId: string;
+  provider: DeployProviderKind;
+  artifactId: string;
+  preflightToken: string;
+  buildToken: string;
+  uploadFiles: number;
+  uploadBytes: number;
+  skippedFiles: number;
+  deleteFiles: number;
+  managedDeleteFiles: number;
+  unmanagedDeleteFiles: number;
+  actions: DeployAction[];
+  warnings: string[];
+};
+
+export type DeployPlanInput = {
+  targetId: string;
+  expectedBuildToken: string;
+  expectedArtifactId: string;
+};
+
+export type DeployExecutionInput = {
+  targetId: string;
+  expectedSettingsRevision: number;
+  expectedPlanToken: string;
+  expectedPreflightToken: string;
+  expectedBuildToken: string;
+  expectedArtifactId: string;
+};
+
+export type DeployProgressPhase =
+  | "preparing"
+  | "inventory"
+  | "uploading"
+  | "deleting"
+  | "activating"
+  | "invalidating_cache"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type DeployProgressEvent = {
+  schemaVersion: number;
+  operationId: string;
+  targetId: string;
+  provider: DeployProviderKind;
+  phase: DeployProgressPhase;
+  currentPath?: string;
+  completedFiles: number;
+  totalFiles: number;
+  completedBytes: number;
+  totalBytes: number;
+  timestampMs: number;
+};
+
+export type DeployConnectionTestReceipt = {
+  schemaVersion: number;
+  targetId: string;
+  provider: DeployProviderKind;
+  checkedAtMs: number;
+  observedRemoteObjects?: number;
+  warnings: string[];
+};
+
+export type DeployReceiptStatus = "completed" | "failed" | "cancelled" | "partial";
+
+export type DeployReceipt = {
+  schemaVersion: number;
+  operationId: string;
+  targetId: string;
+  provider: DeployProviderKind;
+  artifactId: string;
+  planToken: string;
+  settingsRevision: number;
+  status: DeployReceiptStatus;
+  startedAtMs: number;
+  completedAtMs: number;
+  uploadedFiles: number;
+  uploadedBytes: number;
+  skippedFiles: number;
+  deletedFiles: number;
+  deletedManagedFiles: number;
+  deletedUnmanagedFiles: number;
+  remoteManifestPublished: boolean;
+  cacheInvalidated: boolean;
+  deploymentId?: string;
+  deploymentUrl?: string;
+  warnings: string[];
+};
+
+export type DeployErrorCode =
+  | "invalid_configuration"
+  | "missing_credentials"
+  | "artifact_unavailable"
+  | "connection_failed"
+  | "remote_inventory_failed"
+  | "upload_failed"
+  | "delete_failed"
+  | "activation_failed"
+  | "cache_invalidation_failed"
+  | "cancelled"
+  | "internal";
+
+export type DeployCommandError = {
+  schemaVersion: number;
+  code: DeployErrorCode;
+  message: string;
+  receipt?: DeployReceipt;
 };
 
 export type ZolaProjectSettings = {
@@ -3209,6 +3504,7 @@ export type SourceRelationKind =
   | "internalContentLink"
   | "assetUrl"
   | "assetHash"
+  | "assetReference"
   | "dataLoad"
   | "dataFileLoad"
   | "contentDataLoad"
@@ -3684,7 +3980,7 @@ export type CanvasHoverReceipt = {
   } | null;
 };
 
-export const SELECTION_COORDINATOR_SCHEMA_VERSION = 1 as const;
+export const SELECTION_COORDINATOR_SCHEMA_VERSION = 2 as const;
 
 export type SelectionSubjectKind =
   | "htmlElement"
@@ -3743,33 +4039,39 @@ export type SelectionAnchor = {
   bindingPath: string | null;
 };
 
-export type SelectionPreviewProjection = {
-  editorNodeId: string | null;
-  targetKind: SelectionSubjectKind | null;
-  primaryRenderInstanceId: string | null;
-  renderInstanceIds: string[];
-  boundaryInstanceId: string | null;
+export type SelectionEntry = {
+  memberId: string;
+  resolution: SelectionResolution;
+  subject: SelectionSubject;
+  anchor: SelectionAnchor;
+  provenance: EditorSourceProvenance;
+  capabilities: EditorNavigationCapabilities;
+  diagnostics: string[];
 };
 
-export type SelectionUiProjections = {
-  preview: SelectionPreviewProjection;
-  layers: {
-    editorNodeId: string | null;
-  };
-  code: {
-    file: string | null;
-    range: SourceRange | null;
-    focus: SelectionFocus;
-  };
-  inspector: {
-    editorNodeId: string | null;
-    subjectKind: SelectionSubjectKind | null;
-    canInspect: boolean;
-  };
-  status: {
-    provenance: EditorSourceProvenance | null;
-    focus: SelectionFocus;
-  };
+export type SelectionAggregateCapabilities = {
+  memberCount: number;
+  allResolved: boolean;
+  allSourceBacked: boolean;
+  sameFile: boolean;
+  sameParent: boolean;
+  hasAncestorDescendant: boolean;
+  hasDuplicateSourceTargets: boolean;
+  canBatchAttributes: boolean;
+  canBatchDuplicate: boolean;
+  canBatchDelete: boolean;
+  canBatchMove: boolean;
+  primaryOnlyEditsAllowed: boolean;
+  primaryOnlyReasonCode: string | null;
+  reasons: string[];
+};
+
+export type SelectionAggregateHtmlFacts = {
+  complete: boolean;
+  commonClasses: string[];
+  mixedClasses: string[];
+  commonAttributes: Record<string, string | null>;
+  mixedAttributeNames: string[];
 };
 
 export type SelectionSnapshot = {
@@ -3780,13 +4082,12 @@ export type SelectionSnapshot = {
   canvasIdentity: EditorNavigationIdentity;
   route: string;
   activeDocumentPath: string | null;
-  resolution: SelectionResolution;
-  subject: SelectionSubject | null;
+  primaryMemberId: string | null;
+  rangeOriginMemberId: string | null;
+  members: SelectionEntry[];
+  aggregateCapabilities: SelectionAggregateCapabilities;
+  aggregateHtmlFacts: SelectionAggregateHtmlFacts;
   focus: SelectionFocus;
-  anchor: SelectionAnchor | null;
-  provenance: EditorSourceProvenance | null;
-  capabilities: EditorNavigationCapabilities | null;
-  projections: SelectionUiProjections;
   diagnostics: string[];
 };
 
@@ -3812,6 +4113,9 @@ export type SelectionCoordinatorSnapshot = {
 
 export type SelectionIntent =
   | { kind: "selectEditorNode"; editorNodeId: string }
+  | { kind: "toggleEditorNode"; editorNodeId: string }
+  | { kind: "extendRangeToEditorNode"; editorNodeId: string }
+  | { kind: "setPrimaryEditorNode"; editorNodeId: string }
   | {
       kind: "selectSourcePosition";
       file: string;
@@ -3999,6 +4303,7 @@ export type EditorMovePlanInput = {
   targetNodeId: string;
   position: ProjectMovePosition;
   editScopeGrant?: EditScopeGrant | null;
+  nativeBlockSlot?: NativeBlockSlotMutationContext | null;
 };
 
 export type EditorMoveCommitInput = {
@@ -4048,7 +4353,6 @@ export type EditorMoveTimings = {
   nativeBlockContractMs: number;
   workspaceStageMs: number;
   afterProjectModelBuildMs: number;
-  aliasCalculationMs: number;
 };
 
 export type SourceEditLocation = {
@@ -4157,6 +4461,9 @@ export type SourceGraphTemplate = {
   internalLinks: string[];
   assetUrls: string[];
   assetHashes: string[];
+  literalAssetReferences: string[];
+  assetReferenceEligible: number;
+  assetReferenceUnanalysable: number;
   dataLoads: string[];
   imageMetadata: string[];
   imageResizes: string[];
@@ -4471,6 +4778,9 @@ export type BlockSlotDefinition = {
   label: string;
   required: boolean;
   multiple: boolean;
+  itemKind: string;
+  minimumItems: number;
+  maximumItems: number | null;
 };
 
 export type BlockDefinition = {
@@ -4547,10 +4857,65 @@ export type UiBlockSourceInstance = {
   editable: boolean;
   diagnostic: LocalizedDiagnostic | null;
   options: NativeBlockOptionState[];
+  slots: NativeBlockSlotState[];
+  icon: NativeIconState | null;
+};
+
+export type NativeBlockSlotItemState = {
+  sourceNodeId: string;
+  tag: string;
+  label: string;
+  index: number;
+  editable: boolean;
+};
+
+export type NativeBlockSlotState = {
+  id: string;
+  itemKind: string;
+  containerSourceNodeId: string | null;
+  minimumItems: number;
+  maximumItems: number | null;
+  editable: boolean;
+  diagnostic: string | null;
+  items: NativeBlockSlotItemState[];
+};
+
+export type NativeBlockSlotMutationContext = {
+  providerId: string;
+  slotId: string;
+  rootSourceId: string;
+  expectedModelRevision: string;
+};
+
+export type NativeBlockSlotMutationRequest = {
+  operation: "insert" | "duplicate" | "move" | "delete";
+  context: NativeBlockSlotMutationContext;
+  slot: NativeBlockSlotState;
+  item?: NativeBlockSlotItemState | null;
+  targetItem?: NativeBlockSlotItemState | null;
+  position?: "before" | "after";
+};
+
+export type NativeIconState = {
+  iconIdentity: string;
+  packId: string;
+  iconId: string;
+  size: number;
+  strokeWidth: string;
+  decorative: boolean;
+  accessibleLabel: string | null;
+};
+
+export type NativeIconMutationIntent = {
+  iconIdentity: string;
+  size: number;
+  strokeWidth: string;
+  decorative: boolean;
+  accessibleLabel: string | null;
 };
 
 export type UiBlockGraphSnapshot = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   projectRoot: string;
   runtimeSessionId: string;
   workspaceRevision: number;
@@ -5195,6 +5560,11 @@ export type SourceGraph = {
   markdownProjections: MarkdownProjection[];
   nodes: SourceGraphNode[];
   relations: SourceGraphRelation[];
+  assetReferenceCoverage: {
+    eligible: number;
+    analyzed: number;
+    unanalysable: number;
+  };
   diagnostics: SourceGraphDiagnostic[];
 };
 
@@ -5631,9 +6001,22 @@ export type ProjectModelSnapshot = {
   diagnostics: ProjectModelDiagnostic[];
 };
 
-export const PROJECT_AUDIT_SCHEMA_VERSION = 2 as const;
+export const AUDIT_RUN_SCHEMA_VERSION = 4 as const;
+export const AUDIT_RULESET_VERSION = 1 as const;
+export const AUDIT_FIX_APPLY_SCHEMA_VERSION = 1 as const;
 
-export type AuditSeverity = "info" | "warning" | "error";
+export type AuditRunMode = "quick" | "full";
+export type AuditScope = { kind: "project" } | { kind: "file"; path: string };
+export type AuditOutcome =
+  | "pass"
+  | "violation"
+  | "needs_review"
+  | "not_applicable"
+  | "skipped"
+  | "engine_error"
+  | "suppressed";
+export type AuditImpact = "info" | "minor" | "moderate" | "serious" | "critical";
+export type AuditPolicy = "off" | "advisory" | "blocking" | "budget";
 
 export type AuditCategory =
   | "build"
@@ -5641,36 +6024,262 @@ export type AuditCategory =
   | "accessibility"
   | "seo"
   | "assets"
-  | "workspace";
+  | "workspace"
+  | "components"
+  | "content"
+  | "data"
+  | "deploy"
+  | "performance"
+  | "crawl";
+export type AuditProviderKind =
+  | "workspace_integrity"
+  | "project_model"
+  | "source_conformance"
+  | "project_graph"
+  | "component_graph"
+  | "block_graph"
+  | "content_models"
+  | "listing_items"
+  | "dynamic_widgets"
+  | "template_semantics"
+  | "content_semantics"
+  | "asset_usage"
+  | "build_zola";
+export type AuditProviderStatus = "complete" | "partial" | "failed" | "skipped";
+export type AuditPublishCoverageRequirement = "required" | "advisory";
+export type AuditCompleteness = "complete" | "partial";
+export type AuditSourceOrigin = "project" | "theme" | "workspace" | "generated";
+export type AuditEvidenceKind = "source" | "graph" | "parser" | "build" | "coverage" | "runtime";
 
-export type AuditDiagnostic = {
+export type AuditLocation = {
+  file: string;
+  range: SourceRange | null;
+  origin: AuditSourceOrigin;
+  sourceNodeId: string | null;
+};
+
+export type AuditEvidence = {
+  kind: AuditEvidenceKind;
+  diagnostic: LocalizedDiagnostic;
+  value: string | null;
+};
+
+export type AuditFixApplicability = "safe" | "needs_confirmation" | "manual";
+export type AuditTextEdit = { location: AuditLocation; replacement: string };
+export type AuditFix = {
   id: string;
-  severity: AuditSeverity;
+  titleDiagnostic: LocalizedDiagnostic;
+  applicability: AuditFixApplicability;
+  edits: AuditTextEdit[];
+};
+
+export type AuditSuppressionScope = "finding" | "file" | "rule";
+export type AuditSuppression = {
+  ruleCode: string;
+  file: string | null;
+  fingerprint: string | null;
+  scope: AuditSuppressionScope;
+  reason: string;
+};
+export type AuditPolicyOverride = { ruleCode: string; policy: AuditPolicy };
+export type AuditRequest = {
+  mode: AuditRunMode;
+  scope: AuditScope;
+  policyOverrides: AuditPolicyOverride[];
+  suppressions: AuditSuppression[];
+};
+
+export type AuditFinding = {
+  id: string;
+  fingerprint: string;
+  providerId: string;
+  ruleCode: string;
   category: AuditCategory;
-  code: string;
+  outcome: AuditOutcome;
+  impact: AuditImpact;
+  policy: AuditPolicy;
   titleDiagnostic: LocalizedDiagnostic;
   messageDiagnostic: LocalizedDiagnostic;
-  file: string | null;
-  range: SourceRange | null;
+  primaryLocation: AuditLocation | null;
+  relatedLocations: AuditLocation[];
+  evidence: AuditEvidence[];
+  fixes: AuditFix[];
+  suppression: AuditSuppression | null;
 };
 
 export type AuditSummary = {
   total: number;
-  errors: number;
-  warnings: number;
-  info: number;
+  violations: number;
+  needsReview: number;
+  engineErrors: number;
+  passed: number;
+  notApplicable: number;
+  skipped: number;
+  suppressed: number;
+  blocking: number;
   affectedFiles: number;
 };
 
-export type ProjectAuditSnapshot = {
-  schemaVersion: typeof PROJECT_AUDIT_SCHEMA_VERSION;
+export type AuditCoverage = {
+  eligible: number;
+  analyzed: number;
+  limitations: LocalizedDiagnostic[];
+};
+
+export type AuditProviderReceipt = {
+  id: string;
+  kind: AuditProviderKind;
+  status: AuditProviderStatus;
+  publishCoverageRequirement: AuditPublishCoverageRequirement;
+  findingCount: number;
+  coverage: AuditCoverage;
+  evidence: AuditEvidence[];
+};
+
+export type AuditRunReceipt = {
+  schemaVersion: typeof AUDIT_RUN_SCHEMA_VERSION;
+  rulesetVersion: typeof AUDIT_RULESET_VERSION;
   projectRoot: string;
   runtimeSessionId: string;
   workspaceRevision: number;
   projectModelRevision: string;
+  mode: AuditRunMode;
+  scope: AuditScope;
+  completeness: AuditCompleteness;
   summary: AuditSummary;
-  diagnostics: AuditDiagnostic[];
+  providers: AuditProviderReceipt[];
+  findings: AuditFinding[];
 };
+
+export type AuditFixApplyInput = {
+  schemaVersion: typeof AUDIT_FIX_APPLY_SCHEMA_VERSION;
+  expectedAuditSchemaVersion: typeof AUDIT_RUN_SCHEMA_VERSION;
+  expectedRulesetVersion: typeof AUDIT_RULESET_VERSION;
+  expectedProjectRoot: string;
+  expectedSessionId: string;
+  expectedWorkspaceRevision: number;
+  expectedProjectModelRevision: string;
+  findingFingerprint: string;
+  fixId: string;
+};
+
+export type AuditFixApplyReceipt = {
+  schemaVersion: typeof AUDIT_FIX_APPLY_SCHEMA_VERSION;
+  findingFingerprint: string;
+  fixId: string;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
+  audit: AuditRunReceipt;
+};
+
+export const PUBLISH_PREFLIGHT_SCHEMA_VERSION = 1 as const;
+export const PUBLISH_BUILD_RECEIPT_SCHEMA_VERSION = 1 as const;
+
+export type PublishPreflightStatus = "ready" | "blocked" | "failed";
+export type PublishPreflightGateOutcome =
+  | "passed"
+  | "blocked"
+  | "advisory"
+  | "skipped"
+  | "engine_error";
+export type PublishPreflightEvidenceKind =
+  | "workspace"
+  | "disk"
+  | "audit"
+  | "build"
+  | "deploy_configuration"
+  | "credentials"
+  | "runtime";
+export type PublishPreflightRemediationKind =
+  | "save_workspace"
+  | "reconcile_disk"
+  | "open_audit"
+  | "open_source"
+  | "configure_deploy"
+  | "configure_credentials"
+  | "retry";
+
+export type PublishPreflightEvidence = {
+  kind: PublishPreflightEvidenceKind;
+  diagnostic: LocalizedDiagnostic;
+  value?: string;
+};
+
+export type PublishPreflightRemediation = {
+  kind: PublishPreflightRemediationKind;
+  diagnostic: LocalizedDiagnostic;
+  location?: AuditLocation;
+};
+
+export type PublishPreflightGate = {
+  id: string;
+  outcome: PublishPreflightGateOutcome;
+  diagnostic: LocalizedDiagnostic;
+  evidence: PublishPreflightEvidence[];
+  auditFingerprints: string[];
+  remediations: PublishPreflightRemediation[];
+};
+
+export type PublishPreflightTargetIdentity = {
+  targetId: string;
+  provider: string;
+  credentialRef: string;
+  credentialKind: string;
+  credentialConfigured: boolean;
+};
+
+export type PublishPreflightReceipt = {
+  schemaVersion: typeof PUBLISH_PREFLIGHT_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  diskGeneration: number;
+  workspaceDirty: boolean;
+  diskCoherent: boolean;
+  observedDiskFingerprint: string;
+  projectModelRevision: string;
+  deploySettingsRevision: number;
+  deploySettingsFingerprint: string;
+  activeTarget?: PublishPreflightTargetIdentity;
+  auditIdentity: {
+    schemaVersion: typeof AUDIT_RUN_SCHEMA_VERSION;
+    rulesetVersion: typeof AUDIT_RULESET_VERSION;
+    receiptId: string;
+    projectModelRevision: string;
+  };
+  auditReceipt: AuditRunReceipt;
+  status: PublishPreflightStatus;
+  gates: PublishPreflightGate[];
+  preflightToken: string;
+};
+
+export type PublishBuildReceipt = {
+  schemaVersion: typeof PUBLISH_BUILD_RECEIPT_SCHEMA_VERSION;
+  projectRoot: string;
+  runtimeSessionId: string;
+  workspaceRevision: number;
+  diskGeneration: number;
+  projectModelRevision: string;
+  deploySettingsRevision: number;
+  deploySettingsFingerprint: string;
+  targetId: string;
+  preflightToken: string;
+  artifactId: string;
+  artifactFiles: number;
+  artifactBytes: number;
+  completedAtMs: number;
+  buildToken: string;
+  log: string;
+};
+
+export type PublishPreflightRequest = {
+  policyOverrides: AuditPolicyOverride[];
+  suppressions: AuditSuppression[];
+};
+
+export type AuditRefreshResult =
+  | { ok: true; receipt: AuditRunReceipt }
+  | { ok: false; error: string; stale: boolean };
 
 export const DESIGN_CLASS_INVENTORY_SCHEMA_VERSION = 1;
 export const DESIGN_CLASS_RENAME_SCHEMA_VERSION = 1;
@@ -5925,7 +6534,7 @@ export type TemplateWorkbenchPlan = {
 export type ProjectMovePosition = "before" | "after" | "inside";
 
 export type ProjectHtmlInsertElement = {
-  kind?: "html" | "block" | null;
+  kind?: "html" | "block" | "nativeBlockSlotItem" | null;
   blockId?: string | null;
   tag: string;
   className?: string | null;
@@ -5935,12 +6544,11 @@ export type ProjectHtmlInsertElement = {
 
 export type ProjectHtmlInsertIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
   targetTag?: string | null;
-  targetSelector?: string | null;
   targetKind?: string | null;
   position: ProjectMovePosition;
   element: ProjectHtmlInsertElement;
+  nativeBlockSlot?: NativeBlockSlotMutationContext | null;
 };
 
 export type ProjectHtmlAttributeMutation =
@@ -5953,14 +6561,28 @@ export type NativeBlockOptionIntent = {
   value: BlockOptionValue;
 };
 
+export type ProjectGeneratedIdentityKind = "class" | "dataAnim";
+
+export type ProjectGeneratedIdentityIntent = {
+  kind: ProjectGeneratedIdentityKind;
+};
+
+export type ProjectGeneratedIdentityProjection = {
+  kind: ProjectGeneratedIdentityKind;
+  value: string;
+  classes: string[];
+  dataAnim: string | null;
+  alreadyPresent: boolean;
+};
+
 export type ProjectHtmlAttributeIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
   targetTag?: string | null;
-  targetSelector?: string | null;
   attributes: ProjectHtmlAttributeMutation[];
   zolaImage?: ProjectZolaImageIntent | null;
   nativeBlockOption?: NativeBlockOptionIntent | null;
+  nativeIcon?: NativeIconMutationIntent | null;
+  generatedIdentity?: ProjectGeneratedIdentityIntent | null;
 };
 
 export type ProjectZolaImageIntent = {
@@ -5976,37 +6598,31 @@ export type ProjectZolaImageIntent = {
 
 export type ProjectHtmlTextIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
   targetTag?: string | null;
-  targetSelector?: string | null;
   text: string;
 };
 
 export type ProjectHtmlTagIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
   targetTag?: string | null;
-  targetSelector?: string | null;
   newTag: string;
 };
 
 export type ProjectHtmlDeleteIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
+  targetRenderInstanceId?: string | null;
   targetTag?: string | null;
-  targetSelector?: string | null;
+  nativeBlockSlot?: NativeBlockSlotMutationContext | null;
 };
 
 export type ProjectHtmlDuplicateIntent = {
   sourceSourceId: string | null;
-  sourceLocation?: ProjectSourceEditLocation | null;
   sourceTag?: string | null;
-  sourceSelector?: string | null;
+  nativeBlockSlot?: NativeBlockSlotMutationContext | null;
 };
 
 export type ProjectTeraDeleteIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
   targetKind?: string | null;
   targetLabel?: string | null;
 };
@@ -6076,6 +6692,7 @@ export type InsertCatalogPayload =
   | {
       kind: "block";
       blockId: string;
+      blockKind: "js" | "static";
       tag: string;
       className: string;
       text: string;
@@ -6140,10 +6757,8 @@ export type InsertCatalogSnapshot = {
 
 export type ProjectTeraInsertIntent = {
   targetSourceId: string | null;
-  targetLocation?: ProjectSourceEditLocation | null;
   targetKind?: string | null;
   targetTag?: string | null;
-  targetSelector?: string | null;
   position: ProjectMovePosition;
   item: ProjectTeraInsertItem;
 };
@@ -6183,9 +6798,6 @@ export type PreviewProjectionDiagnostic = {
 export type PreviewProjectionIntentInput = {
   messageType: string;
   previewRevision?: number | null;
-  sourceSelector?: string | null;
-  targetSelector?: string | null;
-  selector?: string | null;
   sourceId?: string | null;
   targetSourceId?: string | null;
   sourceTemplateSourceId?: string | null;
@@ -6224,9 +6836,16 @@ export type PreviewStructuralCommandIdentity = {
 
 export type SelectionMutationIdentity = {
   selectionRevision: number;
-  editorNodeId?: string | null;
-  sourceNodeId?: string | null;
-  renderInstanceId?: string | null;
+  workspaceRevision: number;
+  primaryMemberId: string | null;
+  members: readonly SelectionMutationMemberIdentity[];
+};
+
+export type SelectionMutationMemberIdentity = {
+  memberId: string;
+  editorNodeId: string | null;
+  sourceNodeId: string | null;
+  renderInstanceId: string | null;
 };
 
 export type PreviewStructuralSelectionIdentity = SelectionMutationIdentity;
@@ -6263,7 +6882,7 @@ export type NativeBlockRegistryItem = {
   familyId: string;
   variantId: string;
   scale: BlockScale;
-  kind: "css" | "js";
+  kind: "css" | "js" | "static";
   label: string;
   description: string;
   tag: string;
@@ -6285,6 +6904,48 @@ export type NativeBlockRegistrySnapshot = {
   schemaVersion: number;
   blocks: NativeBlockRegistryItem[];
   groups: NativeBlockRegistryGroup[];
+};
+
+export type IconCatalogNode = {
+  tag: "path";
+  attributes: Record<string, string>;
+};
+
+export type IconCatalogItem = {
+  id: string;
+  label: string;
+  category: string;
+  tags: string[];
+  nodes: IconCatalogNode[];
+};
+
+export type IconCatalogSummary = {
+  schemaVersion: 1;
+  packId: "tabler-outline";
+  packVersion: string;
+  license: string;
+  total: number;
+  categories: string[];
+};
+
+export type IconCatalogSearchInput = {
+  query: string;
+  category?: string | null;
+  offset?: number | null;
+  limit?: number | null;
+};
+
+export type IconCatalogPage = {
+  schemaVersion: 1;
+  packId: "tabler-outline";
+  packVersion: string;
+  query: string;
+  category: string | null;
+  offset: number;
+  limit: number;
+  total: number;
+  hasMore: boolean;
+  items: IconCatalogItem[];
 };
 
 export type NativeBlockContractInput = {
@@ -6388,13 +7049,12 @@ export type PageContractAuthorityReceipt = {
 
 export type CanvasPatchAnchor = {
   sourceId: string;
-  alternateSourceIds: string[];
   renderInstanceId: string | null;
-  selectorFallback: string | null;
   expectedTag: string | null;
 };
 
 export type CanvasPatchOperation =
+  | { kind: "batch"; operations: CanvasPatchOperation[] }
   | { kind: "setAttributes"; target: CanvasPatchAnchor; attributes: Record<string, string | null> }
   | {
       kind: "setBlockOption";
@@ -6403,6 +7063,14 @@ export type CanvasPatchOperation =
       optionId: string;
       attribute: string;
       value: string | null;
+    }
+  | {
+      kind: "setIcon";
+      target: CanvasPatchAnchor;
+      providerId: "icon";
+      iconIdentity: string;
+      attributes: Record<string, string | null>;
+      childrenHtml: string;
     }
   | { kind: "setText"; target: CanvasPatchAnchor; text: string }
   | { kind: "setTextHtml"; target: CanvasPatchAnchor; escapedText: string }
@@ -6469,6 +7137,16 @@ export type ProjectHtmlAttributePatch = {
   attributes: Record<string, string | null>;
   zolaImageContract: boolean;
   zolaImage: ZolaImagePresentation | null;
+  managedIcon: ProjectManagedIconPatch | null;
+  generatedIdentity: ProjectGeneratedIdentityProjection | null;
+};
+
+export type ProjectManagedIconPatch = {
+  state: NativeIconState;
+  previousState: NativeIconState;
+  previousAttributes: Record<string, string | null>;
+  childrenHtml: string;
+  previousChildrenHtml: string;
 };
 
 export type PreviewHtmlAttributesExecutionStatus = "committed" | "blocked";
@@ -6489,6 +7167,36 @@ export type PreviewHtmlAttributesExecutionReceipt = {
   workspaceMutation: ProjectWorkspaceMutationReceipt | null;
   touchedFiles: string[];
   diagnostics: PreviewProjectionDiagnostic[];
+};
+
+export type PreviewSelectionBatchAction =
+  | { kind: "setAttributes"; attributes: ProjectHtmlAttributeMutation[] }
+  | { kind: "mutateClasses"; add: string[]; remove: string[] }
+  | { kind: "generateSharedClass" }
+  | { kind: "duplicate" }
+  | { kind: "delete" }
+  | {
+      kind: "move";
+      targetSourceId: string;
+      targetTag?: string | null;
+      position: ProjectMovePosition;
+    };
+
+export type PreviewSelectionBatchExecutionInput = {
+  schemaVersion: 1;
+  action: PreviewSelectionBatchAction;
+};
+
+export type PreviewSelectionBatchExecutionReceipt = {
+  schemaVersion: 1;
+  status: "committed" | "blocked";
+  modelRevision: string | null;
+  affectedSourceIds: string[];
+  primaryAffectedSourceId: string | null;
+  generatedClass: string | null;
+  canvasPatch: CanvasPatch | null;
+  workspaceMutation: ProjectWorkspaceMutationReceipt | null;
+  diagnostics: string[];
 };
 
 export type ProjectHtmlTextPatch = {
@@ -6889,7 +7597,7 @@ export type CodexMcpStatus = {
 };
 
 export type UiContextProjection = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   uiRevision: number;
   expectedProjectSessionId: string | null;
   expectedProjectRevision: number | null;
@@ -6907,6 +7615,9 @@ export type UiContextProjection = {
   };
   selection: {
     hasSelection: boolean;
+    primaryMemberId: string | null;
+    memberIds: string[];
+    memberCount: number;
     selector: string | null;
     cssSelector: string | null;
     tag: string | null;
@@ -6949,15 +7660,6 @@ export type UiContextProjection = {
     workspaceProjectionRecoveryRequired: boolean;
     truncated: boolean;
   };
-};
-
-export type SourceNodeRange = {
-  selector: string;
-  cssSelector: string;
-  tag: string;
-  openStart: number;
-  openEnd: number;
-  end: number;
 };
 
 // ── JS / Motion tab types ─────────────────────────────────────────────────────

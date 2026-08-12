@@ -23,6 +23,7 @@ use crate::{
             WritePolicy, WriteTarget,
         },
     },
+    source_graph::model::SourceGraph,
     zola_theme::active_theme_from_source,
 };
 
@@ -212,6 +213,7 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
     session_root: &Path,
     previous: Option<&PersistentProjectionManifest>,
     projection: &WorkspaceProjectionSnapshot,
+    source_graph: &SourceGraph,
     pending_project_authority: Option<&PendingProjectAuthority>,
 ) -> Result<(PersistentProjectionUpdate, PreviewProjectionPublication), String> {
     let require_live_disk = pending_project_authority.is_none();
@@ -252,7 +254,13 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
     let mut generation =
         PreviewProjectionGeneration::begin(authority.inner(), session_root, &projection_root)?;
     let materialization = if needs_baseline {
-        materialize_generation_contents(zola_root, &mut generation, projection, &project_read)
+        materialize_generation_contents(
+            zola_root,
+            &mut generation,
+            projection,
+            source_graph,
+            &project_read,
+        )
     } else {
         (|| {
             let excluded = projected_paths
@@ -270,6 +278,7 @@ pub(crate) fn sync_persistent_project_workspace<R: Runtime>(
             materialize_generation_delta(
                 &mut generation,
                 projection,
+                source_graph,
                 &project_read,
                 &projected_paths,
                 reused_entries,
@@ -492,6 +501,7 @@ fn materialize_generation_contents(
     zola_root: &Path,
     generation: &mut PreviewProjectionGeneration,
     projection: &WorkspaceProjectionSnapshot,
+    source_graph: &SourceGraph,
     project_read: &ProjectReadAccess<'_>,
 ) -> Result<(), String> {
     let active_theme = projected_active_theme(projection);
@@ -517,12 +527,13 @@ fn materialize_generation_contents(
         let _ = zola_relative;
     }
 
-    let source_ids = SourceIdIndex::for_template_sources(
+    let source_ids = SourceIdIndex::for_source_graph(
+        source_graph,
         projection
             .source_texts
             .iter()
             .map(|(path, source)| (path.as_str(), source.as_str())),
-    );
+    )?;
     let mut source_texts = projection.source_texts.iter().collect::<Vec<_>>();
     source_texts.sort_by(|left, right| left.0.cmp(right.0));
     for (project_relative, source) in source_texts {
@@ -559,6 +570,7 @@ fn materialize_generation_contents(
 fn materialize_generation_delta(
     generation: &mut PreviewProjectionGeneration,
     projection: &WorkspaceProjectionSnapshot,
+    source_graph: &SourceGraph,
     project_read: &ProjectReadAccess<'_>,
     changed_paths: &[String],
     reused_entries: usize,
@@ -568,12 +580,13 @@ fn materialize_generation_delta(
         entries: reused_entries,
         bytes: reused_bytes,
     };
-    let source_ids = SourceIdIndex::for_template_sources(
+    let source_ids = SourceIdIndex::for_source_graph(
+        source_graph,
         projection
             .source_texts
             .iter()
             .map(|(path, source)| (path.as_str(), source.as_str())),
-    );
+    )?;
     for project_relative in changed_paths {
         let Some(zola_relative) = zola_relative_projection_path(project_relative)? else {
             continue;
@@ -847,6 +860,8 @@ fn copy_zola_sources(
     Ok(())
 }
 
+// The recursive materializer keeps source/target trust roots and its resource budget explicit.
+#[allow(clippy::too_many_arguments)]
 fn copy_entry_recursive(
     zola_root: &Path,
     source: &Path,

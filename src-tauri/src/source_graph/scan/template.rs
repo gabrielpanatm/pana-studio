@@ -3,7 +3,9 @@ use std::{collections::HashMap, path::Path};
 use crate::{
     localization::LocalizedDiagnostic,
     source_graph::{
+        asset_references::scan_html_asset_references,
         html::{html_label, should_project_html_tag},
+        markdown::MarkdownSourceNode,
         mixed_cst::{parse_mixed_cst, MixedCstDocument, MixedCstKind},
         model::{
             SourceCapabilities, SourceCapabilityReason, SourceDiagnosticSeverity,
@@ -28,6 +30,22 @@ struct SetPrelude {
     parent: Option<String>,
 }
 
+struct TeraProjectionNode {
+    node_id: String,
+    kind: SourceNodeKind,
+    parent_id: Option<String>,
+    start: usize,
+    end: usize,
+}
+
+struct ProjectedHtmlBody {
+    node_id: String,
+    start: usize,
+    end: usize,
+}
+
+// Root identity, origin and workspace source projection remain explicit scanner inputs.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn scan_template(
     project_root: &Path,
     zola_root: &Path,
@@ -59,7 +77,7 @@ pub(super) fn scan_template(
         SourceCapabilities::code_only(SourceCapabilityReason::TeraTemplateFile),
     );
 
-    let source = read_source(path, &file, draft_sources, builder);
+    let source = read_source(&file, draft_sources, builder);
     // The template/partial node is also the addressable root of a fragment
     // opened directly in Template Workbench. Keeping its full-file range in
     // SourceGraph gives HTML and Tera insertions one Rust-owned anchor even
@@ -91,8 +109,9 @@ pub(super) fn scan_template(
     let mut open_scopes: Vec<TeraScopeSummary> = Vec::new();
     let mut completed_scopes: Vec<TeraScopeSummary> = Vec::new();
     let mut set_preludes: Vec<SetPrelude> = Vec::new();
+    let mut tera_projection_nodes = Vec::<TeraProjectionNode>::new();
 
-    for item in tera_items_from_document(&tera_document) {
+    for item in tera_items_from_document(tera_document) {
         match item.kind {
             TeraItemKind::EndScope => {
                 if scope_stack.len() > 1 {
@@ -148,6 +167,13 @@ pub(super) fn scan_template(
                     parent.clone(),
                     SourceCapabilities::code_only(tera_reason(&kind)),
                 );
+                tera_projection_nodes.push(TeraProjectionNode {
+                    node_id: item_node_id.clone(),
+                    kind: kind.clone(),
+                    parent_id: parent.clone(),
+                    start: item.start,
+                    end: item.end,
+                });
 
                 match kind {
                     SourceNodeKind::Extends => {
@@ -267,7 +293,7 @@ pub(super) fn scan_template(
         macros = facts.macros;
     }
 
-    add_mixed_html_nodes(
+    let projected_html_bodies = add_mixed_html_nodes(
         &file,
         &source,
         &node_id,
@@ -277,10 +303,27 @@ pub(super) fn scan_template(
         &mixed_document,
         builder,
     );
+    reparent_tera_nodes_inside_html(&tera_projection_nodes, &projected_html_bodies, builder);
 
     let zola_references = extract_zola_template_references(&source);
+    let literal_asset_references = scan_html_asset_references(&source, &mixed_document);
+    let markdown_source_nodes = tera_projection_nodes
+        .iter()
+        .map(|node| MarkdownSourceNode {
+            id: node.node_id.clone(),
+            kind: node.kind.clone(),
+            start: node.start,
+            end: node.end,
+        })
+        .collect::<Vec<_>>();
     let markdown_projections =
-        crate::source_graph::markdown::analyze_template_markdown(&file, &source).projections;
+        crate::source_graph::markdown::analyze_template_markdown_with_source_nodes(
+            &file,
+            &source,
+            &node_id,
+            &markdown_source_nodes,
+        )
+        .projections;
     if zola_references.dynamic_data_loads > 0 {
         builder.add_diagnostic(
             crate::source_graph::model::SourceDiagnosticSeverity::Warning,
@@ -309,6 +352,9 @@ pub(super) fn scan_template(
         internal_links: zola_references.internal_links,
         asset_urls: zola_references.asset_urls,
         asset_hashes: zola_references.asset_hashes,
+        asset_reference_eligible: literal_asset_references.eligible(),
+        asset_reference_unanalysable: literal_asset_references.unanalysable,
+        literal_asset_references: literal_asset_references.references,
         data_loads: zola_references.data_loads,
         image_metadata: zola_references.image_metadata,
         image_resizes: zola_references.image_resizes,
@@ -338,6 +384,8 @@ fn take_loop_prelude_start(
     Some(set_preludes.remove(set_preludes.len() - 1 - index).start)
 }
 
+// Mixed-CST projection keeps its source, scope and builder evidence independently borrowed.
+#[allow(clippy::too_many_arguments)]
 fn add_mixed_html_nodes(
     file: &str,
     source: &str,
@@ -347,10 +395,14 @@ fn add_mixed_html_nodes(
     tera_scopes: &[TeraScopeSummary],
     document: &MixedCstDocument,
     builder: &mut SourceGraphBuilder,
-) {
+) -> Vec<ProjectedHtmlBody> {
     let mut projected_elements = HashMap::<usize, (String, usize)>::new();
+    let mut projected_bodies = Vec::new();
 
     for (element_index, element) in document.elements.iter().enumerate() {
+        if is_managed_icon_descendant(element, document, source) {
+            continue;
+        }
         let Some(opening_node) = document.nodes.get(element.opening_node) else {
             continue;
         };
@@ -388,6 +440,19 @@ fn add_mixed_html_nodes(
             Some(parent_node_id.to_string()),
             html_capabilities(parent_scope),
         );
+        if let Some(closing_start) = element
+            .closing_node
+            .and_then(|closing_node| document.nodes.get(closing_node))
+            .map(|closing_node| closing_node.start)
+        {
+            if opening_node.end <= closing_start {
+                projected_bodies.push(ProjectedHtmlBody {
+                    node_id: node_id.clone(),
+                    start: opening_node.end,
+                    end: closing_start,
+                });
+            }
+        }
         let block_marker_attribute = ["data-pana-block", "data-pana-component"]
             .into_iter()
             .find(|attribute| html_attribute_value(source, tag, attribute).is_some());
@@ -422,6 +487,71 @@ fn add_mixed_html_nodes(
         }
         projected_elements.insert(element_index, (node_id, opening_node.start));
     }
+    projected_bodies
+}
+
+fn reparent_tera_nodes_inside_html(
+    tera_nodes: &[TeraProjectionNode],
+    html_bodies: &[ProjectedHtmlBody],
+    builder: &mut SourceGraphBuilder,
+) {
+    let containers = tera_nodes
+        .iter()
+        .filter_map(|node| {
+            innermost_html_body(html_bodies, node.start, node.end)
+                .map(|body| (node.node_id.as_str(), body.node_id.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+
+    for node in tera_nodes {
+        let Some(container_id) = containers.get(node.node_id.as_str()).copied() else {
+            continue;
+        };
+        let parent_container = node
+            .parent_id
+            .as_deref()
+            .and_then(|parent_id| containers.get(parent_id).copied());
+        if parent_container != Some(container_id) {
+            builder.reparent_node(&node.node_id, container_id);
+        }
+    }
+}
+
+fn innermost_html_body(
+    bodies: &[ProjectedHtmlBody],
+    start: usize,
+    end: usize,
+) -> Option<&ProjectedHtmlBody> {
+    bodies
+        .iter()
+        .filter(|body| body.start <= start && end <= body.end)
+        .max_by_key(|body| (body.start, usize::MAX - body.end))
+}
+
+fn is_managed_icon_descendant(
+    element: &crate::source_graph::mixed_cst::HtmlElementCst,
+    document: &MixedCstDocument,
+    source: &str,
+) -> bool {
+    let mut parent = element.parent;
+    while let Some(parent_index) = parent {
+        let Some(parent_element) = document.elements.get(parent_index) else {
+            return false;
+        };
+        let Some(opening_node) = document.nodes.get(parent_element.opening_node) else {
+            return false;
+        };
+        if let MixedCstKind::StartTag(tag) = &opening_node.kind {
+            let is_icon = tag.name.eq_ignore_ascii_case("svg")
+                && html_attribute_value(source, tag, "data-pana-block")
+                    .is_some_and(|value| value.trim() == "icon");
+            if is_icon {
+                return true;
+            }
+        }
+        parent = parent_element.parent;
+    }
+    false
 }
 
 fn html_attribute_value<'a>(
@@ -452,11 +582,11 @@ fn projected_html_parent(
     None
 }
 
-fn innermost_tera_scope<'a>(
-    scopes: &'a [TeraScopeSummary],
+fn innermost_tera_scope(
+    scopes: &[TeraScopeSummary],
     start: usize,
     end: usize,
-) -> Option<&'a TeraScopeSummary> {
+) -> Option<&TeraScopeSummary> {
     scopes
         .iter()
         .filter(|scope| scope.start <= start && end <= scope.end)

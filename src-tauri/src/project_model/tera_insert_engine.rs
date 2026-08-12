@@ -9,29 +9,26 @@ use crate::{
     },
     project_model::model::{ProjectModel, ProjectModelFileKind},
     source_graph::{
+        identity::SourceTextEdit,
         model::{SourceGraphTemplate, SourceNode, SourceNodeKind},
         tera::{parse_tera_items, TeraItemKind},
     },
 };
 
 use super::move_engine::{
-    append_document_fragment, can_receive_children, content_revision, line_indent_at_offset,
-    line_number_at_offset, parse_html_tag_at, resolve_conjunctive_anchor,
-    resolve_html_element_span, same_model_path, source_location_at_offset, ProjectMovePosition,
-    ProjectSourceEditLocation,
+    append_document_fragment, can_receive_children, content_revision, inside_prefix_for_insert,
+    line_number_at_offset, parse_html_tag_at, resolve_html_element_span, same_model_path,
+    source_location_at_offset, ProjectMovePosition, ProjectSourceEditLocation,
 };
-use super::structural_envelope::{
-    semantic_html_indent, structural_envelope_for_html_node, StructuralEnvelopeKind,
-};
+use super::structural_edit::{format_tera_fragment, StructuralPlacement};
+use super::structural_envelope::{structural_envelope_for_html_node, StructuralEnvelopeKind};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTeraInsertIntent {
     pub target_source_id: Option<String>,
-    pub target_location: Option<ProjectSourceEditLocation>,
     pub target_kind: Option<String>,
     pub target_tag: Option<String>,
-    pub target_selector: Option<String>,
     pub position: ProjectMovePosition,
     pub item: ProjectTeraInsertItem,
 }
@@ -80,30 +77,45 @@ pub struct ProjectTeraInsertPatch {
     pub resolved_target_id: String,
     pub inserted_label: String,
     pub inserted_kind: String,
+    pub target_label: String,
+    pub target_kind: String,
+    pub position: ProjectMovePosition,
+    pub expected_child_index: Option<usize>,
     pub before_revision: String,
     pub after_revision: String,
     pub contents: String,
     pub target_location: ProjectSourceEditLocation,
     pub inserted_location: ProjectSourceEditLocation,
     pub inserted_start_line: usize,
+    pub target_start_line: usize,
     pub line_shift_start: usize,
     pub line_shift: isize,
     pub snippet: String,
+    #[serde(skip)]
+    exact_edit: SourceTextEdit,
+    #[serde(skip)]
+    inserted_offset: usize,
+}
+
+impl ProjectTeraInsertPatch {
+    pub(crate) fn exact_source_edit(&self) -> SourceTextEdit {
+        self.exact_edit.clone()
+    }
+
+    pub(crate) fn inserted_offset(&self) -> usize {
+        self.inserted_offset
+    }
 }
 
 struct TeraInsertApplication {
     contents: String,
     inserted_location: ProjectSourceEditLocation,
     inserted_start_line: usize,
+    target_start_line: usize,
     line_shift_start: usize,
     line_shift: isize,
-}
-
-pub fn plan_tera_insert(
-    model: &ProjectModel,
-    intent: &ProjectTeraInsertIntent,
-) -> ProjectTeraInsertPlan {
-    plan_tera_insert_with_owner(model, intent, None)
+    exact_edit: SourceTextEdit,
+    inserted_offset: usize,
 }
 
 pub fn plan_tera_insert_for_active_document(
@@ -192,7 +204,7 @@ fn plan_tera_insert_inner(
     validate_tera_insert(model, intent, target_node, owner_template)?;
     let snippet = build_tera_insert_snippet(model, &intent.item)?;
     let anchor_is_html = target_node.kind == SourceNodeKind::Html;
-    let (anchor_start, anchor_end, semantic_indent) = if anchor_is_html {
+    let (anchor_start, anchor_end, placement) = if anchor_is_html {
         let envelope = structural_envelope_for_html_node(model, &file.contents, target_node)?;
         if intent.position == ProjectMovePosition::Inside
             && envelope.kind == StructuralEnvelopeKind::DynamicWidget
@@ -210,28 +222,29 @@ fn plan_tera_insert_inner(
         (
             span.start,
             span.end,
-            semantic_html_indent(model, &file.contents, target_node),
+            StructuralPlacement::for_html_target(model, &file.contents, target_node),
         )
     } else {
         (
             target_range.start,
             target_range.end,
-            line_indent_at_offset(&file.contents, target_range.start),
+            StructuralPlacement::for_direct_target(&file.contents, target_range.start),
         )
     };
     let target_location =
         source_location_at_offset(&file.contents, &target_node.file, anchor_start);
-    let fragment_root_application = if intent.position == ProjectMovePosition::Inside
-        && is_document_fragment_root(model, target_node)
-    {
-        Some(apply_tera_insert_into_document_fragment_root(
-            &file.contents,
-            &target_node.file,
-            &snippet,
-        ))
-    } else {
-        None
-    };
+    let is_fragment_root = is_document_fragment_root(model, target_node);
+    let fragment_root_application =
+        if intent.position == ProjectMovePosition::Inside && is_fragment_root {
+            Some(apply_tera_insert_into_document_fragment_root(
+                &file.contents,
+                &target_node.file,
+                target_range.start,
+                &snippet,
+            )?)
+        } else {
+            None
+        };
     let empty_block_application = if fragment_root_application.is_none()
         && target_node.kind == SourceNodeKind::Block
         && intent.position == ProjectMovePosition::Inside
@@ -242,7 +255,7 @@ fn plan_tera_insert_inner(
             target_range.start,
             target_range.end,
             &snippet,
-            &semantic_indent,
+            &placement,
         )?
     } else {
         None
@@ -257,7 +270,7 @@ fn plan_tera_insert_inner(
             anchor_is_html,
             intent.position,
             &snippet,
-            &semantic_indent,
+            &placement,
         )?,
     };
 
@@ -272,15 +285,28 @@ fn plan_tera_insert_inner(
             .unwrap_or_else(|| tera_item_kind(&intent.item.kind))
             .to_string(),
         inserted_kind: tera_item_kind(&intent.item.kind).to_string(),
+        target_label: target_node.label.clone(),
+        target_kind: source_kind_label(&target_node.kind).to_string(),
+        position: intent.position,
+        expected_child_index: (intent.position == ProjectMovePosition::Inside).then_some(
+            if anchor_is_html || is_fragment_root {
+                target_node.children.len()
+            } else {
+                0
+            },
+        ),
         before_revision: file.revision.clone(),
         after_revision: content_revision(&applied.contents),
         contents: applied.contents,
         target_location,
         inserted_location: applied.inserted_location,
         inserted_start_line: applied.inserted_start_line,
+        target_start_line: applied.target_start_line,
         line_shift_start: applied.line_shift_start,
         line_shift: applied.line_shift,
         snippet,
+        exact_edit: applied.exact_edit,
+        inserted_offset: applied.inserted_offset,
     })
 }
 
@@ -300,20 +326,10 @@ fn resolve_tera_insert_anchor<'a>(
     model: &'a ProjectModel,
     intent: &ProjectTeraInsertIntent,
 ) -> Option<&'a SourceNode> {
-    let id_node = intent
+    intent
         .target_source_id
         .as_deref()
-        .and_then(|id| resolve_anchor_node(model, id, intent.target_kind.as_deref()));
-    let location_node = intent.target_location.as_ref().and_then(|location| {
-        resolve_anchor_node_at_location(model, location, intent.target_kind.as_deref())
-    });
-
-    resolve_conjunctive_anchor(
-        intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-        id_node,
-        location_node,
-    )
+        .and_then(|id| resolve_anchor_node(model, id, intent.target_kind.as_deref()))
 }
 
 fn resolve_anchor_node<'a>(
@@ -321,47 +337,10 @@ fn resolve_anchor_node<'a>(
     source_id: &str,
     kind: Option<&str>,
 ) -> Option<&'a SourceNode> {
-    model.source_graph.nodes.iter().find(|node| {
-        node.id == source_id
-            && is_tera_insert_anchor_kind(&node.kind)
-            && node_kind_matches(node, kind)
-    })
-}
-
-fn resolve_anchor_node_at_location<'a>(
-    model: &'a ProjectModel,
-    location: &ProjectSourceEditLocation,
-    kind: Option<&str>,
-) -> Option<&'a SourceNode> {
-    if location.line == 0 || location.column == 0 {
-        return None;
-    }
-
-    let mut candidates: Vec<&SourceNode> = model
+    model
         .source_graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            is_tera_insert_anchor_kind(&node.kind)
-                && same_model_path(&node.file, &location.file)
-                && node_kind_matches(node, kind)
-                && node
-                    .range
-                    .as_ref()
-                    .is_some_and(|range| range.line == location.line)
-        })
-        .collect();
-
-    candidates.retain(|node| {
-        node.range
-            .as_ref()
-            .is_some_and(|range| range.column == location.column)
-    });
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
-    }
+        .node_by_id(source_id)
+        .filter(|node| is_tera_insert_anchor_kind(&node.kind) && node_kind_matches(node, kind))
 }
 
 fn validate_tera_insert(
@@ -399,9 +378,9 @@ fn validate_tera_insert(
                 .to_string(),
         );
     }
-    if kind == "import" && intent.position == ProjectMovePosition::Inside {
+    if matches!(kind, "import" | "macroCall") && intent.position == ProjectMovePosition::Inside {
         return Err(
-            "Importurile Tera se inserează la nivel de template, înainte sau după o ancoră stabilă."
+            "Importurile și apelurile macro Tera se inserează la nivel de template, înainte sau după o ancoră stabilă."
                 .to_string(),
         );
     }
@@ -447,14 +426,15 @@ fn validate_tera_insert(
     if kind == "block" && !matches!(context_kind, Some(SourceNodeKind::Template)) {
         return Err("Block-urile Tera rămân la nivel de template în DnD sigur.".to_string());
     }
-    if matches!(kind, "macro" | "import")
+    if matches!(kind, "macro" | "import" | "macroCall")
         && !matches!(
             context_kind,
             Some(SourceNodeKind::Template) | Some(SourceNodeKind::Partial)
         )
     {
         return Err(
-            "Macro-urile și importurile Tera rămân la nivel de template în DnD sigur.".to_string(),
+            "Macro-urile, importurile și apelurile macro Tera rămân la nivel de template în DnD sigur."
+                .to_string(),
         );
     }
     if matches!(kind, "extends" | "include" | "import" | "macroCall") {
@@ -490,6 +470,8 @@ fn validate_tera_insert(
     Ok(())
 }
 
+// Source span, placement and indentation are independent patch-safety inputs.
+#[allow(clippy::too_many_arguments)]
 fn apply_tera_insert(
     source: &str,
     file: &str,
@@ -498,47 +480,97 @@ fn apply_tera_insert(
     anchor_is_html: bool,
     position: ProjectMovePosition,
     snippet: &str,
-    semantic_anchor_indent: &str,
+    placement: &StructuralPlacement,
 ) -> Result<TeraInsertApplication, String> {
     let anchor_start_line_start = line_start_index(source, start);
     let anchor_start_line_break = line_break_index(source, start);
     let anchor_end_line_break = line_break_index(source, end);
-    let insert_indent = semantic_anchor_indent.to_string();
-    let nested_indent = format!("{insert_indent}  ");
-    let block = format_inserted_tera_snippet(
+    let insert_indent = placement.indent.as_str();
+    let nested_indent = placement.child_indent();
+    let formatted = format_tera_fragment(
         snippet,
         if position == ProjectMovePosition::Inside {
             &nested_indent
         } else {
-            &insert_indent
+            insert_indent
         },
-    );
+        &placement.style,
+    )?;
+    if position == ProjectMovePosition::Inside && anchor_is_html {
+        let insert_index = html_inside_insert_index(source, start, end)?;
+        let opening = parse_html_tag_at(source, start).ok_or_else(|| {
+            "Ancora HTML nu mai indică un tag stabil pentru inserarea Tera.".to_string()
+        })?;
+        let before_insert = inside_prefix_for_insert(source, opening.end, insert_index);
+        let inserted_fragment_offset = before_insert.len() + placement.style.line_ending().len();
+        let replacement_length = placement.style.line_ending().len()
+            + formatted.len()
+            + placement.style.line_ending().len()
+            + insert_indent.len();
+        let contents = format!(
+            "{}{}{}{}{}{}",
+            before_insert,
+            placement.style.line_ending(),
+            formatted,
+            placement.style.line_ending(),
+            insert_indent,
+            &source[insert_index..]
+        );
+        let inserted_start_line = line_number_at_offset(&contents, inserted_fragment_offset);
+        let line_shift = contents.bytes().filter(|byte| *byte == b'\n').count() as isize
+            - source.bytes().filter(|byte| *byte == b'\n').count() as isize;
+        return Ok(TeraInsertApplication {
+            target_start_line: line_number_at_offset(&contents, start),
+            contents,
+            inserted_location: ProjectSourceEditLocation {
+                file: file.to_string(),
+                line: inserted_start_line,
+                column: nested_indent.chars().count() + 1,
+            },
+            inserted_start_line,
+            line_shift_start: inserted_start_line,
+            line_shift,
+            exact_edit: SourceTextEdit {
+                old_start: before_insert.len(),
+                old_end: insert_index,
+                new_start: before_insert.len(),
+                new_end: before_insert.len() + replacement_length,
+            },
+            inserted_offset: inserted_fragment_offset + nested_indent.len(),
+        });
+    }
+    let block = format!("{formatted}{}", placement.style.line_ending());
 
     let insert_index = match position {
         ProjectMovePosition::Before => anchor_start_line_start,
         ProjectMovePosition::After => anchor_end_line_break
             .map(|index| index + 1)
             .unwrap_or(source.len()),
-        ProjectMovePosition::Inside if anchor_is_html => {
-            html_inside_insert_index(source, start, end)?
-        }
+        ProjectMovePosition::Inside if anchor_is_html => unreachable!("handled above"),
         ProjectMovePosition::Inside => anchor_start_line_break
             .map(|index| index + 1)
             .unwrap_or(end),
     };
-    let insertion = source_block_for_insert(source, insert_index, &block);
-    let inserted_start_line = line_number_at_offset(source, insert_index)
-        + if insertion.starts_with('\n') { 1 } else { 0 };
+    let insertion =
+        source_block_for_insert(source, insert_index, &block, placement.style.line_ending());
+    let inserted_fragment_offset = insert_index + insertion.len().saturating_sub(block.len());
+    let target_offset = if insert_index <= start {
+        start + insertion.len()
+    } else {
+        start
+    };
     let contents = format!(
         "{}{}{}",
         &source[..insert_index],
         insertion,
         &source[insert_index..]
     );
+    let inserted_start_line = line_number_at_offset(&contents, inserted_fragment_offset);
+    let target_start_line = line_number_at_offset(&contents, target_offset);
     let column_indent = if position == ProjectMovePosition::Inside {
         &nested_indent
     } else {
-        &insert_indent
+        insert_indent
     };
 
     Ok(TeraInsertApplication {
@@ -549,20 +581,37 @@ fn apply_tera_insert(
             column: column_indent.chars().count() + 1,
         },
         inserted_start_line,
+        target_start_line,
         line_shift_start: inserted_start_line,
         line_shift: insertion.bytes().filter(|byte| *byte == b'\n').count() as isize,
+        exact_edit: SourceTextEdit {
+            old_start: insert_index,
+            old_end: insert_index,
+            new_start: insert_index,
+            new_end: insert_index + insertion.len(),
+        },
+        inserted_offset: inserted_fragment_offset + column_indent.len(),
     })
 }
 
 fn apply_tera_insert_into_document_fragment_root(
     source: &str,
     file: &str,
+    target_start: usize,
     snippet: &str,
-) -> TeraInsertApplication {
-    let block = format_inserted_tera_snippet(snippet, "");
+) -> Result<TeraInsertApplication, String> {
+    let placement = StructuralPlacement::for_direct_target(source, 0);
+    let block = format_tera_fragment(snippet, "", &placement.style)?;
     let appended = append_document_fragment(source, &block);
     let inserted_start_line = appended.inserted_start_line;
-    TeraInsertApplication {
+    let exact_edit = SourceTextEdit {
+        old_start: appended.insertion_offset,
+        old_end: appended.insertion_offset,
+        new_start: appended.insertion_offset,
+        new_end: appended.insertion_offset + appended.inserted_length,
+    };
+    let target_start_line = line_number_at_offset(&appended.contents, target_start);
+    Ok(TeraInsertApplication {
         contents: appended.contents,
         inserted_location: ProjectSourceEditLocation {
             file: file.to_string(),
@@ -570,9 +619,12 @@ fn apply_tera_insert_into_document_fragment_root(
             column: 1,
         },
         inserted_start_line,
+        target_start_line,
         line_shift_start: inserted_start_line,
         line_shift: appended.line_shift,
-    }
+        exact_edit,
+        inserted_offset: appended.inserted_offset,
+    })
 }
 
 fn apply_tera_insert_into_empty_block(
@@ -581,7 +633,7 @@ fn apply_tera_insert_into_empty_block(
     start: usize,
     end: usize,
     snippet: &str,
-    block_indent: &str,
+    placement: &StructuralPlacement,
 ) -> Result<Option<TeraInsertApplication>, String> {
     let target_source = source
         .get(start..end)
@@ -608,14 +660,16 @@ fn apply_tera_insert_into_empty_block(
         return Ok(None);
     }
 
-    let child_indent = format!("{block_indent}  ");
-    let block = format_inserted_tera_snippet(snippet, &child_indent);
+    let block_indent = placement.indent.as_str();
+    let child_indent = placement.child_indent();
+    let formatted = format_tera_fragment(snippet, &child_indent, &placement.style)?;
+    let block = format!("{formatted}{}", placement.style.line_ending());
     let opening_end = start + opening.end;
     let insert_at = start + closing.start;
     let existing_body = source
         .get(opening_end..insert_at)
         .ok_or_else(|| "Interiorul blocului Tera activ are un range invalid.".to_string())?;
-    let replacement = format!("\n{block}{block_indent}");
+    let replacement = format!("{}{block}{block_indent}", placement.style.line_ending());
     let inserted_start_line = line_number_at_offset(source, opening_end) + 1;
     let contents = format!(
         "{}{}{}",
@@ -625,6 +679,7 @@ fn apply_tera_insert_into_empty_block(
     );
     let replacement_lines = replacement.bytes().filter(|byte| *byte == b'\n').count() as isize;
     let existing_lines = existing_body.bytes().filter(|byte| *byte == b'\n').count() as isize;
+    let target_start_line = line_number_at_offset(&contents, start);
 
     Ok(Some(TeraInsertApplication {
         contents,
@@ -634,8 +689,16 @@ fn apply_tera_insert_into_empty_block(
             column: child_indent.chars().count() + 1,
         },
         inserted_start_line,
+        target_start_line,
         line_shift_start: inserted_start_line,
         line_shift: replacement_lines - existing_lines,
+        exact_edit: SourceTextEdit {
+            old_start: opening_end,
+            old_end: insert_at,
+            new_start: opening_end,
+            new_end: opening_end + replacement.len(),
+        },
+        inserted_offset: opening_end + placement.style.line_ending().len() + child_indent.len(),
     }))
 }
 
@@ -848,9 +911,7 @@ fn target_context_kind(
     let parent_id = anchor.parent.as_deref()?;
     model
         .source_graph
-        .nodes
-        .iter()
-        .find(|node| node.id == parent_id)
+        .node_by_id(parent_id)
         .map(|node| node.kind.clone())
 }
 
@@ -1112,12 +1173,7 @@ fn validate_dynamic_field_anchor(
         if !visited.insert(node_id.to_string()) {
             break;
         }
-        let Some(node) = model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| node.id == node_id)
-        else {
+        let Some(node) = model.source_graph.node_by_id(node_id) else {
             break;
         };
         if node.kind == SourceNodeKind::For {
@@ -1429,7 +1485,7 @@ fn has_ancestor_kind(
         if !visited.insert(id) {
             break;
         }
-        let Some(node) = model.source_graph.nodes.iter().find(|node| node.id == id) else {
+        let Some(node) = model.source_graph.node_by_id(id) else {
             break;
         };
         if node.kind == kind {
@@ -1455,70 +1511,11 @@ fn line_break_index(source: &str, index: usize) -> Option<usize> {
     })
 }
 
-fn format_inserted_tera_snippet(snippet: &str, indent: &str) -> String {
-    let stripped = strip_common_indent(snippet.trim_end());
-    let body = stripped
-        .split('\n')
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                format!("{indent}{}", line.trim_end())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{body}\n")
-}
-
-fn strip_common_indent(snippet: &str) -> String {
-    let lines = snippet.split('\n').collect::<Vec<_>>();
-    let content_lines = lines
-        .iter()
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>();
-    let Some(common_indent_length) = content_lines
-        .iter()
-        .map(|line| {
-            line.chars()
-                .take_while(|character| *character == ' ' || *character == '\t')
-                .count()
-        })
-        .min()
-    else {
-        return snippet.to_string();
-    };
-    if common_indent_length == 0 {
-        return snippet.to_string();
-    }
-    lines
-        .iter()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                line.chars().skip(common_indent_length).collect()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn source_block_for_insert(source: &str, index: usize, block: &str) -> String {
+fn source_block_for_insert(source: &str, index: usize, block: &str, line_ending: &str) -> String {
     if index > 0 && source.as_bytes().get(index - 1) != Some(&b'\n') {
-        format!("\n{block}")
+        format!("{line_ending}{block}")
     } else {
         block.to_string()
-    }
-}
-
-fn source_location_label(location: Option<&ProjectSourceEditLocation>) -> String {
-    match location {
-        Some(location) if location.column > 0 => {
-            format!("{}:{}:{}", location.file, location.line, location.column)
-        }
-        Some(location) => format!("{}:{}", location.file, location.line),
-        None => "fără locație".to_string(),
     }
 }
 
@@ -1527,32 +1524,27 @@ fn tera_anchor_missing_message(intent: &ProjectTeraInsertIntent) -> String {
         .target_source_id
         .as_deref()
         .unwrap_or("fără Source ID");
-    let loc = source_location_label(intent.target_location.as_ref());
     let kind = intent.target_kind.as_deref().unwrap_or("fără kind");
-    let selector = intent.target_selector.as_deref().unwrap_or("fără selector");
-    format!(
-        "Nu am putut ancora drop-ul Tera în Project Model. Source ID: {id}; locație: {loc}; kind: {kind}; selector live: {selector}."
-    )
+    format!("Nu am putut ancora drop-ul Tera în Project Model. SourceNodeId: {id}; kind: {kind}.")
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::project_model::build_project_model;
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     use super::*;
 
     #[test]
     fn plan_tera_insert_adds_include_before_html_anchor() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<main>\n",
@@ -1561,7 +1553,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let section = model
             .source_graph
             .nodes
@@ -1569,14 +1561,12 @@ mod tests {
             .find(|node| node.label == "<section .hero>")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(section.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "include".to_string(),
@@ -1588,6 +1578,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -1602,13 +1593,15 @@ mod tests {
     #[test]
     fn preview_tera_insert_requires_the_anchor_to_belong_to_the_active_document() {
         let root = unique_test_dir();
-        write_project(&root, "{% block content %}\n\n{% endblock content %}\n");
-        fs::write(
-            root.join("templates/other.html"),
+        let mut fixture = project_fixture(
+            root.clone(),
             "{% block content %}\n\n{% endblock content %}\n",
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        fixture.source(
+            "templates/other.html",
+            "{% block content %}\n\n{% endblock content %}\n",
+        );
+        let model = fixture.build_model().unwrap();
         let content = model
             .source_graph
             .nodes
@@ -1621,10 +1614,8 @@ mod tests {
             .unwrap();
         let intent = ProjectTeraInsertIntent {
             target_source_id: Some(content.id.clone()),
-            target_location: None,
             target_kind: Some("block".to_string()),
             target_tag: Some("div".to_string()),
-            target_selector: Some("[data-pana-empty-tera-slot]".to_string()),
             position: ProjectMovePosition::Inside,
             item: ProjectTeraInsertItem {
                 kind: "teraVariable".to_string(),
@@ -1663,10 +1654,8 @@ mod tests {
     #[test]
     fn preview_tera_insert_appends_repeatedly_to_direct_fragment_root() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
-        let fragment_path = root.join("templates/listing-items/card.html");
-        fs::write(&fragment_path, "\n").unwrap();
+        let mut fixture = project_fixture(root.clone(), "<main></main>\n");
+        fixture.source("templates/listing-items/card.html", "\n");
 
         let insert = |model: &ProjectModel, expression: &str| {
             let fragment = model
@@ -1679,19 +1668,12 @@ mod tests {
                         && node.parent.is_none()
                 })
                 .expect("listing item root");
-            let range = fragment.range.as_ref().expect("fragment root range");
             plan_tera_insert_for_active_document(
                 model,
                 &ProjectTeraInsertIntent {
                     target_source_id: Some(fragment.id.clone()),
-                    target_location: Some(ProjectSourceEditLocation {
-                        file: fragment.file.clone(),
-                        line: range.line,
-                        column: range.column,
-                    }),
                     target_kind: Some("partial".to_string()),
                     target_tag: Some("div".to_string()),
-                    target_selector: Some("[data-pana-active-document-root]".to_string()),
                     position: ProjectMovePosition::Inside,
                     item: ProjectTeraInsertItem {
                         kind: "teraVariable".to_string(),
@@ -1707,14 +1689,13 @@ mod tests {
             )
         };
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let first = insert(&model, "item.title");
         assert!(first.allowed, "{:?}", first.diagnostic);
         let first_contents = first.patch.expect("first patch").contents;
         assert_eq!(first_contents, "{{ item.title }}\n");
-        fs::write(&fragment_path, &first_contents).unwrap();
-
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        fixture.draft("templates/listing-items/card.html", &first_contents);
+        let model = fixture.build_model().unwrap();
         let second = insert(&model, "item.description");
         fs::remove_dir_all(&root).unwrap();
         assert!(second.allowed, "{:?}", second.diagnostic);
@@ -1727,22 +1708,16 @@ mod tests {
     #[test]
     fn dynamic_image_binding_is_rust_validated_and_reconstructible() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let mut fixture = project_fixture(
+            root.clone(),
             "<main><section class=\"hero\"></section>{% for item in page.extra.gallery %}<div class=\"item\"></div>{% endfor %}</main>\n",
         );
-        fs::create_dir_all(root.join(".panastudio/content-models")).unwrap();
-        fs::write(
-            root.join(".panastudio/project.toml"),
-            "schema_version = 1\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join(".panastudio/content-models/service.toml"),
+        fixture.source(".panastudio/project.toml", "schema_version = 1\n");
+        fixture.source(
+            ".panastudio/content-models/service.toml",
             "schemaVersion = 1\nid = \"service\"\nlabel = \"Serviciu\"\n\n[[fields]]\nid = \"field_image\"\nkey = \"image\"\nlabel = \"Imagine\"\nkind = \"image\"\n\n[[fields]]\nid = \"field_gallery\"\nkey = \"gallery\"\nlabel = \"Galerie\"\nkind = \"repeater\"\n\n[[fields.fields]]\nid = \"field_gallery_image\"\nkey = \"image\"\nlabel = \"Imagine galerie\"\nkind = \"image\"\n",
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
         let section = model
             .source_graph
             .nodes
@@ -1751,10 +1726,8 @@ mod tests {
             .unwrap();
         let intent = ProjectTeraInsertIntent {
             target_source_id: Some(section.id.clone()),
-            target_location: None,
             target_kind: Some("html".to_string()),
             target_tag: Some("section".to_string()),
-            target_selector: Some(".hero".to_string()),
             position: ProjectMovePosition::After,
             item: ProjectTeraInsertItem {
                 kind: "teraVariable".to_string(),
@@ -1777,7 +1750,8 @@ mod tests {
                 dynamic_widget: None,
             },
         };
-        let plan = plan_tera_insert(&model, &intent);
+        let plan =
+            plan_tera_insert_for_active_document(&model, &intent, Some("templates/index.html"));
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let contents = plan.patch.unwrap().contents;
         assert!(contents.contains("pana:dynamic model=service field=field_image"));
@@ -1787,7 +1761,8 @@ mod tests {
 
         let mut invalid = intent;
         invalid.item.dynamic_binding.as_mut().unwrap().path = "other".to_string();
-        let blocked = plan_tera_insert(&model, &invalid);
+        let blocked =
+            plan_tera_insert_for_active_document(&model, &invalid, Some("templates/index.html"));
         assert!(!blocked.allowed);
         assert!(blocked
             .diagnostic
@@ -1806,14 +1781,12 @@ mod tests {
             fallback: String::new(),
             text: "Imagine galerie".to_string(),
         };
-        let outside_loop = plan_tera_insert(
+        let outside_loop = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(section.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::After,
                 item: ProjectTeraInsertItem {
                     kind: "teraVariable".to_string(),
@@ -1825,6 +1798,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
         assert!(!outside_loop.allowed);
         assert!(outside_loop
@@ -1838,14 +1812,12 @@ mod tests {
             .iter()
             .find(|node| node.kind == SourceNodeKind::For)
             .unwrap();
-        let inside_loop = plan_tera_insert(
+        let inside_loop = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(loop_node.id.clone()),
-                target_location: None,
                 target_kind: Some("for".to_string()),
                 target_tag: None,
-                target_selector: None,
                 position: ProjectMovePosition::Inside,
                 item: ProjectTeraInsertItem {
                     kind: "teraVariable".to_string(),
@@ -1857,6 +1829,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
         assert!(inside_loop.allowed, "{:?}", inside_loop.diagnostic);
         assert!(inside_loop
@@ -1868,10 +1841,10 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_insert_rejects_contradictory_or_stale_identity_for_html_siblings() {
+    fn plan_tera_insert_uses_only_exact_source_id_and_rejects_stale_identity() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"first\"></section>\n",
@@ -1879,51 +1852,49 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let first = model
             .source_graph
             .nodes
             .iter()
             .find(|node| node.label == "<section .first>")
             .unwrap();
-        let second = model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| node.label == "<section .second>")
-            .unwrap();
-        let second_range = second.range.as_ref().expect("section should have range");
-        let second_location = ProjectSourceEditLocation {
-            file: second.file.clone(),
-            line: second_range.line,
-            column: second_range.column,
+        let intent = |target_source_id| ProjectTeraInsertIntent {
+            target_source_id,
+            target_kind: Some("html".to_string()),
+            target_tag: Some("section".to_string()),
+            position: ProjectMovePosition::Before,
+            item: ProjectTeraInsertItem {
+                kind: "include".to_string(),
+                label: Some("Include Card".to_string()),
+                target: Some("partials/card.html".to_string()),
+                name: None,
+                expression: None,
+                dynamic_binding: None,
+                dynamic_widget: None,
+            },
         };
+        let exact = plan_tera_insert_for_active_document(
+            &model,
+            &intent(Some(first.id.clone())),
+            Some("templates/index.html"),
+        );
+        assert!(exact.allowed, "{:?}", exact.diagnostic);
+        assert_eq!(
+            exact
+                .patch
+                .expect("exact SourceNodeId insert patch")
+                .resolved_target_id,
+            first.id
+        );
 
-        for target_source_id in [Some(first.id.clone()), Some("stale-source-id".to_string())] {
-            let plan = plan_tera_insert(
-                &model,
-                &ProjectTeraInsertIntent {
-                    target_source_id,
-                    target_location: Some(second_location.clone()),
-                    target_kind: Some("html".to_string()),
-                    target_tag: Some("section".to_string()),
-                    target_selector: Some(".second".to_string()),
-                    position: ProjectMovePosition::Before,
-                    item: ProjectTeraInsertItem {
-                        kind: "include".to_string(),
-                        label: Some("Include Card".to_string()),
-                        target: Some("partials/card.html".to_string()),
-                        name: None,
-                        expression: None,
-                        dynamic_binding: None,
-                        dynamic_widget: None,
-                    },
-                },
-            );
-
-            assert!(!plan.allowed, "{:?}", plan.diagnostic);
-            assert!(plan.patch.is_none());
-        }
+        let stale = plan_tera_insert_for_active_document(
+            &model,
+            &intent(Some("stale-source-id".to_string())),
+            Some("templates/index.html"),
+        );
+        assert!(!stale.allowed, "{:?}", stale.diagnostic);
+        assert!(stale.patch.is_none());
 
         fs::remove_dir_all(&root).unwrap();
     }
@@ -1931,8 +1902,11 @@ mod tests {
     #[test]
     fn plan_tera_insert_blocks_duplicate_block() {
         let root = unique_test_dir();
-        write_project(&root, "{% block content %}<main></main>{% endblock %}\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = project_fixture(
+            root.clone(),
+            "{% block content %}<main></main>{% endblock %}\n",
+        );
+        let model = fixture.build_model().unwrap();
         let main = model
             .source_graph
             .nodes
@@ -1940,14 +1914,12 @@ mod tests {
             .find(|node| node.label == "<main>")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(main.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("main".to_string()),
-                target_selector: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "block".to_string(),
@@ -1959,6 +1931,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -1969,11 +1942,11 @@ mod tests {
     #[test]
     fn plan_tera_insert_blocks_duplicate_include_with_tera_equivalent_syntax() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             "{% block content %}\n{%- include 'partials/card.html' -%}\n<main></main>\n{% endblock %}\n",
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let main = model
             .source_graph
             .nodes
@@ -1981,14 +1954,12 @@ mod tests {
             .find(|node| node.label == "<main>")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(main.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("main".to_string()),
-                target_selector: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "include".to_string(),
@@ -2000,6 +1971,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -2013,8 +1985,11 @@ mod tests {
     #[test]
     fn plan_tera_insert_blocks_missing_include_target() {
         let root = unique_test_dir();
-        write_project(&root, "{% block content %}<main></main>{% endblock %}\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = project_fixture(
+            root.clone(),
+            "{% block content %}<main></main>{% endblock %}\n",
+        );
+        let model = fixture.build_model().unwrap();
         let main = model
             .source_graph
             .nodes
@@ -2022,14 +1997,12 @@ mod tests {
             .find(|node| node.label == "<main>")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(main.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("main".to_string()),
-                target_selector: Some("main".to_string()),
                 position: ProjectMovePosition::Inside,
                 item: ProjectTeraInsertItem {
                     kind: "include".to_string(),
@@ -2041,6 +2014,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -2054,11 +2028,11 @@ mod tests {
     #[test]
     fn plan_tera_insert_blocks_duplicate_import_with_tera_equivalent_syntax() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             "{%- import 'macros.html' as macros -%}\n{% block content %}<main></main>{% endblock %}\n",
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let content_block = model
             .source_graph
             .nodes
@@ -2066,14 +2040,12 @@ mod tests {
             .find(|node| node.kind == SourceNodeKind::Block && node.label == "content")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(content_block.id.clone()),
-                target_location: None,
                 target_kind: Some("block".to_string()),
                 target_tag: None,
-                target_selector: Some("content".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "import".to_string(),
@@ -2085,6 +2057,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -2098,11 +2071,11 @@ mod tests {
     #[test]
     fn plan_tera_insert_blocks_block_in_nested_scope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             "{% block content %}\n<main></main>\n{% endblock %}\n",
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let main = model
             .source_graph
             .nodes
@@ -2110,14 +2083,12 @@ mod tests {
             .find(|node| node.label == "<main>")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(main.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("main".to_string()),
-                target_selector: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "block".to_string(),
@@ -2129,6 +2100,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -2139,11 +2111,11 @@ mod tests {
     #[test]
     fn plan_tera_insert_blocks_macro_in_nested_scope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             "{% block content %}\n<main></main>\n{% endblock %}\n",
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let main = model
             .source_graph
             .nodes
@@ -2151,14 +2123,12 @@ mod tests {
             .find(|node| node.label == "<main>")
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(main.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("main".to_string()),
-                target_selector: Some("main".to_string()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "macro".to_string(),
@@ -2170,6 +2140,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -2180,15 +2151,15 @@ mod tests {
     #[test]
     fn plan_tera_insert_uses_filter_as_a_specialized_anchor() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "{% filter upper %}{{ title }}{% endfilter %}\n",
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let filter = model
             .source_graph
             .nodes
@@ -2196,14 +2167,12 @@ mod tests {
             .find(|node| node.kind == SourceNodeKind::Filter)
             .unwrap();
 
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(filter.id.clone()),
-                target_location: None,
                 target_kind: Some("filter".to_string()),
                 target_tag: None,
-                target_selector: Some(filter.label.clone()),
                 position: ProjectMovePosition::Before,
                 item: ProjectTeraInsertItem {
                     kind: "include".to_string(),
@@ -2215,6 +2184,7 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -2227,24 +2197,68 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_insert_adds_safe_macro_call_from_catalog_identity() {
+    fn plan_tera_insert_adds_safe_macro_call_at_template_level() {
         let root = unique_test_dir();
-        write_project(&root, "{% block content %}<main></main>{% endblock %}\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = project_fixture(root.clone(), "<main></main>\n");
+        let model = fixture.build_model().unwrap();
         let main = model
             .source_graph
             .nodes
             .iter()
             .find(|node| node.label == "<main>")
             .unwrap();
-        let plan = plan_tera_insert(
+        let plan = plan_tera_insert_for_active_document(
             &model,
             &ProjectTeraInsertIntent {
                 target_source_id: Some(main.id.clone()),
-                target_location: None,
                 target_kind: Some("html".to_string()),
                 target_tag: Some("main".to_string()),
-                target_selector: Some("main".to_string()),
+                position: ProjectMovePosition::Before,
+                item: ProjectTeraInsertItem {
+                    kind: "macroCall".to_string(),
+                    label: Some("Card".to_string()),
+                    target: Some("macros.html".to_string()),
+                    name: Some("card".to_string()),
+                    expression: None,
+                    dynamic_binding: None,
+                    dynamic_widget: None,
+                },
+            },
+            Some("templates/index.html"),
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let contents = plan.patch.expect("macro call patch").contents;
+        assert!(contents.contains("{% import \"macros.html\" as pana_component %}"));
+        assert!(contents.contains("{{ pana_component::card() }}"));
+        assert!(
+            contents.find("{{ pana_component::card() }}").unwrap()
+                < contents.find("<main>").unwrap(),
+            "Apelul macro trebuie să rămână la nivel de template înaintea ancorei: {contents}"
+        );
+    }
+
+    #[test]
+    fn plan_tera_insert_blocks_macro_call_inside_html() {
+        let root = unique_test_dir();
+        let fixture = project_fixture(
+            root.clone(),
+            "{% block content %}<main></main>{% endblock %}\n",
+        );
+        let model = fixture.build_model().unwrap();
+        let main = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<main>")
+            .unwrap();
+        let plan = plan_tera_insert_for_active_document(
+            &model,
+            &ProjectTeraInsertIntent {
+                target_source_id: Some(main.id.clone()),
+                target_kind: Some("html".to_string()),
+                target_tag: Some("main".to_string()),
                 position: ProjectMovePosition::Inside,
                 item: ProjectTeraInsertItem {
                     kind: "macroCall".to_string(),
@@ -2256,45 +2270,25 @@ mod tests {
                     dynamic_widget: None,
                 },
             },
+            Some("templates/index.html"),
         );
-
-        fs::remove_dir_all(&root).unwrap();
-        assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let contents = plan.patch.expect("macro call patch").contents;
-        assert!(contents.contains("{% import \"macros.html\" as pana_component %}"));
-        assert!(contents.contains("{{ pana_component::card() }}"));
-        assert!(
-            contents.find("{{ pana_component::card() }}").unwrap()
-                < contents.find("</main>").unwrap(),
-            "Inserarea Inside trebuie să rămână înaintea tagului HTML de închidere: {contents}"
-        );
+        fs::remove_dir_all(root).unwrap();
+        assert!(!plan.allowed);
+        assert!(plan
+            .diagnostic
+            .as_deref()
+            .is_some_and(|diagnostic| diagnostic.contains("nivel de template")));
     }
 
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates/partials")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
-        fs::write(
-            root.join("templates/partials/card.html"),
-            "<article></article>\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/base.html"), "<body></body>\n").unwrap();
-        fs::write(
-            root.join("templates/macros.html"),
+    fn project_fixture(root: PathBuf, template: &str) -> ProjectModelTestFixture {
+        let mut fixture = ProjectModelTestFixture::standard_zola(root, template).unwrap();
+        fixture.source("templates/partials/card.html", "<article></article>\n");
+        fixture.source("templates/base.html", "<body></body>\n");
+        fixture.source(
+            "templates/macros.html",
             "{% macro card() %}{% endmacro %}\n",
-        )
-        .unwrap();
+        );
+        fixture
     }
 
     fn unique_test_dir() -> PathBuf {

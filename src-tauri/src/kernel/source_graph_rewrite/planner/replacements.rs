@@ -30,6 +30,8 @@ pub(super) struct TextReplacement {
     pub rewrite: SourceGraphReferenceRewrite,
 }
 
+// Relation semantics and their diagnostic code are intentionally explicit planner evidence.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn plan_frontmatter_template_replacements(
     graph: &SourceGraph,
     store: &FileBufferStore,
@@ -371,6 +373,7 @@ pub(super) fn relation_kind_label(kind: &SourceRelationKind) -> &'static str {
         SourceRelationKind::InternalContentLink => "internal_content_link",
         SourceRelationKind::AssetUrl => "asset_url",
         SourceRelationKind::AssetHash => "asset_hash",
+        SourceRelationKind::AssetReference => "asset_reference",
         SourceRelationKind::DataLoad => "data_load",
         SourceRelationKind::DataFileLoad => "data_file_load",
         SourceRelationKind::ContentDataLoad => "content_data_load",

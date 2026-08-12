@@ -16,15 +16,15 @@ pub(crate) use content::{
 };
 pub(crate) use data_files::{
     conventional_zola_data_file, editable_local_toml_path, resolve_zola_load_data_file,
-    resolve_zola_output_root, ResolvedZolaDataFile, ZolaDataResolutionContext,
+    ResolvedZolaDataFile, ZolaDataResolutionContext,
 };
 pub(crate) use paths::{
     data_file_reference_keys, internal_content_path, local_static_asset_project_file_reference,
     local_zola_data_project_file_reference, normalize_static_asset_reference,
     normalize_zola_data_file_reference, rewrite_zola_data_file_reference,
     rewrite_zola_static_asset_reference, static_asset_logical_path, static_asset_reference,
-    static_asset_reference_keys, zola_data_file_reference_for_rewrite,
-    zola_static_asset_reference_for_rewrite,
+    static_asset_reference_from_style, static_asset_reference_keys,
+    zola_data_file_reference_for_rewrite, zola_static_asset_reference_for_rewrite,
 };
 pub(crate) use runtime::{
     collect_zola_runtime_uses, ZolaTeraRuntimeAvailability, ZolaTeraRuntimeKind,

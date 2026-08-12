@@ -1,3 +1,4 @@
+mod batch;
 mod editor_move;
 mod events;
 mod gate;
@@ -7,6 +8,7 @@ mod runner;
 mod spec;
 mod tera;
 
+pub use self::batch::{execute_preview_selection_batch, PreviewSelectionBatchExecutionOutcome};
 pub(crate) use self::editor_move::{execute_editor_move, EditorMoveExecutionOutcome};
 pub use self::html::{
     execute_preview_html_attributes, execute_preview_html_delete, execute_preview_html_duplicate,

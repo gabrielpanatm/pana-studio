@@ -166,6 +166,8 @@ pub fn read_context_status(app: &AppHandle) -> Result<AiContextStatus, String> {
     })
 }
 
+// Discovery JSON is a stable external protocol whose independent fields remain explicit.
+#[allow(clippy::too_many_arguments)]
 fn write_discovery_file(
     app: &AppHandle,
     boundary: &Path,

@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::OnceLock,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +15,10 @@ use crate::source_graph::zola_shortcode::ZolaShortcodeInvocation;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceGraph {
+    /// Runtime-only O(1) authority index. It is derived from `nodes`, never
+    /// serialized, and reset whenever reconciliation changes node identities.
+    #[serde(skip)]
+    pub(crate) node_index: OnceLock<HashMap<String, usize>>,
     pub project_root: String,
     pub zola_root: String,
     pub active_theme: Option<String>,
@@ -30,7 +37,39 @@ pub struct SourceGraph {
     pub markdown_projections: Vec<MarkdownProjection>,
     pub nodes: Vec<SourceNode>,
     pub relations: Vec<SourceRelation>,
+    pub asset_reference_coverage: SourceAssetReferenceCoverage,
     pub diagnostics: Vec<SourceGraphDiagnostic>,
+}
+
+impl SourceGraph {
+    pub fn node_by_id(&self, source_node_id: &str) -> Option<&SourceNode> {
+        let index = self.node_index.get_or_init(|| {
+            self.nodes
+                .iter()
+                .enumerate()
+                .map(|(index, node)| (node.id.clone(), index))
+                .collect()
+        });
+        index
+            .get(source_node_id)
+            .and_then(|index| self.nodes.get(*index))
+            .filter(|node| node.id == source_node_id)
+    }
+
+    pub(crate) fn rebuild_node_index(&mut self) -> Result<(), String> {
+        let mut index = HashMap::with_capacity(self.nodes.len());
+        for (position, node) in self.nodes.iter().enumerate() {
+            if index.insert(node.id.clone(), position).is_some() {
+                return Err(format!(
+                    "SourceGraph a refuzat SourceNodeId duplicat: {}.",
+                    node.id
+                ));
+            }
+        }
+        self.node_index = OnceLock::new();
+        let _ = self.node_index.set(index);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -129,6 +168,9 @@ pub struct SourceGraphTemplate {
     pub internal_links: Vec<String>,
     pub asset_urls: Vec<String>,
     pub asset_hashes: Vec<String>,
+    pub literal_asset_references: Vec<String>,
+    pub asset_reference_eligible: usize,
+    pub asset_reference_unanalysable: usize,
     pub data_loads: Vec<String>,
     pub image_metadata: Vec<String>,
     pub image_resizes: Vec<String>,
@@ -170,8 +212,11 @@ pub enum BlockOrigin {
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum BlockScale {
+    /// Piesă atomică, fără structură internă compusă administrată ca bloc.
     Element,
+    /// Ansamblu page-level care reprezintă o zonă completă de pagină.
     Section,
+    /// Ansamblu autonom de elemente care poate fi integrat într-un container.
     Composition,
 }
 
@@ -281,6 +326,9 @@ pub struct BlockSlotDefinition {
     pub label: String,
     pub required: bool,
     pub multiple: bool,
+    pub item_kind: String,
+    pub minimum_items: usize,
+    pub maximum_items: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -671,7 +719,7 @@ pub struct SourceNode {
     pub capabilities: SourceCapabilities,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum SourceNodeKind {
     Page,
@@ -904,6 +952,7 @@ pub enum SourceRelationKind {
     InternalContentLink,
     AssetUrl,
     AssetHash,
+    AssetReference,
     DataLoad,
     DataFileLoad,
     ContentDataLoad,
@@ -916,6 +965,14 @@ pub enum SourceRelationKind {
     OverridesBlock,
     UsesStyle,
     UsesScript,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAssetReferenceCoverage {
+    pub eligible: usize,
+    pub analyzed: usize,
+    pub unanalysable: usize,
 }
 
 #[derive(Clone, Serialize)]
@@ -936,7 +993,12 @@ pub enum SourceDiagnosticSeverity {
 
 #[cfg(test)]
 mod tests {
-    use super::{SourceCapabilities, SourceCapabilityReason};
+    use std::time::Instant;
+
+    use super::{
+        SourceCapabilities, SourceCapabilityReason, SourceGraph, SourceNode, SourceNodeKind,
+        SourceOrigin,
+    };
 
     #[test]
     fn source_capabilities_serialize_semantic_reason_codes_without_user_prose() {
@@ -959,5 +1021,76 @@ mod tests {
 
         assert_eq!(value["reasonCode"], serde_json::Value::Null);
         assert!(capabilities.technical_reason().is_none());
+    }
+
+    #[test]
+    #[ignore = "release-only warm latency budget"]
+    fn source_node_index_warm_p95_is_below_one_millisecond_for_1k_and_10k_nodes() {
+        for node_count in [1_000usize, 10_000] {
+            let mut graph = graph_with_nodes(node_count);
+            graph.rebuild_node_index().unwrap();
+            assert!(graph.node_by_id("node-0").is_some());
+            let mut samples = Vec::with_capacity(20_000);
+            for sample in 0..20_000usize {
+                let id = format!("node-{}", sample.wrapping_mul(7_919) % node_count);
+                let started = Instant::now();
+                assert_eq!(
+                    graph.node_by_id(&id).map(|node| node.id.as_str()),
+                    Some(id.as_str())
+                );
+                samples.push(started.elapsed().as_nanos());
+            }
+            samples.sort_unstable();
+            let percentile = |value: usize| samples[(samples.len() - 1) * value / 100];
+            eprintln!(
+                "source_node_index nodes={node_count} p50_ns={} p95_ns={} p99_ns={}",
+                percentile(50),
+                percentile(95),
+                percentile(99),
+            );
+            assert!(
+                percentile(95) < 1_000_000,
+                "target resolution p95 exceeded 1 ms for {node_count} nodes"
+            );
+        }
+    }
+
+    fn graph_with_nodes(count: usize) -> SourceGraph {
+        SourceGraph {
+            node_index: Default::default(),
+            project_root: "/project".to_string(),
+            zola_root: "/project".to_string(),
+            active_theme: None,
+            pages: Vec::new(),
+            templates: Vec::new(),
+            styles: Vec::new(),
+            scripts: Vec::new(),
+            assets: Vec::new(),
+            data_files: Vec::new(),
+            structured_documents: Vec::new(),
+            component_graph: Default::default(),
+            block_graph: Default::default(),
+            content_models: Default::default(),
+            listing_items: Default::default(),
+            dynamic_widget_graph: Default::default(),
+            markdown_projections: Vec::new(),
+            nodes: (0..count)
+                .map(|index| SourceNode {
+                    id: format!("node-{index}"),
+                    kind: SourceNodeKind::Html,
+                    file: "templates/index.html".to_string(),
+                    origin: SourceOrigin::Local,
+                    theme_name: None,
+                    label: "<div>".to_string(),
+                    range: None,
+                    parent: None,
+                    children: Vec::new(),
+                    capabilities: SourceCapabilities::visual_html(),
+                })
+                .collect(),
+            relations: Vec::new(),
+            asset_reference_coverage: Default::default(),
+            diagnostics: Vec::new(),
+        }
     }
 }

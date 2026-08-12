@@ -36,8 +36,6 @@ diagnostic-disk-conflict-summary-clean =
         [few] { $count } fișiere urmărite sunt aliniate cu discul.
        *[other] { $count } de fișiere urmărite sunt aliniate cu discul.
     }
-project-model-not-zola-project = Proiectul curent nu pare să fie un proiect Zola valid.
-source-graph-output-root-failed = Source Graph nu poate rezolva output_dir pentru load_data: { $details }
 source-graph-not-zola-project = Proiectul curent nu pare să fie un proiect Zola valid.
 source-graph-conventional-data-invalid = Source Graph nu a putut cataloga un fișier de date convențional: { $details }
 source-graph-load-data-missing = Fișierul local Zola referențiat de load_data nu a fost găsit: { $path }
@@ -51,7 +49,7 @@ source-graph-shortcode-syntax-invalid = Conținutul Markdown are sintaxă shortc
 source-graph-page-template-missing = Template-ul paginii nu a fost găsit: { $template }
 source-graph-section-page-template-missing = Template-ul page_template al secțiunii nu a fost găsit: { $template }
 source-graph-frontmatter-invalid = Frontmatter { $format } invalid: { $details }
-source-graph-file-read-failed = Fișierul nu a putut fi citit: { $details }
+source-graph-projection-source-missing = Proiecția exactă ProjectWorkspace nu conține textul-sursă pentru acest fișier indexat; Audit nu a folosit discul ca alternativă.
 source-graph-tera-syntax-invalid = Template-ul nu respectă gramatica Tera folosită de Zola: { $details }
 source-graph-partial-extends-invalid = Parțialele nu trebuie să folosească extends. Creează un template de pagină sau layout pentru moștenire Tera.
 source-graph-partial-block-invalid = Parțialul { $name } conține blocul Tera „{ $block }”. Parțialele trebuie să fie fragmente incluse, fără block/endblock.

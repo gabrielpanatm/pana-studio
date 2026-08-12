@@ -632,9 +632,9 @@ fn css_url_references(source: &str) -> Vec<String> {
         {
             index += 2;
             while index + 1 < bytes.len()
-                && !bytes
+                && bytes
                     .get(index..index + 2)
-                    .is_some_and(|candidate| candidate == b"*/")
+                    .is_none_or(|candidate| candidate != b"*/")
             {
                 index += 1;
             }

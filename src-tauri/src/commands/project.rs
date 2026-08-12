@@ -17,14 +17,14 @@ use crate::{
         component_legacy_migration::migrate_legacy_component_catalog,
         disk_conflict::scan_disk_conflicts,
         file_buffer_store::{
-            bootstrap_file_buffer_store, now_ms as file_buffer_now_ms,
+            bootstrap_file_buffer_store, map_text_changes, now_ms as file_buffer_now_ms,
             require_file_buffer_session_binding, FileBufferChangeSetInput,
             FileBufferChangeSetResult, FileBufferCommandReceipt, FileBufferFileSnapshot,
             FileBufferMutationExpectation, FileBufferRequestIdentity, FileBufferStore,
             FileBufferStoreSnapshot, FileBufferTextSnapshot,
         },
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
-        preview_projection::{CanvasPatch, CanvasPatchAnchor, CanvasPatchOperation},
+        preview_projection::{CanvasPatch, CanvasPatchOperation},
         project_session::{
             persist_project_session_open, prepare_project_session_with_fingerprint,
             record_project_session_opened, ProjectSessionSnapshot,
@@ -58,7 +58,7 @@ use crate::{
             ProjectWorkspaceSaveRecoveryAction, ProjectWorkspaceSaveRecoveryReceipt,
             ProjectWorkspaceSnapshot, WorkspaceCanvasHistoryDelta, WorkspaceDocumentMutation,
             WorkspaceHistoryDirection, WorkspaceHistorySnapshot, WorkspaceMutationMetadata,
-            WorkspaceUndoRedoReceipt,
+            WorkspaceSourceTreeHistory, WorkspaceSourceTreeHistoryAction, WorkspaceUndoRedoReceipt,
         },
         recovery_coordinator::{
             scan_recovery_coordinator, RecoveryCoordinatorScan, RecoveryCoordinatorStatus,
@@ -85,14 +85,13 @@ use crate::{
     project_model::{
         build_project_model_from_workspace_projection,
         model::ProjectModel,
-        move_engine::html_identity_aliases,
-        rebuild_project_model_after_workspace_change,
+        rebuild_project_model_after_workspace_change_with_source_changes,
         template_workbench::{
             resolve_template_workbench_plan, TemplateWorkbenchPlan, TemplateWorkbenchPlanInput,
         },
         ProjectModelIncrementalIntent,
     },
-    source_graph::model::SourceNodeKind,
+    source_graph::identity::{SourceChangeSet, SourceTextEdit, SourceTreeMovePosition},
     state::AppState,
 };
 
@@ -997,31 +996,29 @@ fn apply_project_workspace_history(
             } else {
                 ProjectModelIncrementalIntent::Unsupported
             };
-            let build = rebuild_project_model_after_workspace_change(
+            let source_changes = previous_model
+                .as_ref()
+                .map(|before_model| {
+                    history_source_changes(
+                        before_model,
+                        &projection,
+                        &result.entry.document_paths,
+                        result.canvas_delta.as_ref(),
+                        result.source_tree.as_ref(),
+                        direction,
+                    )
+                })
+                .transpose()?;
+            let build = rebuild_project_model_after_workspace_change_with_source_changes(
                 Path::new(&candidate.session.project_root),
                 previous_model.as_ref(),
                 previous_model_source_revision,
                 &projection,
                 &result.entry.document_paths,
                 incremental_intent,
+                source_changes,
             )?;
-            let alias_updates = previous_model
-                .as_ref()
-                .map(|before_model| {
-                    history_source_identity_aliases(
-                        before_model,
-                        &build.model,
-                        result.canvas_delta.as_ref(),
-                        direction,
-                    )
-                })
-                .unwrap_or_default();
             candidate.publish_project_model(&projection, build.model)?;
-            candidate.publish_source_identity_alias_transition(
-                result.revision_before,
-                result.revision_after,
-                alias_updates,
-            )?;
             Ok((result, build.report))
         })?;
     append_history_project_model_build_event(&app, direction, &project_model_build);
@@ -1107,208 +1104,127 @@ fn apply_project_workspace_history(
     })
 }
 
-fn history_source_identity_aliases(
+fn history_source_changes(
     before_model: &ProjectModel,
-    after_model: &ProjectModel,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
+    changed_paths: &[String],
     canvas_delta: Option<&WorkspaceCanvasHistoryDelta>,
+    source_tree: Option<&WorkspaceSourceTreeHistory>,
     direction: WorkspaceHistoryDirection,
-) -> std::collections::HashMap<String, String> {
-    let mut aliases = html_identity_aliases(before_model, after_model);
-    let Some(canvas_delta) = canvas_delta else {
-        return aliases;
-    };
-    let (before_operation, after_operation) = match direction {
-        WorkspaceHistoryDirection::Undo => (&canvas_delta.inverse, &canvas_delta.forward),
-        WorkspaceHistoryDirection::Redo => (&canvas_delta.forward, &canvas_delta.inverse),
-    };
-    for (before_anchor, after_anchor) in
-        paired_history_canvas_anchors(before_operation, after_operation)
-    {
-        let Some(before_source_id) = live_history_anchor_source_id(before_model, before_anchor)
+) -> Result<Vec<SourceChangeSet>, String> {
+    let mut changes = changed_paths
+        .iter()
+        .filter_map(|path| {
+            let before = before_model
+                .files
+                .iter()
+                .find(|file| file.relative_path == *path)?;
+            let after = projection.source_texts.get(path)?;
+            Some(SourceChangeSet::between(path, &before.contents, after))
+        })
+        .collect::<Vec<_>>();
+    let restore_tree = source_tree.is_some_and(|history| {
+        matches!(
+            (history.action, direction),
+            (
+                WorkspaceSourceTreeHistoryAction::Inserted,
+                WorkspaceHistoryDirection::Redo
+            ) | (
+                WorkspaceSourceTreeHistoryAction::Deleted,
+                WorkspaceHistoryDirection::Undo
+            )
+        )
+    });
+    if restore_tree {
+        if let Some(history) = source_tree {
+            for tree in &history.trees {
+                if let Some(change) = changes.iter_mut().find(|change| change.file == tree.file) {
+                    *change = change.clone().with_tree_restore(tree.clone());
+                }
+            }
+        }
+    }
+    let remove_tree = source_tree.is_some_and(|history| {
+        matches!(
+            (history.action, direction),
+            (
+                WorkspaceSourceTreeHistoryAction::Inserted,
+                WorkspaceHistoryDirection::Undo
+            ) | (
+                WorkspaceSourceTreeHistoryAction::Deleted,
+                WorkspaceHistoryDirection::Redo
+            )
+        )
+    });
+    if remove_tree {
+        if let Some(history) = source_tree {
+            for tree in &history.trees {
+                if let Some(change) = changes.iter_mut().find(|change| change.file == tree.file) {
+                    *change = change
+                        .clone()
+                        .with_tree_delete_many(tree.root_source_node_ids()?);
+                }
+            }
+        }
+    }
+
+    let operation = canvas_delta.map(|delta| match direction {
+        WorkspaceHistoryDirection::Undo => &delta.inverse,
+        WorkspaceHistoryDirection::Redo => &delta.forward,
+    });
+    let mut move_operations = Vec::new();
+    if let Some(operation) = operation {
+        collect_canvas_move_operations(operation, &mut move_operations);
+    }
+    for (source, target, position) in move_operations {
+        let Some(source_file) = before_model
+            .source_graph
+            .node_by_id(&source.source_id)
+            .map(|node| node.file.as_str())
         else {
             continue;
         };
-        let Some(after_source_id) = live_history_anchor_source_id(after_model, after_anchor) else {
-            continue;
+        let tree_position = match position {
+            crate::project_model::move_engine::ProjectMovePosition::Before => {
+                SourceTreeMovePosition::Before
+            }
+            crate::project_model::move_engine::ProjectMovePosition::After => {
+                SourceTreeMovePosition::After
+            }
+            crate::project_model::move_engine::ProjectMovePosition::Inside => {
+                SourceTreeMovePosition::Inside
+            }
         };
-        if before_source_id != after_source_id {
-            aliases.insert(before_source_id, after_source_id);
+        if let Some(change) = changes.iter_mut().find(|change| change.file == source_file) {
+            *change =
+                change
+                    .clone()
+                    .with_tree_move(&source.source_id, &target.source_id, tree_position);
         }
     }
-    aliases
+    Ok(changes)
 }
 
-fn paired_history_canvas_anchors<'a>(
-    before: &'a CanvasPatchOperation,
-    after: &'a CanvasPatchOperation,
-) -> Vec<(&'a CanvasPatchAnchor, &'a CanvasPatchAnchor)> {
-    match (before, after) {
-        (
-            CanvasPatchOperation::SetAttributes { target: before, .. },
-            CanvasPatchOperation::SetAttributes { target: after, .. },
-        )
-        | (
-            CanvasPatchOperation::SetBlockOption { target: before, .. },
-            CanvasPatchOperation::SetBlockOption { target: after, .. },
-        )
-        | (
-            CanvasPatchOperation::SetText { target: before, .. },
-            CanvasPatchOperation::SetText { target: after, .. },
-        )
-        | (
-            CanvasPatchOperation::SetTextHtml { target: before, .. },
-            CanvasPatchOperation::SetTextHtml { target: after, .. },
-        )
-        | (
-            CanvasPatchOperation::ReplaceTag { target: before, .. },
-            CanvasPatchOperation::ReplaceTag { target: after, .. },
-        ) => vec![(before, after)],
-        (
-            CanvasPatchOperation::Move {
-                source: before_source,
-                target: before_target,
-                ..
-            },
-            CanvasPatchOperation::Move {
-                source: after_source,
-                target: after_target,
-                ..
-            },
-        ) => vec![(before_source, after_source), (before_target, after_target)],
-        _ => Vec::new(),
-    }
-}
-
-fn live_history_anchor_source_id(
-    model: &ProjectModel,
-    anchor: &CanvasPatchAnchor,
-) -> Option<String> {
-    std::iter::once(anchor.source_id.as_str())
-        .chain(anchor.alternate_source_ids.iter().map(String::as_str))
-        .find(|source_id| {
-            model
-                .source_graph
-                .nodes
-                .iter()
-                .any(|node| node.kind == SourceNodeKind::Html && node.id == *source_id)
-        })
-        .map(str::to_string)
-}
-
-#[cfg(test)]
-mod source_identity_history_tests {
-    use std::{
-        collections::{BTreeMap, HashMap},
-        fs,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    use crate::project_model::build_project_model;
-
-    use super::*;
-
-    #[test]
-    fn undo_and_redo_publish_the_exact_attribute_target_identity_transition() {
-        let root = unique_test_dir();
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        let before_source = concat!(
-            "<h1>\n",
-            "  <span>Construiește vizual.</span>\n",
-            "  <span>Păstrează controlul</span>\n",
-            "  <span>asupra codului.</span>\n",
-            "</h1>\n",
-        );
-        let after_source = concat!(
-            "<h1>\n",
-            "  <span>Construiește vizual.</span>\n",
-            "  <span class=\"ps-span-control-abc123\">Păstrează controlul</span>\n",
-            "  <span>asupra codului.</span>\n",
-            "</h1>\n",
-        );
-        fs::write(root.join("templates/index.html"), before_source).unwrap();
-        let before = build_project_model(&root, &HashMap::new()).unwrap();
-        let mut drafts = HashMap::new();
-        drafts.insert("templates/index.html".to_string(), after_source.to_string());
-        let after = build_project_model(&root, &drafts).unwrap();
-        let before_id = span_id_for_text(&before, before_source, "Păstrează controlul");
-        let after_id = span_id_for_text(&after, after_source, "Păstrează controlul");
-        assert_ne!(before_id, after_id);
-
-        let delta = WorkspaceCanvasHistoryDelta {
-            before_model_revision: before.revision.clone(),
-            after_model_revision: after.revision.clone(),
-            forward: CanvasPatchOperation::SetAttributes {
-                target: CanvasPatchAnchor::source(&before_id, None, Some("span")),
-                attributes: BTreeMap::from([(
-                    "class".to_string(),
-                    Some("ps-span-control-abc123".to_string()),
-                )]),
-            },
-            inverse: CanvasPatchOperation::SetAttributes {
-                target: CanvasPatchAnchor::source(&after_id, None, Some("span"))
-                    .with_alternate_source_ids([before_id.clone()]),
-                attributes: BTreeMap::from([("class".to_string(), None)]),
-            },
-        };
-
-        let undo_aliases = history_source_identity_aliases(
-            &after,
-            &before,
-            Some(&delta),
-            WorkspaceHistoryDirection::Undo,
-        );
-        assert_eq!(undo_aliases.get(&after_id), Some(&before_id));
-
-        let redo_aliases = history_source_identity_aliases(
-            &before,
-            &after,
-            Some(&delta),
-            WorkspaceHistoryDirection::Redo,
-        );
-        assert_eq!(redo_aliases.get(&before_id), Some(&after_id));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    fn span_id_for_text(model: &ProjectModel, source: &str, text: &str) -> String {
-        model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| {
-                node.kind == SourceNodeKind::Html
-                    && node.label.starts_with("<span")
-                    && node.range.as_ref().is_some_and(|range| {
-                        source
-                            .get(range.start..range.end)
-                            .is_some_and(|fragment| fragment.contains(text))
-                    })
-            })
-            .expect("span semantic")
-            .id
-            .clone()
-    }
-
-    fn unique_test_dir() -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "pana-studio-selection-history-{}-{stamp}",
-            std::process::id()
-        ))
+fn collect_canvas_move_operations<'a>(
+    operation: &'a CanvasPatchOperation,
+    moves: &mut Vec<(
+        &'a crate::kernel::preview_projection::CanvasPatchAnchor,
+        &'a crate::kernel::preview_projection::CanvasPatchAnchor,
+        &'a crate::project_model::move_engine::ProjectMovePosition,
+    )>,
+) {
+    match operation {
+        CanvasPatchOperation::Move {
+            source,
+            target,
+            position,
+        } => moves.push((source, target, position)),
+        CanvasPatchOperation::Batch { operations } => {
+            for operation in operations {
+                collect_canvas_move_operations(operation, moves);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1448,7 +1364,7 @@ fn project_session_root_identity(session: &ProjectSessionSnapshot) -> Result<(u6
 fn require_project_transition_for_action(
     app: &AppHandle,
     state: &State<AppState>,
-    target_root: &PathBuf,
+    target_root: &Path,
     action: KernelProjectTransitionAction,
     operator_decision_id: Option<&str>,
 ) -> Result<(), String> {
@@ -1503,7 +1419,7 @@ fn require_project_transition_for_action(
 fn validate_project_transition_action_target(
     action: KernelProjectTransitionAction,
     current_root: &PathBuf,
-    target_root: &PathBuf,
+    target_root: &Path,
 ) -> Result<(), String> {
     match action {
         KernelProjectTransitionAction::OpenProject if current_root == target_root => Err(
@@ -1522,7 +1438,7 @@ fn validate_project_transition_action_target(
 
 fn build_project_transition_evidence_for_target(
     state: &State<AppState>,
-    target_root: &PathBuf,
+    target_root: &Path,
     action: KernelProjectTransitionAction,
     project_state: &crate::kernel::project_state::KernelProjectStateSnapshot,
     policy: &crate::kernel::project_state::KernelProjectTransitionPolicy,
@@ -1571,7 +1487,7 @@ fn project_transition_action_for_open_target(
 fn record_project_transition_blocked(
     app: &AppHandle,
     policy: &crate::kernel::project_state::KernelProjectTransitionPolicy,
-    target_root: &PathBuf,
+    target_root: &Path,
 ) {
     let event = KernelLogEvent::new(
         KernelLogLevel::Warn,
@@ -1735,6 +1651,7 @@ fn clear_project_runtime_state(
     *current_root = None;
     *project_workspace = None;
     *recovery_coordinator_scan = None;
+    state.clear_publish_authorization()?;
     state
         .ai_coordination
         .bind_project(None, crate::kernel::observability::now_ms())
@@ -1956,8 +1873,17 @@ fn set_file_buffer_draft_impl(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<FileBufferCommandReceipt<FileBufferFileSnapshot>, String> {
-    with_bound_project_workspace(state, &identity, |workspace| {
+    let receipt = with_bound_project_workspace(state, &identity, |workspace| {
         let file = commit_project_workspace_session_mutation(app, workspace, |candidate| {
+            let previous_model = candidate.project_model.clone();
+            let previous_model_source_revision = candidate.project_model_source_revision;
+            let before_source = candidate
+                .documents
+                .text_snapshot(&relative_path)
+                .ok_or_else(|| {
+                    format!("ProjectWorkspace nu urmărește documentul {relative_path}.")
+                })?
+                .text;
             let mut validation_store = candidate.documents.clone();
             validation_store.set_draft_if_current(
                 &relative_path,
@@ -1979,6 +1905,16 @@ fn set_file_buffer_draft_impl(
                 }],
                 file_buffer_now_ms(),
             )?;
+            if receipt.changed {
+                publish_code_edit_project_model(
+                    candidate,
+                    previous_model.as_ref(),
+                    previous_model_source_revision,
+                    &relative_path,
+                    &before_source,
+                    None,
+                )?;
+            }
             receipt
                 .files
                 .into_iter()
@@ -1990,7 +1926,9 @@ fn set_file_buffer_draft_impl(
             workspace.revision,
             file,
         ))
-    })
+    })?;
+    invalidate_code_selection_after_commit(state, &receipt);
+    Ok(receipt)
 }
 
 #[tauri::command(async)]
@@ -2009,14 +1947,33 @@ fn apply_file_buffer_changeset_impl(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<FileBufferCommandReceipt<FileBufferChangeSetResult>, String> {
-    with_bound_project_workspace(state, &identity, |workspace| {
+    let receipt = with_bound_project_workspace(state, &identity, |workspace| {
         let source = input
             .source
             .clone()
             .unwrap_or_else(|| "code_editor.changeset".to_string());
         let relative_path = input.relative_path.clone();
         let result = commit_project_workspace_session_mutation(app, workspace, |candidate| {
-            candidate.apply_document_changeset(
+            let previous_model = candidate.project_model.clone();
+            let previous_model_source_revision = candidate.project_model_source_revision;
+            let before_source = candidate
+                .documents
+                .text_snapshot(&relative_path)
+                .ok_or_else(|| {
+                    format!("ProjectWorkspace nu urmărește documentul {relative_path}.")
+                })?
+                .text;
+            let exact_edits =
+                map_text_changes(&before_source, &input.changes, input.coordinate_space)?
+                    .into_iter()
+                    .map(|change| SourceTextEdit {
+                        old_start: change.old_start,
+                        old_end: change.old_end,
+                        new_start: change.new_start,
+                        new_end: change.new_end,
+                    })
+                    .collect::<Vec<_>>();
+            let result = candidate.apply_document_changeset(
                 &workspace_identity(candidate),
                 WorkspaceMutationMetadata {
                     label: "Editare document".to_string(),
@@ -2026,14 +1983,27 @@ fn apply_file_buffer_changeset_impl(
                 },
                 input,
                 file_buffer_now_ms(),
-            )
+            )?;
+            if result.applied {
+                publish_code_edit_project_model(
+                    candidate,
+                    previous_model.as_ref(),
+                    previous_model_source_revision,
+                    &relative_path,
+                    &before_source,
+                    Some(exact_edits),
+                )?;
+            }
+            Ok(result)
         })?;
         Ok(FileBufferCommandReceipt::new(
             &workspace.session,
             workspace.revision,
             result,
         ))
-    })
+    })?;
+    invalidate_code_selection_after_commit(state, &receipt);
+    Ok(receipt)
 }
 
 #[tauri::command(async)]
@@ -2054,8 +2024,17 @@ fn clear_file_buffer_draft_impl(
     app: &AppHandle,
     state: &AppState,
 ) -> Result<FileBufferCommandReceipt<FileBufferFileSnapshot>, String> {
-    with_bound_project_workspace(state, &identity, |workspace| {
+    let receipt = with_bound_project_workspace(state, &identity, |workspace| {
         let file = commit_project_workspace_session_mutation(app, workspace, |candidate| {
+            let previous_model = candidate.project_model.clone();
+            let previous_model_source_revision = candidate.project_model_source_revision;
+            let before_source = candidate
+                .documents
+                .text_snapshot(&relative_path)
+                .ok_or_else(|| {
+                    format!("ProjectWorkspace nu urmărește documentul {relative_path}.")
+                })?
+                .text;
             let mut validation_store = candidate.documents.clone();
             validation_store.clear_draft_if_current(&relative_path, &expectation)?;
             let baseline = candidate
@@ -2073,11 +2052,21 @@ fn clear_file_buffer_draft_impl(
                     transaction_id: None,
                 },
                 vec![WorkspaceDocumentMutation {
-                    relative_path,
+                    relative_path: relative_path.clone(),
                     contents: baseline,
                 }],
                 file_buffer_now_ms(),
             )?;
+            if receipt.changed {
+                publish_code_edit_project_model(
+                    candidate,
+                    previous_model.as_ref(),
+                    previous_model_source_revision,
+                    &relative_path,
+                    &before_source,
+                    None,
+                )?;
+            }
             receipt
                 .files
                 .into_iter()
@@ -2089,7 +2078,93 @@ fn clear_file_buffer_draft_impl(
             workspace.revision,
             file,
         ))
-    })
+    })?;
+    invalidate_code_selection_after_commit(state, &receipt);
+    Ok(receipt)
+}
+
+fn publish_code_edit_project_model(
+    candidate: &mut ProjectWorkspace,
+    previous_model: Option<&ProjectModel>,
+    previous_model_source_revision: Option<u64>,
+    relative_path: &str,
+    actual_before_source: &str,
+    exact_edits: Option<Vec<SourceTextEdit>>,
+) -> Result<(), String> {
+    let projection = candidate.capture_projection_snapshot()?;
+    let source_changes = previous_model.and_then(|model| {
+        let before = model
+            .files
+            .iter()
+            .find(|file| file.relative_path == relative_path)?;
+        let after = projection.source_texts.get(relative_path)?;
+        let mut change = SourceChangeSet::between(relative_path, &before.contents, after);
+        if previous_model_source_revision
+            .is_some_and(|revision| revision.checked_add(1) == Some(projection.revision))
+            && before.contents == actual_before_source
+        {
+            if let Some(edits) = exact_edits {
+                change = change.with_exact_text_edits(edits);
+            }
+        }
+        Some(vec![change])
+    });
+    let intent = if relative_path.starts_with("templates/") && relative_path.ends_with(".html") {
+        ProjectModelIncrementalIntent::HtmlStructural
+    } else if relative_path.ends_with(".css") {
+        ProjectModelIncrementalIntent::StyleDeclaration
+    } else {
+        ProjectModelIncrementalIntent::Unsupported
+    };
+    let build = rebuild_project_model_after_workspace_change_with_source_changes(
+        Path::new(&candidate.session.project_root),
+        previous_model,
+        previous_model_source_revision,
+        &projection,
+        &[relative_path.to_string()],
+        intent,
+        source_changes,
+    )?;
+    candidate.publish_project_model(&projection, build.model)
+}
+
+fn invalidate_code_selection_after_commit<T>(
+    state: &AppState,
+    receipt: &FileBufferCommandReceipt<T>,
+) {
+    let retained = (|| -> Result<std::collections::HashSet<String>, String> {
+        let workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut valida selecția după tranzacția Code.".to_string())?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace lipsește după tranzacția Code.".to_string())?;
+        if workspace.runtime_session_id() != receipt.runtime_session_id
+            || workspace.revision != receipt.workspace_revision
+            || workspace.project_model_source_revision != Some(receipt.workspace_revision)
+        {
+            return Err("Selecția Code nu poate fi validată pe o revizie stale.".to_string());
+        }
+        let model = workspace
+            .project_model
+            .as_ref()
+            .ok_or_else(|| "ProjectModel lipsește după tranzacția Code.".to_string())?;
+        Ok(model
+            .source_graph
+            .nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect())
+    })();
+    let result = retained.and_then(|retained| {
+        state
+            .selection_coordinator
+            .invalidate_missing_source_target(&receipt.runtime_session_id, &retained)
+    });
+    if let Err(diagnostic) = result {
+        eprintln!("[Pană Studio] {diagnostic}");
+    }
 }
 
 fn workspace_identity(workspace: &ProjectWorkspace) -> ProjectWorkspaceIdentity {
@@ -2409,7 +2484,7 @@ pub fn open_project(
         state.project_lifecycle.clone(),
         operation_id.clone(),
     );
-    if root != PathBuf::from(&inspection.candidate.root) {
+    if root != Path::new(&inspection.candidate.root) {
         return Err(
             "ProjectLifecycle a refuzat deschiderea altui root decât cel inspectat.".to_string(),
         );
@@ -2732,6 +2807,7 @@ pub fn open_project(
         *current_root = Some(root.clone());
         *project_workspace = Some(next_project_workspace);
         *recovery_scan = Some(recovery_coordinator_scan);
+        state.clear_publish_authorization()?;
         state
             .ai_coordination
             .bind_project(

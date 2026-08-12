@@ -274,7 +274,7 @@ pub fn negotiate_supported_locale(
     let requested = fixed_locale
         .into_iter()
         .chain(system_candidates.iter().map(String::as_str))
-        .filter_map(|locale| normalize_locale_candidate(locale))
+        .filter_map(normalize_locale_candidate)
         .collect::<Vec<_>>();
     negotiate_languages(
         &requested,

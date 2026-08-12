@@ -3,6 +3,7 @@
   import WorkspaceResizeHandle from "$lib/components/workspace/WorkspaceResizeHandle.svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
+  import { primarySelectionEditorNodeId } from "$lib/kernel/selection-read-model";
 
   let { app }: { app: AppState } = $props();
 
@@ -47,7 +48,9 @@
         editorNavigationSnapshot={app.editorNavigationSnapshot}
         editorNavigationLoading={app.editorNavigationLoading}
         editorNavigationError={app.editorNavigationError}
-        coordinatedSelectionNodeId={app.selectionSnapshot?.projections.layers.editorNodeId ?? null}
+        coordinatedSelectionNodeIds={app.selectionSnapshot?.members.flatMap((member) =>
+          member.anchor.editorNodeId ? [member.anchor.editorNodeId] : []) ?? []}
+        coordinatedPrimaryNodeId={primarySelectionEditorNodeId(app.selectionSnapshot)}
         hoveredEditorNavigationNodeId={app.hoverSnapshot?.editorNodeId ?? null}
         editorEditScopeId={app.editorEditScopeId}
         selectFileExplorerEntry={(entryId) => app.selectFileExplorerEntry(entryId)}
@@ -56,7 +59,8 @@
         openScannedFile={(file) => app.loadScannedProjectFile(file)}
         startInsertCatalogDrag={(item, snapshot, event) =>
           app.startInsertCatalogDrag(item, snapshot, event)}
-        selectEditorNavigationNode={(node) => app.selectEditorNavigationNode(node)}
+        selectEditorNavigationNode={(node, options) =>
+          app.selectEditorNavigationNode(node, options)}
         hoverEditorNavigationNode={(node) => app.hoverEditorNavigationNode(node)}
         enterEditorNavigationScope={(scopeId) => app.enterEditorNavigationScope(scopeId)}
         exitEditorNavigationScope={() => app.exitEditorNavigationScope()}

@@ -1019,7 +1019,7 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 }
 
 fn decode_hex_bounded(value: &str, max_encoded_bytes: usize) -> Result<Vec<u8>, String> {
-    if value.len() % 2 != 0 || value.len() > max_encoded_bytes {
+    if !value.len().is_multiple_of(2) || value.len() > max_encoded_bytes {
         return Err("WriteAuthority WAL a întâlnit un câmp hex invalid.".into());
     }
     let mut bytes = Vec::with_capacity(value.len() / 2);

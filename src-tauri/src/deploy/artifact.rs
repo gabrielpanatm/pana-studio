@@ -15,9 +15,11 @@ const MAX_ZOLA_CONFIG_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug)]
 pub struct DeployArtifactManifest {
+    #[cfg(test)]
     pub root: PathBuf,
     pub files: Vec<DeployArtifactFile>,
     pub total_bytes: u64,
+    pub artifact_id: String,
 }
 
 #[derive(Debug)]
@@ -59,9 +61,9 @@ fn resolve_artifact_root_with_configured_output(
     zola_root: &Path,
     configured: &str,
 ) -> Result<PathBuf, String> {
-    let output_root = normalize_output_path(&zola_root, &configured)?;
+    let output_root = normalize_output_path(zola_root, configured)?;
 
-    reject_source_overlap(&output_root, &zola_root)?;
+    reject_source_overlap(&output_root, zola_root)?;
     validate_absolute_existing_components_no_follow(&output_root)?;
     Ok(output_root)
 }
@@ -202,11 +204,29 @@ pub fn build_deploy_artifact_manifest(
         }
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    let artifact_id = deploy_artifact_id(&files, total_bytes);
     Ok(DeployArtifactManifest {
+        #[cfg(test)]
         root,
         files,
         total_bytes,
+        artifact_id,
     })
+}
+
+fn deploy_artifact_id(files: &[DeployArtifactFile], total_bytes: u64) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"pana-deploy-artifact-v1\0");
+    digest.update(total_bytes.to_be_bytes());
+    digest.update((files.len() as u64).to_be_bytes());
+    for file in files {
+        let path = file.relative_path.as_bytes();
+        digest.update((path.len() as u64).to_be_bytes());
+        digest.update(path);
+        digest.update((file.bytes.len() as u64).to_be_bytes());
+        digest.update(file.sha256_uppercase.as_bytes());
+    }
+    format!("sha256:{:x}", digest.finalize())
 }
 
 fn canonical_project_root(project_root: &Path) -> Result<PathBuf, String> {

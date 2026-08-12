@@ -584,10 +584,9 @@ fn remove_definition_from_config(
     language: &str,
     default_language: &str,
 ) -> Result<bool, String> {
-    if language == default_language {
-        if remove_definition_from_table(document.as_table_mut(), name)? {
-            return Ok(true);
-        }
+    if language == default_language && remove_definition_from_table(document.as_table_mut(), name)?
+    {
+        return Ok(true);
     }
     let Some(language_table) = existing_language_table_mut(document, language)? else {
         return Ok(false);

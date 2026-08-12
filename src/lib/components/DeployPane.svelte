@@ -1,35 +1,29 @@
 <script lang="ts">
   import {
     IconHammer,
-    IconRocket,
-    IconEye,
-    IconEyeOff,
     IconX,
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
     readProjectAppConfig,
-    readProjectEnv,
     readZolaProjectSettings,
     saveProjectAppConfig,
-    saveProjectEnv,
     saveZolaProjectSettings,
     zolaBuild,
-    deployToBunny,
     cancelPublishOperation,
   } from "$lib/project/io";
   import {
-    BUNNY_ENV_KEYS,
     appConfigDraftFromConfig,
     appConfigFromDraft,
-    bunnyEnvVarsFromDraft,
     createDefaultZolaSettings,
     textFieldsFromZolaSettings,
     zolaSettingsWithTextFields,
     type ProjectAppConfig,
   } from "$lib/project/deploy-settings";
+  import DeployTargetsPanel from "$lib/components/deploy/DeployTargetsPanel.svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type { ZolaProjectSettings } from "$lib/types";
+  import type { AppState } from "$lib/state/app.svelte";
   import { errorMessage } from "$lib/util";
 
   let {
@@ -39,6 +33,7 @@
     actionsOnly = false,
     projectRoot = "",
     runtimeSessionId = "",
+    app = undefined as AppState | undefined,
     onStatusUpdate = undefined as ((text: string, kind: string) => void) | undefined,
     onCachebustAssetsChange = undefined as ((value: boolean) => void) | undefined,
   }: {
@@ -48,12 +43,12 @@
     actionsOnly?: boolean;
     projectRoot?: string;
     runtimeSessionId?: string;
+    app?: AppState;
     onStatusUpdate?: (text: string, kind: string) => void;
     onCachebustAssetsChange?: (value: boolean) => void;
   } = $props();
 
   let zolaSettings = $state<ZolaProjectSettings>(createDefaultZolaSettings());
-  let envVars = $state<Record<string, string>>({});
   let cachebustAssetsDraft = $state(false);
   let feedFilenamesText = $state("");
   let feedLimitText = $state("");
@@ -61,7 +56,6 @@
   let loading = $state(false);
   let configLoaded = $state(false);
   let configDirty = $state(false);
-  let showSecrets = $state<Record<string, boolean>>({});
 
   let buildRunning = $state(false);
   let deployRunning = $state(false);
@@ -70,6 +64,7 @@
   const searchIndexFormatOptions = ["elasticlunr_javascript", "elasticlunr_json", "fuse_javascript", "fuse_json"];
   let actionLog = $state("");
   let actionOk = $state<boolean | null>(null);
+  const publishReady = $derived(app?.currentPublishPreflightReceipt()?.status === "ready");
 
   $effect(() => {
     if (scannedProject) loadConfig();
@@ -83,17 +78,16 @@
     loading = true;
     configLoaded = false;
     try {
-      const [settings, env, appConfig] = await Promise.all([
+      const [settings, appConfig] = await Promise.all([
         readZolaProjectSettings(),
-        readProjectEnv(),
         readProjectAppConfig(),
       ]);
       zolaSettings = settings;
-      envVars = env;
       syncAppConfigFields(appConfig);
       syncTextFields(settings);
       onCachebustAssetsChange?.(appConfig.cachebustAssets);
       configDirty = false;
+      app?.invalidatePublishAuthorization();
     } catch (e) {
       onStatusUpdate?.(t("deploy-config-load-error", { error: errorMessage(e) }), "error");
     }
@@ -109,9 +103,8 @@
         feedLimitText,
         searchTruncateText,
       });
-      const [savedSettings, , appConfig] = await Promise.all([
+      const [savedSettings, appConfig] = await Promise.all([
         saveZolaProjectSettings(settingsToSave),
-        saveProjectEnv(bunnyEnvVarsFromDraft(envVars)),
         saveProjectAppConfig(appConfigFromDraft({
           cachebustAssetsDraft,
         })),
@@ -152,22 +145,22 @@
     markConfigDirty();
   }
 
-  function setVar(key: string, value: string) {
-    envVars = { ...envVars, [key]: value };
-    markConfigDirty();
-  }
-
-  function toggleSecret(key: string) {
-    showSecrets = { ...showSecrets, [key]: !showSecrets[key] };
-  }
-
   async function runBuild() {
     buildRunning = true;
     actionLog = "";
     actionOk = null;
     onStatusUpdate?.(t("deploy-build-running-status"), "saving");
     try {
-      actionLog = await zolaBuild();
+      if (workspaceMode) {
+        if (!app) throw new Error(t("publish-build-requires-preflight"));
+        const receipt = await app.buildForPublish();
+        actionLog = receipt.log || t("publish-build-receipt-summary", {
+          files: receipt.artifactFiles,
+          bytes: receipt.artifactBytes,
+        });
+      } else {
+        actionLog = await zolaBuild();
+      }
       actionOk = true;
       onStatusUpdate?.(t("deploy-build-complete"), "saved");
     } catch (e) {
@@ -178,25 +171,8 @@
     buildRunning = false;
   }
 
-  async function runDeploy() {
-    deployRunning = true;
-    actionLog = "";
-    actionOk = null;
-    onStatusUpdate?.(t("deploy-publish-running-status"), "saving");
-    try {
-      actionLog = await deployToBunny();
-      actionOk = true;
-      onStatusUpdate?.(t("deploy-publish-complete"), "saved");
-    } catch (e) {
-      actionLog = errorMessage(e);
-      actionOk = false;
-      onStatusUpdate?.(t("deploy-publish-error", { error: actionLog }), "error");
-    }
-    deployRunning = false;
-  }
-
   async function cancelRunningOperation() {
-    if (cancelRunning || (!buildRunning && !deployRunning)) return;
+    if (cancelRunning || !buildRunning) return;
     if (!projectRoot || !runtimeSessionId) {
       onStatusUpdate?.(t("deploy-cancel-no-session"), "error");
       return;
@@ -232,15 +208,11 @@
           {t("deploy-save-config")}
         </button>
         {#if workspaceMode}
-          <button type="button" class="action-btn build-btn compact-action" onclick={runBuild} disabled={buildRunning || configDirty} title={configDirty ? t("deploy-save-before-build") : t("deploy-build-title")}>
+          <button type="button" class="action-btn build-btn compact-action" onclick={runBuild} disabled={buildRunning || deployRunning || configDirty || !publishReady} title={configDirty ? t("deploy-save-before-build") : !publishReady ? t("publish-build-requires-preflight") : t("deploy-build-title")}>
             <IconHammer size={14} stroke={1.8} />
             {buildRunning ? t("deploy-building") : t("deploy-build")}
           </button>
-          <button type="button" class="action-btn deploy-btn compact-action" onclick={runDeploy} disabled={deployRunning || configDirty} title={configDirty ? t("deploy-save-before-publish") : t("deploy-publish-title")}>
-            <IconRocket size={14} stroke={1.8} />
-            {deployRunning ? t("deploy-publishing") : t("deploy-publish")}
-          </button>
-          {#if buildRunning || deployRunning}
+          {#if buildRunning}
             <button type="button" class="action-btn cancel-btn compact-action" onclick={cancelRunningOperation} disabled={cancelRunning}>
               <IconX size={14} stroke={2} /> {cancelRunning ? t("deploy-cancelling") : t("deploy-cancel")}
             </button>
@@ -254,6 +226,17 @@
         <pre class="log-text">{actionLog}</pre>
       </div>
     {/if}
+
+    <DeployTargetsPanel
+      {app}
+      {scannedProject}
+      {actionsOnly}
+      {projectRoot}
+      {runtimeSessionId}
+      disabled={configDirty || buildRunning}
+      {onStatusUpdate}
+      onRunningChange={(running) => { deployRunning = running; }}
+    />
 
     {#if !actionsOnly}
     <section class="config-section">
@@ -489,36 +472,6 @@
       </label>
     </section>
 
-    <section class="config-section">
-      <h3 class="section-label">{t("deploy-section-bunny")}</h3>
-      {#each BUNNY_ENV_KEYS as { key, labelId, secret }}
-        <label class="config-field">
-          <span>{t(labelId)}</span>
-          <div class="secret-row">
-            <input
-              class="config-input"
-              type={secret && !showSecrets[key] ? "password" : "text"}
-              value={envVars[key] ?? ""}
-              oninput={(e) => setVar(key, e.currentTarget.value)}
-              placeholder={key}
-              autocomplete="off"
-            />
-            {#if secret}
-              <button type="button" class="toggle-secret" onclick={() => toggleSecret(key)}
-                title={showSecrets[key] ? t("deploy-hide-secret") : t("deploy-show-secret")}>
-                {#if showSecrets[key]}
-                  <IconEyeOff size={13} stroke={1.8} />
-                {:else}
-                  <IconEye size={13} stroke={1.8} />
-                {/if}
-              </button>
-            {/if}
-          </div>
-        </label>
-      {/each}
-      <p class="env-note">{t("deploy-env-note")}</p>
-    </section>
-
     <button type="button" class="save-config-btn" onclick={saveConfig}>
       {t("deploy-save-config")}
     </button>
@@ -526,13 +479,9 @@
     <div class="divider"></div>
 
     {#if !workspaceMode}<section class="actions-section">
-      <button type="button" class="action-btn build-btn" onclick={runBuild} disabled={buildRunning}>
+      <button type="button" class="action-btn build-btn" onclick={runBuild} disabled={buildRunning || deployRunning}>
         <IconHammer size={14} stroke={1.8} />
         {buildRunning ? t("deploy-building") : t("deploy-build-zola")}
-      </button>
-      <button type="button" class="action-btn deploy-btn" onclick={runDeploy} disabled={deployRunning}>
-        <IconRocket size={14} stroke={1.8} />
-        {deployRunning ? t("deploy-publishing") : t("deploy-publish")}
       </button>
     </section>{/if}
     {/if}
@@ -800,26 +749,6 @@
     background: var(--brand);
   }
 
-  .secret-row { display: flex; gap: 4px; align-items: center; }
-  .secret-row .config-input { flex: 1; }
-
-  .toggle-secret {
-    width: 26px; height: 28px; flex-shrink: 0;
-    border: 1px solid var(--border-4); border-radius: 6px;
-    background: var(--surface-4); color: var(--text-muted);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-  }
-
-  .toggle-secret:hover { border-color: var(--brand); color: var(--brand); }
-
-  .env-note {
-    margin: 0;
-    font-size: 12px;
-    color: var(--text-muted);
-    opacity: 0.65;
-  }
-
   .save-config-btn {
     width: 100%;
     min-height: 30px;
@@ -872,12 +801,6 @@
     border: 1px solid color-mix(in srgb, #f59e0b 50%, transparent);
     background: color-mix(in srgb, #f59e0b 15%, transparent);
     color: #b45309;
-  }
-
-  .deploy-btn {
-    border: 1px solid var(--brand);
-    background: var(--brand);
-    color: #fff;
   }
 
   .cancel-btn {

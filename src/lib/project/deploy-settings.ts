@@ -1,16 +1,5 @@
-import type { ZolaProjectSettings } from "$lib/types";
-
-export const BUNNY_ENV_KEYS = [
-  { key: "BUNNY_STORAGE_ZONE", labelId: "deploy-bunny-storage-zone", secret: false },
-  { key: "BUNNY_STORAGE_KEY", labelId: "deploy-bunny-storage-key", secret: true },
-  { key: "BUNNY_STORAGE_REGION", labelId: "deploy-bunny-storage-region", secret: false },
-  { key: "BUNNY_PULL_ZONE_ID", labelId: "deploy-bunny-pull-zone-id", secret: false },
-  { key: "BUNNY_CDN_API_KEY", labelId: "deploy-bunny-cdn-api-key", secret: true },
-] as const;
-
-export type ProjectAppConfig = {
-  cachebustAssets: boolean;
-};
+import type { ProjectAppConfig, ZolaProjectSettings } from "$lib/types";
+export type { ProjectAppConfig } from "$lib/types";
 
 export type ProjectAppConfigDraft = {
   cachebustAssetsDraft: boolean;
@@ -85,18 +74,10 @@ export function appConfigDraftFromConfig(config: ProjectAppConfig): ProjectAppCo
   };
 }
 
-export function appConfigFromDraft(draft: ProjectAppConfigDraft): ProjectAppConfig {
+export function appConfigFromDraft(draft: ProjectAppConfigDraft): { cachebustAssets: boolean } {
   return {
     cachebustAssets: draft.cachebustAssetsDraft,
   };
-}
-
-export function bunnyEnvVarsFromDraft(envVars: Record<string, string>): Record<string, string> {
-  const bunny: Record<string, string> = {};
-  for (const { key } of BUNNY_ENV_KEYS) {
-    if (envVars[key] !== undefined) bunny[key] = envVars[key];
-  }
-  return bunny;
 }
 
 function parseList(value: string) {

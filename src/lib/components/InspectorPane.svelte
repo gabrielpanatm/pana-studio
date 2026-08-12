@@ -7,6 +7,7 @@
     IconPointerBolt,
   } from "@tabler/icons-svelte";
   import { tick, untrack } from "svelte";
+  import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
   import HtmlPane from "$lib/components/inspector/HtmlPane.svelte";
   import JsPane  from "$lib/components/inspector/JsPane.svelte";
   import BlockPropertiesPane from "$lib/components/inspector/BlockPropertiesPane.svelte";
@@ -59,10 +60,14 @@
     captureCssPendingValueBaseline,
     restoreCssPendingValueBaseline,
   } from "$lib/inspector/css-property-edit";
-  import type { ApplyNativeBlockOptionRequest } from "$lib/state/html-actions-controller";
+  import type {
+    ApplyNativeBlockOptionRequest,
+    ApplyNativeIconRequest,
+  } from "$lib/state/html-actions-controller";
   import type { MotionWorkspaceState } from "$lib/state/motion-workspace.svelte";
   import {
     advanceStableHtmlInspectorProjection,
+    projectHtmlInspectorClassSummary,
     type StableHtmlInspectorProjection,
   } from "$lib/inspector/html-projection-stability";
   import {
@@ -220,9 +225,11 @@
     installedFontAxes = [],
     attributeValues,
     attributeStatus = "",
+    attributePending = false,
     textContentValue = "",
     textStatus = "",
     classEditorValue = "",
+    classPending = false,
     classStatus = "",
     imageSourceValue = "",
     imageStatus = "",
@@ -260,6 +267,8 @@
     onCssCodeTargetChange,
     getOpenCssRuleContext,
     applyNativeBlockOption,
+    applyNativeIcon,
+    applyNativeBlockSlotMutation,
     updateDynamicWidget,
     deleteDynamicWidget,
     persistBlockPropertiesLayout,
@@ -295,9 +304,11 @@
     installedFontAxes?: InstalledFontVariationAxis[];
     attributeValues: EditableAttributes;
     attributeStatus?: string;
+    attributePending?: boolean;
     textContentValue?: string;
     textStatus?: string;
     classEditorValue?: string;
+    classPending?: boolean;
     classStatus?: string;
     imageSourceValue?: string;
     imageStatus?: string;
@@ -347,6 +358,10 @@
     }) => boolean | Promise<boolean>;
     getOpenCssRuleContext?: (file: string, selector: string, viewport: CssViewport) => CssRuleContext | null;
     applyNativeBlockOption: (request: ApplyNativeBlockOptionRequest) => Promise<EditorActionOutcome>;
+    applyNativeIcon: (request: ApplyNativeIconRequest) => Promise<EditorActionOutcome>;
+    applyNativeBlockSlotMutation: (
+      request: import("$lib/types").NativeBlockSlotMutationRequest,
+    ) => Promise<EditorActionOutcome>;
     updateDynamicWidget: (
       snapshot: DynamicWidgetSnapshot,
       properties: DynamicWidgetProperties,
@@ -385,7 +400,7 @@
     htmlProjectionPending = transition.pending;
   });
 
-  const presentedInspectorSelectionSummary = $derived(
+  const baseInspectorSelectionSummary = $derived(
     htmlProjectionPending && stableHtmlProjection
       ? stableHtmlProjection.summary
       : inspectorSelectionSummary,
@@ -414,6 +429,12 @@
     htmlProjectionPending && stableHtmlProjection
       ? stableHtmlProjection.classEditorValue
       : classEditorValue,
+  );
+  const presentedInspectorSelectionSummary = $derived(
+    projectHtmlInspectorClassSummary(
+      baseInspectorSelectionSummary,
+      presentedClassEditorValue,
+    ),
   );
   const presentedImageSourceValue = $derived(
     htmlProjectionPending && stableHtmlProjection
@@ -464,14 +485,20 @@
   // AppState resolves the canonical ProjectWorkspace target and remains the
   // authority. During a resolving frame the last complete projection stays
   // visually identical; the panel itself is inert until the atomic swap.
-  const canEditHtmlEffective = $derived(presentedCanEditHtml);
+  const canEditHtmlEffective = $derived(
+    presentedCanEditHtml
+      && (
+        (presentedSelectionSnapshot?.aggregateCapabilities.memberCount ?? 0) === 1
+        || presentedSelectionSnapshot?.aggregateCapabilities.canBatchAttributes === true
+      ),
+  );
   const hasTeraSelection = $derived(
-    selectionSnapshot?.resolution === "resolved"
-      && selectionSnapshot.subject?.kind === "teraBoundary",
+    selectionResolution(selectionSnapshot) === "resolved"
+      && primarySelectionEntry(selectionSnapshot)?.subject.kind === "teraBoundary",
   );
   const hasMarkdownSelection = $derived(
-    selectionSnapshot?.resolution === "resolved"
-      && selectionSnapshot.subject?.kind === "markdownBoundary",
+    selectionResolution(selectionSnapshot) === "resolved"
+      && primarySelectionEntry(selectionSnapshot)?.subject.kind === "markdownBoundary",
   );
   const directAuthoringDocumentPath = $derived(
     hasTeraSelection
@@ -627,33 +654,42 @@
   }
 
   function selectedTemplatePath() {
-    return selectionSnapshot?.provenance?.definition?.file
-      ?? selectionSnapshot?.provenance?.composition?.file
+    const provenance = primarySelectionEntry(selectionSnapshot)?.provenance;
+    return provenance?.definition?.file
+      ?? provenance?.composition?.file
       ?? activeRenderedTemplatePath
       ?? null;
   }
 
   function captureCssSelectionIdentity(): SelectionMutationIdentity | null {
     const snapshot = selectionSnapshot;
-    const anchor = snapshot?.anchor;
+    const anchor = primarySelectionEntry(snapshot)?.anchor;
     if (
       !snapshot
-      || snapshot.resolution !== "resolved"
+      || selectionResolution(snapshot) !== "resolved"
       || snapshot.projectRoot !== projectRoot
       || snapshot.runtimeSessionId !== runtimeSessionId
       || !anchor
       || !Number.isSafeInteger(snapshot.selectionRevision)
       || snapshot.selectionRevision <= 0
     ) return null;
+    const members = snapshot.members.map((member) => ({
+      memberId: member.memberId,
+      editorNodeId: member.anchor.editorNodeId?.trim() || null,
+      sourceNodeId: member.anchor.sourceNodeId?.trim() || null,
+      renderInstanceId: member.anchor.renderInstanceId?.trim() || null,
+    }));
+    if (
+      !snapshot.primaryMemberId
+      || members.length === 0
+      || !members.some((member) => member.memberId === snapshot.primaryMemberId)
+    ) return null;
     const identity: SelectionMutationIdentity = Object.freeze({
       selectionRevision: snapshot.selectionRevision,
-      editorNodeId: anchor.editorNodeId?.trim() || null,
-      sourceNodeId: anchor.sourceNodeId?.trim() || null,
-      renderInstanceId: anchor.renderInstanceId?.trim() || null,
+      workspaceRevision: snapshot.canvasIdentity.workspaceRevision,
+      primaryMemberId: snapshot.primaryMemberId,
+      members,
     });
-    if (!identity.editorNodeId && !identity.sourceNodeId && !identity.renderInstanceId) {
-      return null;
-    }
     return identity;
   }
 
@@ -1240,6 +1276,7 @@
   <div class="inspector-context">
     <SelectionSummaryCard
       summary={presentedInspectorSelectionSummary}
+      selection={presentedSelectionSnapshot}
       authoringDocumentPath={directAuthoringDocumentPath}
       selectClass={selectClassForCss}
     />
@@ -1352,8 +1389,8 @@
 
         {:else if inspectorTab === "js"}
         <JsPane
-          selectionSummary={inspectorSelectionSummary}
-          dataAnim={attributeValues["data-anim"] ?? null}
+          selectionSummary={presentedInspectorSelectionSummary}
+          dataAnim={presentedAttributeValues["data-anim"] ?? null}
           workspace={motionWorkspace}
           onSwitchToHtml={() => { void changeInspectorTab("html"); }}
         />
@@ -1365,9 +1402,11 @@
           physicalFacts={presentedHtmlPhysicalFacts}
           canEditHtml={canEditHtmlEffective}
           attributeValues={presentedAttributeValues}
+          {attributePending}
           textContentValue={presentedTextContentValue}
           imageSourceValue={presentedImageSourceValue}
           classEditorValue={presentedClassEditorValue}
+          {classPending}
           pendingTag={presentedPendingTag}
           {scannedAssets}
           isActivePreviewHtmlSource={presentedIsActivePreviewHtmlSource}
@@ -1395,8 +1434,12 @@
       </div>
     </div>
     <BlockPropertiesPane
-      selectionContext={inspectorBlockSelectionContext}
-      dynamicSelectionContext={inspectorDynamicWidgetSelectionContext}
+      selectionContext={presentedSelectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed
+        ? inspectorBlockSelectionContext
+        : null}
+      dynamicSelectionContext={presentedSelectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed
+        ? inspectorDynamicWidgetSelectionContext
+        : null}
       {sourceGraph}
       selectedTag={inspectorSelectionSummary?.tag ?? null}
       {projectRoot}
@@ -1407,6 +1450,14 @@
       collapsed={blockPropertiesCollapsed}
       onLayoutCommit={persistBlockPropertiesLayout}
       onApply={applyNativeBlockOption}
+      onIconUpdate={(intent, context, source) => applyNativeIcon({
+        intent,
+        rootTag: context.rootTag,
+        rootSourceId: source.rootSourceNodeId,
+        rootLocation: source.rootLocation,
+        rootSessionId: context.rootSessionId,
+      })}
+      onSlotMutation={applyNativeBlockSlotMutation}
       onDynamicUpdate={updateDynamicWidget}
       onDynamicDelete={deleteDynamicWidget}
     />

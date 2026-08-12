@@ -83,10 +83,10 @@ pub(crate) fn read_bounded_regular_file_snapshot(
             ));
         }
         validate_journal_postflight(path, file_label, &parent_lock, &file, initial_file_state)?;
-        return Ok(Some(BoundedRegularFileSnapshot {
+        Ok(Some(BoundedRegularFileSnapshot {
             bytes,
             version_token: initial_file_state.version_token(),
-        }));
+        }))
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -117,7 +117,7 @@ pub(crate) fn read_bounded_journal_lines(
         };
         let file = consume_bounded_journal_file(file, path, journal_label, limits, &mut consume)?;
         validate_journal_postflight(path, journal_label, &parent_lock, &file, initial_file_state)?;
-        return Ok(BoundedJournalReadOutcome::Present);
+        Ok(BoundedJournalReadOutcome::Present)
     }
 
     #[cfg(not(target_os = "linux"))]

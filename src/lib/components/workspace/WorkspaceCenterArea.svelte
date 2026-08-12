@@ -559,7 +559,7 @@
     {:else if retainedAuxiliarySurface === "versioning" && VersionControlWorkspace}
       <VersionControlWorkspace {app} />
     {:else if retainedAuxiliarySurface === "publish" && PublishWorkspace}
-      <PublishWorkspace {app} />
+      <PublishWorkspace {app} {openWorkspaceSource} />
     {:else if retainedAuxiliarySurface === "audit" && AuditWorkspace}
       <AuditWorkspace
         {app}

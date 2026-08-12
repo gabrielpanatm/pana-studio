@@ -1,9 +1,13 @@
-import { CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION } from "$lib/types";
+import {
+  CSS_INSPECTOR_CONTEXT_SCHEMA_VERSION,
+  PUBLISH_BUILD_RECEIPT_SCHEMA_VERSION,
+  PUBLISH_PREFLIGHT_SCHEMA_VERSION,
+} from "$lib/types";
+import { selectionResolution } from "$lib/kernel/selection-read-model";
 import type {
   CssInspectorContextResolution,
   CssMutationCommandReceipt,
   EditableStyles,
-  FontInventory,
   FontManagerSnapshot,
   FontDeliveryMutationReceipt,
   FontFamilyRemovalPlan,
@@ -82,6 +86,9 @@ import type {
   NativeBlockContractInput,
   NativeBlockContractPlan,
   NativeBlockRegistrySnapshot,
+  IconCatalogPage,
+  IconCatalogSearchInput,
+  IconCatalogSummary,
   PreviewHtmlDeleteExecutionInput,
   PreviewHtmlDeleteExecutionReceipt,
   PreviewHtmlAttributesExecutionInput,
@@ -106,6 +113,8 @@ import type {
   PageJsRequestIdentity,
   PreviewProjectionIntentInput,
   PreviewProjectionIntentReceipt,
+  PreviewSelectionBatchExecutionInput,
+  PreviewSelectionBatchExecutionReceipt,
   PreviewTeraDeleteExecutionInput,
   PreviewTeraDeleteExecutionReceipt,
   PreviewTeraInsertDropExecutionInput,
@@ -113,7 +122,13 @@ import type {
   PreviewStructuralCommandIdentity,
   ProjectAppConfig,
   ProjectDiskManifest,
-  ProjectAuditSnapshot,
+  AuditRequest,
+  AuditRunReceipt,
+  AuditFixApplyInput,
+  AuditFixApplyReceipt,
+  PublishBuildReceipt,
+  PublishPreflightReceipt,
+  PublishPreflightRequest,
   ProjectModelSnapshot,
   TemplateWorkbenchPlan,
   ProjectOpenRecoveryDecisionInput,
@@ -146,6 +161,15 @@ import type {
   DesignClassInventorySnapshot,
   DesignClassRenameReceipt,
   PublishOperationCancelReceipt,
+  DeployConfigurationSnapshot,
+  DeployConnectionTestReceipt,
+  DeployCredentialStatus,
+  DeployCredentialWriteInput,
+  DeployExecutionInput,
+  DeployPlan,
+  DeployPlanInput,
+  DeployReceipt,
+  DeploySettings,
   KernelLogLevel,
   KernelObservabilityLogSnapshot,
   KernelObservabilityLogSourceFilter,
@@ -220,7 +244,9 @@ import {
   DESIGN_CLASS_RENAME_SCHEMA_VERSION,
   CANVAS_INTERACTION_SCHEMA_VERSION,
   SELECTION_COORDINATOR_SCHEMA_VERSION,
-  PROJECT_AUDIT_SCHEMA_VERSION,
+  AUDIT_RUN_SCHEMA_VERSION,
+  AUDIT_RULESET_VERSION,
+  AUDIT_FIX_APPLY_SCHEMA_VERSION,
   PROJECT_WORKSPACE_SCHEMA_VERSION,
   TAXONOMY_CATALOG_SCHEMA_VERSION,
   TAXONOMY_MUTATION_SCHEMA_VERSION,
@@ -652,6 +678,13 @@ export function executePreviewHtmlDeleteIntent(
   return invoke<PreviewHtmlDeleteExecutionReceipt>("execute_preview_html_delete_intent", { input, identity });
 }
 
+export function executePreviewSelectionBatchIntent(
+  input: PreviewSelectionBatchExecutionInput,
+  identity: PreviewStructuralCommandIdentity,
+): Promise<PreviewSelectionBatchExecutionReceipt> {
+  return invoke<PreviewSelectionBatchExecutionReceipt>("execute_preview_selection_batch_intent", { input, identity });
+}
+
 export function executePreviewTeraDeleteIntent(
   input: PreviewTeraDeleteExecutionInput,
   identity: PreviewStructuralCommandIdentity,
@@ -680,6 +713,14 @@ export function applyNativeBlockContract(
 
 export function readNativeBlockRegistry(): Promise<NativeBlockRegistrySnapshot> {
   return invoke<NativeBlockRegistrySnapshot>("read_native_block_registry");
+}
+
+export function readIconCatalog(): Promise<IconCatalogSummary> {
+  return invoke<IconCatalogSummary>("read_icon_catalog");
+}
+
+export function searchIconCatalog(input: IconCatalogSearchInput): Promise<IconCatalogPage> {
+  return invoke<IconCatalogPage>("search_icon_catalog", { input });
 }
 
 export function planPageAssetContract(
@@ -1242,10 +1283,7 @@ export async function applyContentModelMutation(
   return receipt;
 }
 
-export function readProjectModel(draftSources?: Record<string, string>): Promise<ProjectModelSnapshot> {
-  if (draftSources && Object.keys(draftSources).length > 0) {
-    return invoke<ProjectModelSnapshot>("read_project_model_with_drafts", { draftSources });
-  }
+export function readProjectModel(): Promise<ProjectModelSnapshot> {
   return invoke<ProjectModelSnapshot>("read_project_model");
 }
 
@@ -1598,6 +1636,15 @@ function requireSelectionCoordinatorSnapshot(
     throw new Error("SelectionCoordinator a întors altă sesiune sau o revizie invalidă.");
   }
   const selection = receipt.selection;
+  if (!Array.isArray(selection.members)) {
+    throw new Error("SelectionCoordinator a întors un set de membri invalid.");
+  }
+  const memberIds = selection.members.map((member) => member.memberId);
+  const memberIdSet = new Set(memberIds);
+  const primary = selection.primaryMemberId
+    ? selection.members.find((member) => member.memberId === selection.primaryMemberId) ?? null
+    : null;
+  const resolution = selectionResolution(selection);
   requireInspectorSelectionSummary(
     receipt.inspectorSummary,
     identity,
@@ -1609,19 +1656,35 @@ function requireSelectionCoordinatorSnapshot(
     notRendered: new Set(["notRendered"]),
     ambiguous: new Set(["ambiguous"]),
   } satisfies Record<
-    SelectionCoordinatorSnapshot["selection"]["resolution"],
+    ReturnType<typeof selectionResolution>,
     Set<string>
   >;
   if (
-    (selection.resolution === "resolved" && (!selection.subject || !selection.anchor))
-    || (selection.resolution === "cleared" && (selection.subject || selection.anchor))
-    || !expectedInspectorStates[selection.resolution].has(receipt.inspectorSummary.state)
+    selection.members.length > 256
+    || memberIdSet.size !== memberIds.length
+    || memberIds.some((memberId) => typeof memberId !== "string" || !memberId)
+    || selection.aggregateCapabilities.memberCount !== selection.members.length
+    || (selection.members.length > 0 && !primary)
+    || (selection.members.length === 0 && selection.primaryMemberId !== null)
     || (
-      selection.projections.preview.primaryRenderInstanceId
-      && !selection.projections.preview.renderInstanceIds.includes(
-        selection.projections.preview.primaryRenderInstanceId,
-      )
+      selection.rangeOriginMemberId !== null
+      && !memberIdSet.has(selection.rangeOriginMemberId)
     )
+    || selection.members.some((member) => (
+      !member.anchor
+      || !member.subject
+      || !member.capabilities
+      || !Array.isArray(member.diagnostics)
+    ))
+    || (
+      resolution === "resolved"
+      && selection.members.some((member) => member.resolution !== "resolved")
+    )
+    || (
+      resolution === "cleared"
+      && selection.members.length > 0
+    )
+    || !expectedInspectorStates[resolution].has(receipt.inspectorSummary.state)
   ) {
     throw new Error("SelectionCoordinator a întors o proiecție semantică inconsistentă.");
   }
@@ -1894,8 +1957,6 @@ export async function commitEditorMove(
     || timings.workspaceStageMs < 0
     || !Number.isSafeInteger(timings.afterProjectModelBuildMs)
     || timings.afterProjectModelBuildMs < 0
-    || !Number.isSafeInteger(timings.aliasCalculationMs)
-    || timings.aliasCalculationMs < 0
     || (
       timings.patchIssuedToReceiptMs !== null
       && (
@@ -1909,16 +1970,58 @@ export async function commitEditorMove(
   return receipt;
 }
 
-export async function readProjectAudit(): Promise<ProjectAuditSnapshot> {
-  const snapshot = await invoke<ProjectAuditSnapshot>("read_project_audit");
-  if (snapshot.schemaVersion !== PROJECT_AUDIT_SCHEMA_VERSION) {
+export async function readProjectAudit(request: AuditRequest): Promise<AuditRunReceipt> {
+  const receipt = await invoke<AuditRunReceipt>("read_project_audit", { request });
+  if (receipt.schemaVersion !== AUDIT_RUN_SCHEMA_VERSION) {
     throw schemaMismatch(
       t("io-resource-project-audit"),
-      snapshot.schemaVersion,
-      PROJECT_AUDIT_SCHEMA_VERSION,
+      receipt.schemaVersion,
+      AUDIT_RUN_SCHEMA_VERSION,
     );
   }
-  return snapshot;
+  if (
+    receipt.rulesetVersion !== AUDIT_RULESET_VERSION
+    || !Array.isArray(receipt.findings)
+    || !Array.isArray(receipt.providers)
+    || !receipt.findings.every((finding) => (
+      typeof finding.id === "string"
+      && finding.fingerprint.startsWith("sha256:")
+      && typeof finding.providerId === "string"
+      && typeof finding.ruleCode === "string"
+    ))
+    || !receipt.providers.every((provider) => (
+      typeof provider.id === "string"
+      && ["complete", "partial", "failed", "skipped"].includes(provider.status)
+      && ["required", "advisory"].includes(provider.publishCoverageRequirement)
+      && Number.isSafeInteger(provider.coverage.eligible)
+      && Number.isSafeInteger(provider.coverage.analyzed)
+    ))
+  ) {
+    throw new Error(t("io-audit-receipt-invalid"));
+  }
+  return receipt;
+}
+
+export async function applyAuditFix(
+  input: AuditFixApplyInput,
+): Promise<AuditFixApplyReceipt> {
+  const receipt = await invoke<AuditFixApplyReceipt>("apply_audit_fix", { input });
+  if (
+    receipt.schemaVersion !== AUDIT_FIX_APPLY_SCHEMA_VERSION
+    || receipt.findingFingerprint !== input.findingFingerprint
+    || receipt.fixId !== input.fixId
+    || receipt.audit.schemaVersion !== AUDIT_RUN_SCHEMA_VERSION
+    || receipt.audit.rulesetVersion !== AUDIT_RULESET_VERSION
+    || receipt.audit.projectRoot !== input.expectedProjectRoot
+    || receipt.audit.runtimeSessionId !== input.expectedSessionId
+    || receipt.audit.workspaceRevision !== receipt.mutation.revisionAfter
+    || receipt.workspace.projectRoot !== input.expectedProjectRoot
+    || receipt.workspace.runtimeSessionId !== input.expectedSessionId
+    || receipt.workspace.revision !== receipt.mutation.revisionAfter
+  ) {
+    throw new Error(t("io-audit-fix-receipt-invalid"));
+  }
+  return receipt;
 }
 
 export async function readDesignClassInventory(): Promise<DesignClassInventorySnapshot> {
@@ -2255,7 +2358,7 @@ export async function readUiBlockGraph(
     identity,
   });
   if (
-    snapshot.schemaVersion !== 2
+    snapshot.schemaVersion !== 3
     || snapshot.projectRoot !== identity.expectedProjectRoot
     || snapshot.runtimeSessionId !== identity.expectedSessionId
   ) {
@@ -2890,10 +2993,6 @@ export function applyThemeStyleDraft(
   );
 }
 
-export function getFontInventory(): Promise<FontInventory> {
-  return invoke<FontInventory>("get_font_inventory");
-}
-
 export function getFontManager(
   identity: ProjectWorkspaceIdentity,
 ): Promise<FontManagerSnapshot> {
@@ -2909,23 +3008,23 @@ export function getFontPreviewAsset(
 
 export function assignFontRole(
   roleId: FontRoleId,
-  family: string,
+  familyId: string,
   identity: ProjectWorkspaceIdentity,
 ): Promise<FontRoleAssignmentReceipt> {
   return invoke<FontRoleAssignmentReceipt>("assign_font_role", {
     roleId,
-    family,
+    familyId,
     identity,
   });
 }
 
 export function setFontDisplay(
-  family: string,
+  familyId: string,
   display: "auto" | "block" | "swap" | "fallback" | "optional",
   identity: ProjectWorkspaceIdentity,
 ): Promise<FontDeliveryMutationReceipt> {
   return invoke<FontDeliveryMutationReceipt>("set_font_display", {
-    family,
+    familyId,
     display,
     identity,
   });
@@ -2944,26 +3043,22 @@ export function setFontPreload(
 }
 
 export function planFontFamilyRemoval(
-  family: string,
-  directory: string,
+  familyId: string,
   identity: ProjectWorkspaceIdentity,
 ): Promise<FontFamilyRemovalPlan> {
   return invoke<FontFamilyRemovalPlan>("plan_font_family_removal", {
-    family,
-    directory,
+    familyId,
     identity,
   });
 }
 
 export function removeFontFamily(
-  family: string,
-  directory: string,
+  familyId: string,
   expectedPlanToken: string,
   identity: ProjectWorkspaceIdentity,
 ): Promise<FontFamilyRemovalReceipt> {
   return invoke<FontFamilyRemovalReceipt>("remove_font_family", {
-    family,
-    directory,
+    familyId,
     expectedPlanToken,
     identity,
   });
@@ -3331,8 +3426,100 @@ export function zolaCheckWorkspace(): Promise<string> {
   return invoke<string>("zola_check_workspace");
 }
 
-export function deployToBunny(): Promise<string> {
-  return invoke<string>("deploy_to_bunny");
+export function readDeployConfiguration(): Promise<DeployConfigurationSnapshot> {
+  return invoke<DeployConfigurationSnapshot>("read_deploy_configuration");
+}
+
+export function saveDeploySettings(
+  settings: DeploySettings,
+): Promise<DeployConfigurationSnapshot> {
+  return invoke<DeployConfigurationSnapshot>("save_deploy_settings", { settings });
+}
+
+export function saveDeployCredential(
+  targetId: string,
+  credential: DeployCredentialWriteInput,
+): Promise<DeployCredentialStatus> {
+  return invoke<DeployCredentialStatus>("save_deploy_credential", { targetId, credential });
+}
+
+export function deleteDeployCredential(credentialRef: string): Promise<boolean> {
+  return invoke<boolean>("delete_deploy_credential", { credentialRef });
+}
+
+export function testDeployConnection(targetId: string): Promise<DeployConnectionTestReceipt> {
+  return invoke<DeployConnectionTestReceipt>("test_deploy_connection", { targetId });
+}
+
+export async function runPublishPreflight(
+  request: PublishPreflightRequest = { policyOverrides: [], suppressions: [] },
+): Promise<PublishPreflightReceipt> {
+  const receipt = await invoke<PublishPreflightReceipt>("run_publish_preflight", { request });
+  validatePublishPreflightReceipt(receipt);
+  return receipt;
+}
+
+export async function currentPublishPreflightReceipt(): Promise<PublishPreflightReceipt | null> {
+  const receipt = await invoke<PublishPreflightReceipt | null>("current_publish_preflight_receipt");
+  if (receipt) validatePublishPreflightReceipt(receipt);
+  return receipt;
+}
+
+export async function buildForPublish(expectedPreflightToken: string): Promise<PublishBuildReceipt> {
+  const receipt = await invoke<PublishBuildReceipt>("build_for_publish", {
+    expectedPreflightToken,
+  });
+  validatePublishBuildReceipt(receipt);
+  return receipt;
+}
+
+export async function currentPublishBuildReceipt(): Promise<PublishBuildReceipt | null> {
+  const receipt = await invoke<PublishBuildReceipt | null>("current_publish_build_receipt");
+  if (receipt) validatePublishBuildReceipt(receipt);
+  return receipt;
+}
+
+export function planDeploy(input: DeployPlanInput): Promise<DeployPlan> {
+  return invoke<DeployPlan>("plan_deploy", { input });
+}
+
+export function executeDeploy(input: DeployExecutionInput): Promise<DeployReceipt> {
+  return invoke<DeployReceipt>("execute_deploy", { input });
+}
+
+function validatePublishPreflightReceipt(receipt: PublishPreflightReceipt) {
+  if (
+    receipt.schemaVersion !== PUBLISH_PREFLIGHT_SCHEMA_VERSION
+    || receipt.auditReceipt.schemaVersion !== AUDIT_RUN_SCHEMA_VERSION
+    || receipt.auditReceipt.rulesetVersion !== AUDIT_RULESET_VERSION
+    || receipt.auditIdentity.schemaVersion !== AUDIT_RUN_SCHEMA_VERSION
+    || receipt.auditIdentity.rulesetVersion !== AUDIT_RULESET_VERSION
+    || !receipt.preflightToken.startsWith("sha256:")
+    || !receipt.observedDiskFingerprint.startsWith("sha256:")
+    || typeof receipt.workspaceDirty !== "boolean"
+    || typeof receipt.diskCoherent !== "boolean"
+    || !receipt.auditIdentity.receiptId.startsWith("sha256:")
+    || !Array.isArray(receipt.gates)
+    || !receipt.gates.every((gate) => (
+      /^[a-z0-9_]+$/.test(gate.id)
+      && Array.isArray(gate.evidence)
+      && Array.isArray(gate.auditFingerprints)
+      && Array.isArray(gate.remediations)
+    ))
+  ) {
+    throw new Error(t("io-publish-preflight-receipt-invalid"));
+  }
+}
+
+function validatePublishBuildReceipt(receipt: PublishBuildReceipt) {
+  if (
+    receipt.schemaVersion !== PUBLISH_BUILD_RECEIPT_SCHEMA_VERSION
+    || !receipt.preflightToken.startsWith("sha256:")
+    || !receipt.buildToken.startsWith("sha256:")
+    || !receipt.artifactId.startsWith("sha256:")
+  ) {
+    throw new Error(t("io-publish-build-receipt-invalid"));
+  }
 }
 
 export function readAiContextStatus(): Promise<AiContextStatus> {

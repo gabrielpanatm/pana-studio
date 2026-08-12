@@ -949,7 +949,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 fn decode_hex_utf8(value: &str) -> Result<String, String> {
-    if value.len() % 2 != 0 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if !value.len().is_multiple_of(2) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("Trailer-ul hex al integrării este invalid.".to_string());
     }
     let mut bytes = Vec::with_capacity(value.len() / 2);

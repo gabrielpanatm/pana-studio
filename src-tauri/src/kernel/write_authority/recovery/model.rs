@@ -1344,7 +1344,7 @@ fn validate_authority_evidence(evidence: &WalAuthorityEvidence, role: &str) -> R
 fn valid_digest(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
-        && value.len() % 2 == 0
+        && value.len().is_multiple_of(2)
         && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 

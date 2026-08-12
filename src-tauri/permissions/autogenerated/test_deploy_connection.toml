@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-test-deploy-connection"
+description = "Enables the test_deploy_connection command without any pre-configured scope."
+commands.allow = ["test_deploy_connection"]
+
+[[permission]]
+identifier = "deny-test-deploy-connection"
+description = "Denies the test_deploy_connection command without any pre-configured scope."
+commands.deny = ["test_deploy_connection"]

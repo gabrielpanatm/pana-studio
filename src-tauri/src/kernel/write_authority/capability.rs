@@ -1424,7 +1424,7 @@ mod platform {
                 &format!("WAL baseline nu poate fi reverificat: {error}"),
             )
         })?;
-        if observed != size || !same_stable_leaf_version(&captured, &captured_after) {
+        if observed != size || !same_stable_leaf_version(captured, &captured_after) {
             return Err(capability_error(
                 public_label,
                 "WAL baseline s-a modificat în timpul hash-ului",
@@ -1436,7 +1436,7 @@ mod platform {
                 inode: captured.st_ino,
             },
             size,
-            version_token: version_token_for_stat(&captured),
+            version_token: version_token_for_stat(captured),
             content_hash: format!("{:x}", hasher.finalize()),
         })
     }
@@ -4453,6 +4453,8 @@ mod platform {
         }
     }
 
+    // The CAS boundary exposes each captured identity and cleanup target for auditability.
+    #[allow(clippy::too_many_arguments)]
     fn conditional_atomic_replace(
         parent: &OwnedFd,
         leaf: &OsStr,
@@ -5797,8 +5799,11 @@ mod platform {
     }
 
     #[cfg(test)]
+    type CapabilityTestHook = Box<dyn Fn(CapabilityTestStage)>;
+
+    #[cfg(test)]
     thread_local! {
-        static TEST_HOOK: std::cell::RefCell<Option<Box<dyn Fn(CapabilityTestStage)>>> =
+        static TEST_HOOK: std::cell::RefCell<Option<CapabilityTestHook>> =
             std::cell::RefCell::new(None);
         static TEST_FAIL_DIRECTORY_SYNC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         static TEST_FORCE_EXTERNAL_LINKAT_PROC_FALLBACK: std::cell::Cell<bool> =
@@ -6661,7 +6666,7 @@ mod platform {
             let target_path = authority_path.join("document.txt");
             fs::create_dir_all(target_path.parent().unwrap()).unwrap();
             fs::write(&target_path, "original-before").unwrap();
-            fs::create_dir_all(replacement_path.to_path_buf()).unwrap();
+            fs::create_dir_all(&replacement_path).unwrap();
             fs::write(
                 replacement_path.join("document.txt"),
                 "replacement-sentinel",
@@ -6726,8 +6731,8 @@ mod platform {
             let held_path = root.join("project-held");
             let replacement_path = root.join("project-replacement");
             let target_path = authority_path.join("missing.txt");
-            fs::create_dir_all(authority_path.to_path_buf()).unwrap();
-            fs::create_dir_all(replacement_path.to_path_buf()).unwrap();
+            fs::create_dir_all(&authority_path).unwrap();
+            fs::create_dir_all(&replacement_path).unwrap();
             fs::write(replacement_path.join("missing.txt"), "replacement-sentinel").unwrap();
 
             let authority = capture_directory_authority(

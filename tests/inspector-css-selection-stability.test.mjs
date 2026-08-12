@@ -6,18 +6,29 @@ import {
   sameCssSemanticSelection,
 } from "$lib/inspector/css-selection-stability";
 
-const captured = Object.freeze({
-  selectionRevision: 16,
-  editorNodeId: "editor:hero-title",
-  sourceNodeId: "source:hero-title",
-  renderInstanceId: "render:hero-title",
-});
+function identity(selectionRevision, editorNodeId, sourceNodeId, renderInstanceId) {
+  return Object.freeze({
+    selectionRevision,
+    workspaceRevision: 7,
+    primaryMemberId: editorNodeId,
+    members: [{ memberId: editorNodeId, editorNodeId, sourceNodeId, renderInstanceId }],
+  });
+}
+
+const captured = identity(
+  16,
+  "editor:hero-title",
+  "source:hero-title",
+  "render:hero-title",
+);
 
 test("CSS editing keeps one semantic session across focus-only revisions", () => {
-  const focused = Object.freeze({
-    ...captured,
-    selectionRevision: 17,
-  });
+  const focused = identity(
+    17,
+    "editor:hero-title",
+    "source:hero-title",
+    "render:hero-title",
+  );
 
   assert.equal(sameCssSemanticSelection(captured, focused), true);
   assert.equal(
@@ -27,12 +38,12 @@ test("CSS editing keeps one semantic session across focus-only revisions", () =>
 });
 
 test("CSS editing rejects a newer revision that belongs to another element", () => {
-  const otherElement = Object.freeze({
-    selectionRevision: 17,
-    editorNodeId: "editor:subtitle",
-    sourceNodeId: "source:subtitle",
-    renderInstanceId: "render:subtitle",
-  });
+  const otherElement = identity(
+    17,
+    "editor:subtitle",
+    "source:subtitle",
+    "render:subtitle",
+  );
 
   assert.equal(sameCssSemanticSelection(captured, otherElement), false);
   assert.notEqual(
@@ -42,20 +53,20 @@ test("CSS editing rejects a newer revision that belongs to another element", () 
 });
 
 test("CSS semantic identity requires at least one Rust-owned anchor", () => {
-  const emptyAt16 = { selectionRevision: 16 };
-  const emptyAt17 = { selectionRevision: 17 };
+  const emptyAt16 = { selectionRevision: 16, workspaceRevision: 7, primaryMemberId: null, members: [] };
+  const emptyAt17 = { selectionRevision: 17, workspaceRevision: 7, primaryMemberId: null, members: [] };
 
   assert.equal(sameCssSemanticSelection(emptyAt16, emptyAt17), false);
   assert.equal(cssSemanticSelectionKey(emptyAt16), "");
 });
 
 test("CSS Inspector keeps its subject across a preview render replacement", () => {
-  const rebased = {
-    selectionRevision: 18,
-    editorNodeId: "editor:hero-title:next-render",
-    sourceNodeId: captured.sourceNodeId,
-    renderInstanceId: "render:hero-title:next-render",
-  };
+  const rebased = identity(
+    18,
+    "editor:hero-title:next-render",
+    "source:hero-title",
+    "render:hero-title:next-render",
+  );
 
   assert.notEqual(cssSemanticSelectionKey(captured), cssSemanticSelectionKey(rebased));
   assert.equal(cssInspectorSubjectKey(captured), cssInspectorSubjectKey(rebased));

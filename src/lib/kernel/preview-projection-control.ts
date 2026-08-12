@@ -16,6 +16,7 @@ import type {
   PreviewHtmlTagExecutionReceipt,
   PreviewHtmlTextExecutionReceipt,
   PreviewProjectionDiagnostic,
+  PreviewSelectionBatchExecutionReceipt,
   PreviewTeraDeleteExecutionReceipt,
   PreviewTeraInsertDropExecutionReceipt,
   EditorMoveExecutionReceipt,
@@ -113,6 +114,39 @@ export async function projectCommittedPreviewStructuralMutation(
     patch,
     projectLocalState,
     structuralRefreshReason(receipt),
+    "await",
+  );
+}
+
+export async function projectCommittedPreviewSelectionBatchMutation(
+  host: PreviewStructuralCanonicalProjectionHost,
+  context: PreviewStructuralSessionLease,
+  receipt: PreviewSelectionBatchExecutionReceipt,
+  projectLocalState: () => Promise<void> | void = () => {},
+): Promise<WorkspaceMutationSettlement> {
+  if (receipt.status !== "committed" || !receipt.workspaceMutation) {
+    throw new Error(receipt.diagnostics[0] || "Operația batch a fost blocată de kernel.");
+  }
+  return projectCommittedStructuralMutation(
+    host,
+    {
+      projectRoot: context.projectRoot,
+      sessionId: context.sessionId,
+      projectSessionEpoch: context.projectSessionEpoch,
+      expectedWorkspaceRevision: receipt.workspaceMutation.revisionAfter,
+    },
+    {
+      projectRoot: context.projectRoot,
+      runtimeSessionId: context.sessionId,
+    },
+    {
+      touchedFiles: receipt.workspaceMutation.touchedFiles,
+      workspaceMutation: receipt.workspaceMutation,
+      canvasPatch: receipt.canvasPatch,
+    },
+    null,
+    projectLocalState,
+    "html-structural",
     "await",
   );
 }

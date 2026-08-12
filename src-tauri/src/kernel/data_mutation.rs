@@ -656,7 +656,7 @@ fn apply_exact_replacements(
     source: &str,
     mut replacements: Vec<(usize, usize, String)>,
 ) -> Result<String, String> {
-    replacements.sort_by(|left, right| right.0.cmp(&left.0));
+    replacements.sort_by_key(|right| std::cmp::Reverse(right.0));
     let mut previous_start = source.len();
     let mut rewritten = source.to_string();
     for (start, end, replacement) in replacements {

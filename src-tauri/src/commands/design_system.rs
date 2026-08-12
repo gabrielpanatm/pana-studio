@@ -27,7 +27,10 @@ use crate::{
             WorkspaceResourceMutation, WorkspaceTextChange, WorkspaceTextResourceMutationInput,
         },
     },
-    project_model::cache::{capture_project_model_build_context, publish_project_model_if_current},
+    project_model::cache::{
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
+    },
     state::AppState,
 };
 
@@ -172,17 +175,28 @@ pub fn create_design_class(
         return Err("Clasa nouă trebuie adăugată într-un fișier CSS sau SCSS.".to_string());
     }
 
-    let (root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
+    let (root, session, context) = capture_project_model_build_context(&state)?;
+    if identity.expected_project_root != session.project_root
+        || identity.expected_session_id != session.runtime_instance_id()
+    {
+        return Err("Crearea clasei a refuzat un request pentru alt ProjectSession.".to_string());
+    }
+    let model = build_project_model_from_context(&root, &context)?;
+    let inventory = build_design_class_inventory(
+        &model,
+        session.runtime_instance_id(),
+        context.projection().revision,
+    );
+    if inventory.classes.iter().any(|entry| entry.name == name) {
+        return Err(format!("Clasa .{name} există deja în sursele proiectului."));
+    }
+    publish_project_model_if_current(&state, &context, model)?;
+    let (_bound_root, mut slot) = require_bound_workspace(state.inner(), &identity)?;
     let workspace = slot
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru creare clasă.".to_string())?;
-    let projection = workspace.capture_projection_snapshot()?;
-    let model =
-        crate::project_model::build_project_model_from_workspace_projection(&root, &projection)?;
-    let inventory =
-        build_design_class_inventory(&model, workspace.runtime_session_id(), workspace.revision);
-    if inventory.classes.iter().any(|entry| entry.name == name) {
-        return Err(format!("Clasa .{name} există deja în sursele proiectului."));
+    if workspace.revision != context.projection().revision {
+        return Err("Crearea clasei a devenit stale înainte de commit.".to_string());
     }
     let source = workspace
         .documents
@@ -216,10 +230,7 @@ pub async fn read_design_class_inventory(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let (root, session, context) = capture_project_model_build_context(&state)?;
-        let model = crate::project_model::build_project_model_from_workspace_projection(
-            &root,
-            context.projection(),
-        )?;
+        let model = build_project_model_from_context(&root, &context)?;
         let snapshot = build_design_class_inventory(
             &model,
             session.runtime_instance_id(),
@@ -246,10 +257,7 @@ pub fn rename_design_class(
     {
         return Err("Rename clasă a refuzat un request pentru alt ProjectSession.".to_string());
     }
-    let model = crate::project_model::build_project_model_from_workspace_projection(
-        &root,
-        context.projection(),
-    )?;
+    let model = build_project_model_from_context(&root, &context)?;
     let plan = plan_design_class_rename(&model, &old_name, &new_name)?;
     let changed_files = plan
         .changes

@@ -22,14 +22,14 @@ use super::{
         new_history_entry, transition_is_no_op, WorkspaceBinaryResourceTransition,
         WorkspaceCanvasHistoryDelta, WorkspaceDocumentTransition, WorkspaceHistory,
         WorkspaceHistoryEntry, WorkspacePageJsTransition, WorkspaceResourceTransition,
+        WorkspaceSourceTreeHistory,
     },
     model::{
         ProjectWorkspaceIdentity, ProjectWorkspaceMutationReceipt, ProjectWorkspaceSnapshot,
-        SourceIdentityAliasTransition, WorkspaceBinaryResource, WorkspaceBinaryRestoreChange,
-        WorkspaceDocumentMutation, WorkspaceDocumentProjection, WorkspaceHistoryDirection,
-        WorkspaceMutationMetadata, WorkspaceProjectionSnapshot, WorkspaceResourceDelete,
-        WorkspaceResourceMutation, WorkspaceUndoRedoReceipt,
-        PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
+        WorkspaceBinaryResource, WorkspaceBinaryRestoreChange, WorkspaceDocumentMutation,
+        WorkspaceDocumentProjection, WorkspaceHistoryDirection, WorkspaceMutationMetadata,
+        WorkspaceProjectionSnapshot, WorkspaceResourceDelete, WorkspaceResourceMutation,
+        WorkspaceUndoRedoReceipt, PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES,
         PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES, PROJECT_WORKSPACE_SCHEMA_VERSION,
     },
 };
@@ -53,8 +53,6 @@ pub struct ProjectWorkspace {
     pub revision: u64,
     pub project_model: Option<ProjectModel>,
     pub project_model_source_revision: Option<u64>,
-    pub source_identity_aliases: HashMap<String, String>,
-    pub(crate) source_identity_alias_transition: Option<SourceIdentityAliasTransition>,
     pub(super) last_projection_transaction_id: Option<String>,
     pub(super) history: WorkspaceHistory,
 }
@@ -93,8 +91,6 @@ impl ProjectWorkspace {
             revision: 0,
             project_model: None,
             project_model_source_revision: None,
-            source_identity_aliases: HashMap::new(),
-            source_identity_alias_transition: None,
             last_projection_transaction_id: None,
             history: WorkspaceHistory::default(),
         })
@@ -239,8 +235,6 @@ impl ProjectWorkspace {
         }
         self.project_model = None;
         self.project_model_source_revision = None;
-        self.source_identity_aliases.clear();
-        self.source_identity_alias_transition = None;
         self.last_projection_transaction_id = Some(authority_revision_transaction_id(
             "reconcile",
             self.revision,
@@ -319,31 +313,6 @@ impl ProjectWorkspace {
         }
         self.project_model = Some(model);
         self.project_model_source_revision = Some(revision);
-        Ok(())
-    }
-
-    pub(crate) fn publish_source_identity_alias_transition(
-        &mut self,
-        revision_before: u64,
-        revision_after: u64,
-        aliases: HashMap<String, String>,
-    ) -> Result<(), String> {
-        if revision_after <= revision_before || revision_after != self.revision {
-            return Err(
-                "ProjectWorkspace a refuzat aliasurile Source Identity pentru altă tranziție."
-                    .to_string(),
-            );
-        }
-        let aliases = aliases
-            .into_iter()
-            .filter(|(from, to)| !from.trim().is_empty() && !to.trim().is_empty() && from != to)
-            .collect::<HashMap<_, _>>();
-        self.source_identity_aliases.extend(aliases.clone());
-        self.source_identity_alias_transition = Some(SourceIdentityAliasTransition {
-            revision_before,
-            revision_after,
-            aliases,
-        });
         Ok(())
     }
 
@@ -804,12 +773,11 @@ impl ProjectWorkspace {
                             now_ms,
                         )?
                     } else {
-                        let file = next_documents.stage_new_text_file(
+                        next_documents.stage_new_text_file(
                             &mutation.relative_path,
                             mutation.contents,
                             now_ms,
-                        )?;
-                        file
+                        )?
                     }
                 }
             };
@@ -1144,15 +1112,18 @@ impl ProjectWorkspace {
         let entry = next_history.pop_undo()?;
         let application_transaction_id =
             history_application_transaction_id(WorkspaceHistoryDirection::Undo, self.revision);
+        let mut application = WorkspaceHistoryApplication {
+            documents: &mut next_documents,
+            accepted_documents: &self.accepted_documents,
+            binary_resources: &mut next_binary_resources,
+            deleted_binary_resources: &mut next_deleted_binary_resources,
+            accepted_binary_resource_hashes: &self.accepted_binary_resource_hashes,
+            accepted_disk: &self.accepted_disk,
+            page_js: &mut next_page_js,
+            accepted_page_js: &self.accepted_page_js,
+        };
         apply_history_entry(
-            &mut next_documents,
-            &self.accepted_documents,
-            &mut next_binary_resources,
-            &mut next_deleted_binary_resources,
-            &self.accepted_binary_resource_hashes,
-            &self.accepted_disk,
-            &mut next_page_js,
-            &self.accepted_page_js,
+            &mut application,
             &entry,
             WorkspaceHistoryDirection::Undo,
             now_ms,
@@ -1219,15 +1190,18 @@ impl ProjectWorkspace {
         let entry = next_history.pop_redo()?;
         let application_transaction_id =
             history_application_transaction_id(WorkspaceHistoryDirection::Redo, self.revision);
+        let mut application = WorkspaceHistoryApplication {
+            documents: &mut next_documents,
+            accepted_documents: &self.accepted_documents,
+            binary_resources: &mut next_binary_resources,
+            deleted_binary_resources: &mut next_deleted_binary_resources,
+            accepted_binary_resource_hashes: &self.accepted_binary_resource_hashes,
+            accepted_disk: &self.accepted_disk,
+            page_js: &mut next_page_js,
+            accepted_page_js: &self.accepted_page_js,
+        };
         apply_history_entry(
-            &mut next_documents,
-            &self.accepted_documents,
-            &mut next_binary_resources,
-            &mut next_deleted_binary_resources,
-            &self.accepted_binary_resource_hashes,
-            &self.accepted_disk,
-            &mut next_page_js,
-            &self.accepted_page_js,
+            &mut application,
             &entry,
             WorkspaceHistoryDirection::Redo,
             now_ms,
@@ -1332,8 +1306,13 @@ impl ProjectWorkspace {
     }
 
     fn invalidate_derived_state(&mut self) {
-        self.project_model = None;
-        self.project_model_source_revision = None;
+        // Retain the immutable prior model and its source revision as the
+        // reconciliation base. Freshness is decided exclusively by comparing
+        // `project_model_source_revision` with `revision`; dropping the model
+        // here would force the next reader to bootstrap unrelated IDs.
+        debug_assert!(self
+            .project_model_source_revision
+            .is_none_or(|source_revision| source_revision <= self.revision));
     }
 
     fn require_editable_source_path(&self, relative_path: &str) -> Result<(), String> {
@@ -1466,6 +1445,7 @@ impl ProjectWorkspace {
             documents,
             history: self.history.snapshot(),
             application_transaction_id,
+            source_tree: entry.source_tree,
             canvas_delta: entry.canvas_delta,
         }
     }
@@ -1478,17 +1458,30 @@ impl ProjectWorkspace {
         self.history
             .attach_latest_canvas_delta(mutation_transaction_id, delta)
     }
+
+    pub(crate) fn attach_latest_source_tree_identity(
+        &mut self,
+        mutation_transaction_id: &str,
+        source_tree: WorkspaceSourceTreeHistory,
+    ) -> Result<(), String> {
+        self.history
+            .attach_latest_source_tree(mutation_transaction_id, source_tree)
+    }
+}
+
+struct WorkspaceHistoryApplication<'a> {
+    documents: &'a mut FileBufferStore,
+    accepted_documents: &'a BTreeMap<String, FileBufferEntry>,
+    binary_resources: &'a mut BTreeMap<String, WorkspaceBinaryResource>,
+    deleted_binary_resources: &'a mut std::collections::BTreeSet<String>,
+    accepted_binary_resource_hashes: &'a BTreeMap<String, String>,
+    accepted_disk: &'a AcceptedProjectDiskManifest,
+    page_js: &'a mut PageJsDraftStore,
+    accepted_page_js: &'a BTreeMap<String, PageJsConfig>,
 }
 
 fn apply_history_entry(
-    documents: &mut FileBufferStore,
-    accepted_documents: &BTreeMap<String, FileBufferEntry>,
-    binary_resources: &mut BTreeMap<String, WorkspaceBinaryResource>,
-    deleted_binary_resources: &mut std::collections::BTreeSet<String>,
-    accepted_binary_resource_hashes: &BTreeMap<String, String>,
-    accepted_disk: &AcceptedProjectDiskManifest,
-    page_js: &mut PageJsDraftStore,
-    accepted_page_js: &BTreeMap<String, PageJsConfig>,
+    application: &mut WorkspaceHistoryApplication<'_>,
     entry: &WorkspaceHistoryEntry,
     direction: WorkspaceHistoryDirection,
     now_ms: u128,
@@ -1498,7 +1491,8 @@ fn apply_history_entry(
             WorkspaceHistoryDirection::Undo => &transition.before,
             WorkspaceHistoryDirection::Redo => &transition.after,
         };
-        let current = documents
+        let current = application
+            .documents
             .text_snapshot(&transition.relative_path)
             .ok_or_else(|| {
                 format!(
@@ -1506,7 +1500,7 @@ fn apply_history_entry(
                     transition.relative_path
                 )
             })?;
-        documents.set_draft_if_current(
+        application.documents.set_draft_if_current(
             &transition.relative_path,
             contents.clone(),
             &FileBufferMutationExpectation {
@@ -1521,7 +1515,8 @@ fn apply_history_entry(
             WorkspaceHistoryDirection::Undo => &transition.before,
             WorkspaceHistoryDirection::Redo => &transition.after,
         };
-        let next_revision = documents
+        let next_revision = application
+            .documents
             .files
             .get(&transition.relative_path)
             .map(|entry| entry.revision)
@@ -1530,15 +1525,20 @@ fn apply_history_entry(
         match target {
             Some(target) => {
                 restore_resource_entry(
-                    documents,
-                    accepted_documents.get(&transition.relative_path),
+                    application.documents,
+                    application
+                        .accepted_documents
+                        .get(&transition.relative_path),
                     target,
                     next_revision,
                     now_ms,
                 )?;
             }
             None => {
-                documents.files.remove(&transition.relative_path);
+                application
+                    .documents
+                    .files
+                    .remove(&transition.relative_path);
             }
         }
     }
@@ -1555,27 +1555,44 @@ fn apply_history_entry(
                         transition.relative_path
                     ));
                 }
-                if accepted_binary_resource_hashes.get(&transition.relative_path)
+                if application
+                    .accepted_binary_resource_hashes
+                    .get(&transition.relative_path)
                     == Some(&hash_bytes(&resource.bytes))
                 {
-                    binary_resources.remove(&transition.relative_path);
+                    application
+                        .binary_resources
+                        .remove(&transition.relative_path);
                 } else {
-                    binary_resources.insert(transition.relative_path.clone(), resource.clone());
+                    application
+                        .binary_resources
+                        .insert(transition.relative_path.clone(), resource.clone());
                 }
-                deleted_binary_resources.remove(&transition.relative_path);
+                application
+                    .deleted_binary_resources
+                    .remove(&transition.relative_path);
             }
             None => {
-                binary_resources.remove(&transition.relative_path);
-                if accepted_binary_resource_hashes.contains_key(&transition.relative_path)
-                    || accepted_disk
+                application
+                    .binary_resources
+                    .remove(&transition.relative_path);
+                if application
+                    .accepted_binary_resource_hashes
+                    .contains_key(&transition.relative_path)
+                    || application
+                        .accepted_disk
                         .manifest
                         .files
                         .iter()
                         .any(|entry| entry.relative_path == transition.relative_path)
                 {
-                    deleted_binary_resources.insert(transition.relative_path.clone());
+                    application
+                        .deleted_binary_resources
+                        .insert(transition.relative_path.clone());
                 } else {
-                    deleted_binary_resources.remove(&transition.relative_path);
+                    application
+                        .deleted_binary_resources
+                        .remove(&transition.relative_path);
                 }
             }
         }
@@ -1589,7 +1606,8 @@ fn apply_history_entry(
                 (&transition.after, transition.after_cachebust_assets)
             }
         };
-        let accepted = accepted_page_js
+        let accepted = application
+            .accepted_page_js
             .get(&transition.template_path)
             .ok_or_else(|| {
                 format!(
@@ -1598,7 +1616,7 @@ fn apply_history_entry(
                 )
             })?;
         restore_page_js_config(
-            page_js,
+            application.page_js,
             &transition.template_path,
             accepted,
             target,
@@ -1829,7 +1847,7 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), "<h1>Disk</h1>");
         let target_transaction_id = receipt.entry.unwrap().transaction_id;
-        let canvas_target = CanvasPatchAnchor::source("source-title", None, Some("h1"));
+        let canvas_target = CanvasPatchAnchor::source("source-title", Some("h1"));
         workspace
             .attach_latest_canvas_history_delta(
                 &target_transaction_id,
@@ -2463,7 +2481,7 @@ mod tests {
         assert_eq!(workspace.documents.text_for("templates/new.html"), None);
     }
 
-    fn workspace(root: &PathBuf, files: &[(&str, &str)]) -> ProjectWorkspace {
+    fn workspace(root: &std::path::Path, files: &[(&str, &str)]) -> ProjectWorkspace {
         let session = session(root);
         let mut documents = FileBufferStore::for_project_session(
             &session,
@@ -2523,7 +2541,7 @@ mod tests {
         }
     }
 
-    fn session(root: &PathBuf) -> ProjectSessionSnapshot {
+    fn session(root: &std::path::Path) -> ProjectSessionSnapshot {
         ProjectSessionSnapshot {
             schema_version: 1,
             id: "workspace-test".to_string(),

@@ -1,4 +1,5 @@
 mod delivery;
+mod graph;
 mod local_import;
 mod roles;
 
@@ -7,6 +8,7 @@ pub use delivery::{
     prepare_font_preload_update, select_font_preload_template, FontDeliveryDiagnostic,
     FontDisplayMode, FontPreloadRegistration,
 };
+pub use graph::build_font_face_graph;
 pub use local_import::{
     prepare_local_font_import, FontLicenseMetadata, FontVariationAxis, LocalFontImportFamilyPlan,
     LocalFontImportPlan, LocalFontImportPrepared, LOCAL_FONT_IMPORT_SCHEMA_VERSION,
@@ -16,7 +18,7 @@ pub use roles::{prepare_font_role_assignment, read_font_roles, FontRoleAssignmen
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
-    env, fs,
+    env,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
 };
@@ -25,12 +27,14 @@ use crate::{kernel::file_buffer_store::hash_bytes, zola_theme::ZolaThemeResolver
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 
 const GOOGLE_FONTS_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+pub(super) const ROMANIAN_GLYPHS: [char; 10] = ['ă', 'â', 'î', 'ș', 'ț', 'Ă', 'Â', 'Î', 'Ș', 'Ț'];
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FontInventory {
+pub struct FontFaceGraph {
+    pub schema_version: u32,
     pub roots: Vec<FontRoot>,
-    pub families: Vec<LocalFontFamily>,
+    pub families: Vec<FontFaceFamily>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -42,10 +46,62 @@ pub struct FontCssRegistration {
     pub display_modes: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FontDeliveryKind {
+    Local,
+    System,
+    External,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FontOwnership {
+    Managed,
+    Detected,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FontFaceIssueSeverity {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontFaceIssue {
+    pub code: String,
+    pub severity: FontFaceIssueSeverity,
+    pub message: String,
+    pub file: Option<String>,
+    pub stylesheet: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FontFaceSource {
+    pub stylesheet: String,
+    pub url: String,
+    pub resolved_file: Option<String>,
+    pub delivery: FontDeliveryKind,
+    pub ownership: FontOwnership,
+    pub external: bool,
+    pub dynamic: bool,
+    pub weight: Option<u16>,
+    pub weight_range: Option<FontWeightRange>,
+    pub style: String,
+    pub display: Option<String>,
+    pub unicode_range: Option<String>,
+    pub managed: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFontDownloadResult {
-    pub family: LocalFontFamily,
+    pub family: FontFaceFamily,
     pub font_face_css: String,
     pub css_url: String,
     pub license_file: String,
@@ -98,12 +154,18 @@ pub struct FontRoot {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LocalFontFamily {
+pub struct FontFaceFamily {
+    pub id: String,
     pub family: String,
-    pub directory: String,
+    pub directories: Vec<String>,
     pub origin: FontOrigin,
     pub theme_name: Option<String>,
+    pub delivery: FontDeliveryKind,
+    pub ownership: FontOwnership,
+    pub romanian_supported: Option<bool>,
     pub files: Vec<LocalFontFile>,
+    pub faces: Vec<FontFaceSource>,
+    pub issues: Vec<FontFaceIssue>,
     pub license: FontLicenseMetadata,
     pub registration: FontCssRegistration,
 }
@@ -117,6 +179,7 @@ pub struct LocalFontFile {
     pub extension: String,
     pub format: String,
     pub text_optimized: bool,
+    pub content_hash: String,
     pub internal_family: Option<String>,
     pub subfamily: Option<String>,
     pub weight: Option<u16>,
@@ -125,6 +188,10 @@ pub struct LocalFontFile {
     pub axes: Vec<FontVariationAxis>,
     pub license: FontLicenseMetadata,
     pub unicode_range: Option<String>,
+    pub romanian_glyphs: Vec<char>,
+    pub declared_weight: Option<u16>,
+    pub declared_weight_range: Option<FontWeightRange>,
+    pub declared_style: Option<String>,
     pub preload: FontPreloadRegistration,
 }
 
@@ -140,227 +207,21 @@ pub struct FontWeightRange {
 pub enum FontOrigin {
     Local,
     Theme,
+    External,
 }
 
 #[derive(Clone, Debug)]
-struct FontRootCandidate {
-    absolute_path: PathBuf,
-    relative_path: String,
-    origin: FontOrigin,
-    theme_name: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct FontFamilyKey {
-    directory: String,
-    origin: FontOrigin,
-    theme_name: Option<String>,
+pub(super) struct FontRootCandidate {
+    pub(super) absolute_path: PathBuf,
+    pub(super) relative_path: String,
+    pub(super) origin: FontOrigin,
+    pub(super) theme_name: Option<String>,
 }
 
 static GOOGLE_FONT_CATALOG: OnceLock<Mutex<Option<Vec<GoogleFontCatalogFamily>>>> = OnceLock::new();
 
-pub fn scan_font_inventory(zola_root: &Path) -> FontInventory {
-    let resolver = ZolaThemeResolver::for_root(zola_root);
-    let roots = font_roots(zola_root, &resolver);
-    let mut family_map = BTreeMap::<FontFamilyKey, Vec<LocalFontFile>>::new();
-    let mut public_roots = Vec::new();
-
-    for root in roots {
-        let exists = root.absolute_path.is_dir();
-        public_roots.push(FontRoot {
-            relative_path: root.relative_path.clone(),
-            origin: root.origin.clone(),
-            theme_name: root.theme_name.clone(),
-            exists,
-        });
-
-        if exists {
-            collect_font_files(zola_root, &root, &root.absolute_path, &mut family_map);
-        }
-    }
-
-    let mut families: Vec<LocalFontFamily> = family_map
-        .into_iter()
-        .map(|(key, mut files)| {
-            files.sort_by(|left, right| {
-                font_file_sort_weight(left)
-                    .cmp(&font_file_sort_weight(right))
-                    .then_with(|| left.style.cmp(&right.style))
-                    .then_with(|| left.file_name.cmp(&right.file_name))
-            });
-            let internal_family = files
-                .iter()
-                .find_map(|file| file.internal_family.clone())
-                .unwrap_or_else(|| family_name_from_directory(&key.directory));
-            let license = files
-                .iter()
-                .map(|file| file.license.clone())
-                .find(|license| !license.is_empty())
-                .unwrap_or_default();
-            LocalFontFamily {
-                family: internal_family,
-                directory: key.directory,
-                origin: key.origin,
-                theme_name: key.theme_name,
-                files,
-                license,
-                registration: FontCssRegistration::default(),
-            }
-        })
-        .collect();
-
-    families.sort_by(|left, right| {
-        left.family
-            .to_lowercase()
-            .cmp(&right.family.to_lowercase())
-            .then_with(|| left.directory.cmp(&right.directory))
-    });
-
-    FontInventory {
-        roots: public_roots,
-        families,
-    }
-}
-
-pub fn overlay_staged_font_resources<'a>(
-    mut inventory: FontInventory,
-    resources: impl Iterator<Item = (&'a str, &'a [u8])>,
-) -> FontInventory {
-    for (project_relative_path, bytes) in resources {
-        let relative_zola_path = project_relative_path;
-        let path = Path::new(relative_zola_path);
-        if !relative_zola_path.starts_with("static/fonturi/") || !is_supported_font_file(path) {
-            continue;
-        }
-        let Some(file_name) = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-        else {
-            continue;
-        };
-        let Some(directory) = path
-            .parent()
-            .map(|path| path.to_string_lossy().replace('\\', "/"))
-        else {
-            continue;
-        };
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let file = local_font_file_from_bytes(project_relative_path, &file_name, &extension, bytes);
-        let public_directory = directory;
-        match inventory
-            .families
-            .iter_mut()
-            .find(|family| family.directory == public_directory)
-        {
-            Some(family) => {
-                if !family
-                    .files
-                    .iter()
-                    .any(|existing| existing.file == file.file)
-                {
-                    family.files.push(file);
-                    family.files.sort_by(|left, right| {
-                        font_file_sort_weight(left)
-                            .cmp(&font_file_sort_weight(right))
-                            .then_with(|| left.style.cmp(&right.style))
-                            .then_with(|| left.file_name.cmp(&right.file_name))
-                    });
-                }
-            }
-            None => inventory.families.push(LocalFontFamily {
-                family: file
-                    .internal_family
-                    .clone()
-                    .unwrap_or_else(|| family_name_from_directory(&public_directory)),
-                directory: public_directory,
-                origin: FontOrigin::Local,
-                theme_name: None,
-                license: file.license.clone(),
-                files: vec![file],
-                registration: FontCssRegistration::default(),
-            }),
-        }
-    }
-    if inventory
-        .families
-        .iter()
-        .any(|family| family.origin == FontOrigin::Local)
-    {
-        if let Some(root) = inventory
-            .roots
-            .iter_mut()
-            .find(|root| root.origin == FontOrigin::Local)
-        {
-            root.exists = true;
-        }
-    }
-    inventory.families.sort_by(|left, right| {
-        left.family
-            .to_lowercase()
-            .cmp(&right.family.to_lowercase())
-            .then_with(|| left.directory.cmp(&right.directory))
-    });
-    inventory
-}
-
-pub fn annotate_font_registrations<'a>(
-    mut inventory: FontInventory,
-    sources: impl Iterator<Item = (&'a str, &'a str)>,
-) -> FontInventory {
-    let stylesheet_sources = sources
-        .filter(|(path, _)| is_stylesheet_path(path))
-        .collect::<Vec<_>>();
-
-    for family in &mut inventory.families {
-        let normalized_family = normalize_font_family_name(&family.family);
-        let marker = managed_font_start_marker(&family.family);
-        let mut stylesheets = Vec::new();
-        let mut display_modes = Vec::new();
-        let mut managed = false;
-
-        for (path, source) in &stylesheet_sources {
-            let mut matched = false;
-            for block in css_font_face_blocks(source) {
-                let declarations = parse_css_declarations(block);
-                let Some(block_family) = declarations.get("font-family") else {
-                    continue;
-                };
-                if normalize_font_family_name(block_family) != normalized_family {
-                    continue;
-                }
-                matched = true;
-                if let Some(display) = declarations.get("font-display") {
-                    let display = display.trim().to_ascii_lowercase();
-                    if !display.is_empty() && !display_modes.contains(&display) {
-                        display_modes.push(display);
-                    }
-                }
-            }
-            if matched {
-                stylesheets.push((*path).to_string());
-                managed |= source.contains(&marker);
-            }
-        }
-
-        stylesheets.sort();
-        stylesheets.dedup();
-        display_modes.sort();
-        family.registration = FontCssRegistration {
-            registered: !stylesheets.is_empty(),
-            managed,
-            stylesheets,
-            display_modes,
-        };
-    }
-
-    inventory
-}
-
-pub fn font_family_registration_count(source: &str, family: &str) -> usize {
+#[cfg(test)]
+fn font_family_registration_count(source: &str, family: &str) -> usize {
     let normalized_family = normalize_font_family_name(family);
     css_font_face_blocks(source)
         .into_iter()
@@ -556,8 +417,8 @@ pub fn plan_google_font_family_download(
     let parsed_faces = parse_google_font_faces(&css);
     let faces = parsed_faces
         .iter()
+        .filter(|face| is_woff2_google_font_face(face))
         .cloned()
-        .filter(is_woff2_google_font_face)
         .collect::<Vec<_>>();
     if faces.is_empty() && !parsed_faces.is_empty() {
         let formats = google_font_face_formats(&parsed_faces);
@@ -618,6 +479,7 @@ pub fn plan_google_font_family_download(
             extension: extension.clone(),
             format: font_format_label(&extension).to_string(),
             text_optimized: character_set.is_some(),
+            content_hash: hash_bytes(&bytes),
             internal_family: Some(family.to_string()),
             subfamily: None,
             weight: face.weight,
@@ -629,6 +491,10 @@ pub fn plan_google_font_family_download(
                 .unwrap_or_default(),
             license: FontLicenseMetadata::default(),
             unicode_range: face.unicode_range.clone(),
+            romanian_glyphs: Vec::new(),
+            declared_weight: face.weight,
+            declared_weight_range: weight_range,
+            declared_style: face.style.clone(),
             preload: FontPreloadRegistration::default(),
         });
         css_blocks.push(google_font_face_css(
@@ -646,12 +512,18 @@ pub fn plan_google_font_family_download(
 
     Ok(GoogleFontDownloadPlan {
         result: GoogleFontDownloadResult {
-            family: LocalFontFamily {
+            family: FontFaceFamily {
+                id: format!("css:{}", normalize_font_family_name(family)),
                 family: family.to_string(),
-                directory: format!("static/fonturi/{family_slug}"),
+                directories: vec![format!("static/fonturi/{family_slug}")],
                 origin: FontOrigin::Local,
                 theme_name: None,
+                delivery: FontDeliveryKind::Local,
+                ownership: FontOwnership::Managed,
+                romanian_supported: None,
                 files,
+                faces: Vec::new(),
+                issues: Vec::new(),
                 license: FontLicenseMetadata {
                     description: Some(license.identifier.clone()),
                     url: Some(license.source_url.clone()),
@@ -674,7 +546,7 @@ pub fn plan_google_font_family_download(
     })
 }
 
-fn is_stylesheet_path(path: &str) -> bool {
+pub(super) fn is_stylesheet_path(path: &str) -> bool {
     matches!(
         Path::new(path)
             .extension()
@@ -685,6 +557,7 @@ fn is_stylesheet_path(path: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 fn css_font_face_blocks(source: &str) -> Vec<&str> {
     let mut blocks = Vec::new();
     let mut cursor = 0usize;
@@ -718,14 +591,14 @@ fn css_font_face_blocks(source: &str) -> Vec<&str> {
     blocks
 }
 
-fn normalize_font_family_name(value: &str) -> String {
+pub(super) fn normalize_font_family_name(value: &str) -> String {
     value
         .trim()
         .trim_matches(|character| matches!(character, '\'' | '"'))
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 pub(crate) fn managed_font_start_marker(family: &str) -> String {
@@ -1055,7 +928,7 @@ fn normalize_google_category(category: &str) -> String {
     category.to_ascii_lowercase().replace('_', "-")
 }
 
-fn font_roots(zola_root: &Path, resolver: &ZolaThemeResolver) -> Vec<FontRootCandidate> {
+pub(super) fn font_roots(zola_root: &Path, resolver: &ZolaThemeResolver) -> Vec<FontRootCandidate> {
     let mut roots = vec![FontRootCandidate {
         absolute_path: zola_root.join("static").join("fonturi"),
         relative_path: "static/fonturi".to_string(),
@@ -1416,7 +1289,7 @@ fn parse_google_font_faces(css: &str) -> Vec<GoogleFontFace> {
     faces
 }
 
-fn parse_font_weight(value: &str) -> (Option<u16>, Option<FontWeightRange>) {
+pub(super) fn parse_font_weight(value: &str) -> (Option<u16>, Option<FontWeightRange>) {
     let weights = value
         .split_whitespace()
         .filter_map(|item| item.trim().parse::<u16>().ok())
@@ -1575,46 +1448,7 @@ fn css_string_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
-fn collect_font_files(
-    zola_root: &Path,
-    root: &FontRootCandidate,
-    dir: &Path,
-    families: &mut BTreeMap<FontFamilyKey, Vec<LocalFontFile>>,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_font_files(zola_root, root, &path, families);
-            continue;
-        }
-
-        if !is_supported_font_file(&path) {
-            continue;
-        }
-
-        let relative_zola_path = path
-            .strip_prefix(zola_root)
-            .map(|path| path.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
-        let directory = family_directory_for_file(&relative_zola_path, &root.relative_path);
-        let key = FontFamilyKey {
-            directory,
-            origin: root.origin.clone(),
-            theme_name: root.theme_name.clone(),
-        };
-
-        families
-            .entry(key)
-            .or_default()
-            .push(local_font_file(&path, &relative_zola_path));
-    }
-}
-
-fn is_supported_font_file(path: &Path) -> bool {
+pub(super) fn is_supported_font_file(path: &Path) -> bool {
     matches!(
         path.extension()
             .and_then(|extension| extension.to_str())
@@ -1623,7 +1457,7 @@ fn is_supported_font_file(path: &Path) -> bool {
     )
 }
 
-fn is_text_optimized_font_file_name(file_name: &str) -> bool {
+pub(super) fn is_text_optimized_font_file_name(file_name: &str) -> bool {
     let stem = Path::new(file_name)
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -1636,41 +1470,7 @@ fn is_text_optimized_font_file_name(file_name: &str) -> bool {
     })
 }
 
-fn local_font_file(path: &Path, relative_zola_path: &str) -> LocalFontFile {
-    let file_name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    let bytes = fs::read(path).ok();
-    bytes
-        .as_deref()
-        .map(|bytes| local_font_file_from_bytes(relative_zola_path, &file_name, &extension, bytes))
-        .unwrap_or_else(|| LocalFontFile {
-            file: relative_zola_path.to_string(),
-            file_name: file_name.clone(),
-            size_bytes: path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
-            extension: extension.clone(),
-            format: font_format_label(&extension).to_string(),
-            text_optimized: is_text_optimized_font_file_name(&file_name),
-            internal_family: None,
-            subfamily: None,
-            weight: detect_font_weight(&file_name),
-            weight_range: detect_font_weight_range(&file_name),
-            style: detect_font_style(&file_name),
-            axes: Vec::new(),
-            license: FontLicenseMetadata::default(),
-            unicode_range: None,
-            preload: FontPreloadRegistration::default(),
-        })
-}
-
-fn local_font_file_from_bytes(
+pub(super) fn local_font_file_from_bytes(
     relative_zola_path: &str,
     file_name: &str,
     extension: &str,
@@ -1684,6 +1484,7 @@ fn local_font_file_from_bytes(
             extension: extension.to_string(),
             format: font_format_label(extension).to_string(),
             text_optimized: is_text_optimized_font_file_name(file_name),
+            content_hash: hash_bytes(bytes),
             internal_family: Some(metadata.family),
             subfamily: metadata.subfamily,
             weight: metadata.weight,
@@ -1692,6 +1493,10 @@ fn local_font_file_from_bytes(
             axes: metadata.axes,
             license: metadata.license,
             unicode_range: None,
+            romanian_glyphs: metadata.romanian_glyphs,
+            declared_weight: None,
+            declared_weight_range: None,
+            declared_style: None,
             preload: FontPreloadRegistration::default(),
         },
         Err(_) => LocalFontFile {
@@ -1701,6 +1506,7 @@ fn local_font_file_from_bytes(
             extension: extension.to_string(),
             format: font_format_label(extension).to_string(),
             text_optimized: is_text_optimized_font_file_name(file_name),
+            content_hash: hash_bytes(bytes),
             internal_family: None,
             subfamily: None,
             weight: detect_font_weight(file_name),
@@ -1709,64 +1515,23 @@ fn local_font_file_from_bytes(
             axes: Vec::new(),
             license: FontLicenseMetadata::default(),
             unicode_range: None,
+            romanian_glyphs: Vec::new(),
+            declared_weight: None,
+            declared_weight_range: None,
+            declared_style: None,
             preload: FontPreloadRegistration::default(),
         },
     }
 }
 
-fn font_file_sort_weight(file: &LocalFontFile) -> u16 {
+pub(super) fn font_file_sort_weight(file: &LocalFontFile) -> u16 {
     file.weight_range
         .map(|range| range.start)
         .or(file.weight)
         .unwrap_or(400)
 }
 
-fn family_directory_for_file(relative_zola_path: &str, root_relative_path: &str) -> String {
-    let Some(rest) = relative_zola_path
-        .strip_prefix(root_relative_path)
-        .map(|path| path.trim_start_matches('/'))
-    else {
-        return relative_zola_path
-            .rsplit_once('/')
-            .map(|(dir, _)| dir.to_string())
-            .unwrap_or_else(|| root_relative_path.to_string());
-    };
-
-    if let Some((first_segment, _)) = rest.split_once('/') {
-        return format!("{root_relative_path}/{first_segment}");
-    }
-
-    relative_zola_path
-        .rsplit_once('/')
-        .map(|(dir, _)| dir.to_string())
-        .unwrap_or_else(|| root_relative_path.to_string())
-}
-
-fn family_name_from_directory(directory: &str) -> String {
-    directory
-        .rsplit('/')
-        .next()
-        .filter(|segment| !segment.is_empty() && *segment != "fonturi")
-        .map(humanize_family_segment)
-        .unwrap_or_else(|| "Fonturi locale".to_string())
-}
-
-fn humanize_family_segment(segment: &str) -> String {
-    segment
-        .replace(['_', '-'], " ")
-        .split_whitespace()
-        .map(|word| {
-            let mut chars = word.chars();
-            match chars.next() {
-                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn font_format_label(extension: &str) -> &'static str {
+pub(super) fn font_format_label(extension: &str) -> &'static str {
     match extension {
         "woff2" => "woff2",
         "woff" => "woff",
@@ -2044,42 +1809,6 @@ mod tests {
     }
 
     #[test]
-    fn staged_workspace_font_is_visible_without_a_disk_file() {
-        let inventory = FontInventory {
-            roots: vec![FontRoot {
-                relative_path: "static/fonturi".to_string(),
-                origin: FontOrigin::Local,
-                theme_name: None,
-                exists: false,
-            }],
-            families: Vec::new(),
-        };
-        let path = "static/fonturi/inter/inter-normal-400-1.woff2";
-        let bytes = include_bytes!(
-            "../../resources/theme-packs/cadru/theme/static/fonturi/inter-400-700-latin-ext.woff2"
-        );
-        let projected =
-            overlay_staged_font_resources(inventory, [(path, bytes.as_slice())].into_iter());
-
-        assert_eq!(projected.families.len(), 1);
-        assert_eq!(projected.families[0].family, "Inter");
-        assert_eq!(projected.families[0].directory, "static/fonturi/inter");
-        assert_eq!(projected.families[0].files[0].file, path);
-        assert_eq!(
-            projected.families[0].files[0].size_bytes,
-            bytes.len() as u64
-        );
-        assert_eq!(
-            projected.families[0].files[0].weight_range,
-            Some(FontWeightRange {
-                start: 100,
-                end: 900
-            })
-        );
-        assert!(projected.roots[0].exists);
-    }
-
-    #[test]
     fn parses_google_css2_woff2_face() {
         let css = r#"
         @font-face {
@@ -2139,43 +1868,6 @@ mod tests {
         let removed = remove_managed_font_face_block(source, "Inter").unwrap();
 
         assert_eq!(font_family_registration_count(&removed, "Inter"), 1);
-    }
-
-    #[test]
-    fn inventory_reports_registered_and_managed_font_faces() {
-        let inventory = FontInventory {
-            roots: Vec::new(),
-            families: vec![LocalFontFamily {
-                family: "Inter".to_string(),
-                directory: "static/fonturi/inter".to_string(),
-                origin: FontOrigin::Local,
-                theme_name: None,
-                files: Vec::new(),
-                license: FontLicenseMetadata::default(),
-                registration: FontCssRegistration::default(),
-            }],
-        };
-        let source = r#"
-/* pana-studio-font:inter:start */
-@font-face {
-  font-family: 'Inter';
-  font-display: swap;
-}
-/* pana-studio-font:inter:end */
-"#;
-        let annotated =
-            annotate_font_registrations(inventory, [("sass/_baza.scss", source)].into_iter());
-
-        assert!(annotated.families[0].registration.registered);
-        assert!(annotated.families[0].registration.managed);
-        assert_eq!(
-            annotated.families[0].registration.stylesheets,
-            vec!["sass/_baza.scss"]
-        );
-        assert_eq!(
-            annotated.families[0].registration.display_modes,
-            vec!["swap"]
-        );
     }
 
     #[test]

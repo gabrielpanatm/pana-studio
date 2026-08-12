@@ -31,6 +31,9 @@ fn core(active_file: Option<&str>) -> AiContextCore {
         },
         selection: UiSelectionContext {
             has_selection: false,
+            primary_member_id: None,
+            member_ids: Vec::new(),
+            member_count: 0,
             selector: None,
             css_selector: None,
             tag: None,

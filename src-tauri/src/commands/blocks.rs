@@ -3,10 +3,11 @@ use tauri::{AppHandle, State};
 
 use crate::{
     blocks::{
-        inspect_native_block_source, native_block_registry_snapshot,
-        plan_native_block_contract as plan_contract, NativeBlockContractPlan,
+        inspect_native_block_slots, inspect_native_block_source, inspect_native_icon_source,
+        native_block_registry_snapshot, plan_native_block_contract as plan_contract,
+        IconCatalogPage, IconCatalogSearchInput, IconCatalogSummary, NativeBlockContractPlan,
         NativeBlockContractRequest, NativeBlockMarkerKind, NativeBlockOptionState,
-        NativeBlockRegistrySnapshot,
+        NativeBlockRegistrySnapshot, NativeBlockSlotState, NativeIconState,
     },
     commands::page_contracts::{
         apply_authoritative_page_contract, PageContractAuthorityReceipt, PageContractMutationPlan,
@@ -18,6 +19,10 @@ use crate::{
     kernel::project_workspace::ProjectWorkspaceMutationReceipt,
     localization::LocalizedDiagnostic,
     project::strip_zola_root_prefix,
+    project_model::cache::{
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
+    },
     project_model::move_engine::{parse_html_tag_at, ProjectSourceEditLocation},
     source_graph::model::{
         BlockDefinition, BlockResolutionStatus, RenderedBlockInstance, SourceNodeKind,
@@ -47,6 +52,16 @@ pub struct NativeBlockContractApplyInput {
 #[tauri::command]
 pub fn read_native_block_registry() -> NativeBlockRegistrySnapshot {
     native_block_registry_snapshot()
+}
+
+#[tauri::command]
+pub fn read_icon_catalog() -> Result<IconCatalogSummary, String> {
+    crate::blocks::read_icon_catalog()
+}
+
+#[tauri::command]
+pub fn search_icon_catalog(input: IconCatalogSearchInput) -> Result<IconCatalogPage, String> {
+    crate::blocks::search_icon_catalog(input)
 }
 
 #[tauri::command]
@@ -142,6 +157,8 @@ pub struct UiBlockSourceInstance {
     pub editable: bool,
     pub diagnostic: Option<LocalizedDiagnostic>,
     pub options: Vec<NativeBlockOptionState>,
+    pub slots: Vec<NativeBlockSlotState>,
+    pub icon: Option<NativeIconState>,
 }
 
 #[derive(Debug, Serialize)]
@@ -165,34 +182,37 @@ pub fn read_ui_block_graph(
     identity: FileBufferRequestIdentity,
     state: State<AppState>,
 ) -> Result<UiBlockGraphSnapshot, String> {
-    let (root, projection, project_root, runtime_session_id, workspace_revision) = {
+    let (bound_root, project_root, runtime_session_id, workspace_revision) = {
         let (root, workspace) = require_bound_workspace(state.inner(), &identity)?;
         let workspace = workspace
             .as_ref()
             .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru blocuri.".to_string())?;
         (
             root,
-            workspace.capture_projection_snapshot()?,
             workspace.session.project_root.clone(),
             workspace.runtime_session_id(),
             workspace.revision,
         )
     };
-    let model =
-        crate::project_model::build_project_model_from_workspace_projection(&root, &projection)?;
+    let (root, session, context) = capture_project_model_build_context(&state)?;
+    if root != bound_root
+        || session.runtime_instance_id() != runtime_session_id
+        || context.projection().revision != workspace_revision
+    {
+        return Err("BlockGraph a refuzat un ProjectModel stale.".to_string());
+    }
+    let model = build_project_model_from_context(&root, &context)?;
+    publish_project_model_if_current(&state, &context, model.clone())?;
     let source_graph = &model.source_graph;
     let source_instances = source_graph
         .block_graph
         .source_instances
         .iter()
         .map(|instance| {
-            let marker = source_graph
-                .nodes
-                .iter()
-                .find(|node| node.id == instance.source_node_id);
+            let marker = source_graph.node_by_id(&instance.source_node_id);
             let root_node = marker
                 .and_then(|node| node.parent.as_deref())
-                .and_then(|parent| source_graph.nodes.iter().find(|node| node.id == parent))
+                .and_then(|parent| source_graph.node_by_id(parent))
                 .filter(|node| node.kind == SourceNodeKind::Html);
             let root_location = root_node.and_then(|node| {
                 node.range.as_ref().map(|range| ProjectSourceEditLocation {
@@ -209,13 +229,16 @@ pub fn read_ui_block_graph(
                         .find(|file| file.relative_path == node.file)?;
                     let range = node.range.as_ref()?;
                     let opening = parse_html_tag_at(&file.contents, range.start)?;
-                    file.contents
-                        .get(opening.start..opening.end)
-                        .map(inspect_native_block_source)
+                    file.contents.get(opening.start..opening.end).map(|source| {
+                        Ok::<_, String>((
+                            inspect_native_block_source(source)?,
+                            inspect_native_icon_source(source)?,
+                        ))
+                    })
                 })
                 .transpose();
-            let (marker_kind, mut editable, diagnostic, options) = match inspection {
-                Ok(Some(inspection)) => (
+            let (marker_kind, mut editable, mut diagnostic, options, icon) = match inspection {
+                Ok(Some((inspection, icon))) => (
                     Some(inspection.marker_kind),
                     inspection.editable,
                     inspection.diagnostic.map(|details| {
@@ -223,6 +246,7 @@ pub fn read_ui_block_graph(
                             .with_argument("details", details)
                     }),
                     inspection.options,
+                    icon,
                 ),
                 Ok(None) => (
                     None,
@@ -231,6 +255,7 @@ pub fn read_ui_block_graph(
                         "blocks-diagnostic-source-root-missing",
                     )),
                     Vec::new(),
+                    None,
                 ),
                 Err(details) => (
                     None,
@@ -240,21 +265,30 @@ pub fn read_ui_block_graph(
                             .with_argument("details", details),
                     ),
                     Vec::new(),
+                    None,
                 ),
             };
+            let slots = root_node
+                .map(|root| inspect_native_block_slots(&model, root, &instance.provider_id))
+                .unwrap_or_default();
+            if let Some(details) = slots
+                .iter()
+                .find(|slot| !slot.editable && instance.provider_id == "slider")
+                .and_then(|slot| slot.diagnostic.clone())
+            {
+                editable = false;
+                if diagnostic.is_none() {
+                    diagnostic = Some(
+                        LocalizedDiagnostic::new("blocks-diagnostic-contract-invalid")
+                            .with_argument("details", details),
+                    );
+                }
+            }
             if root_node.is_some_and(|node| !node.capabilities.can_edit_attributes) {
                 editable = false;
             }
-            let status = if instance.status == BlockResolutionStatus::UnknownProvider {
-                BlockResolutionStatus::UnknownProvider
-            } else if marker_kind == Some(NativeBlockMarkerKind::Canonical) && diagnostic.is_some()
-            {
-                BlockResolutionStatus::InvalidContract
-            } else if marker_kind.is_none() {
-                BlockResolutionStatus::InvalidContract
-            } else {
-                BlockResolutionStatus::Resolved
-            };
+            let status =
+                ui_block_resolution_status(&instance.status, marker_kind, diagnostic.is_some());
             UiBlockSourceInstance {
                 id: instance.id.clone(),
                 definition_id: instance.definition_id.clone(),
@@ -268,6 +302,8 @@ pub fn read_ui_block_graph(
                 editable,
                 diagnostic,
                 options,
+                slots,
+                icon,
             }
         })
         .collect::<Vec<_>>();
@@ -281,7 +317,7 @@ pub fn read_ui_block_graph(
     diagnostics.extend(runtime.diagnostics.iter().cloned());
 
     Ok(UiBlockGraphSnapshot {
-        schema_version: 2,
+        schema_version: 3,
         project_root,
         runtime_session_id,
         workspace_revision,
@@ -293,6 +329,22 @@ pub fn read_ui_block_graph(
         rendered_instances: runtime.instances,
         diagnostics,
     })
+}
+
+fn ui_block_resolution_status(
+    source_status: &BlockResolutionStatus,
+    marker_kind: Option<NativeBlockMarkerKind>,
+    has_diagnostic: bool,
+) -> BlockResolutionStatus {
+    if source_status == &BlockResolutionStatus::UnknownProvider {
+        BlockResolutionStatus::UnknownProvider
+    } else if marker_kind.is_none()
+        || (marker_kind == Some(NativeBlockMarkerKind::Canonical) && has_diagnostic)
+    {
+        BlockResolutionStatus::InvalidContract
+    } else {
+        BlockResolutionStatus::Resolved
+    }
 }
 
 #[tauri::command]
@@ -391,5 +443,42 @@ fn unavailable_runtime_snapshot(
         available: false,
         instances: Vec::new(),
         diagnostics: vec![diagnostic],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_block_status_preserves_unknown_provider_and_rejects_invalid_contracts() {
+        assert_eq!(
+            ui_block_resolution_status(
+                &BlockResolutionStatus::UnknownProvider,
+                Some(NativeBlockMarkerKind::Canonical),
+                false,
+            ),
+            BlockResolutionStatus::UnknownProvider
+        );
+        assert_eq!(
+            ui_block_resolution_status(&BlockResolutionStatus::Resolved, None, false),
+            BlockResolutionStatus::InvalidContract
+        );
+        assert_eq!(
+            ui_block_resolution_status(
+                &BlockResolutionStatus::Resolved,
+                Some(NativeBlockMarkerKind::Canonical),
+                true,
+            ),
+            BlockResolutionStatus::InvalidContract
+        );
+        assert_eq!(
+            ui_block_resolution_status(
+                &BlockResolutionStatus::Resolved,
+                Some(NativeBlockMarkerKind::Legacy),
+                true,
+            ),
+            BlockResolutionStatus::Resolved
+        );
     }
 }

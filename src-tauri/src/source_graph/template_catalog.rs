@@ -922,6 +922,8 @@ fn build_semantic_entries(
     entries
 }
 
+// Semantic entries mirror the immutable catalog schema and its distinct evidence projections.
+#[allow(clippy::too_many_arguments)]
 fn semantic_entry(
     id: String,
     category: TemplateSemanticCategory,
@@ -1402,6 +1404,9 @@ mod tests {
             internal_links: Vec::new(),
             asset_urls: Vec::new(),
             asset_hashes: Vec::new(),
+            literal_asset_references: Vec::new(),
+            asset_reference_eligible: 0,
+            asset_reference_unanalysable: 0,
             data_loads: Vec::new(),
             image_metadata: Vec::new(),
             image_resizes: Vec::new(),
@@ -1423,6 +1428,8 @@ mod tests {
         }
     }
 
+    // Test fixtures expose every independent assignment identity used by the scenario matrix.
+    #[allow(clippy::too_many_arguments)]
     fn page(
         id: &str,
         file: &str,
@@ -1478,6 +1485,7 @@ mod tests {
             shortcodes: Vec::new(),
         };
         let graph = SourceGraph {
+            node_index: Default::default(),
             project_root: "/project".to_string(),
             zola_root: "/project".to_string(),
             active_theme: Some("theme".to_string()),
@@ -1533,6 +1541,7 @@ mod tests {
                 relation("index", "footer", SourceRelationKind::Includes),
                 relation("page-node", "index", SourceRelationKind::PageTemplate),
             ],
+            asset_reference_coverage: Default::default(),
             diagnostics: Vec::<SourceGraphDiagnostic>::new(),
         };
 
@@ -1604,6 +1613,7 @@ mod tests {
             None,
         );
         let graph = SourceGraph {
+            node_index: Default::default(),
             project_root: "/project".to_string(),
             zola_root: "/project".to_string(),
             active_theme: None,
@@ -1674,6 +1684,7 @@ mod tests {
                 ),
                 relation("special-node", "special", SourceRelationKind::PageTemplate),
             ],
+            asset_reference_coverage: Default::default(),
             diagnostics: Vec::new(),
         };
 
@@ -1748,6 +1759,7 @@ mod tests {
     #[test]
     fn catalog_keeps_default_page_and_not_found_slots_without_resources_or_consumers() {
         let graph = SourceGraph {
+            node_index: Default::default(),
             project_root: "/project".to_string(),
             zola_root: "/project".to_string(),
             active_theme: None,
@@ -1766,6 +1778,7 @@ mod tests {
             markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),
+            asset_reference_coverage: Default::default(),
             diagnostics: Vec::new(),
         };
 
@@ -1792,6 +1805,7 @@ mod tests {
     #[test]
     fn catalog_projects_taxonomy_list_and_term_as_independent_semantic_uses() {
         let graph = SourceGraph {
+            node_index: Default::default(),
             project_root: "/project".to_string(),
             zola_root: "/project".to_string(),
             active_theme: None,
@@ -1827,6 +1841,7 @@ mod tests {
             markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),
+            asset_reference_coverage: Default::default(),
             diagnostics: Vec::new(),
         };
         let taxonomies = TaxonomyCatalogSnapshot {

@@ -26,6 +26,8 @@ use crate::{
 };
 use zola_config::Config;
 
+// Root identity, workspace projection and resolver inputs are separate trust boundaries.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn scan_content_page(
     project_root: &Path,
     zola_root: &Path,
@@ -40,7 +42,7 @@ pub(super) fn scan_content_page(
     builder: &mut SourceGraphBuilder,
 ) -> SourceGraphPage {
     let file = relative_project_path(project_root, path);
-    let source = read_source(path, &file, draft_sources, builder);
+    let source = read_source(&file, draft_sources, builder);
     let frontmatter = parse_zola_content_frontmatter(&source);
     let page_kind = zola_content_page_kind(zola_root, path);
     let title = frontmatter

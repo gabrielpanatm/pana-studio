@@ -12,8 +12,8 @@ pub fn extract_extends(content: &str) -> Option<String> {
             .trim_end_matches("-%}")
             .trim_end_matches("%}")
             .trim();
-        if inner.starts_with("extends") {
-            let rest = inner["extends".len()..].trim();
+        if let Some(stripped) = inner.strip_prefix("extends") {
+            let rest = stripped.trim();
             if let Some(q) = rest.strip_prefix('"') {
                 if let Some(end) = q.find('"') {
                     return Some(q[..end].to_string());
@@ -134,6 +134,71 @@ pub fn remove_page_scripts_contract(content: &str, js_slug: &str) -> String {
     remove_script_tags_for_asset(&without_page_js, "js/anime.min.js")
 }
 
+fn strip_scripts_block(content: &str) -> String {
+    let Some(start) = content.find("{% block scripts %}") else {
+        return content.to_string();
+    };
+    let after = &content[start..];
+    let Some(rel) = after.find("{% endblock") else {
+        return content.to_string();
+    };
+    let end_tag_start = start + rel;
+    let tail = &content[end_tag_start..];
+    let Some(close) = tail.find("%}") else {
+        return content.to_string();
+    };
+    let mut block_end = end_tag_start + close + 2;
+    if content.get(block_end..block_end + 1) == Some("\n") {
+        block_end += 1;
+    }
+    let prefix_end = if start > 0 && content.get(start - 1..start) == Some("\n") {
+        start - 1
+    } else {
+        start
+    };
+    format!("{}{}", &content[..prefix_end], &content[block_end..])
+}
+
+fn locate_scripts_block(content: &str) -> Option<(usize, usize, usize, usize)> {
+    let start_needle = "{% block scripts %}";
+    let start = content.find(start_needle)?;
+    let inner_start = start + start_needle.len();
+    let after_start = &content[inner_start..];
+    let end_rel = after_start.find("{% endblock")?;
+    let end_tag_start = inner_start + end_rel;
+    let tail = &content[end_tag_start..];
+    let close_rel = tail.find("%}")?;
+    let mut end = end_tag_start + close_rel + 2;
+    if content.get(end..end + 1) == Some("\n") {
+        end += 1;
+    }
+    Some((start, end, inner_start, end_tag_start))
+}
+
+fn remove_script_tags_for_asset(content: &str, asset_path: &str) -> String {
+    let mut result = String::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = content[cursor..].find("<script") {
+        let start = cursor + relative_start;
+        let Some(relative_close) = content[start..].find("</script>") else {
+            break;
+        };
+        let mut end = start + relative_close + "</script>".len();
+        if content.get(end..end + 1) == Some("\n") {
+            end += 1;
+        }
+        let script = &content[start..end];
+        if template_contains_asset_path(script, asset_path) {
+            result.push_str(&content[cursor..start]);
+        } else {
+            result.push_str(&content[cursor..end]);
+        }
+        cursor = end;
+    }
+    result.push_str(&content[cursor..]);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,69 +290,4 @@ mod tests {
         assert!(!result.contains("pana-index.js"));
         assert!(!result.contains("{% block scripts %}"));
     }
-}
-
-fn strip_scripts_block(content: &str) -> String {
-    let Some(start) = content.find("{% block scripts %}") else {
-        return content.to_string();
-    };
-    let after = &content[start..];
-    let Some(rel) = after.find("{% endblock") else {
-        return content.to_string();
-    };
-    let end_tag_start = start + rel;
-    let tail = &content[end_tag_start..];
-    let Some(close) = tail.find("%}") else {
-        return content.to_string();
-    };
-    let mut block_end = end_tag_start + close + 2;
-    if content.get(block_end..block_end + 1) == Some("\n") {
-        block_end += 1;
-    }
-    let prefix_end = if start > 0 && content.get(start - 1..start) == Some("\n") {
-        start - 1
-    } else {
-        start
-    };
-    format!("{}{}", &content[..prefix_end], &content[block_end..])
-}
-
-fn locate_scripts_block(content: &str) -> Option<(usize, usize, usize, usize)> {
-    let start_needle = "{% block scripts %}";
-    let start = content.find(start_needle)?;
-    let inner_start = start + start_needle.len();
-    let after_start = &content[inner_start..];
-    let end_rel = after_start.find("{% endblock")?;
-    let end_tag_start = inner_start + end_rel;
-    let tail = &content[end_tag_start..];
-    let close_rel = tail.find("%}")?;
-    let mut end = end_tag_start + close_rel + 2;
-    if content.get(end..end + 1) == Some("\n") {
-        end += 1;
-    }
-    Some((start, end, inner_start, end_tag_start))
-}
-
-fn remove_script_tags_for_asset(content: &str, asset_path: &str) -> String {
-    let mut result = String::new();
-    let mut cursor = 0;
-    while let Some(relative_start) = content[cursor..].find("<script") {
-        let start = cursor + relative_start;
-        let Some(relative_close) = content[start..].find("</script>") else {
-            break;
-        };
-        let mut end = start + relative_close + "</script>".len();
-        if content.get(end..end + 1) == Some("\n") {
-            end += 1;
-        }
-        let script = &content[start..end];
-        if template_contains_asset_path(script, asset_path) {
-            result.push_str(&content[cursor..start]);
-        } else {
-            result.push_str(&content[cursor..end]);
-        }
-        cursor = end;
-    }
-    result.push_str(&content[cursor..]);
-    result
 }

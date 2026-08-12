@@ -25,7 +25,7 @@ pub(super) fn scan_data_file(
     builder: &mut SourceGraphBuilder,
 ) -> DataFileSummary {
     let ResolvedZolaDataFile {
-        path,
+        path: _,
         file,
         logical_path,
         load_paths,
@@ -44,7 +44,7 @@ pub(super) fn scan_data_file(
         None,
         capabilities.clone(),
     );
-    let source = read_source(&path, &file, draft_sources, builder);
+    let source = read_source(&file, draft_sources, builder);
     let format = data_format_for_file(&file);
     let (mut nodes, parse_error) =
         if matches!(format, crate::source_graph::model::SourceDataFormat::Toml) {

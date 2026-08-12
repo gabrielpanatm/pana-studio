@@ -62,8 +62,11 @@ export function applySelectionState(
   host.classEditorValue = editorState.classEditorValue;
   host.imageSourceValue = editorState.imageSourceValue;
   host.attributeValues = editorState.attributeValues;
-  host.textContentValue = host.coordinatedElementSelection
-    && host.activeHtmlTextEditKey === htmlTextSelectionKey(host.coordinatedElementSelection)
+  const activeSelectionKey = host.coordinatedElementSelection
+    ? htmlTextSelectionKey(host.coordinatedElementSelection)
+    : null;
+  host.textContentValue = activeSelectionKey !== null
+    && host.activeHtmlTextEditKey === activeSelectionKey
     && host.activeHtmlTextEditValue !== null
     ? host.activeHtmlTextEditValue
     : editorState.textContentValue;

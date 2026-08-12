@@ -20,8 +20,8 @@ import {
   type EditorTeraTarget,
   type EditorTransaction,
 } from "$lib/editor-runtime/commands";
-import type { PageSection } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
+import type { PreviewTeraSelectionTarget } from "$lib/state/app-helpers";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export type EditorRuntimeHost = {
@@ -33,14 +33,8 @@ export type EditorRuntimeHost = {
     target: Extract<EditorCommand["target"], { kind: "html" }>,
     options?: { revealCode?: boolean },
   ) => void;
-  selectTeraLayerSource: (section: PageSection, sourceId: string) => void;
   setPreviewTeraSelection: (
-    target: {
-      selector: string;
-      sourceId: string;
-      origin: "current" | "local" | "theme" | "unknown";
-      themeName: string | null;
-    },
+    target: PreviewTeraSelectionTarget,
     options?: { status?: string },
   ) => void;
   enterEditorNavigationScope: (scopeId: string) => Promise<unknown>;
@@ -60,7 +54,6 @@ function transactionFor(revision: number, command: EditorCommand): EditorTransac
     command: command.type,
     surface: commandSurface(command),
     targetKind: target.kind,
-    selector: target.selector ?? null,
     sourceId: target.kind === "html" ? target.sourceId ?? null : target.sourceId,
     startedAt: Date.now(),
   };
@@ -83,11 +76,8 @@ export class EditorRuntime {
     if (command.type === "delete-html" || command.type === "duplicate-html") {
       return canMutateHtmlTarget(command.target);
     }
-    if ((command.type === "select-html" || command.type === "open-html-code") && !command.target.selector) {
-      return { allowed: false, reason: t("editor-runtime-html-selector-missing") };
-    }
-    if (command.type === "select-tera" && !command.target.selector) {
-      return { allowed: false, reason: t("editor-runtime-tera-selector-missing") };
+    if ((command.type === "select-html" || command.type === "open-html-code") && !command.target.sourceId) {
+      return { allowed: false, reason: t("editor-runtime-html-source-id-missing") };
     }
     if (
       command.type === "enter-tera-boundary"
@@ -177,14 +167,9 @@ export class EditorRuntime {
 
   private selectTera(command: Extract<EditorCommand, { target: { kind: "tera" } }>) {
     const target = command.target;
-    if (target.section) {
-      this.host.selectTeraLayerSource(target.section, target.sourceId);
-      return;
-    }
-    if (!target.selector) return;
     this.host.setPreviewTeraSelection({
-      selector: target.selector,
       sourceId: target.sourceId,
+      renderInstanceId: target.renderInstanceId ?? null,
       origin: target.origin ?? "unknown",
       themeName: target.themeName ?? null,
     });

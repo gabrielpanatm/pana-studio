@@ -1,6 +1,6 @@
 {
   "name": "pana-studio",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Editor vizual desktop open-source pentru site-uri Zola.",
   "author": "Gabriel Pană",
   "license": "EUPL-1.2-or-later",
@@ -16,17 +16,20 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "npm run i18n:generate && vite build",
+    "build": "npm run i18n:generate && vite build && npm run bundle:check",
+    "bundle:check": "node scripts/check-bundle-size.mjs",
     "preview": "vite preview",
     "check": "npm run i18n:generate && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-    "test:kernel": "npm run i18n:check && svelte-kit sync && node --test --import ./tests/register-lib-alias-hooks.mjs tests/*.test.mjs",
+    "test:kernel": "npm run i18n:check && npm run icons:check && svelte-kit sync && node --test --import ./tests/register-lib-alias-hooks.mjs tests/*.test.mjs",
     "i18n:generate": "node scripts/generate-i18n-catalog.mjs",
     "i18n:check": "node scripts/generate-i18n-catalog.mjs --check",
     "test:preview-browser": "node tests/browser/canvas-runtime-real.mjs",
     "test:motion-browser": "node tests/browser/motion-runtime-real.mjs",
     "licenses:generate": "node scripts/generate-third-party-notices.mjs",
     "licenses:check": "node scripts/generate-third-party-notices.mjs --check",
+    "icons:generate": "node scripts/generate-icon-registry.mjs",
+    "icons:check": "node scripts/generate-icon-registry.mjs --check",
     "tauri": "scripts/tauri-with-local-appimage-runtime.sh"
   },
   "engines": {

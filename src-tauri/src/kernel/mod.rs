@@ -26,6 +26,7 @@ pub mod project_session;
 pub mod project_state;
 pub mod project_workspace;
 pub mod publish_operation;
+pub mod publish_preflight;
 pub mod recovery_coordinator;
 pub mod scratch_state;
 pub mod selection_coordinator;

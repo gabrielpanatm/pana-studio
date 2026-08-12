@@ -7,7 +7,7 @@ export type HtmlPaletteElement = {
   id: string;
   kind?: "html" | "block";
   blockId?: string;
-  blockKind?: "css" | "js";
+  blockKind?: "css" | "js" | "static";
   tag: string;
   label: string;
   description: string;

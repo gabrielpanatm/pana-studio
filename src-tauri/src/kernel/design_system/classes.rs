@@ -106,7 +106,7 @@ pub fn plan_design_class_rename(
         if ranges.is_empty() {
             continue;
         }
-        ranges.sort_by(|left, right| right.start.cmp(&left.start));
+        ranges.sort_by_key(|right| std::cmp::Reverse(right.start));
         let mut contents = file.contents.clone();
         for occurrence in &ranges {
             contents.replace_range(occurrence.start..occurrence.end, &new_name);
@@ -376,7 +376,9 @@ mod tests {
             zola_root: PathBuf::from("/tmp/design-system-test"),
             revision: "revision".to_string(),
             files,
+            workspace_paths: Default::default(),
             source_graph: SourceGraph {
+                node_index: Default::default(),
                 project_root: String::new(),
                 zola_root: String::new(),
                 active_theme: None,
@@ -395,6 +397,7 @@ mod tests {
                 markdown_projections: Vec::new(),
                 nodes: Vec::new(),
                 relations: Vec::new(),
+                asset_reference_coverage: Default::default(),
                 diagnostics: Vec::new(),
             },
             tera_graph: crate::project_model::model::TeraGraph {

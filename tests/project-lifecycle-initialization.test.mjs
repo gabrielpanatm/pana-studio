@@ -174,6 +174,7 @@ test("SourceGraph consumes the current ProjectModel and rebuilds it after invali
   const end = rustSourceGraphCommands.indexOf("#[tauri::command", start);
   const body = rustSourceGraphCommands.slice(start, end);
   assert.match(body, /project_model_source_revision/);
-  assert.match(body, /build_project_model_from_workspace_projection/);
+  assert.match(body, /capture_project_model_build_context/);
+  assert.match(body, /build_project_model_from_context/);
   assert.match(body, /publish_project_model_if_current/);
 });

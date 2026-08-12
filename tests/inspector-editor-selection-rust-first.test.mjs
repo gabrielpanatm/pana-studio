@@ -45,7 +45,14 @@ test("inspector editors do not consume the legacy selection presentation", () =>
   assert.match(inspectorFiles.shell, /selectionSummary=\{presentedInspectorSelectionSummary\}/);
   assert.match(inspectorFiles.shell, /physicalFacts=\{presentedHtmlPhysicalFacts\}/);
   assert.match(inspectorFiles.shell, /advanceStableHtmlInspectorProjection/);
-  assert.match(inspectorFiles.shell, /selectionContext=\{inspectorBlockSelectionContext\}/);
+  assert.match(
+    inspectorFiles.shell,
+    /selectionContext=\{presentedSelectionSnapshot\?\.aggregateCapabilities\.primaryOnlyEditsAllowed/,
+  );
+  assert.match(
+    inspectorFiles.shell,
+    /dynamicSelectionContext=\{presentedSelectionSnapshot\?\.aggregateCapabilities\.primaryOnlyEditsAllowed/,
+  );
   assert.match(inspectorFiles.workspace, /inspectorSelectionSummary=\{app\.inspectorSelectionSummary\}/);
   assert.match(inspectorFiles.workspace, /inspectorHtmlPhysicalFacts=\{app\.inspectorHtmlPhysicalFacts\}/);
   assert.match(inspectorFiles.workspace, /inspectorBlockSelectionContext=\{app\.inspectorBlockSelectionContext\}/);
@@ -86,7 +93,7 @@ test("HTML physical facts remain narrow and cannot become selection authority", 
 
   assert.match(inspectorFiles.html, /physicalFacts\?: InspectorHtmlPhysicalFacts \| null/);
   assert.match(inspectorFiles.html, /selectionSnapshot\?: SelectionSnapshot \| null/);
-  assert.match(inspectorFiles.html, /selectionSnapshot\?\.provenance\?\.definition/);
+  assert.match(inspectorFiles.html, /primarySelectionEntry\(selectionSnapshot\)\?\.provenance\.definition/);
   assert.doesNotMatch(
     inspectorFiles.html,
     /physicalFacts\?\.(?:tag|id|classes|attributes|selector|text)/,
@@ -101,7 +108,7 @@ test("AppState exposes only exact Rust-accepted inspector projections", () => {
 
   assert.match(adapters, /this\.acceptedSelectionObservation/);
   assert.match(adapters, /accepted\.selectionRevision !== semantic\.selectionRevision/);
-  assert.match(adapters, /accepted\.renderInstanceId !== semantic\.anchor\?\.renderInstanceId/);
+  assert.match(adapters, /accepted\.renderInstanceId !== primary\?\.anchor\.renderInstanceId/);
   assert.match(adapters, /summary\.selectionRevision !== coordinated\.snapshot\.selectionRevision/);
   assert.match(adapters, /summary\.renderInstanceId !== coordinated\.renderInstanceId/);
   assert.match(adapters, /bounded\.providerId !== physical\.providerId/);

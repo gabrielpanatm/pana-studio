@@ -7,7 +7,7 @@ use crate::{
         context_hub::{
             AiContextApp, AiContextCore, AiContextDirtyState, AiContextFileInventory,
             AiContextProject, CanonicalAiContextSnapshot, ContextHubPublication,
-            UiContextProjection, UI_CONTEXT_PROJECTION_SCHEMA_VERSION,
+            UiContextProjection, UiSelectionContext, UI_CONTEXT_PROJECTION_SCHEMA_VERSION,
         },
         file_buffer_store::TextBufferRole,
         observability::now_ms,
@@ -22,6 +22,7 @@ use crate::{
 
 const MAX_UI_CONTEXT_PROJECTION_BYTES: usize = 256 * 1024;
 const MAX_FILE_HINTS_PER_ROLE: usize = 24;
+const MAX_UI_SELECTION_MEMBERS: usize = 256;
 
 #[tauri::command]
 pub fn read_ai_context_status(app: AppHandle) -> Result<AiContextStatus, String> {
@@ -100,7 +101,28 @@ fn validate_ui_projection(projection: &UiContextProjection) -> Result<(), String
             MAX_UI_CONTEXT_PROJECTION_BYTES
         ));
     }
+    validate_ui_selection_context(&projection.selection)?;
     Ok(())
+}
+
+fn validate_ui_selection_context(selection: &UiSelectionContext) -> Result<(), String> {
+    if selection.member_ids.len() > MAX_UI_SELECTION_MEMBERS
+        || selection.member_count != selection.member_ids.len()
+        || selection.has_selection == selection.member_ids.is_empty()
+    {
+        return Err("UiSelectionContext are un set bounded inconsistent.".to_string());
+    }
+    let mut unique = BTreeSet::new();
+    if selection.member_ids.iter().any(|member_id| {
+        member_id.is_empty() || member_id.len() > 512 || !unique.insert(member_id.as_str())
+    }) {
+        return Err("UiSelectionContext are identități opace invalide sau duplicate.".to_string());
+    }
+    match selection.primary_member_id.as_deref() {
+        Some(primary) if unique.contains(primary) => Ok(()),
+        None if unique.is_empty() => Ok(()),
+        _ => Err("UiSelectionContext nu leagă primary de setul opac.".to_string()),
+    }
 }
 
 fn build_context_publication(
@@ -181,6 +203,20 @@ fn build_context_publication(
         )
     };
     drop(workspace_guard);
+
+    let (rust_primary_member_id, rust_member_ids) = state
+        .selection_coordinator
+        .current_opaque_selection(project_session_id.as_deref())?;
+    if projection.selection.primary_member_id != rust_primary_member_id
+        || projection.selection.member_ids != rust_member_ids
+        || projection.selection.member_count != rust_member_ids.len()
+        || projection.selection.has_selection == rust_member_ids.is_empty()
+    {
+        return Err(
+            "UiContextProjection este stale: setul multi-select nu mai corespunde coordonatorului Rust."
+                .to_string(),
+        );
+    }
 
     let ui_dirty = projection.ui_dirty_state.dirty;
     let core = AiContextCore {
@@ -316,4 +352,56 @@ pub async fn configure_codex_mcp(app: AppHandle) -> Result<CodexMcpStatus, Write
                 "Configurarea Codex a căzut în task-ul de fundal: {error}"
             ))
         })?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn selection(member_ids: Vec<String>, primary_member_id: Option<String>) -> UiSelectionContext {
+        UiSelectionContext {
+            has_selection: !member_ids.is_empty(),
+            member_count: member_ids.len(),
+            member_ids,
+            primary_member_id,
+            selector: None,
+            css_selector: None,
+            tag: None,
+            id: None,
+            classes: Vec::new(),
+            text: None,
+            image_src: None,
+            source_location: None,
+            source_id: None,
+            template_source_id: None,
+            session_id: None,
+            rect: None,
+        }
+    }
+
+    #[test]
+    fn ai_selection_list_is_bounded_unique_and_primary_bound() {
+        let valid = selection(
+            vec!["member:a".to_string(), "member:b".to_string()],
+            Some("member:b".to_string()),
+        );
+        assert!(validate_ui_selection_context(&valid).is_ok());
+
+        let duplicate = selection(
+            vec!["member:a".to_string(), "member:a".to_string()],
+            Some("member:a".to_string()),
+        );
+        assert!(validate_ui_selection_context(&duplicate).is_err());
+
+        let foreign_primary = selection(vec!["member:a".to_string()], Some("member:b".to_string()));
+        assert!(validate_ui_selection_context(&foreign_primary).is_err());
+
+        let oversized = selection(
+            (0..=MAX_UI_SELECTION_MEMBERS)
+                .map(|index| format!("member:{index}"))
+                .collect(),
+            Some("member:0".to_string()),
+        );
+        assert!(validate_ui_selection_context(&oversized).is_err());
+    }
 }

@@ -34,7 +34,7 @@ pub(super) fn scan_structured_toml_document(
         None,
         SourceCapabilities::code_only(SourceCapabilityReason::StructuredConfig),
     );
-    let source = read_source(path, &file, draft_sources, builder);
+    let source = read_source(&file, draft_sources, builder);
     let (mut nodes, parse_error) = match parse_lossless_toml(&source, &file) {
         Ok(document) => (document.nodes, None),
         Err(error) => {

@@ -72,10 +72,9 @@ pub fn run_zola_build_cancellable(
         cleanup_private_generation(&publication, &staging_root);
         return Err(error);
     }
-    cancellation_checkpoint(cancellation_token, "înainte de publicarea artifactului").map_err(
-        |error| {
+    cancellation_checkpoint(cancellation_token, "înainte de publicarea artifactului").inspect_err(
+        |_| {
             cleanup_private_generation(&publication, &staging_root);
-            error
         },
     )?;
 

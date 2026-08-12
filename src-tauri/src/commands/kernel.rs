@@ -1,7 +1,11 @@
 use tauri::{AppHandle, Manager, State};
 
 use super::kernel_preview_context::require_preview_command_identity;
-use super::kernel_preview_pipeline::run_preview_structural_write_command;
+use super::kernel_preview_pipeline::{
+    require_preview_structural_target_matches_selection,
+    run_preview_structural_delete_write_command, run_preview_structural_replace_write_command,
+    run_preview_structural_write_command,
+};
 
 use crate::{
     kernel::{
@@ -15,16 +19,18 @@ use crate::{
         preview_projection::{
             execute_preview_html_attributes, execute_preview_html_delete,
             execute_preview_html_duplicate, execute_preview_html_insert_drop,
-            execute_preview_html_tag, execute_preview_html_text, execute_preview_tera_delete,
-            execute_preview_tera_insert_drop, preflight_preview_projection_intent,
-            PreviewHtmlAttributesExecutionInput, PreviewHtmlAttributesExecutionReceipt,
-            PreviewHtmlDeleteExecutionInput, PreviewHtmlDeleteExecutionReceipt,
-            PreviewHtmlDuplicateExecutionInput, PreviewHtmlDuplicateExecutionReceipt,
-            PreviewHtmlInsertDropExecutionInput, PreviewHtmlInsertDropExecutionReceipt,
-            PreviewHtmlTagExecutionInput, PreviewHtmlTagExecutionReceipt,
-            PreviewHtmlTextExecutionInput, PreviewHtmlTextExecutionReceipt,
-            PreviewProjectionIntentInput, PreviewProjectionIntentReceipt,
-            PreviewProjectionIntentStatus, PreviewStructuralCommandIdentity,
+            execute_preview_html_tag, execute_preview_html_text, execute_preview_selection_batch,
+            execute_preview_tera_delete, execute_preview_tera_insert_drop,
+            preflight_preview_projection_intent, PreviewHtmlAttributesExecutionInput,
+            PreviewHtmlAttributesExecutionReceipt, PreviewHtmlDeleteExecutionInput,
+            PreviewHtmlDeleteExecutionReceipt, PreviewHtmlDuplicateExecutionInput,
+            PreviewHtmlDuplicateExecutionReceipt, PreviewHtmlInsertDropExecutionInput,
+            PreviewHtmlInsertDropExecutionReceipt, PreviewHtmlTagExecutionInput,
+            PreviewHtmlTagExecutionReceipt, PreviewHtmlTextExecutionInput,
+            PreviewHtmlTextExecutionReceipt, PreviewProjectionIntentInput,
+            PreviewProjectionIntentReceipt, PreviewProjectionIntentStatus,
+            PreviewSelectionBatchAction, PreviewSelectionBatchExecutionInput,
+            PreviewSelectionBatchExecutionReceipt, PreviewStructuralCommandIdentity,
             PreviewTeraDeleteExecutionInput, PreviewTeraDeleteExecutionReceipt,
             PreviewTeraInsertDropExecutionInput, PreviewTeraInsertDropExecutionReceipt,
         },
@@ -135,7 +141,6 @@ pub fn execute_preview_html_insert_drop_intent(
                 &context.root,
                 workspace,
                 input,
-                &context.aliases,
                 context.active_document_path.as_deref(),
             )
         },
@@ -155,14 +160,7 @@ pub fn execute_preview_html_attributes_intent(
         &identity,
         "Preview HTML attributes",
         |context, workspace| {
-            execute_preview_html_attributes(
-                &app,
-                &context.session,
-                &context.root,
-                workspace,
-                input,
-                &context.aliases,
-            )
+            execute_preview_html_attributes(&app, &context.session, &context.root, workspace, input)
         },
     )
 }
@@ -186,14 +184,7 @@ pub fn execute_preview_html_text_intent(
         "Preview HTML text",
         preview_projection,
         |context, workspace| {
-            execute_preview_html_text(
-                &app,
-                &context.session,
-                &context.root,
-                workspace,
-                input,
-                &context.aliases,
-            )
+            execute_preview_html_text(&app, &context.session, &context.root, workspace, input)
         },
     )
 }
@@ -211,14 +202,7 @@ pub fn execute_preview_html_tag_intent(
         &identity,
         "Preview HTML tag",
         |context, workspace| {
-            execute_preview_html_tag(
-                &app,
-                &context.session,
-                &context.root,
-                workspace,
-                input,
-                &context.aliases,
-            )
+            execute_preview_html_tag(&app, &context.session, &context.root, workspace, input)
         },
     )
 }
@@ -236,14 +220,7 @@ pub fn execute_preview_html_duplicate_intent(
         &identity,
         "Preview HTML duplicate",
         |context, workspace| {
-            execute_preview_html_duplicate(
-                &app,
-                &context.session,
-                &context.root,
-                workspace,
-                input,
-                &context.aliases,
-            )
+            execute_preview_html_duplicate(&app, &context.session, &context.root, workspace, input)
         },
     )
 }
@@ -255,22 +232,101 @@ pub fn execute_preview_html_delete_intent(
     input: PreviewHtmlDeleteExecutionInput,
     identity: PreviewStructuralCommandIdentity,
 ) -> Result<PreviewHtmlDeleteExecutionReceipt, String> {
-    run_preview_structural_write_command(
-        &app,
-        &state,
+    let native_root_source_id = input
+        .delete_intent
+        .native_block_slot
+        .as_ref()
+        .map(|context| context.root_source_id.as_str());
+    require_preview_structural_target_matches_selection(
         &identity,
+        native_root_source_id.or(input.delete_intent.target_source_id.as_deref()),
+        if native_root_source_id.is_some() {
+            None
+        } else {
+            input.delete_intent.target_render_instance_id.as_deref()
+        },
         "Preview HTML delete",
-        |context, workspace| {
-            execute_preview_html_delete(
-                &app,
+    )?;
+    let preserve_native_selection = native_root_source_id.is_some();
+    let execute =
+        |context: &super::kernel_preview_context::PreviewWriteCommandContext,
+         workspace: &mut crate::kernel::project_workspace::ProjectWorkspace| {
+            execute_preview_html_delete(&app, &context.session, &context.root, workspace, input)
+        };
+    if preserve_native_selection {
+        // The selected native-block root remains valid when one managed slot
+        // item is removed, so its inspector selection must be preserved.
+        run_preview_structural_write_command(
+            &app,
+            &state,
+            &identity,
+            "Preview HTML delete",
+            execute,
+        )
+    } else {
+        run_preview_structural_delete_write_command(
+            &app,
+            &state,
+            &identity,
+            "Preview HTML delete",
+            execute,
+        )
+    }
+}
+
+#[tauri::command(async)]
+pub fn execute_preview_selection_batch_intent(
+    app: AppHandle,
+    state: State<AppState>,
+    input: PreviewSelectionBatchExecutionInput,
+    identity: PreviewStructuralCommandIdentity,
+) -> Result<PreviewSelectionBatchExecutionReceipt, String> {
+    if identity.expected_selection.is_none() {
+        return Err(
+            "Operația batch cere tokenul complet al selecției Rust confirmate.".to_string(),
+        );
+    }
+    let clears_selection = matches!(&input.action, PreviewSelectionBatchAction::Delete);
+    let replaces_selection = matches!(&input.action, PreviewSelectionBatchAction::Duplicate);
+    let execute =
+        |context: &super::kernel_preview_context::PreviewWriteCommandContext,
+         workspace: &mut crate::kernel::project_workspace::ProjectWorkspace| {
+            execute_preview_selection_batch(
                 &context.session,
                 &context.root,
                 workspace,
                 input,
-                &context.aliases,
+                identity
+                    .expected_selection
+                    .as_ref()
+                    .expect("batch identity checked before pipeline"),
             )
-        },
-    )
+        };
+    if clears_selection {
+        run_preview_structural_delete_write_command(
+            &app,
+            &state,
+            &identity,
+            "Preview selection batch",
+            execute,
+        )
+    } else if replaces_selection {
+        run_preview_structural_replace_write_command(
+            &app,
+            &state,
+            &identity,
+            "Preview selection batch",
+            execute,
+        )
+    } else {
+        run_preview_structural_write_command(
+            &app,
+            &state,
+            &identity,
+            "Preview selection batch",
+            execute,
+        )
+    }
 }
 
 #[tauri::command(async)]
@@ -305,7 +361,13 @@ pub fn execute_preview_tera_delete_intent(
     input: PreviewTeraDeleteExecutionInput,
     identity: PreviewStructuralCommandIdentity,
 ) -> Result<PreviewTeraDeleteExecutionReceipt, String> {
-    run_preview_structural_write_command(
+    require_preview_structural_target_matches_selection(
+        &identity,
+        input.delete_intent.target_source_id.as_deref(),
+        None,
+        "Preview Tera delete",
+    )?;
+    run_preview_structural_delete_write_command(
         &app,
         &state,
         &identity,

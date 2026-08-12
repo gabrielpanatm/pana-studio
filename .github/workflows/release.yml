@@ -9,7 +9,7 @@ on:
       tag:
         description: Tagul existent pentru care se construiește release-ul
         required: true
-        default: v0.1.5
+        default: v0.1.6
         type: string
 
 permissions:
@@ -54,7 +54,10 @@ jobs:
           cache: npm
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+          components: clippy, rustfmt
 
       - name: Install JavaScript dependencies
         run: npm ci

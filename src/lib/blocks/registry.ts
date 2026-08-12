@@ -1,11 +1,22 @@
 import type { HtmlPaletteElement, HtmlPaletteGroup } from "$lib/project/html-palette";
 import type {
+  BlockDefinition,
+  BlockScale,
   BlockSelectionContext,
   NativeBlockRegistryItem,
   NativeBlockRegistrySnapshot,
   UiBlockGraphSnapshot,
   UiBlockSourceInstance,
 } from "$lib/types";
+
+const BLOCK_SCALE_ORDER: readonly BlockScale[] = ["element", "section", "composition"];
+
+export function availableNativeBlockScales(
+  definitions: ReadonlyArray<Pick<BlockDefinition, "scale">>,
+): BlockScale[] {
+  const available = new Set(definitions.map((definition) => definition.scale));
+  return BLOCK_SCALE_ORDER.filter((scale) => available.has(scale));
+}
 
 function paletteElementForBlock(block: NativeBlockRegistryItem): HtmlPaletteElement {
   return {

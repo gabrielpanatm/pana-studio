@@ -12,6 +12,7 @@ use crate::{
 
 use super::native::{
     known_native_block_ids, native_block_by_id, native_block_instance_id, native_block_preview_css,
+    NativeBlockKind,
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -61,13 +62,23 @@ pub fn plan_native_block_contract(request: NativeBlockContractRequest) -> Native
         &mut diagnostics,
     );
     let active_block_ids = active_ids_in_registry_order(&active_set);
+    let styled_set = active_set
+        .iter()
+        .filter(|id| native_block_by_id(id).is_some_and(|block| !block.scss.trim().is_empty()))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let runtime_set = active_set
+        .iter()
+        .filter(|id| native_block_by_id(id).is_some_and(|block| block.kind == NativeBlockKind::Js))
+        .cloned()
+        .collect::<BTreeSet<_>>();
 
     let stylesheet_source = request.stylesheet_source.unwrap_or_default();
     let had_managed_block_styles = has_any_block_style_contract(&stylesheet_source);
-    let next_stylesheet = reconcile_block_style_source(&stylesheet_source, &active_set);
+    let next_stylesheet = reconcile_block_style_source(&stylesheet_source, &styled_set);
     let next_template_source =
         reconcile_block_instance_source(&request.template_source, &mut diagnostics);
-    let next_template = if active_set.is_empty() {
+    let next_template = if styled_set.is_empty() {
         if had_managed_block_styles && next_stylesheet.trim().is_empty() {
             remove_page_stylesheet_link(&next_template_source, &stylesheet_href)
         } else {
@@ -82,7 +93,7 @@ pub fn plan_native_block_contract(request: NativeBlockContractRequest) -> Native
     };
 
     let current_page_js = normalize_page_js_config(request.page_js_config.unwrap_or_default());
-    let next_page_js = reconcile_page_js_blocks(&current_page_js, &active_set);
+    let next_page_js = reconcile_page_js_blocks(&current_page_js, &runtime_set);
     let preview_css = native_block_preview_css(active_block_ids.iter().map(String::as_str));
 
     NativeBlockContractPlan {
@@ -612,6 +623,29 @@ mod tests {
             .contents
             .contains("pana:block accordion:start"));
         assert_eq!(plan.page_js_config.blocks[0].id, "accordion");
+    }
+
+    #[test]
+    fn static_icon_never_generates_page_css_or_javascript_runtime() {
+        let plan = plan_native_block_contract(request(
+            concat!(
+                "{% block content %}",
+                "<svg data-pana-block=\"icon\" data-pana-icon=\"tabler-outline:home\" ",
+                "data-pana-instance=\"icon-test\"><path d=\"M 1 1\"></path></svg>",
+                "{% endblock content %}",
+            ),
+            "",
+            PageJsConfig::default(),
+        ));
+
+        assert_eq!(plan.active_block_ids, vec!["icon".to_string()]);
+        assert!(!plan.template.changed);
+        assert!(!plan.stylesheet.changed);
+        assert!(plan.stylesheet.contents.is_empty());
+        assert!(!plan.page_js_changed);
+        assert!(plan.page_js_config.blocks.is_empty());
+        assert!(plan.preview_css.is_empty());
+        assert!(!plan.template.contents.contains("/pagini/index.css"));
     }
 
     #[test]

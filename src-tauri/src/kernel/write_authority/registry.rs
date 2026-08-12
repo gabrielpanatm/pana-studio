@@ -118,7 +118,8 @@ fn validate_internal_path(owner: WriteOwner, segments: &[&str]) -> bool {
             segments == ["config.json"]
                 || (segments.len() == 2
                     && segments[0] == "projects"
-                    && is_hex_json_name(segments[1]))
+                    && (is_hex_json_name(segments[1])
+                        || is_hex_deploy_secrets_json_name(segments[1])))
         }
         WriteOwner::McpContext => {
             matches!(
@@ -190,9 +191,17 @@ fn validate_project_path(intent: &WriteIntent, segments: &[&str]) -> bool {
 }
 
 fn is_hex_json_name(value: &str) -> bool {
+    value.strip_suffix(".json").is_some_and(is_project_hash)
+}
+
+fn is_hex_deploy_secrets_json_name(value: &str) -> bool {
     value
-        .strip_suffix(".json")
-        .is_some_and(|stem| stem.len() == 16 && stem.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .strip_suffix(".deploy-secrets.json")
+        .is_some_and(is_project_hash)
+}
+
+fn is_project_hash(value: &str) -> bool {
+    value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub fn known_write_declarations() -> Vec<WriteDeclaration> {
@@ -377,7 +386,8 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
             category: WriteCategory::InternalAppWrite,
             owner: WriteOwner::AppConfig,
             operations: vec![WriteOperationKind::WriteText],
-            path_authority: "ApplicationHome.config/projects",
+            path_authority:
+                "ApplicationHome.config/{config.json,projects/[project-id].json,projects/[project-id].deploy-secrets.json}",
             atomicity: WriteAtomicity::AtomicRename,
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::LoggedAtomicFile,
@@ -491,6 +501,46 @@ mod tests {
     use super::*;
     use crate::kernel::write_authority::{WritePolicy, WriteTarget};
 
+    fn app_config_intent(relative_path: &str) -> WriteIntent {
+        WriteIntent::new(
+            WriteCategory::InternalAppWrite,
+            WriteOwner::AppConfig,
+            WriteOperationKind::WriteText,
+            WriteTarget::new(
+                PathBuf::from("/app/config").join(relative_path),
+                PathBuf::from("/app/config"),
+                format!("config/{relative_path}"),
+            ),
+            WritePolicy::internal_atomic(),
+            "app config path contract test",
+        )
+    }
+
+    #[test]
+    fn app_config_accepts_only_exact_project_and_deploy_secret_store_names() {
+        for accepted in [
+            "config.json",
+            "projects/0123456789abcdef.json",
+            "projects/0123456789abcdef.deploy-secrets.json",
+        ] {
+            validate_authority_path(&app_config_intent(accepted))
+                .unwrap_or_else(|error| panic!("{accepted} trebuia acceptat: {error}"));
+        }
+
+        for rejected in [
+            "projects/0123456789abcde.deploy-secrets.json",
+            "projects/0123456789abcdeg.deploy-secrets.json",
+            "projects/0123456789abcdef.deploy-secrets.json.bak",
+            "projects/deploy-secrets.json",
+            "projects/nested/0123456789abcdef.deploy-secrets.json",
+        ] {
+            assert!(
+                validate_authority_path(&app_config_intent(rejected)).is_err(),
+                "{rejected} trebuia refuzat"
+            );
+        }
+    }
+
     #[test]
     fn scratch_state_write_and_cleanup_are_declared_as_rebuildable_cache() {
         let target = WriteTarget::new(
@@ -549,12 +599,11 @@ mod tests {
     #[test]
     fn project_write_declarations_have_only_current_explicit_owners() {
         for declaration in known_write_declarations() {
-            match declaration.category {
-                WriteCategory::ProjectSourceWrite => assert!(matches!(
+            if declaration.category == WriteCategory::ProjectSourceWrite {
+                assert!(matches!(
                     declaration.owner,
                     WriteOwner::ProjectWorkspace | WriteOwner::ProjectInitializer
-                )),
-                _ => {}
+                ));
             }
         }
     }

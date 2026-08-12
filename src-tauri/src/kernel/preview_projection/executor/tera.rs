@@ -3,11 +3,15 @@ use std::path::Path;
 use tauri::AppHandle;
 
 use crate::{
-    kernel::{project_session::ProjectSessionSnapshot, project_workspace::ProjectWorkspace},
+    kernel::{
+        project_session::ProjectSessionSnapshot,
+        project_workspace::{ProjectWorkspace, WorkspaceSourceTreeHistoryAction},
+    },
     project_model::{
         model::ProjectModel, tera_delete_engine::plan_tera_delete,
         tera_insert_engine::plan_tera_insert_for_active_document,
     },
+    source_graph::identity::{capture_source_forest_identity, capture_source_tree_identity},
 };
 
 use super::super::model::{
@@ -17,11 +21,14 @@ use super::super::model::{
 use super::{
     events::{append_tera_delete_event, append_tera_insert_drop_event},
     gate::require_preview_executor_intent,
+    html::attach_source_tree_history,
     receipts::{
         blocked_tera_delete_receipt, blocked_tera_insert_drop_receipt,
         committed_tera_delete_receipt, committed_tera_insert_drop_receipt,
     },
-    runner::{run_preview_structural_plan, PreviewStructuralPlanCommitted},
+    runner::{
+        inserted_tera_source_nodes, run_preview_structural_plan, PreviewStructuralPlanCommitted,
+    },
     spec::{TERA_DELETE_INTENT, TERA_DELETE_PLAN, TERA_INSERT_DROP_INTENT, TERA_INSERT_DROP_PLAN},
 };
 
@@ -87,7 +94,24 @@ pub fn execute_preview_tera_insert_drop(
         }
     };
 
-    let PreviewStructuralPlanCommitted { patch, commit, .. } = committed;
+    let PreviewStructuralPlanCommitted {
+        before_model,
+        patch,
+        commit,
+    } = committed;
+    let inserted = inserted_tera_source_nodes(&before_model, &commit.after_model, &patch)?;
+    let inserted_source_ids = inserted
+        .iter()
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    let inserted_source_tree =
+        capture_source_forest_identity(&commit.after_model.source_graph, &inserted_source_ids)?;
+    attach_source_tree_history(
+        workspace,
+        &commit.workspace_mutation,
+        WorkspaceSourceTreeHistoryAction::Inserted,
+        Some(inserted_source_tree),
+    )?;
     let receipt = committed_tera_insert_drop_receipt(
         intent_receipt,
         commit.after_model.revision.clone(),
@@ -144,7 +168,19 @@ pub fn execute_preview_tera_delete(
         }
     };
 
-    let PreviewStructuralPlanCommitted { patch, commit, .. } = committed;
+    let PreviewStructuralPlanCommitted {
+        before_model,
+        patch,
+        commit,
+    } = committed;
+    let deleted_source_tree =
+        capture_source_tree_identity(&before_model.source_graph, &patch.resolved_target_id)?;
+    attach_source_tree_history(
+        workspace,
+        &commit.workspace_mutation,
+        WorkspaceSourceTreeHistoryAction::Deleted,
+        Some(deleted_source_tree),
+    )?;
     let receipt = committed_tera_delete_receipt(
         intent_receipt,
         commit.after_model.revision.clone(),

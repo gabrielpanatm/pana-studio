@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::deploy::DeploySettings;
 use crate::system_preferences::{SystemContrast, SystemPreferencesSnapshot};
 
 pub const APPLICATION_SETTINGS_SCHEMA_VERSION: u32 = 3;
@@ -138,6 +139,8 @@ pub struct ProjectAppConfig {
     pub project_path: String,
     #[serde(default)]
     pub cachebust_assets: bool,
+    #[serde(default)]
+    pub deploy: DeploySettings,
 }
 
 #[derive(Clone, Deserialize)]

@@ -9,6 +9,7 @@ mod session_binding;
 mod store;
 
 pub use bootstrap::bootstrap_file_buffer_store;
+pub(crate) use changeset::map_text_changes;
 pub use changeset::{
     FileBufferChangeCoordinateSpace, FileBufferChangeSetInput, FileBufferChangeSetResult,
     FileBufferTextChange,

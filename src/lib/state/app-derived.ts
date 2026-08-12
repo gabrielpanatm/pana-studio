@@ -1,5 +1,4 @@
 import { canElementAcceptChildren, htmlVoidTags } from "$lib/html/mutations";
-import { parseHtmlSourceNodes } from "$lib/html/parser";
 import {
   currentHtmlRelativePath,
   currentSourceRelativePath,
@@ -16,6 +15,11 @@ import { workbenchSourceStatusFromSelection } from "$lib/source-provenance";
 import type { AppState } from "$lib/state/app.svelte";
 import type { ProjectFile } from "$lib/types";
 import { t } from "$lib/i18n/runtime.svelte";
+import {
+  primarySelectionEditorNodeId,
+  primarySelectionEntry,
+  selectionResolution,
+} from "$lib/kernel/selection-read-model";
 
 export function deriveCurrentSourcePath(app: AppState) {
   return app.activeScannedPath ?? "";
@@ -35,10 +39,6 @@ export function deriveCurrentHtmlRelativePath(app: AppState) {
 
 export function deriveCurrentSourceRelativePath(app: AppState) {
   return currentSourceRelativePath(app.activeScannedPath);
-}
-
-export function deriveHtmlSourceNodes(app: AppState) {
-  return app.sourceLanguage === "html" ? parseHtmlSourceNodes(app.source, htmlVoidTags) : [];
 }
 
 export function deriveScannedFilesByRole(app: AppState, role: ProjectFile["role"]) {
@@ -95,13 +95,14 @@ export function deriveIsActiveRenderedPreviewPage(app: AppState) {
 
 export function deriveSelectedSourceEditTarget(app: AppState) {
   return app.resolveSourceEditTargetForSourceId(
-    app.selectionSnapshot?.anchor?.sourceNodeId,
+    primarySelectionEntry(app.selectionSnapshot)?.anchor.sourceNodeId,
   );
 }
 
 export function deriveSelectedTemplateSourceNode(app: AppState) {
-  const sourceNodeId = app.selectionSnapshot?.subject?.kind === "teraBoundary"
-    ? app.selectionSnapshot.anchor?.sourceNodeId
+  const primary = primarySelectionEntry(app.selectionSnapshot);
+  const sourceNodeId = primary?.subject.kind === "teraBoundary"
+    ? primary.anchor.sourceNodeId
     : null;
   return sourceNodeId
     ? (app.sourceGraph?.nodes.find((node) => node.id === sourceNodeId) ?? null)
@@ -109,7 +110,7 @@ export function deriveSelectedTemplateSourceNode(app: AppState) {
 }
 
 export function deriveSelectedEditorNavigationNode(app: AppState) {
-  const editorNodeId = app.selectionSnapshot?.projections.layers.editorNodeId ?? null;
+  const editorNodeId = primarySelectionEditorNodeId(app.selectionSnapshot);
   return editorNodeId
     ? (app.editorNavigationSnapshot?.nodes.find(
         (node) => node.id === editorNodeId,
@@ -121,9 +122,9 @@ export function deriveSelectedSemanticSourceLocation(app: AppState) {
   const selection = app.selectionSnapshot;
   return Boolean(
     selection
-    && selection.resolution === "resolved"
-    && selection.anchor?.file
-    && selection.anchor.range,
+    && selectionResolution(selection) === "resolved"
+    && primarySelectionEntry(selection)?.anchor.file
+    && primarySelectionEntry(selection)?.anchor.range,
   );
 }
 

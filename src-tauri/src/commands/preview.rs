@@ -1,7 +1,7 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::Instant,
-};
+use std::collections::{BTreeMap, BTreeSet};
+
+#[cfg(debug_assertions)]
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -23,8 +23,11 @@ use crate::{
         ProjectPreviewStartReceipt,
     },
     project::{is_zola_project, zola_project_root, ActiveProjectReadiness},
-    project_model::template_workbench::{
-        resolve_template_workbench_plan, TemplateWorkbenchPlan, TemplateWorkbenchPlanInput,
+    project_model::{
+        cache::{build_project_model_from_context, capture_project_model_build_context},
+        template_workbench::{
+            resolve_template_workbench_plan, TemplateWorkbenchPlan, TemplateWorkbenchPlanInput,
+        },
     },
     state::AppState,
 };
@@ -404,7 +407,7 @@ pub async fn start_project_preview(
                     &task_project_root,
                     &task_identity.expected_session_id,
                 )?;
-            let (projection, project_model) =
+            let (projection, project_model, model_cache_hit) =
                 capture_workspace_projection_with_model(state.inner(), None)?;
             let owner = PersistentPreviewOwner::new(
                 task_identity.expected_project_root.clone(),
@@ -439,7 +442,8 @@ pub async fn start_project_preview(
             let candidate = engine.render_candidate_with_project_model(
                 &app,
                 &projection,
-                project_model.as_ref(),
+                &project_model,
+                model_cache_hit,
             )?;
             append_projection_publication_event(&app, &candidate);
             let canvas_projection = stage_candidate_if_current(
@@ -566,7 +570,7 @@ pub async fn project_project_workspace_preview(
                     &task_root,
                     &task_identity.expected_session_id,
                 )?;
-            let (projection, project_model) =
+            let (projection, project_model, model_cache_hit) =
                 capture_workspace_projection_with_model(state.inner(), Some(expected_revision))?;
             let owner = PersistentPreviewOwner::new(
                 task_identity.expected_project_root.clone(),
@@ -594,7 +598,8 @@ pub async fn project_project_workspace_preview(
             let candidate = engine.render_candidate_with_project_model(
                 &app,
                 &projection,
-                project_model.as_ref(),
+                &project_model,
+                model_cache_hit,
             )?;
             append_projection_publication_event(&app, &candidate);
             let projected_paths = candidate.projected_paths.clone();
@@ -647,6 +652,7 @@ pub async fn project_template_workbench_preview(
     let task_root = root.clone();
     let receipt = tauri::async_runtime::spawn_blocking(
         move || -> Result<TemplateWorkbenchPreviewReceipt, String> {
+            #[cfg(debug_assertions)]
             let started = Instant::now();
             let state = app.state::<AppState>();
             let _operation = state
@@ -664,18 +670,11 @@ pub async fn project_template_workbench_preview(
                     &task_root,
                     &task_identity.expected_session_id,
                 )?;
-            let (projection, cached_model) = capture_workspace_projection_with_model(
+            let (projection, model, _model_cache_hit) = capture_workspace_projection_with_model(
                 state.inner(),
                 Some(task_input.expected_workspace_revision),
             )?;
-            let model_cache_hit = cached_model.is_some();
-            let model = match cached_model {
-                Some(model) => model,
-                None => crate::project_model::build_project_model_from_workspace_projection(
-                    &task_root,
-                    &projection,
-                )?,
-            };
+            #[cfg(debug_assertions)]
             let plan_started = Instant::now();
             let plan = resolve_template_workbench_plan(
                 &model,
@@ -685,6 +684,7 @@ pub async fn project_template_workbench_preview(
                     preferred_route: task_input.preferred_route,
                 },
             )?;
+            #[cfg(debug_assertions)]
             let plan_ms = plan_started.elapsed().as_millis();
             let mut engine_slot = state
                 .preview_engine
@@ -694,13 +694,14 @@ pub async fn project_template_workbench_preview(
                 "Context de template cere mai întâi Preview-ul canonic al aceleiași revizii."
                     .to_string()
             })?;
+            #[cfg(debug_assertions)]
             let publish_started = Instant::now();
             let publication = engine.publish_template_workbench_view(&projection, &model, &plan)?;
             #[cfg(debug_assertions)]
             eprintln!(
                 "[Pană Studio][perf] template_workbench source={} model_cache_hit={} plan_ms={} publish_ms={} total_ms={}",
                 plan.active_template.file,
-                model_cache_hit,
+                _model_cache_hit,
                 plan_ms,
                 publish_started.elapsed().as_millis(),
                 started.elapsed().as_millis()
@@ -1342,32 +1343,23 @@ fn capture_workspace_projection_with_model(
 ) -> Result<
     (
         crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
-        Option<crate::project_model::model::ProjectModel>,
+        crate::project_model::model::ProjectModel,
+        bool,
     ),
     String,
 > {
-    let workspace = state
-        .project_workspace
-        .lock()
-        .map_err(|_| "Nu am putut captura ProjectWorkspace pentru Preview.".to_string())?;
-    let workspace = workspace
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru Preview.".to_string())?;
+    let (root, _session, context) = capture_project_model_build_context(state)?;
     if let Some(expected_revision) = expected_revision {
-        if workspace.revision != expected_revision {
+        if context.projection().revision != expected_revision {
             return Err(format!(
                 "Proiecția Preview a devenit stale înainte de materializare: așteptat {expected_revision}, activ {}.",
-                workspace.revision
+                context.projection().revision
             ));
         }
     }
-    let projection = workspace.capture_projection_snapshot()?;
-    let project_model = if workspace.project_model_source_revision == Some(projection.revision) {
-        workspace.project_model.clone()
-    } else {
-        None
-    };
-    Ok((projection, project_model))
+    let model_cache_hit = context.model_cache_hit();
+    let model = build_project_model_from_context(&root, &context)?;
+    Ok((context.projection().clone(), model, model_cache_hit))
 }
 
 fn normalize_requested_paths(paths: Vec<String>) -> Result<Vec<String>, String> {

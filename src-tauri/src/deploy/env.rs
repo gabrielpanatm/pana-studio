@@ -3,13 +3,6 @@ use std::{collections::HashMap, fs, path::Path};
 pub(super) fn read_env_from_root(root: &Path) -> Result<HashMap<String, String>, String> {
     let path = root.join(".env");
     if !path.exists() {
-        let parent_path = root.parent().map(|p| p.join(".env"));
-        if let Some(pp) = parent_path {
-            if pp.exists() {
-                let source = fs::read_to_string(&pp).map_err(|e| e.to_string())?;
-                return Ok(parse_env(&source));
-            }
-        }
         return Err(
             "Fișierul .env nu a fost găsit.\nAdaugă credentialele Bunny în tab-ul Deploy."
                 .to_string(),
@@ -42,4 +35,40 @@ fn parse_env(source: &str) -> HashMap<String, String> {
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "pana-deploy-env-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    fn project_env_never_falls_back_to_parent_credentials() {
+        let parent = temp_dir("no-parent-fallback");
+        let project = parent.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(parent.join(".env"), "BUNNY_STORAGE_KEY=parent-secret\n").unwrap();
+
+        let error = read_env_from_root(&project).unwrap_err();
+        assert!(error.contains("nu a fost găsit"));
+
+        fs::write(project.join(".env"), "BUNNY_STORAGE_KEY=project-secret\n").unwrap();
+        let env = read_env_from_root(&project).unwrap();
+        assert_eq!(env.get("BUNNY_STORAGE_KEY").unwrap(), "project-secret");
+
+        fs::remove_dir_all(parent).unwrap();
+    }
 }

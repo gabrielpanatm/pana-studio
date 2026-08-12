@@ -1,6 +1,11 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::Serialize;
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    fs,
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 use tauri::{AppHandle, Manager, Runtime, State};
 
 use crate::{
@@ -8,17 +13,16 @@ use crate::{
         require_current_project_root, require_project_workspace_available_for_write,
     },
     fonts::{
-        annotate_font_preloads, annotate_font_registrations, font_delivery_diagnostics,
-        font_family_registration_count, overlay_staged_font_resources,
-        plan_google_font_family_download, prepare_font_display_update, prepare_font_preload_update,
-        prepare_font_role_assignment, prepare_local_font_import, read_font_roles,
-        remove_managed_font_face_block, scan_font_inventory,
+        annotate_font_preloads, build_font_face_graph, font_delivery_diagnostics,
+        normalize_font_family_name, plan_google_font_family_download, prepare_font_display_update,
+        prepare_font_preload_update, prepare_font_role_assignment, prepare_local_font_import,
+        read_font_roles, remove_managed_font_face_block,
         search_google_fonts as search_google_fonts_impl, select_font_face_stylesheet,
         select_font_preload_template, upsert_managed_font_face_block, FontCssRegistration,
-        FontDeliveryDiagnostic, FontDisplayMode, FontInventory, FontOrigin, FontRoleAssignment,
-        FontRoleId, GoogleFontAxis, GoogleFontCatalogFamily, GoogleFontDownloadResult,
-        LocalFontImportFamilyPlan, LocalFontImportPlan, LocalFontImportPrepared,
-        LOCAL_FONT_IMPORT_SCHEMA_VERSION,
+        FontDeliveryDiagnostic, FontDisplayMode, FontFaceGraph, FontOrigin, FontOwnership,
+        FontRoleAssignment, FontRoleId, GoogleFontAxis, GoogleFontCatalogFamily,
+        GoogleFontDownloadResult, LocalFontImportFamilyPlan, LocalFontImportPlan,
+        LocalFontImportPrepared, LOCAL_FONT_IMPORT_SCHEMA_VERSION,
     },
     kernel::{
         file_buffer_store::hash_bytes,
@@ -56,7 +60,7 @@ pub struct LocalFontImportReceipt {
 #[serde(rename_all = "camelCase")]
 pub struct FontManagerSnapshot {
     pub schema_version: u32,
-    pub inventory: FontInventory,
+    pub graph: FontFaceGraph,
     pub roles: Vec<FontRoleAssignment>,
     pub diagnostics: Vec<FontDeliveryDiagnostic>,
 }
@@ -92,8 +96,9 @@ pub struct FontPreviewAsset {
 pub struct FontFamilyRemovalPlan {
     pub schema_version: u32,
     pub plan_token: String,
+    pub family_id: String,
     pub family: String,
-    pub directory: String,
+    pub directories: Vec<String>,
     pub files: Vec<String>,
     pub stylesheet_paths: Vec<String>,
     pub license_files: Vec<String>,
@@ -125,17 +130,16 @@ struct BuiltFontFamilyRemovalPlan {
     binary_changes: Vec<WorkspaceBinaryRestoreChange>,
 }
 
-#[tauri::command]
-pub fn get_font_inventory(state: State<AppState>) -> Result<FontInventory, String> {
-    let root = zola_project_root(&require_current_project_root(&state)?);
-    let workspace = state.project_workspace.lock().map_err(|_| {
-        "Nu am putut bloca ProjectWorkspace pentru inventarul fonturilor.".to_string()
-    })?;
-    let workspace = workspace
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
-    Ok(font_inventory_for_workspace(&root, workspace))
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct FontFaceGraphCacheKey {
+    project_root: String,
+    runtime_session_id: String,
+    workspace_revision: u64,
+    disk_generation: u64,
 }
+
+static FONT_FACE_GRAPH_CACHE: OnceLock<Mutex<HashMap<FontFaceGraphCacheKey, FontFaceGraph>>> =
+    OnceLock::new();
 
 #[tauri::command]
 pub async fn get_font_manager(
@@ -145,8 +149,8 @@ pub async fn get_font_manager(
     tauri::async_runtime::spawn_blocking(move || {
         let (project_root, projection) = capture_font_workspace_read_projection(&app, &identity)?;
         let zola_root = zola_project_root(&project_root);
-        let inventory = font_inventory_for_projection(&zola_root, &projection);
-        let manager = font_manager_snapshot_for_projection(&projection, inventory);
+        let graph = font_face_graph_for_projection(&zola_root, &projection);
+        let manager = font_manager_snapshot_for_projection(&projection, graph);
         validate_font_workspace_read_projection(&app, &identity, &project_root, &projection)?;
         Ok(manager)
     })
@@ -163,15 +167,13 @@ pub async fn get_font_preview_asset(
     tauri::async_runtime::spawn_blocking(move || {
         let (project_root, projection) = capture_font_workspace_read_projection(&app, &identity)?;
         let zola_root = zola_project_root(&project_root);
-        let inventory = font_inventory_for_projection(&zola_root, &projection);
-        let font_file = inventory
+        let graph = font_face_graph_for_projection(&zola_root, &projection);
+        let font_file = graph
             .families
             .iter()
             .flat_map(|family| family.files.iter())
             .find(|candidate| candidate.file == file)
-            .ok_or_else(|| {
-                format!("Fișierul {file} nu există în inventarul autoritativ al fonturilor.")
-            })?;
+            .ok_or_else(|| format!("Fișierul {file} nu există în FontFaceGraph."))?;
         let bytes = if let Some(staged) = projection.resource_bytes.get(&file) {
             staged.to_vec()
         } else {
@@ -214,7 +216,7 @@ pub async fn get_font_preview_asset(
 #[tauri::command]
 pub fn assign_font_role(
     role_id: String,
-    family: String,
+    family_id: String,
     identity: ProjectWorkspaceIdentity,
     app: AppHandle,
     state: State<AppState>,
@@ -235,17 +237,24 @@ pub fn assign_font_role(
         &workspace.session.project_root,
         &project_root,
     )?;
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
-    let installed = inventory
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
+    let installed = graph
         .families
         .iter()
-        .find(|candidate| normalize_font_name(&candidate.family) == normalize_font_name(&family))
+        .find(|candidate| candidate.id == family_id)
         .ok_or_else(|| {
-            format!("Familia {family} nu există în biblioteca Rust a proiectului sau temei active.")
+            format!("Identitatea {family_id} nu există în FontFaceGraph-ul proiectului sau temei active.")
         })?;
     if !installed.registration.registered {
         return Err(format!(
-            "Familia {family} are fișiere, dar nu are declarații @font-face detectate; rolul nu poate folosi un font neînregistrat."
+            "Familia {} are fișiere, dar nu are declarații @font-face detectate; rolul nu poate folosi un font neînregistrat.",
+            installed.family
+        ));
+    }
+    if installed.delivery == crate::fonts::FontDeliveryKind::Missing {
+        return Err(format!(
+            "Familia {} are surse nerezolvate și nu poate primi un rol semantic.",
+            installed.family
         ));
     }
     let (source_path, source_after, _) = prepare_font_role_assignment(
@@ -276,8 +285,8 @@ pub fn assign_font_role(
             now_ms(),
         )
     })?;
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
-    let manager = font_manager_snapshot(workspace, inventory);
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
+    let manager = font_manager_snapshot(workspace, graph);
     let assigned = manager
         .roles
         .iter()
@@ -294,7 +303,7 @@ pub fn assign_font_role(
 
 #[tauri::command]
 pub fn set_font_display(
-    family: String,
+    family_id: String,
     display: String,
     identity: ProjectWorkspaceIdentity,
     app: AppHandle,
@@ -317,12 +326,14 @@ pub fn set_font_display(
         &workspace.session.project_root,
         &project_root,
     )?;
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
-    let installed = inventory
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
+    let installed = graph
         .families
         .iter()
-        .find(|candidate| normalize_font_name(&candidate.family) == normalize_font_name(&family))
-        .ok_or_else(|| format!("Familia {family} nu există în biblioteca Rust a proiectului."))?;
+        .find(|candidate| candidate.id == family_id)
+        .ok_or_else(|| {
+            format!("Identitatea {family_id} nu există în FontFaceGraph-ul proiectului.")
+        })?;
     if !installed.registration.managed {
         return Err(format!(
             "Politica font-display pentru {} nu poate fi modificată: declarațiile @font-face nu sunt gestionate de Pană Studio.",
@@ -373,11 +384,11 @@ pub fn set_font_display(
             now_ms(),
         )
     })?;
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
     Ok(FontDeliveryMutationReceipt {
         mutation,
         workspace: workspace.snapshot(),
-        manager: font_manager_snapshot(workspace, inventory),
+        manager: font_manager_snapshot(workspace, graph),
     })
 }
 
@@ -404,8 +415,8 @@ pub fn set_font_preload(
         &workspace.session.project_root,
         &project_root,
     )?;
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
-    let (family, target) = inventory
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
+    let (family, target) = graph
         .families
         .iter()
         .find_map(|family| {
@@ -438,7 +449,7 @@ pub fn set_font_preload(
         .text_for(&template_path)
         .ok_or_else(|| format!("ProjectWorkspace nu mai urmărește {template_path}."))?;
     let template_after =
-        prepare_font_preload_update(&template_source, &inventory.families, &file, enabled)?;
+        prepare_font_preload_update(&template_source, &graph.families, &file, enabled)?;
     if template_after == template_source {
         return Err(format!(
             "Preload-ul pentru {} este deja {}.",
@@ -474,18 +485,17 @@ pub fn set_font_preload(
             now_ms(),
         )
     })?;
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
     Ok(FontDeliveryMutationReceipt {
         mutation,
         workspace: workspace.snapshot(),
-        manager: font_manager_snapshot(workspace, inventory),
+        manager: font_manager_snapshot(workspace, graph),
     })
 }
 
 #[tauri::command]
 pub async fn plan_font_family_removal(
-    family: String,
-    directory: String,
+    family_id: String,
     identity: ProjectWorkspaceIdentity,
     app: AppHandle,
 ) -> Result<FontFamilyRemovalPlan, String> {
@@ -499,14 +509,7 @@ pub async fn plan_font_family_removal(
             .as_ref()
             .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
         workspace.require_identity(&identity)?;
-        Ok(build_font_family_removal_plan(
-            workspace,
-            &project_root,
-            &family,
-            &directory,
-            &identity,
-        )?
-        .public)
+        Ok(build_font_family_removal_plan(workspace, &project_root, &family_id, &identity)?.public)
     })
     .await
     .map_err(|error| {
@@ -516,8 +519,7 @@ pub async fn plan_font_family_removal(
 
 #[tauri::command]
 pub async fn remove_font_family(
-    family: String,
-    directory: String,
+    family_id: String,
     expected_plan_token: String,
     identity: ProjectWorkspaceIdentity,
     app: AppHandle,
@@ -539,13 +541,8 @@ pub async fn remove_font_family(
             &workspace.session.project_root,
             &project_root,
         )?;
-        let built = build_font_family_removal_plan(
-            workspace,
-            &project_root,
-            &family,
-            &directory,
-            &identity,
-        )?;
+        let built =
+            build_font_family_removal_plan(workspace, &project_root, &family_id, &identity)?;
         if built.public.plan_token != expected_plan_token {
             return Err(
                 "Planul eliminării fontului este stale. Reanalizează familia înainte de confirmare."
@@ -579,12 +576,12 @@ pub async fn remove_font_family(
                 now_ms(),
             )
         })?;
-        let inventory = font_inventory_for_workspace(&zola_root, workspace);
+        let graph = font_face_graph_for_workspace(&zola_root, workspace);
         Ok(FontFamilyRemovalReceipt {
             plan: built.public,
             mutation,
             workspace: workspace.snapshot(),
-            manager: font_manager_snapshot(workspace, inventory),
+            manager: font_manager_snapshot(workspace, graph),
         })
     })
     .await
@@ -662,66 +659,103 @@ fn validate_font_workspace_read_projection<R: Runtime>(
     Ok(())
 }
 
-fn font_inventory_for_sources<'a>(
-    root: &Path,
-    staged_resources: impl Iterator<Item = (&'a str, &'a [u8])>,
-    deleted_resources: impl Iterator<Item = &'a str>,
-    documents: impl Iterator<Item = (&'a str, &'a str)>,
-) -> FontInventory {
-    let deleted = deleted_resources.collect::<HashSet<_>>();
-    let documents = documents.collect::<Vec<_>>();
-    let mut inventory = overlay_staged_font_resources(scan_font_inventory(root), staged_resources);
-    for family in &mut inventory.families {
-        family
-            .files
-            .retain(|file| !deleted.contains(file.file.as_str()));
-    }
-    inventory.families.retain(|family| !family.files.is_empty());
-    let mut inventory = annotate_font_registrations(inventory, documents.iter().copied());
-    inventory.families = annotate_font_preloads(inventory.families, documents.iter().copied());
-    inventory
-}
-
-fn font_inventory_for_workspace(
+fn font_face_graph_for_workspace(
     root: &Path,
     workspace: &crate::kernel::project_workspace::ProjectWorkspace,
-) -> FontInventory {
-    font_inventory_for_sources(
+) -> FontFaceGraph {
+    let key = FontFaceGraphCacheKey {
+        project_root: workspace.session.project_root.clone(),
+        runtime_session_id: workspace.runtime_session_id(),
+        workspace_revision: workspace.revision,
+        disk_generation: workspace.accepted_disk.generation,
+    };
+    if let Some(graph) = cached_font_face_graph(&key) {
+        return graph;
+    }
+    let documents = workspace
+        .documents
+        .files
+        .iter()
+        .map(|(path, entry)| (path.as_str(), entry.current_text()))
+        .collect::<Vec<_>>();
+    let mut graph = build_font_face_graph(
         root,
+        documents.iter().copied(),
         workspace.staged_binary_resources(),
         workspace.deleted_binary_resources(),
         workspace
-            .documents
+            .accepted_disk
+            .manifest
             .files
             .iter()
-            .map(|(path, entry)| (path.as_str(), entry.current_text())),
-    )
+            .map(|entry| (entry.relative_path.as_str(), entry.version_token.as_str())),
+    );
+    graph.families = annotate_font_preloads(graph.families, documents.iter().copied());
+    publish_font_face_graph_cache(key, &graph);
+    graph
 }
 
-fn font_inventory_for_projection(
+fn font_face_graph_for_projection(
     root: &Path,
     projection: &WorkspaceProjectionSnapshot,
-) -> FontInventory {
-    font_inventory_for_sources(
+) -> FontFaceGraph {
+    let key = FontFaceGraphCacheKey {
+        project_root: projection.project_root.clone(),
+        runtime_session_id: projection.runtime_session_id.clone(),
+        workspace_revision: projection.revision,
+        disk_generation: projection.accepted_disk.generation,
+    };
+    if let Some(graph) = cached_font_face_graph(&key) {
+        return graph;
+    }
+    let documents = projection
+        .source_texts
+        .iter()
+        .map(|(path, text)| (path.as_str(), text.as_str()))
+        .collect::<Vec<_>>();
+    let mut graph = build_font_face_graph(
         root,
+        documents.iter().copied(),
         projection
             .resource_bytes
             .iter()
             .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
         projection.deleted_sources.iter().map(String::as_str),
         projection
-            .source_texts
+            .accepted_disk
+            .manifest
+            .files
             .iter()
-            .map(|(path, text)| (path.as_str(), text.as_str())),
-    )
+            .map(|entry| (entry.relative_path.as_str(), entry.version_token.as_str())),
+    );
+    graph.families = annotate_font_preloads(graph.families, documents.iter().copied());
+    publish_font_face_graph_cache(key, &graph);
+    graph
+}
+
+fn cached_font_face_graph(key: &FontFaceGraphCacheKey) -> Option<FontFaceGraph> {
+    FONT_FACE_GRAPH_CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(key).cloned())
+}
+
+fn publish_font_face_graph_cache(key: FontFaceGraphCacheKey, graph: &FontFaceGraph) {
+    if let Ok(mut cache) = FONT_FACE_GRAPH_CACHE.get_or_init(Default::default).lock() {
+        if cache.len() >= 16 && !cache.contains_key(&key) {
+            cache.clear();
+        }
+        cache.insert(key, graph.clone());
+    }
 }
 
 fn font_manager_snapshot(
     workspace: &crate::kernel::project_workspace::ProjectWorkspace,
-    inventory: FontInventory,
+    graph: FontFaceGraph,
 ) -> FontManagerSnapshot {
     font_manager_snapshot_for_sources(
-        inventory,
+        graph,
         workspace
             .documents
             .files
@@ -732,10 +766,10 @@ fn font_manager_snapshot(
 
 fn font_manager_snapshot_for_projection(
     projection: &WorkspaceProjectionSnapshot,
-    inventory: FontInventory,
+    graph: FontFaceGraph,
 ) -> FontManagerSnapshot {
     font_manager_snapshot_for_sources(
-        inventory,
+        graph,
         projection
             .source_texts
             .iter()
@@ -744,14 +778,14 @@ fn font_manager_snapshot_for_projection(
 }
 
 fn font_manager_snapshot_for_sources<'a>(
-    inventory: FontInventory,
+    graph: FontFaceGraph,
     documents: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> FontManagerSnapshot {
-    let roles = read_font_roles(documents, &inventory.families);
-    let diagnostics = font_delivery_diagnostics(&inventory.families, &roles);
+    let roles = read_font_roles(documents, &graph.families);
+    let diagnostics = font_delivery_diagnostics(&graph.families, &roles);
     FontManagerSnapshot {
-        schema_version: 3,
-        inventory,
+        schema_version: 4,
+        graph,
         roles,
         diagnostics,
     }
@@ -870,6 +904,8 @@ pub async fn apply_local_font_import(
     .map_err(|error| format!("Importul fonturilor a căzut în task-ul de fundal: {error}"))?
 }
 
+// Tauri derives the existing font-install IPC keys from this flat signature.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn download_google_font_family(
     family: String,
@@ -897,6 +933,8 @@ pub async fn download_google_font_family(
     .map_err(|error| format!("Instalarea fontului a căzut în task-ul de fundal: {error}"))?
 }
 
+// The blocking adapter mirrors the stable IPC contract and only adds the native app handle.
+#[allow(clippy::too_many_arguments)]
 fn download_google_font_family_blocking<R: Runtime>(
     app: &AppHandle<R>,
     family: String,
@@ -1064,18 +1102,14 @@ fn font_resource_already_available(
     }
     let target = resolve_project_write_path(project_root, relative_path)?;
     match fs::symlink_metadata(&target) {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Err(format!(
-                "Font Manager a blocat scrierea: {} este symlink.",
-                relative_path
-            ));
-        }
-        Ok(metadata) if metadata.is_dir() => {
-            return Err(format!(
-                "Font Manager a blocat scrierea: {} este director.",
-                relative_path
-            ));
-        }
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
+            "Font Manager a blocat scrierea: {} este symlink.",
+            relative_path
+        )),
+        Ok(metadata) if metadata.is_dir() => Err(format!(
+            "Font Manager a blocat scrierea: {} este director.",
+            relative_path
+        )),
         Ok(_) => {
             let existing = fs::read(&target).map_err(|error| {
                 format!(
@@ -1086,18 +1120,16 @@ fn font_resource_already_available(
             if hash_bytes(&existing) == hash_bytes(bytes) {
                 return Ok(true);
             }
-            return Err(format!(
+            Err(format!(
                 "Font Manager a blocat suprascrierea fontului existent {}. Șterge sau redenumește fișierul înainte de re-descărcare.",
                 relative_path
-            ));
+            ))
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(format!(
-                "Nu am putut verifica fontul {} înainte de scriere: {}",
-                relative_path, error
-            ));
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "Nu am putut verifica fontul {} înainte de scriere: {}",
+            relative_path, error
+        )),
     }
 }
 
@@ -1209,8 +1241,14 @@ fn build_local_font_import_plan(
         .families
         .iter()
         .map(|family| LocalFontImportFamilyPlan {
+            id: family.family.id.clone(),
             family: family.family.family.clone(),
-            directory: family.family.directory.clone(),
+            directory: family
+                .family
+                .directories
+                .first()
+                .cloned()
+                .unwrap_or_default(),
             file_count: family.family.files.len(),
             variable: family.family.files.iter().any(|file| !file.axes.is_empty()),
             license: family.family.license.clone(),
@@ -1242,49 +1280,78 @@ fn build_local_font_import_plan(
 fn build_font_family_removal_plan(
     workspace: &crate::kernel::project_workspace::ProjectWorkspace,
     project_root: &Path,
-    family: &str,
-    directory: &str,
+    family_id: &str,
     identity: &ProjectWorkspaceIdentity,
 ) -> Result<BuiltFontFamilyRemovalPlan, String> {
-    let directory = normalize_project_relative_path(directory)?;
-    if !directory.starts_with("static/fonturi/") {
-        return Err(format!(
-            "Font Manager a refuzat directorul {directory}: numai resursele locale din static/fonturi pot fi eliminate."
-        ));
-    }
     let zola_root = zola_project_root(project_root);
-    let inventory = font_inventory_for_workspace(&zola_root, workspace);
-    let installed = inventory
+    let graph = font_face_graph_for_workspace(&zola_root, workspace);
+    let installed = graph
         .families
         .iter()
-        .find(|candidate| {
-            candidate.origin == FontOrigin::Local
-                && candidate.directory == directory
-                && normalize_font_name(&candidate.family) == normalize_font_name(family)
-        })
+        .find(|candidate| candidate.origin == FontOrigin::Local && candidate.id == family_id)
         .cloned()
         .ok_or_else(|| {
-            format!("Familia locală {family} din {directory} nu mai există în inventarul Rust.")
+            format!("Familia locală cu identitatea {family_id} nu mai există în FontFaceGraph.")
         })?;
+    let mut files = installed
+        .files
+        .iter()
+        .filter(|file| file.file.starts_with("static/fonturi/"))
+        .map(|file| normalize_project_relative_path(&file.file))
+        .collect::<Result<Vec<_>, _>>()?;
+    files.sort();
+    files.dedup();
+    if files.is_empty() {
+        return Err(format!(
+            "Familia {} nu are resurse locale gestionabile în static/fonturi.",
+            installed.family
+        ));
+    }
+    let target_files = files.iter().cloned().collect::<HashSet<_>>();
+    let mut directories = files
+        .iter()
+        .filter_map(|file| Path::new(file).parent())
+        .map(|directory| normalize_project_relative_path(&directory.to_string_lossy()))
+        .collect::<Result<Vec<_>, _>>()?;
+    directories.sort();
+    directories.dedup();
+    if directories
+        .iter()
+        .any(|directory| !directory.starts_with("static/fonturi/"))
+    {
+        return Err(format!(
+            "Font Manager a refuzat familia {}: numai resursele locale din static/fonturi pot fi eliminate.",
+            installed.family
+        ));
+    }
+    let retained_delivery = installed.faces.iter().any(|face| {
+        face.ownership == FontOwnership::Detected
+            && face.delivery != crate::fonts::FontDeliveryKind::Missing
+            && face
+                .resolved_file
+                .as_ref()
+                .is_none_or(|file| !target_files.contains(file))
+    });
     let roles = read_font_roles(
         workspace
             .documents
             .files
             .iter()
             .map(|(path, entry)| (path.as_str(), entry.current_text())),
-        &inventory.families,
+        &graph.families,
     );
     let mut blocked_reasons = Vec::new();
     let used_roles = roles
         .iter()
         .filter(|role| {
             role.family.as_deref().is_some_and(|assigned| {
-                normalize_font_name(assigned) == normalize_font_name(family)
+                normalize_font_family_name(assigned)
+                    == normalize_font_family_name(&installed.family)
             })
         })
         .map(|role| role.label.clone())
         .collect::<Vec<_>>();
-    if !used_roles.is_empty() {
+    if !used_roles.is_empty() && !retained_delivery {
         blocked_reasons.push(format!(
             "Familia este încă atribuită rolurilor: {}. Atribuie mai întâi alte fonturi.",
             used_roles.join(", ")
@@ -1293,7 +1360,7 @@ fn build_font_family_removal_plan(
     let preloaded_files = installed
         .files
         .iter()
-        .filter(|file| file.preload.preloaded)
+        .filter(|file| target_files.contains(&file.file) && file.preload.preloaded)
         .map(|file| file.file_name.clone())
         .collect::<Vec<_>>();
     if !preloaded_files.is_empty() {
@@ -1302,7 +1369,37 @@ fn build_font_family_removal_plan(
             preloaded_files.join(", ")
         ));
     }
-    if !installed.registration.managed {
+    let managed_stylesheet_candidates = installed
+        .faces
+        .iter()
+        .filter(|face| {
+            face.ownership == FontOwnership::Managed
+                && face
+                    .resolved_file
+                    .as_ref()
+                    .is_some_and(|file| target_files.contains(file))
+        })
+        .map(|face| face.stylesheet.clone())
+        .collect::<BTreeSet<_>>();
+    let detected_local_references = installed
+        .faces
+        .iter()
+        .filter(|face| {
+            face.ownership == FontOwnership::Detected
+                && face
+                    .resolved_file
+                    .as_ref()
+                    .is_some_and(|file| target_files.contains(file))
+        })
+        .map(|face| face.stylesheet.clone())
+        .collect::<BTreeSet<_>>();
+    if !detected_local_references.is_empty() {
+        blocked_reasons.push(format!(
+            "Fișierele locale sunt încă referite de declarații @font-face detectate, dar negestionate, în: {}.",
+            detected_local_references.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if managed_stylesheet_candidates.is_empty() {
         blocked_reasons.push(
             "Declarațiile @font-face nu sunt gestionate de Pană Studio; eliminarea automată ar putea rupe CSS extern."
                 .to_string(),
@@ -1311,9 +1408,8 @@ fn build_font_family_removal_plan(
 
     let mut text_changes = Vec::new();
     let mut managed_stylesheets = Vec::new();
-    let mut unmanaged_stylesheets = Vec::new();
-    for stylesheet in &installed.registration.stylesheets {
-        let Some(source) = workspace.documents.text_for(stylesheet) else {
+    for stylesheet in managed_stylesheet_candidates {
+        let Some(source) = workspace.documents.text_for(&stylesheet) else {
             blocked_reasons.push(format!(
                 "Stylesheet-ul {stylesheet} nu mai este urmărit de ProjectWorkspace."
             ));
@@ -1322,9 +1418,6 @@ fn build_font_family_removal_plan(
         match remove_managed_font_face_block(&source, &installed.family) {
             Ok(contents) => {
                 managed_stylesheets.push(stylesheet.clone());
-                if font_family_registration_count(&contents, &installed.family) > 0 {
-                    unmanaged_stylesheets.push(stylesheet.clone());
-                }
                 if contents != source {
                     text_changes.push(WorkspaceResourceMutation {
                         relative_path: stylesheet.clone(),
@@ -1333,7 +1426,9 @@ fn build_font_family_removal_plan(
                     });
                 }
             }
-            Err(_) => unmanaged_stylesheets.push(stylesheet.clone()),
+            Err(error) => blocked_reasons.push(format!(
+                "Blocul @font-face gestionat din {stylesheet} nu mai poate fi eliminat: {error}"
+            )),
         }
     }
     if managed_stylesheets.is_empty() {
@@ -1341,31 +1436,21 @@ fn build_font_family_removal_plan(
             "Blocul @font-face administrat nu mai poate fi identificat în stylesheet.".to_string(),
         );
     }
-    if !unmanaged_stylesheets.is_empty() {
-        blocked_reasons.push(format!(
-            "Familia mai are declarații @font-face externe în: {}.",
-            unmanaged_stylesheets.join(", ")
-        ));
-    }
-
-    let directory_prefix = format!("{directory}/");
-    let mut files = installed
-        .files
-        .iter()
-        .map(|file| normalize_project_relative_path(&file.file))
-        .collect::<Result<Vec<_>, _>>()?;
-    files.sort();
-    files.dedup();
-    if files
-        .iter()
-        .any(|file| !file.starts_with(&directory_prefix))
-    {
+    if files.iter().any(|file| {
+        !directories
+            .iter()
+            .any(|directory| file.starts_with(&format!("{directory}/")))
+    }) {
         return Err(format!(
-            "Inventarul familiei {} conține un fișier în afara directorului administrat {directory}.",
+            "FontFaceGraph conține un fișier al familiei {} în afara directoarelor locale demonstrate.",
             installed.family
         ));
     }
 
+    let directory_prefixes = directories
+        .iter()
+        .map(|directory| format!("{directory}/"))
+        .collect::<Vec<_>>();
     let mut all_directory_resources = workspace
         .accepted_disk
         .manifest
@@ -1378,11 +1463,28 @@ fn build_font_family_removal_plan(
                 .staged_binary_resources()
                 .map(|(path, _)| path.to_string()),
         )
-        .filter(|path| path.starts_with(&directory_prefix))
+        .filter(|path| {
+            directory_prefixes
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+        })
+        .collect::<HashSet<_>>();
+    let shared_directories = graph
+        .families
+        .iter()
+        .filter(|candidate| candidate.id != installed.id)
+        .flat_map(|candidate| candidate.files.iter())
+        .filter_map(|file| Path::new(&file.file).parent())
+        .map(|directory| directory.to_string_lossy().replace('\\', "/"))
         .collect::<HashSet<_>>();
     let mut license_files = all_directory_resources
         .iter()
-        .filter(|path| is_managed_font_license_path(path, &directory))
+        .filter(|path| {
+            directories.iter().any(|directory| {
+                !shared_directories.contains(directory)
+                    && is_managed_font_license_path(path, directory)
+            })
+        })
         .cloned()
         .collect::<Vec<_>>();
     license_files.sort();
@@ -1480,8 +1582,8 @@ fn build_font_family_removal_plan(
         identity.expected_project_root,
         identity.expected_session_id,
         identity.expected_revision,
-        installed.family,
-        directory
+        installed.id,
+        installed.family
     );
     for file in &files {
         token_material.push('|');
@@ -1505,10 +1607,11 @@ fn build_font_family_removal_plan(
         !text_changes.is_empty() || !text_deletes.is_empty() || !binary_changes.is_empty();
     Ok(BuiltFontFamilyRemovalPlan {
         public: FontFamilyRemovalPlan {
-            schema_version: 1,
+            schema_version: 2,
             plan_token: hash_bytes(token_material.as_bytes()),
+            family_id: installed.id,
             family: installed.family,
-            directory,
+            directories,
             files,
             stylesheet_paths: managed_stylesheets,
             license_files,
@@ -1541,12 +1644,4 @@ fn is_managed_font_license_path(path: &str, directory: &str) -> bool {
             .as_deref(),
         Some("licenta.txt" | "license.txt" | "ofl.txt" | "ufl.txt")
     )
-}
-
-fn normalize_font_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
 }

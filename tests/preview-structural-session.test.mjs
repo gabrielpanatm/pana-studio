@@ -4,6 +4,7 @@ import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   drainPreviewStructuralLanes,
+  PreviewStructuralCancellationError,
   previewStructuralCommandIdentity,
   previewStructuralLaneSnapshot,
   requirePreviewStructuralReceiptIdentity,
@@ -47,13 +48,45 @@ async function nextTurn() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+function semanticSelectionSnapshot(
+  selectionRevision,
+  workspaceRevision,
+  editorNodeId,
+  sourceNodeId,
+  renderInstanceId,
+) {
+  return {
+    schemaVersion: 2,
+    projectRoot: "/project",
+    runtimeSessionId: "session:runtime-a",
+    selectionRevision,
+    canvasIdentity: { workspaceRevision },
+    primaryMemberId: editorNodeId,
+    rangeOriginMemberId: editorNodeId,
+    members: [{
+      memberId: editorNodeId,
+      resolution: "resolved",
+      subject: { kind: "htmlElement", tag: "div", label: "<div>" },
+      anchor: {
+        editorNodeId,
+        sourceNodeId,
+        renderInstanceId,
+        renderInstanceIds: [renderInstanceId],
+      },
+    }],
+    focus: { kind: "element" },
+  };
+}
+
 function selection(selector, sourceId, tag = "section") {
   return {
-    snapshot: {
-      selectionRevision: 1,
-      runtimeSessionId: "session:runtime-a",
-      anchor: { sourceNodeId: sourceId, renderInstanceId: `render:${sourceId}` },
-    },
+    snapshot: semanticSelectionSnapshot(
+      1,
+      1,
+      `editor:${sourceId}`,
+      sourceId,
+      `render:${sourceId}`,
+    ),
     documentEpoch: 1,
     renderInstanceId: `render:${sourceId}`,
     sourceNodeId: sourceId,
@@ -127,17 +160,13 @@ test("structural lane serializes the complete commit-to-projection lifecycle", a
 
 test("selection-driven structural commands capture the Rust selection revision before queueing", async () => {
   const activeHost = host({
-    selectionSnapshot: {
-      projectRoot: "/project",
-      runtimeSessionId: "session:runtime-a",
-      selectionRevision: 37,
-      resolution: "resolved",
-      anchor: {
-        editorNodeId: "editor_render:title",
-        sourceNodeId: "source:title",
-        renderInstanceId: "render-title",
-      },
-    },
+    selectionSnapshot: semanticSelectionSnapshot(
+      37,
+      23,
+      "editor_render:title",
+      "source:title",
+      "render-title",
+    ),
   });
   const gate = deferred();
   const first = runInPreviewStructuralLane(activeHost, async () => {
@@ -150,22 +179,27 @@ test("selection-driven structural commands capture the Rust selection revision b
 
   await nextTurn();
   activeHost.selectionSnapshot = {
-    ...activeHost.selectionSnapshot,
-    selectionRevision: 38,
-    anchor: {
-      editorNodeId: "editor_render:subtitle",
-      sourceNodeId: "source:subtitle",
-      renderInstanceId: "render-subtitle",
-    },
+    ...semanticSelectionSnapshot(
+      38,
+      23,
+      "editor_render:subtitle",
+      "source:subtitle",
+      "render-subtitle",
+    ),
   };
   gate.resolve();
   await Promise.all([first, queued]);
 
   assert.deepEqual(capturedIdentity.expectedSelection, {
     selectionRevision: 37,
-    editorNodeId: "editor_render:title",
-    sourceNodeId: "source:title",
-    renderInstanceId: "render-title",
+    workspaceRevision: 23,
+    primaryMemberId: "editor_render:title",
+    members: [{
+      memberId: "editor_render:title",
+      editorNodeId: "editor_render:title",
+      sourceNodeId: "source:title",
+      renderInstanceId: "render-title",
+    }],
   });
 });
 
@@ -453,7 +487,39 @@ test("preview Delete uses the Rust-resolved Canvas target instead of a legacy br
   assert.match(controller, /selection\.renderInstanceId !== target\.renderInstanceId/);
 });
 
-test("generated class and data-anim keep the captured target across identity collection", () => {
+test("Layers Delete resolves the clicked node before dispatching consecutive child-parent deletes", () => {
+  const app = readFileSync(fileURLToPath(new URL(
+    "../src/lib/state/app.svelte.ts",
+    import.meta.url,
+  )), "utf8");
+  const deleteFlow = app.slice(
+    app.indexOf("async deleteEditorNavigationNode"),
+    app.indexOf("async deleteHtmlElement", app.indexOf("async deleteEditorNavigationNode")),
+  );
+  const selectAt = deleteFlow.indexOf("await selectEditorNavigationNodeFromController");
+  const verifyAt = deleteFlow.indexOf("primarySelectionEditorNodeId(selection) !== node.id");
+  const dispatchAt = deleteFlow.indexOf("type: \"delete-html\"");
+  assert.ok(selectAt >= 0, "ținta apăsată trebuie selectată prin Rust");
+  assert.ok(verifyAt > selectAt, "confirmarea Rust trebuie verificată");
+  assert.ok(dispatchAt > verifyAt, "Delete trebuie emis numai după confirmarea țintei");
+});
+
+test("missing structural selection remains a visible target error, not a masked session cancellation", () => {
+  const lease = {
+    projectRoot: "/project",
+    sessionId: "session:runtime-a",
+    projectSessionEpoch: 4,
+    selection: null,
+  };
+  assert.throws(
+    () => previewStructuralCommandIdentity(lease, true),
+    (error) => error instanceof Error
+      && !(error instanceof PreviewStructuralCancellationError)
+      && error.message.length > 0,
+  );
+});
+
+test("generated class and data-anim delegate identity allocation to the captured Rust target", () => {
   const source = readFileSync(fileURLToPath(new URL(
     "../src/lib/state/html-actions-controller.ts",
     import.meta.url,
@@ -467,17 +533,16 @@ test("generated class and data-anim keep the captured target across identity col
     source.indexOf("export async function insertNodeRelative"),
   );
 
-  for (const action of [classAction, dataAnimAction]) {
-    const captureAt = action.indexOf("captureHtmlActionTarget(host.coordinatedElementSelection)");
-    const collectAt = action.indexOf("await collectIdentitySourceTexts(host)");
-    const sessionCheckAt = action.indexOf("previewStructuralSessionLeaseMatches(host, sessionLease)");
-    assert.ok(captureAt >= 0 && captureAt < collectAt);
-    assert.ok(sessionCheckAt > collectAt);
-  }
-  assert.match(classAction, /applyClassesToTarget\(\s*host,\s*target,/);
-  assert.match(dataAnimAction, /applyAttributesToTarget\(\s*host,\s*target,/);
-  assert.match(classAction, /\{ markPending: false \}/);
-  assert.match(dataAnimAction, /\{ markPending: false \}/);
+  assert.match(
+    classAction,
+    /captureHtmlActionTarget\(host\.coordinatedElementSelection\)[\s\S]*generateIdentityForTarget\(host, target, "class"\)/,
+  );
+  assert.match(
+    dataAnimAction,
+    /captureHtmlActionTarget\(host\.coordinatedElementSelection\)[\s\S]*generateIdentityForTarget\(host, target, "dataAnim"\)/,
+  );
+  assert.match(source, /executeSelectedHtmlAttributes\([\s\S]*\{ kind \},\s*\);/);
+  assert.doesNotMatch(source, /collectIdentitySourceTexts|generateUniqueHtmlIdentity|readProjectFile/);
   assert.match(source, /committedDraftCanSettle\(currentClasses, submittedClasses, baselineClasses\)/);
   assert.match(
     source,
@@ -495,7 +560,7 @@ test("generated class and data-anim keep the captured target across identity col
   );
 });
 
-test("A queued structural target stays A when selection changes to B before execution", async () => {
+test("A queued structural SourceNode target stays A when selection changes to B before execution", async () => {
   const activeHost = host({
     coordinatedElementSelection: selection("main > section:nth-of-type(1)", "source-a"),
   });
@@ -522,7 +587,7 @@ test("A queued structural target stays A when selection changes to B before exec
   releaseFirst.resolve();
   await Promise.all([first, queued]);
 
-  assert.equal(executedTarget.selector, "main > section:nth-of-type(1)");
+  assert.equal("selector" in executedTarget, false);
   assert.equal(executedTarget.sourceId, "source-a");
   assert.equal(executedTarget.sourceLocation.line, 4);
   assert.deepEqual(executedTarget.classes, ["source-a"]);
@@ -573,7 +638,6 @@ test("Duplicate din meniul contextual așteaptă exact comanda structurală pent
     ...target,
     sourceLocation: null,
     observation: null,
-    section: null,
   };
   const runtime = {
     canDispatch() {

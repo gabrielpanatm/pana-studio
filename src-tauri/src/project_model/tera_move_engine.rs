@@ -6,23 +6,21 @@ use crate::{
 };
 
 use super::move_engine::{
-    can_receive_children, content_revision, line_indent_at_offset, line_number_at_offset,
-    removal_range_for_span, resolve_conjunctive_anchor, same_model_path, source_location_at_offset,
+    can_receive_children, content_revision, inside_prefix_for_insert, line_number_at_offset,
+    parse_html_tag_at, removal_range_for_span, same_model_path, source_location_at_offset,
     ProjectMovePosition, ProjectSourceEditLocation, Span,
 };
+use super::structural_edit::{format_tera_fragment, StructuralPlacement};
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTeraMoveIntent {
     pub source_source_id: Option<String>,
     pub target_source_id: Option<String>,
-    pub source_location: Option<ProjectSourceEditLocation>,
-    pub target_location: Option<ProjectSourceEditLocation>,
     pub source_kind: Option<String>,
     pub target_kind: Option<String>,
     pub source_label: Option<String>,
     pub target_tag: Option<String>,
-    pub target_selector: Option<String>,
     pub position: ProjectMovePosition,
 }
 
@@ -43,6 +41,10 @@ pub struct ProjectTeraMovePatch {
     pub resolved_target_id: String,
     pub moved_label: String,
     pub moved_kind: String,
+    pub target_label: String,
+    pub target_kind: String,
+    pub position: ProjectMovePosition,
+    pub expected_child_index: Option<usize>,
     pub before_revision: String,
     pub after_revision: String,
     pub contents: String,
@@ -51,6 +53,7 @@ pub struct ProjectTeraMovePatch {
     pub source_start_line: usize,
     pub source_end_line: usize,
     pub new_start_line: usize,
+    pub target_start_line: usize,
 }
 
 struct TeraMoveApplication {
@@ -58,6 +61,7 @@ struct TeraMoveApplication {
     source_start_line: usize,
     source_end_line: usize,
     new_start_line: usize,
+    target_start_line: usize,
 }
 
 pub fn plan_tera_move(model: &ProjectModel, intent: &ProjectTeraMoveIntent) -> ProjectTeraMovePlan {
@@ -148,12 +152,18 @@ fn plan_tera_move_inner(
         source_location_at_offset(&file.contents, &source_node.file, source_span.start);
     let target_location =
         source_location_at_offset(&file.contents, &target_node.file, target_span.start);
+    let placement = if target_node.kind == SourceNodeKind::Html {
+        StructuralPlacement::for_html_target(model, &file.contents, target_node)
+    } else {
+        StructuralPlacement::for_direct_target(&file.contents, target_range.start)
+    };
     let applied = apply_tera_move(
         &file.contents,
         source_span,
         target_span,
         target_node.kind == SourceNodeKind::Html,
         intent.position,
+        &placement,
     )?;
 
     Ok(ProjectTeraMovePatch {
@@ -162,6 +172,16 @@ fn plan_tera_move_inner(
         resolved_target_id: target_node.id.clone(),
         moved_label: source_node.label.clone(),
         moved_kind: tera_kind_label(&source_node.kind).to_string(),
+        target_label: target_node.label.clone(),
+        target_kind: tera_kind_label(&target_node.kind).to_string(),
+        position: intent.position,
+        expected_child_index: (intent.position == ProjectMovePosition::Inside).then_some(
+            if target_node.kind == SourceNodeKind::Html {
+                target_node.children.len()
+            } else {
+                0
+            },
+        ),
         before_revision: file.revision.clone(),
         after_revision: content_revision(&applied.contents),
         contents: applied.contents,
@@ -170,6 +190,7 @@ fn plan_tera_move_inner(
         source_start_line: applied.source_start_line,
         source_end_line: applied.source_end_line,
         new_start_line: applied.new_start_line,
+        target_start_line: applied.target_start_line,
     })
 }
 
@@ -177,40 +198,20 @@ fn resolve_tera_move_source<'a>(
     model: &'a ProjectModel,
     intent: &ProjectTeraMoveIntent,
 ) -> Option<&'a SourceNode> {
-    let id_node = intent
+    intent
         .source_source_id
         .as_deref()
-        .and_then(|id| resolve_source_node(model, id, intent.source_kind.as_deref()));
-    let location_node = intent.source_location.as_ref().and_then(|location| {
-        resolve_source_node_at_location(model, location, intent.source_kind.as_deref())
-    });
-
-    resolve_conjunctive_anchor(
-        intent.source_source_id.as_deref(),
-        intent.source_location.as_ref(),
-        id_node,
-        location_node,
-    )
+        .and_then(|id| resolve_source_node(model, id, intent.source_kind.as_deref()))
 }
 
 fn resolve_tera_move_target<'a>(
     model: &'a ProjectModel,
     intent: &ProjectTeraMoveIntent,
 ) -> Option<&'a SourceNode> {
-    let id_node = intent
+    intent
         .target_source_id
         .as_deref()
-        .and_then(|id| resolve_target_node(model, id, intent.target_kind.as_deref()));
-    let location_node = intent.target_location.as_ref().and_then(|location| {
-        resolve_target_node_at_location(model, location, intent.target_kind.as_deref())
-    });
-
-    resolve_conjunctive_anchor(
-        intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-        id_node,
-        location_node,
-    )
+        .and_then(|id| resolve_target_node(model, id, intent.target_kind.as_deref()))
 }
 
 fn resolve_source_node<'a>(
@@ -218,45 +219,10 @@ fn resolve_source_node<'a>(
     source_id: &str,
     kind: Option<&str>,
 ) -> Option<&'a SourceNode> {
-    model.source_graph.nodes.iter().find(|node| {
-        node.id == source_id && is_movable_tera_kind(&node.kind) && node_kind_matches(node, kind)
-    })
-}
-
-fn resolve_source_node_at_location<'a>(
-    model: &'a ProjectModel,
-    location: &ProjectSourceEditLocation,
-    kind: Option<&str>,
-) -> Option<&'a SourceNode> {
-    if location.line == 0 || location.column == 0 {
-        return None;
-    }
-
-    let mut candidates: Vec<&SourceNode> = model
+    model
         .source_graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            is_movable_tera_kind(&node.kind)
-                && same_model_path(&node.file, &location.file)
-                && node_kind_matches(node, kind)
-                && node
-                    .range
-                    .as_ref()
-                    .is_some_and(|range| range.line == location.line)
-        })
-        .collect();
-
-    candidates.retain(|node| {
-        node.range
-            .as_ref()
-            .is_some_and(|range| range.column == location.column)
-    });
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
-    }
+        .node_by_id(source_id)
+        .filter(|node| is_movable_tera_kind(&node.kind) && node_kind_matches(node, kind))
 }
 
 fn resolve_target_node<'a>(
@@ -264,47 +230,10 @@ fn resolve_target_node<'a>(
     source_id: &str,
     kind: Option<&str>,
 ) -> Option<&'a SourceNode> {
-    model.source_graph.nodes.iter().find(|node| {
-        node.id == source_id
-            && is_tera_move_anchor_kind(&node.kind)
-            && node_kind_matches(node, kind)
-    })
-}
-
-fn resolve_target_node_at_location<'a>(
-    model: &'a ProjectModel,
-    location: &ProjectSourceEditLocation,
-    kind: Option<&str>,
-) -> Option<&'a SourceNode> {
-    if location.line == 0 || location.column == 0 {
-        return None;
-    }
-
-    let mut candidates: Vec<&SourceNode> = model
+    model
         .source_graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            is_tera_move_anchor_kind(&node.kind)
-                && same_model_path(&node.file, &location.file)
-                && node_kind_matches(node, kind)
-                && node
-                    .range
-                    .as_ref()
-                    .is_some_and(|range| range.line == location.line)
-        })
-        .collect();
-
-    candidates.retain(|node| {
-        node.range
-            .as_ref()
-            .is_some_and(|range| range.column == location.column)
-    });
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
-    }
+        .node_by_id(source_id)
+        .filter(|node| is_tera_move_anchor_kind(&node.kind) && node_kind_matches(node, kind))
 }
 
 fn validate_tera_move_source(node: &SourceNode) -> Result<(), String> {
@@ -376,9 +305,7 @@ fn target_context_kind(
     let parent_id = target.parent.as_deref()?;
     model
         .source_graph
-        .nodes
-        .iter()
-        .find(|node| node.id == parent_id)
+        .node_by_id(parent_id)
         .map(|node| node.kind.clone())
 }
 
@@ -422,6 +349,7 @@ fn apply_tera_move(
     target_span: Span,
     target_is_html: bool,
     position: ProjectMovePosition,
+    placement: &StructuralPlacement,
 ) -> Result<TeraMoveApplication, String> {
     let removed_length = source_span.end.saturating_sub(source_span.start);
     let moving_source = source
@@ -453,43 +381,107 @@ fn apply_tera_move(
 
     let source_start_line = line_number_at_offset(source, source_span.start);
     let source_end_line = line_number_at_offset(source, source_span.end);
-    let target_indent = line_indent_at_offset(&without_source, adjusted_target_start);
-    let nested_indent = format!("{target_indent}  ");
-    let block = format_moved_tera_snippet(
+    let target_indent = placement.indent.as_str();
+    let nested_indent = placement.child_indent();
+    let formatted = format_tera_fragment(
         &moving_source,
         if position == ProjectMovePosition::Inside {
             &nested_indent
         } else {
-            &target_indent
+            target_indent
         },
-    );
+        &placement.style,
+    )?;
+    if position == ProjectMovePosition::Inside && target_is_html {
+        let insert_index =
+            html_inside_insert_index(&without_source, adjusted_target_start, adjusted_target_end)?;
+        let opening =
+            parse_html_tag_at(&without_source, adjusted_target_start).ok_or_else(|| {
+                "Ancora HTML nu mai indică un tag stabil pentru mutarea Tera.".to_string()
+            })?;
+        let before_insert = inside_prefix_for_insert(&without_source, opening.end, insert_index);
+        let inserted_fragment_offset = before_insert.len() + placement.style.line_ending().len();
+        let contents = format!(
+            "{}{}{}{}{}{}",
+            before_insert,
+            placement.style.line_ending(),
+            formatted,
+            placement.style.line_ending(),
+            target_indent,
+            &without_source[insert_index..]
+        );
+        return Ok(TeraMoveApplication {
+            target_start_line: line_number_at_offset(&contents, adjusted_target_start),
+            new_start_line: line_number_at_offset(&contents, inserted_fragment_offset),
+            contents,
+            source_start_line,
+            source_end_line,
+        });
+    }
+
+    let block = format!("{formatted}{}", placement.style.line_ending());
 
     let insert_index = match position {
         ProjectMovePosition::Before => line_start_index(&without_source, adjusted_target_start),
         ProjectMovePosition::After => line_break_index(&without_source, adjusted_target_end)
             .map(|index| index + 1)
             .unwrap_or(without_source.len()),
-        ProjectMovePosition::Inside if target_is_html => adjusted_target_end,
+        ProjectMovePosition::Inside if target_is_html => unreachable!("handled above"),
         ProjectMovePosition::Inside => line_break_index(&without_source, adjusted_target_start)
             .map(|index| index + 1)
             .unwrap_or(adjusted_target_end),
     };
-    let insertion = source_block_for_insert(&without_source, insert_index, &block);
-    let new_start_line = line_number_at_offset(&without_source, insert_index)
-        + if insertion.starts_with('\n') { 1 } else { 0 };
+    let insertion = source_block_for_insert(
+        &without_source,
+        insert_index,
+        &block,
+        placement.style.line_ending(),
+    );
+    let inserted_fragment_offset = insert_index + insertion.len().saturating_sub(block.len());
+    let target_offset = if insert_index <= adjusted_target_start {
+        adjusted_target_start + insertion.len()
+    } else {
+        adjusted_target_start
+    };
     let contents = format!(
         "{}{}{}",
         &without_source[..insert_index],
         insertion,
         &without_source[insert_index..]
     );
+    let new_start_line = line_number_at_offset(&contents, inserted_fragment_offset);
+    let target_start_line = line_number_at_offset(&contents, target_offset);
 
     Ok(TeraMoveApplication {
         contents,
         source_start_line,
         source_end_line,
         new_start_line,
+        target_start_line,
     })
+}
+
+fn html_inside_insert_index(source: &str, start: usize, end: usize) -> Result<usize, String> {
+    let opening = parse_html_tag_at(source, start).ok_or_else(|| {
+        "Ancora HTML nu mai indică un tag stabil pentru mutarea Tera.".to_string()
+    })?;
+    if opening.is_closing || opening.is_self_closing {
+        return Err("Ancora HTML nu poate primi conținut Tera în interior.".to_string());
+    }
+    let element = source
+        .get(start..end)
+        .ok_or_else(|| "Range-ul ancorei HTML este invalid pentru mutarea Tera.".to_string())?;
+    let closing = format!("</{}", opening.tag);
+    let relative = element
+        .to_ascii_lowercase()
+        .rfind(&closing)
+        .ok_or_else(|| {
+            format!(
+                "Nu am găsit tagul de închidere </{}> al ancorei.",
+                opening.tag
+            )
+        })?;
+    Ok(start + relative)
 }
 
 fn node_kind_matches(node: &SourceNode, kind: Option<&str>) -> bool {
@@ -593,80 +585,21 @@ fn line_break_index(source: &str, index: usize) -> Option<usize> {
         .map(|relative| index + relative)
 }
 
-fn format_moved_tera_snippet(snippet: &str, indent: &str) -> String {
-    let stripped = strip_common_indent(snippet.trim_end());
-    let body = stripped
-        .split('\n')
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                format!("{indent}{}", line.trim())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{body}\n")
-}
-
-fn strip_common_indent(snippet: &str) -> String {
-    let lines: Vec<&str> = snippet.split('\n').collect();
-    let content_lines: Vec<&str> = lines
-        .iter()
-        .copied()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    let common_indent_length = content_lines
-        .iter()
-        .map(|line| {
-            line.chars()
-                .take_while(|character| *character == ' ' || *character == '\t')
-                .count()
-        })
-        .min()
-        .unwrap_or(0);
-    if common_indent_length == 0 {
-        return snippet.to_string();
-    }
-    lines
-        .iter()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                line.chars().skip(common_indent_length).collect()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn source_block_for_insert(source: &str, index: usize, block: &str) -> String {
+fn source_block_for_insert(source: &str, index: usize, block: &str, line_ending: &str) -> String {
     if index > 0 && source.as_bytes().get(index - 1) != Some(&b'\n') {
-        format!("\n{block}")
+        format!("{line_ending}{block}")
     } else {
         block.to_string()
     }
 }
 
-fn source_location_label(location: Option<&ProjectSourceEditLocation>) -> String {
-    match location {
-        Some(location) if location.column > 0 => {
-            format!("{}:{}:{}", location.file, location.line, location.column)
-        }
-        Some(location) => format!("{}:{}", location.file, location.line),
-        None => "fără locație".to_string(),
-    }
-}
-
 fn tera_move_missing_message(kind: &str, intent: &ProjectTeraMoveIntent) -> String {
-    let (id, loc, node_kind) = if kind == "sursă" {
+    let (id, node_kind) = if kind == "sursă" {
         (
             intent
                 .source_source_id
                 .as_deref()
                 .unwrap_or("fără Source ID"),
-            source_location_label(intent.source_location.as_ref()),
             intent.source_kind.as_deref().unwrap_or("fără kind"),
         )
     } else {
@@ -675,35 +608,32 @@ fn tera_move_missing_message(kind: &str, intent: &ProjectTeraMoveIntent) -> Stri
                 .target_source_id
                 .as_deref()
                 .unwrap_or("fără Source ID"),
-            source_location_label(intent.target_location.as_ref()),
             intent.target_kind.as_deref().unwrap_or("fără kind"),
         )
     };
-    let selector = intent.target_selector.as_deref().unwrap_or("fără selector");
     let source_label = intent.source_label.as_deref().unwrap_or("fără label sursă");
     format!(
-        "Nu am putut ancora {kind} Tera în Project Model. Source ID: {id}; locație: {loc}; kind: {node_kind}; selector live: {selector}; sursă: {source_label}."
+        "Nu am putut ancora {kind} Tera în Project Model. SourceNodeId: {id}; kind: {node_kind}; sursă: {source_label}."
     )
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::project_model::build_project_model;
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     use super::*;
 
     #[test]
     fn plan_tera_move_moves_include_before_html_anchor() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  {% include \"partials/a.html\" %}\n",
@@ -712,7 +642,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Include, "partials/b.html");
         let target = model
             .source_graph
@@ -726,13 +656,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("include".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Before,
             },
         );
@@ -749,15 +676,15 @@ mod tests {
     #[test]
     fn plan_tera_move_blocks_move_into_own_scope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  <section class=\"hero\"></section>\n",
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Block, "content");
         let target = model
             .source_graph
@@ -771,13 +698,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("block".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Inside,
             },
         );
@@ -790,20 +714,19 @@ mod tests {
     #[test]
     fn plan_tera_move_blocks_cross_file_move() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let mut fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  {% include \"partials/a.html\" %}\n",
                 "{% endblock %}\n",
             ),
         );
-        fs::write(
-            root.join("templates/partials/card.html"),
+        fixture.source(
+            "templates/partials/card.html",
             "<article class=\"card\"></article>\n",
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Include, "partials/a.html");
         let target = model
             .source_graph
@@ -817,13 +740,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("include".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("article".to_string()),
-                target_selector: Some(".card".to_string()),
                 position: ProjectMovePosition::Before,
             },
         );
@@ -836,8 +756,8 @@ mod tests {
     #[test]
     fn plan_tera_move_blocks_macro_inside_html_anchor() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  <section class=\"hero\"></section>\n",
@@ -846,7 +766,7 @@ mod tests {
                 "{% endmacro %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Macro, "card");
         let target = model
             .source_graph
@@ -860,13 +780,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("macro".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Inside,
             },
         );
@@ -879,8 +796,8 @@ mod tests {
     #[test]
     fn plan_tera_move_blocks_block_into_nested_scope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  <section class=\"hero\"></section>\n",
@@ -890,7 +807,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Block, "sidebar");
         let target = model
             .source_graph
@@ -904,13 +821,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("block".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Before,
             },
         );
@@ -923,8 +837,8 @@ mod tests {
     #[test]
     fn plan_tera_move_handles_filter_as_a_specialized_source() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  {% filter upper %}{{ title }}{% endfilter %}\n",
@@ -932,7 +846,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Filter, "filter");
         let target = model
             .source_graph
@@ -946,13 +860,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("filter".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Before,
             },
         );
@@ -965,8 +876,8 @@ mod tests {
     #[test]
     fn plan_tera_move_handles_filter_as_a_specialized_destination() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  {% include \"partials/a.html\" %}\n",
@@ -974,7 +885,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = find_node(&model, SourceNodeKind::Include, "partials/a.html");
         let target = find_node(&model, SourceNodeKind::Filter, "filter");
 
@@ -983,13 +894,10 @@ mod tests {
             &ProjectTeraMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_kind: Some("include".to_string()),
                 target_kind: Some("filter".to_string()),
                 source_label: Some(source.label.clone()),
                 target_tag: None,
-                target_selector: None,
                 position: ProjectMovePosition::Before,
             },
         );
@@ -1000,10 +908,10 @@ mod tests {
     }
 
     #[test]
-    fn plan_tera_move_rejects_contradictory_or_stale_identity_for_same_kind_siblings() {
+    fn plan_tera_move_uses_only_exact_source_id_and_rejects_stale_identity() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = project_fixture(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "  {% include \"partials/a.html\" %}\n",
@@ -1012,7 +920,7 @@ mod tests {
                 "{% endblock %}\n",
             ),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let first = find_node(&model, SourceNodeKind::Include, "partials/a.html");
         let second = find_node(&model, SourceNodeKind::Include, "partials/b.html");
         let target = model
@@ -1021,50 +929,58 @@ mod tests {
             .iter()
             .find(|node| node.label == "<section .target>")
             .unwrap();
-        let second_location = node_location(second);
+        let exact = plan_tera_move(
+            &model,
+            &ProjectTeraMoveIntent {
+                source_source_id: Some(first.id.clone()),
+                target_source_id: Some(target.id.clone()),
+                source_kind: Some("include".to_string()),
+                target_kind: Some("html".to_string()),
+                source_label: Some(second.label.clone()),
+                target_tag: Some("section".to_string()),
+                position: ProjectMovePosition::Before,
+            },
+        );
+        assert!(exact.allowed, "{:?}", exact.diagnostic);
+        assert_eq!(
+            exact
+                .patch
+                .expect("exact SourceNodeId move patch")
+                .resolved_source_id,
+            first.id
+        );
 
-        for source_source_id in [Some(first.id.clone()), Some("stale-source-id".to_string())] {
-            let plan = plan_tera_move(
-                &model,
-                &ProjectTeraMoveIntent {
-                    source_source_id,
-                    target_source_id: Some(target.id.clone()),
-                    source_location: Some(second_location.clone()),
-                    target_location: None,
-                    source_kind: Some("include".to_string()),
-                    target_kind: Some("html".to_string()),
-                    source_label: Some(second.label.clone()),
-                    target_tag: Some("section".to_string()),
-                    target_selector: Some(".target".to_string()),
-                    position: ProjectMovePosition::Before,
-                },
-            );
+        let stale = plan_tera_move(
+            &model,
+            &ProjectTeraMoveIntent {
+                source_source_id: Some("stale-source-id".to_string()),
+                target_source_id: Some(target.id.clone()),
+                source_kind: Some("include".to_string()),
+                target_kind: Some("html".to_string()),
+                source_label: Some(second.label.clone()),
+                target_tag: Some("section".to_string()),
+                position: ProjectMovePosition::Before,
+            },
+        );
+        assert!(!stale.allowed, "{:?}", stale.diagnostic);
+        assert!(stale.patch.is_none());
 
-            assert!(!plan.allowed, "{:?}", plan.diagnostic);
-            assert!(plan.patch.is_none());
-        }
-
-        let mut wrong_column = node_location(first);
-        wrong_column.column += 1;
-        let exact_column_plan = plan_tera_move(
+        let missing_source_id = plan_tera_move(
             &model,
             &ProjectTeraMoveIntent {
                 source_source_id: None,
                 target_source_id: Some(target.id.clone()),
-                source_location: Some(wrong_column),
-                target_location: None,
                 source_kind: Some("include".to_string()),
                 target_kind: Some("html".to_string()),
                 source_label: Some(first.label.clone()),
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".target".to_string()),
                 position: ProjectMovePosition::Before,
             },
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(!exact_column_plan.allowed);
-        assert!(exact_column_plan.patch.is_none());
+        assert!(!missing_source_id.allowed);
+        assert!(missing_source_id.patch.is_none());
     }
 
     fn find_node<'a>(
@@ -1080,32 +996,12 @@ mod tests {
             .unwrap()
     }
 
-    fn node_location(node: &SourceNode) -> ProjectSourceEditLocation {
-        let range = node.range.as_ref().expect("source node should have range");
-        ProjectSourceEditLocation {
-            file: node.file.clone(),
-            line: range.line,
-            column: range.column,
-        }
-    }
-
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates/partials")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
-        fs::write(root.join("templates/partials/a.html"), "<p>A</p>\n").unwrap();
-        fs::write(root.join("templates/partials/b.html"), "<p>B</p>\n").unwrap();
-        fs::write(root.join("templates/base.html"), "<body></body>\n").unwrap();
+    fn project_fixture(root: PathBuf, template: &str) -> ProjectModelTestFixture {
+        let mut fixture = ProjectModelTestFixture::standard_zola(root, template).unwrap();
+        fixture.source("templates/partials/a.html", "<p>A</p>\n");
+        fixture.source("templates/partials/b.html", "<p>B</p>\n");
+        fixture.source("templates/base.html", "<body></body>\n");
+        fixture
     }
 
     fn unique_test_dir() -> PathBuf {

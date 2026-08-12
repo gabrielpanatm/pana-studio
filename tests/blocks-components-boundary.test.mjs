@@ -42,13 +42,13 @@ test("BlockGraph deține sursa, iar UiBlockGraph unește explicit Canvas-ul", ()
   assert.match(workspace, /uiBlockGraph\?\.renderedInstances/);
 });
 
-test("registrul Rust este autoritatea unică pentru cei șase provideri nativi", () => {
+test("registrul Rust este autoritatea unică pentru cei opt provideri nativi", () => {
   const native = source("../src-tauri/src/blocks/native.rs");
   const commands = source("../src-tauri/src/commands/blocks.rs");
   const registry = source("../src-tauri/src/tauri_command_registry.rs");
   const io = source("../src/lib/project/io.ts");
 
-  for (const blockId of ["counter", "accordion", "tabs", "dialog", "offcanvas", "nav-menu"]) {
+  for (const blockId of ["icon", "counter", "accordion", "tabs", "slider", "dialog", "offcanvas", "nav-menu"]) {
     assert.match(native, new RegExp(`id: "${blockId}"`));
   }
   assert.match(native, /data-pana-block=/);
@@ -59,11 +59,82 @@ test("registrul Rust este autoritatea unică pentru cei șase provideri nativi",
     "apply_native_block_contract",
     "read_block_runtime_snapshot",
     "read_ui_block_graph",
+    "read_icon_catalog",
+    "search_icon_catalog",
   ]) {
     assert.match(commands, new RegExp(command));
     assert.match(registry, new RegExp(command));
     assert.match(io, new RegExp(`"${command}"`));
   }
+});
+
+test("taxonomia separă elementele, compozițiile și secțiunile page-level", () => {
+  const native = source("../src-tauri/src/blocks/native.rs");
+  const model = source("../src-tauri/src/source_graph/model.rs");
+  const workspace = source("../src/lib/components/creation/BlocksWorkspace.svelte");
+
+  for (const blockId of ["accordion", "tabs", "slider", "dialog", "offcanvas", "nav-menu"]) {
+    const definitionStart = native.indexOf(`id: "${blockId}"`);
+    const definitionKind = native.indexOf("kind:", definitionStart);
+    assert.notEqual(definitionStart, -1);
+    assert.notEqual(definitionKind, -1);
+    assert.match(native.slice(definitionStart, definitionKind), /scale: BlockScale::Composition/);
+  }
+  assert.match(model, /zonă completă de pagină\.\n\s+Section,/);
+  assert.doesNotMatch(native, /scale: BlockScale::Section/);
+  assert.match(workspace, /availableNativeBlockScales\(definitions\)/);
+  assert.match(workspace, /dynamicFields\.length > 0/);
+});
+
+test("Slider este Composition Rust-first și se editează exclusiv în panoul Blocuri", () => {
+  const native = source("../src-tauri/src/blocks/native.rs");
+  const slots = source("../src-tauri/src/blocks/slots.rs");
+  const runtime = source("../src-tauri/src/blocks/runtime.js");
+  const blockPane = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
+  const sliderEditor = source("../src/lib/components/inspector/SliderBlockPropertiesEditor.svelte");
+  const htmlPane = source("../src/lib/components/inspector/HtmlPane.svelte");
+
+  assert.match(native, /id: "slider"[\s\S]*scale: BlockScale::Composition[\s\S]*tag: "div"/);
+  assert.match(native, /id: "slides"[\s\S]*minimum_items: 1[\s\S]*maximum_items: Some\(32\)/);
+  assert.match(native, /data-pana-slider-slide/);
+  assert.match(slots, /NativeBlockSlotMutationContext/);
+  assert.match(slots, /render_native_block_slot_item_html/);
+  assert.match(slots, /Slider în slider este blocat/);
+  assert.match(runtime, /structureSignature/);
+  assert.match(runtime, /register\("slider"/);
+  assert.match(blockPane, /<SliderBlockPropertiesEditor/);
+  assert.match(sliderEditor, /operation:\s*"insert" \| "duplicate" \| "move" \| "delete"|request\("insert"\)/);
+  assert.doesNotMatch(htmlPane, /SliderBlockPropertiesEditor|data-pana-slider|inspector-slider/);
+});
+
+test("Icon este bloc static Rust-first, iar editorul lui există exclusiv în panoul Blocuri", () => {
+  const native = source("../src-tauri/src/blocks/native.rs");
+  const icons = source("../src-tauri/src/blocks/icons.rs");
+  const insert = source("../src-tauri/src/project_model/insert_engine.rs");
+  const sourceScan = source("../src-tauri/src/source_graph/scan/template.rs");
+  const blockPane = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
+  const iconEditor = source("../src/lib/components/inspector/IconBlockPropertiesEditor.svelte");
+  const htmlPane = source("../src/lib/components/inspector/HtmlPane.svelte");
+  const io = source("../src/lib/project/io.ts");
+
+  assert.match(native, /enum NativeBlockKind[\s\S]*Static/);
+  assert.match(native, /id: "icon"[\s\S]*kind: NativeBlockKind::Static/);
+  assert.match(native, /scale: BlockScale::Element/);
+  assert.match(native, /render_icon_block_html/);
+  assert.match(icons, /include_str!\("\.\.\/\.\.\/resources\/icon-packs\/tabler-outline-3\.41\.1\.json"\)/);
+  assert.match(icons, /MAX_PAGE_LIMIT:\s*usize\s*=\s*96/);
+  assert.match(icons, /normalize_icon_identity/);
+  assert.match(icons, /validate_node/);
+  assert.match(insert, /render_native_block_html/);
+  assert.match(sourceScan, /is_managed_icon_descendant/);
+  assert.match(blockPane, /<IconBlockPropertiesEditor/);
+  assert.match(iconEditor, /searchIconCatalog\(\{/);
+  assert.match(iconEditor, /offset:\s*currentOffset/);
+  assert.match(iconEditor, /limit:\s*48/);
+  assert.match(iconEditor, /window\.setTimeout[\s\S]*140/);
+  assert.match(io, /invoke<IconCatalogSummary>\("read_icon_catalog"\)/);
+  assert.match(io, /invoke<IconCatalogPage>\("search_icon_catalog"/);
+  assert.doesNotMatch(htmlPane, /IconBlockPropertiesEditor|searchIconCatalog|data-pana-icon/);
 });
 
 test("proprietățile blocurilor sunt definite și validate exclusiv în Rust", () => {

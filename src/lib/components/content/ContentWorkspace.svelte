@@ -103,12 +103,18 @@
       ? pages.find((page) => page.file === editingPagePath) ?? null
       : null,
   );
+  const currentAudit = $derived(app.currentProjectAuditReceipt());
   const contentDiagnostics = $derived(
-    (app.projectAuditSnapshot?.diagnostics ?? []).filter((diagnostic) => diagnostic.category === "seo"),
+    (currentAudit?.findings ?? []).filter((finding) => (
+      finding.category === "seo"
+      && ["violation", "needs_review", "engine_error"].includes(finding.outcome)
+    )),
   );
   const selectedDiagnostics = $derived(
     selectedPage
-      ? (app.projectAuditSnapshot?.diagnostics ?? []).filter((diagnostic) => diagnostic.file === selectedPage.file)
+      ? (currentAudit?.findings ?? []).filter(
+        (finding) => finding.primaryLocation?.file === selectedPage.file,
+      )
       : [],
   );
 

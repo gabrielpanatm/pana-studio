@@ -27,6 +27,7 @@
     resolveZolaImageSource,
     zolaImageSourceFailureMessage,
   } from "$lib/html/zola-image";
+  import { normalizeClassTokens } from "$lib/html/mutations";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
   import type {
     EditableAttributes,
@@ -39,6 +40,7 @@
     ZolaImageOperation,
   } from "$lib/types";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
+  import { primarySelectionEntry } from "$lib/kernel/selection-read-model";
 
   let {
     selectionSummary = null,
@@ -46,9 +48,11 @@
     physicalFacts = null,
     canEditHtml = false,
     attributeValues,
+    attributePending = false,
     textContentValue = "",
     imageSourceValue = "",
     classEditorValue = "",
+    classPending = false,
     pendingTag = null,
     tagStatus = "",
     attributeStatus = "",
@@ -76,9 +80,11 @@
     physicalFacts?: InspectorHtmlPhysicalFacts | null;
     canEditHtml?: boolean;
     attributeValues: EditableAttributes;
+    attributePending?: boolean;
     textContentValue?: string;
     imageSourceValue?: string;
     classEditorValue?: string;
+    classPending?: boolean;
     pendingTag?: string | null;
     tagStatus?: string;
     attributeStatus?: string;
@@ -126,6 +132,10 @@
   let zolaDraftSelectionKey = "";
 
   const canEdit = $derived(canEditHtml);
+  const isMultiSelection = $derived((selectionSnapshot?.members.length ?? 0) > 1);
+  const canEditSingle = $derived(
+    canEdit && selectionSnapshot?.aggregateCapabilities.primaryOnlyEditsAllowed === true,
+  );
   const hasElementSelection = $derived(
     selectionSummary?.state === "resolved"
       && (
@@ -136,21 +146,12 @@
   const tag = $derived(pendingTag ?? selectionSummary?.tag ?? "");
   const tagCapability = $derived(htmlTagCapability(tag));
   const tagOptions = $derived(htmlTagTransitionOptions(tag));
-  const canChangeTag = $derived(canEdit && tagOptions.length > 1);
+  const canChangeTag = $derived(canEditSingle && tagOptions.length > 1);
   const assetContextKey = $derived([
     selectionSnapshot?.runtimeSessionId ?? "",
     selectionSnapshot?.selectionRevision ?? "",
-    selectionSnapshot?.anchor?.sourceNodeId ?? "",
-    selectionSnapshot?.anchor?.renderInstanceId ?? "",
-    selectionSnapshot?.provenance?.definition?.file
-      ?? selectionSnapshot?.provenance?.composition?.file
-      ?? "",
-    selectionSnapshot?.provenance?.definition?.range?.line
-      ?? selectionSnapshot?.provenance?.composition?.range?.line
-      ?? "",
-    selectionSnapshot?.provenance?.definition?.range?.column
-      ?? selectionSnapshot?.provenance?.composition?.range?.column
-      ?? "",
+    primarySelectionEntry(selectionSnapshot)?.anchor.sourceNodeId ?? "",
+    primarySelectionEntry(selectionSnapshot)?.anchor.renderInstanceId ?? "",
     tag,
   ].join("::"));
   const zolaImage = $derived(physicalFacts?.zolaImage ?? null);
@@ -479,13 +480,16 @@
     return "live";
   }
 
-  const hasIdentity = $derived(Boolean(selectionSummary?.elementId || selectionSummary?.classes.length));
+  const projectedClasses = $derived(
+    selectionSummary?.classes ?? normalizeClassTokens(classEditorValue),
+  );
+  const hasIdentity = $derived(Boolean(selectionSummary?.elementId || projectedClasses.length));
   const hasContent  = $derived(Boolean(textContentValue));
   const hasElementSpecific = $derived(elementSpecificAttributes.some(k => k in attributeValues));
   const hasGlobalAttrs = $derived([...GLOBAL_ATTRS].some(k => k in attributeValues));
   const hasA11y = $derived(A11Y_FIXED.some(k => k in attributeValues) || Object.keys(attributeValues).some(k => k.startsWith("aria-")));
   const hasData = $derived(dataAttrs.length > 0);
-  const hasGeneratedClass = $derived(Boolean(selectionSummary?.classes.some((cls) => /^ps-[a-z0-9-]+-[a-z0-9]{6,}$/i.test(cls))));
+  const hasGeneratedClass = $derived(Boolean(projectedClasses.some((cls) => /^ps-[a-z0-9-]+-[a-z0-9]{6,}$/i.test(cls))));
   const hasDataAnimAttr = $derived(Boolean(attributeValues["data-anim"]?.trim()));
 
   // ── Asset helpers ────────────────────────────────────────────────────────
@@ -529,7 +533,12 @@
     <span class="hf-label">{t("inspector-element-dimensions-short")}</span>
     <span class="hf-dims">{physicalFacts?.rect.width ?? "—"} × {physicalFacts?.rect.height ?? "—"}</span>
   </div>
-  {#if !selectionSnapshot?.provenance?.definition && !selectionSnapshot?.provenance?.composition && !isActivePreviewHtmlSource}
+  {#if isMultiSelection && selectionSnapshot?.aggregateCapabilities.primaryOnlyReasonCode}
+    <p class="hf-capability-note">
+      {t("inspector-multi-primary-only")}
+    </p>
+  {/if}
+  {#if !primarySelectionEntry(selectionSnapshot)?.provenance.definition && !primarySelectionEntry(selectionSnapshot)?.provenance.composition && !isActivePreviewHtmlSource}
     <p class="hf-warning">{t("inspector-no-source")}</p>
   {/if}
 </InspectorSection>
@@ -545,34 +554,41 @@
       type="text"
       placeholder="id"
       value={getAttr("id")}
-      disabled={!canEdit}
+      disabled={!canEditSingle}
       oninput={(e) => setAttr("id", e.currentTarget.value)}
       onblur={() => commitField("id")}
     />
   </div>
+  {@render fieldFeedback(["id"])}
 
   <div class="hf-subheader">
     <span class="hf-sublabel">{t("inspector-classes")}</span>
     {#if canEdit}
-      <button type="button" class="hf-add-btn" aria-label={t("inspector-add-class")} onclick={() => { addingClass = true; }}>
+      <button type="button" class="hf-add-btn" aria-label={t("inspector-add-class")} disabled={classPending} onclick={() => { addingClass = true; }}>
         <IconPlus size={13} stroke={1.9} />
       </button>
     {/if}
   </div>
 
   {#if canEdit && !hasGeneratedClass}
-    <button type="button" class="hf-ghost-add" onclick={() => { void generateClassForSelectedHtml(); }}>
-      {t("inspector-generate-class")}
+    <button
+      type="button"
+      class="hf-ghost-add"
+      disabled={classPending}
+      aria-busy={classPending}
+      onclick={() => { void generateClassForSelectedHtml(); }}
+    >
+      {classPending ? t("inspector-applying") : t("inspector-generate-class")}
     </button>
   {/if}
 
   <div class="chip-list">
-    {#if selectionSummary?.classes.length}
-      {#each selectionSummary.classes as cls}
+    {#if projectedClasses.length}
+      {#each projectedClasses as cls}
         <span class="cls-chip">
           <span class="cls-chip-name">{cls}</span>
           {#if canEdit}
-            <button type="button" class="cls-chip-del" aria-label={t("inspector-remove-class", { name: cls })} onclick={() => removeClass(cls)}>
+            <button type="button" class="cls-chip-del" disabled={classPending} aria-label={t("inspector-remove-class", { name: cls })} onclick={() => removeClass(cls)}>
               <IconX size={12} stroke={2} />
             </button>
           {/if}
@@ -587,15 +603,16 @@
           class="hf-input"
           type="text"
           placeholder={t("inspector-class-placeholder")}
+          disabled={classPending}
           bind:value={newClassName}
           onkeydown={(e) => { if (e.key === "Enter") addClass(); if (e.key === "Escape") { addingClass = false; newClassName = ""; } }}
         />
-        <button type="button" class="hf-ok-btn" onclick={addClass}>{t("common-confirm")}</button>
+        <button type="button" class="hf-ok-btn" disabled={classPending} onclick={addClass}>{t("common-confirm")}</button>
       </div>
     {/if}
   </div>
 </InspectorSection>
-{@render fieldFeedback(["id"], canEdit ? "" : classStatus)}
+{@render fieldFeedback([], classStatus)}
 
 <!-- ── CONTENT ──────────────────────────────────────────────────────────── -->
 <InspectorSection title={t("inspector-section-content")} hasValues={hasContent}>
@@ -607,7 +624,7 @@
     <textarea
       class="hf-textarea"
       rows="3"
-      disabled={!canEdit}
+      disabled={!canEditSingle}
       value={textContentValue}
       oncompositionstart={() => { textCompositionActive = true; }}
       oncompositionend={(e) => {
@@ -626,6 +643,7 @@
 
 <!-- ── ELEMENT SPECIFIC ─────────────────────────────────────────────────── -->
 
+{#if !isMultiSelection}
 {#if tag === "a"}
   <InspectorSection title={t("inspector-section-link")} hasValues={hasElementSpecific}>
     {#snippet icon()}<IconLink size={13} stroke={1.7} />{/snippet}
@@ -1059,6 +1077,7 @@
   </InspectorSection>
 {/if}
 {@render fieldFeedback(elementSpecificAttributes, tag === "img" && !canEdit ? imageStatus : "")}
+{/if}
 
 <!-- ── ATRIBUTE ──────────────────────────────────────────────────────────── -->
 <InspectorSection title={t("inspector-section-attributes")} hasValues={hasGlobalAttrs}>
@@ -1153,8 +1172,14 @@
   {#snippet icon()}<IconDatabase size={13} stroke={1.7} />{/snippet}
 
   {#if canEdit && !hasDataAnimAttr}
-    <button type="button" class="hf-ghost-add" onclick={() => { void generateDataAnimForSelectedHtml(); }}>
-      {t("inspector-generate-data-anim")}
+    <button
+      type="button"
+      class="hf-ghost-add"
+      disabled={attributePending}
+      aria-busy={attributePending}
+      onclick={() => { void generateDataAnimForSelectedHtml(); }}
+    >
+      {attributePending ? t("inspector-applying") : t("inspector-generate-data-anim")}
     </button>
   {/if}
 

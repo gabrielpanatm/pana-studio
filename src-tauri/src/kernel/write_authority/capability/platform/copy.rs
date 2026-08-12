@@ -302,14 +302,12 @@ pub(in crate::kernel::write_authority::capability) fn copy_file_wal(
     }
     run_test_hook(CapabilityTestStage::AfterTargetParentCaptured);
 
-    if let Err(error) = validate_copy_before_metadata(
+    validate_copy_before_metadata(
         &parent.directory,
         &parent.leaf,
         &plan.evidence,
         &lexical.public_label,
-    ) {
-        return Err(error);
-    }
+    )?;
 
     let temp_name = plan.temp_leaf()?;
     match leaf_metadata(&parent.directory, &temp_name, &lexical.public_label) {
@@ -1367,7 +1365,7 @@ fn observed_matches_copy_new_shape(
 }
 
 fn mode_bits(stat: &fs::Stat) -> u32 {
-    (stat.st_mode as u32) & 0o7777
+    stat.st_mode & 0o7777
 }
 
 fn recovery_diagnostic(

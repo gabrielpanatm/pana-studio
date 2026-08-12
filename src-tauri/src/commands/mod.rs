@@ -27,6 +27,7 @@ mod page_contracts;
 pub mod preview;
 pub mod project;
 pub mod project_model;
+pub mod publish;
 pub mod source_graph;
 pub mod startup;
 pub mod taxonomies;

@@ -31,7 +31,7 @@ pub(crate) fn install_test_project_authority<R: Runtime>(
         )?;
         let mut publication = runtime.project_publication()?;
         publication.publish(pending)?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(unix))]
     Err("Test ProjectSession authority este disponibilă numai pe Unix.".to_string())

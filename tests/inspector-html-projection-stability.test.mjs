@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   advanceStableHtmlInspectorProjection,
+  projectHtmlInspectorClassSummary,
 } from "$lib/inspector/html-projection-stability";
 
 function summary(revision, state = "resolved", renderInstanceId = `render:${revision}`) {
@@ -12,16 +13,29 @@ function summary(revision, state = "resolved", renderInstanceId = `render:${revi
     state,
     subjectKind: "htmlElement",
     renderInstanceId,
+    tag: "div",
+    selector: "div.old-class",
+    elementId: null,
+    classes: ["old-class"],
+    activeCssClass: "old-class",
   };
 }
 
 function selection(revision, renderInstanceId = `render:${revision}`) {
+  const memberId = `editor:${revision}`;
   return {
+    schemaVersion: 2,
     projectRoot: "/project",
     runtimeSessionId: "session:runtime",
     selectionRevision: revision,
-    resolution: "resolved",
-    anchor: { renderInstanceId },
+    primaryMemberId: memberId,
+    members: [{
+      memberId,
+      resolution: "resolved",
+      subject: { kind: "htmlElement", tag: "div", label: "<div>" },
+      anchor: { renderInstanceId, renderInstanceIds: [renderInstanceId] },
+    }],
+    focus: { kind: "element" },
   };
 }
 
@@ -116,4 +130,24 @@ test("a different runtime never inherits the previous HTML projection", () => {
 
   assert.equal(transition.pending, false);
   assert.equal(transition.projection, null);
+});
+
+test("a Rust-confirmed class value is presented coherently before Canvas reinspection", () => {
+  const projected = projectHtmlInspectorClassSummary(
+    summary(1),
+    "layout ps-div-a1b2c3d4 layout",
+  );
+
+  assert.deepEqual(projected?.classes, ["layout", "ps-div-a1b2c3d4"]);
+  assert.equal(projected?.selector, "div.layout.ps-div-a1b2c3d4");
+  assert.equal(projected?.activeCssClass, null);
+});
+
+test("class presentation preserves an active CSS class that still exists", () => {
+  const projected = projectHtmlInspectorClassSummary(
+    summary(1),
+    "old-class ps-div-a1b2c3d4",
+  );
+
+  assert.equal(projected?.activeCssClass, "old-class");
 });

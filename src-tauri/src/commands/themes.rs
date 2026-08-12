@@ -136,7 +136,7 @@ fn current_theme_root(state: &AppState) -> Result<std::path::PathBuf, String> {
 }
 
 fn require_root_matches(
-    root: &std::path::PathBuf,
+    root: &std::path::Path,
     workspace: &ProjectWorkspace,
 ) -> Result<(), String> {
     if root.to_string_lossy() != workspace.session.project_root {

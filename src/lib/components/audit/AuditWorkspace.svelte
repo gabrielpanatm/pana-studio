@@ -14,9 +14,15 @@
   import type { AppState } from "$lib/state/app.svelte";
   import type {
     AuditCategory,
-    AuditDiagnostic,
-    AuditSeverity,
+    AuditFinding,
+    AuditImpact,
+    AuditOutcome,
+    AuditPolicy,
+    AuditProviderStatus,
+    AuditSourceOrigin,
+    WorkspaceSourceOpenOptions,
   } from "$lib/types";
+  import { auditProviderStatusCounts } from "$lib/audit/model";
   import { errorMessage } from "$lib/util";
 
   let {
@@ -27,15 +33,21 @@
     onViewChange = undefined,
   }: {
     app: AppState;
-    openWorkspaceSource: (path: string) => void | Promise<void>;
+    openWorkspaceSource: (
+      path: string,
+      options?: WorkspaceSourceOpenOptions,
+    ) => void | Promise<void>;
     requestedView?: AuditView;
     observabilityFocusSerial?: number;
     onViewChange?: (view: AuditView) => void;
   } = $props();
 
   type AuditView = "overview" | "runtime";
-  type SeverityFilter = "all" | AuditSeverity;
+  type OutcomeFilter = "all" | AuditOutcome;
+  type ImpactFilter = "all" | AuditImpact;
+  type PolicyFilter = "all" | AuditPolicy;
   type CategoryFilter = "all" | AuditCategory;
+  type OriginFilter = "all" | AuditSourceOrigin;
 
   const views = $derived([
     { id: "overview" as const, label: t("audit-view-project") },
@@ -48,61 +60,100 @@
     seo: t("audit-category-seo"),
     assets: t("audit-category-assets"),
     workspace: t("audit-category-workspace"),
+    components: t("audit-category-components"),
+    content: t("audit-category-content"),
+    data: t("audit-category-data"),
+    deploy: t("audit-category-deploy"),
+    performance: t("audit-category-performance"),
+    crawl: t("audit-category-crawl"),
+  });
+  const outcomeLabels = $derived<Record<AuditOutcome, string>>({
+    pass: t("audit-outcome-pass"),
+    violation: t("audit-outcome-violation"),
+    needs_review: t("audit-outcome-needs-review"),
+    not_applicable: t("audit-outcome-not-applicable"),
+    skipped: t("audit-outcome-skipped"),
+    engine_error: t("audit-outcome-engine-error"),
+    suppressed: t("audit-outcome-suppressed"),
+  });
+  const providerStatusLabels = $derived<Record<AuditProviderStatus, string>>({
+    complete: t("audit-provider-status-complete"),
+    partial: t("audit-provider-status-partial"),
+    failed: t("audit-provider-status-failed"),
+    skipped: t("audit-provider-status-skipped"),
   });
 
   let activeView = $state<AuditView>("overview");
-  let severityFilter = $state<SeverityFilter>("all");
+  let outcomeFilter = $state<OutcomeFilter>("all");
+  let impactFilter = $state<ImpactFilter>("all");
+  let policyFilter = $state<PolicyFilter>("all");
   let categoryFilter = $state<CategoryFilter>("all");
+  let providerFilter = $state("all");
+  let originFilter = $state<OriginFilter>("all");
   let query = $state("");
   let validationRunning = $state(false);
+  let expandedFixId = $state<string | null>(null);
+  let applyingFixId = $state<string | null>(null);
 
-  function diagnosticTitle(diagnostic: AuditDiagnostic) {
-    return errorMessage(diagnostic.titleDiagnostic);
+  function findingTitle(finding: AuditFinding) {
+    return errorMessage(finding.titleDiagnostic);
   }
 
-  function diagnosticMessage(diagnostic: AuditDiagnostic) {
-    return errorMessage(diagnostic.messageDiagnostic);
+  function findingMessage(finding: AuditFinding) {
+    return errorMessage(finding.messageDiagnostic);
+  }
+
+  function visibleReplacement(value: string) {
+    return value.replaceAll("\t", "⇥").replaceAll(" ", "·") || "∅";
+  }
+
+  async function applySafeFix(finding: AuditFinding, fixId: string) {
+    if (applyingFixId) return;
+    applyingFixId = fixId;
+    try {
+      await app.applySafeAuditFix(finding, fixId);
+      expandedFixId = null;
+    } catch (error) {
+      app.setGlobalStatus(t("audit-fix-failed", { error: errorMessage(error) }), "error");
+    } finally {
+      applyingFixId = null;
+    }
   }
 
   $effect(() => {
     if (activeView !== requestedView) activeView = requestedView;
   });
 
-  const snapshot = $derived(app.projectAuditSnapshot);
+  const snapshot = $derived(app.currentProjectAuditReceipt());
   const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
-  const diagnostics = $derived.by(() => {
-    const source = snapshot?.diagnostics ?? [];
-    return source.filter((diagnostic) => {
-      if (severityFilter !== "all" && diagnostic.severity !== severityFilter) return false;
-      if (categoryFilter !== "all" && diagnostic.category !== categoryFilter) return false;
+  const findings = $derived.by(() => {
+    const source = snapshot?.findings ?? [];
+    return source.filter((finding) => {
+      if (outcomeFilter !== "all" && finding.outcome !== outcomeFilter) return false;
+      if (impactFilter !== "all" && finding.impact !== impactFilter) return false;
+      if (policyFilter !== "all" && finding.policy !== policyFilter) return false;
+      if (categoryFilter !== "all" && finding.category !== categoryFilter) return false;
+      if (providerFilter !== "all" && finding.providerId !== providerFilter) return false;
+      if (
+        originFilter !== "all"
+        && finding.primaryLocation?.origin !== originFilter
+      ) return false;
       if (!normalizedQuery) return true;
       return [
-        diagnosticTitle(diagnostic),
-        diagnosticMessage(diagnostic),
-        diagnostic.file ?? "",
-        diagnostic.code,
-        categoryLabels[diagnostic.category],
+        findingTitle(finding),
+        findingMessage(finding),
+        finding.primaryLocation?.file ?? "",
+        finding.ruleCode,
+        finding.providerId,
+        categoryLabels[finding.category],
       ].some((value) => value.toLocaleLowerCase(l10n.locale).includes(normalizedQuery));
     });
   });
-  const zolaTone = $derived(
-    app.controlledPreview.validation === "valid"
-      ? "success"
-      : app.controlledPreview.validation === "invalid"
-        || app.controlledPreview.validation === "error"
-        ? "error"
-        : "neutral",
+  const buildProvider = $derived(snapshot?.providers.find((provider) => provider.id === "build_zola") ?? null);
+  const providerStatusCounts = $derived(auditProviderStatusCounts(snapshot?.providers ?? []));
+  const incompleteProviderCount = $derived(
+    providerStatusCounts.partial + providerStatusCounts.failed + providerStatusCounts.skipped,
   );
-  const zolaLabel = $derived.by(() => {
-    switch (app.controlledPreview.validation) {
-      case "valid": return t("audit-zola-valid");
-      case "invalid": return t("audit-zola-invalid");
-      case "error": return t("audit-zola-unavailable");
-      case "queued": return t("audit-zola-queued");
-      case "running": return t("audit-zola-running");
-      default: return t("audit-zola-none");
-    }
-  });
 
   $effect(() => {
     const projectRoot = app.sessionProjectRoot;
@@ -116,8 +167,18 @@
     if (validationRunning) return;
     validationRunning = true;
     try {
-      await app.runZolaValidation("manual");
-      await app.refreshProjectAudit(true);
+      let buildError = "";
+      try {
+        const valid = await app.runZolaValidation("refresh");
+        if (!valid) buildError = app.controlledPreview.validationMessage;
+      } catch (error) {
+        buildError = error instanceof Error ? error.message : String(error);
+      }
+      const result = await app.refreshProjectAudit(true, "full");
+      if (!result.ok) throw new Error(result.error || t("audit-full-no-receipt"));
+      if (buildError) {
+        app.setGlobalStatus(t("audit-full-failed", { error: buildError }), "error");
+      }
     } catch (error) {
       app.setGlobalStatus(
         t("audit-full-failed", { error: error instanceof Error ? error.message : String(error) }),
@@ -128,15 +189,28 @@
     }
   }
 
-  async function openDiagnostic(diagnostic: AuditDiagnostic) {
-    if (!diagnostic.file) return;
-    await openWorkspaceSource(diagnostic.file);
+  async function openFinding(finding: AuditFinding) {
+    const location = finding.primaryLocation;
+    if (!location) return;
+    await openWorkspaceSource(location.file, { surface: "code" });
+    if (location.range) app.revealSourceRange(location.file, location.range);
   }
 
-  function diagnosticLocation(diagnostic: AuditDiagnostic) {
-    if (!diagnostic.file) return t("audit-project-location");
-    if (!diagnostic.range) return diagnostic.file;
-    return `${diagnostic.file}:${diagnostic.range.line}:${diagnostic.range.column}`;
+  function findingLocation(finding: AuditFinding) {
+    const location = finding.primaryLocation;
+    if (!location) return t("audit-project-location");
+    if (!location.range) return location.file;
+    return `${location.file}:${location.range.line}:${location.range.column}`;
+  }
+
+  function resetFilters() {
+    outcomeFilter = "all";
+    impactFilter = "all";
+    policyFilter = "all";
+    categoryFilter = "all";
+    providerFilter = "all";
+    originFilter = "all";
+    query = "";
   }
 
   function selectView(view: AuditView) {
@@ -171,7 +245,7 @@
         class="ui-button toolbar"
         type="button"
         disabled={app.projectAuditLoading}
-        onclick={() => { void app.refreshProjectAudit(true); }}
+        onclick={() => { void app.refreshProjectAudit(true, "quick"); }}
       >
         <IconRefresh class={app.projectAuditLoading ? "spin" : undefined} size={15} stroke={1.9} />
         {t("audit-refresh")}
@@ -237,42 +311,66 @@
       aria-labelledby="audit-tab-overview"
     >
       <section class="audit-summary" aria-label={t("audit-summary-label")}>
-        <article aria-label={t("audit-errors-count", { count: snapshot?.summary.errors ?? 0 })} class:error={Boolean(snapshot?.summary.errors)}>
-          <span>{t("audit-errors")}</span>
-          <strong>{l10n.formatNumber(snapshot?.summary.errors ?? 0)}</strong>
+        <article class:error={Boolean(snapshot?.summary.violations)}>
+          <span>{t("audit-violations")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.violations ?? 0)}</strong>
         </article>
-        <article aria-label={t("audit-warnings-count", { count: snapshot?.summary.warnings ?? 0 })} class:warning={Boolean(snapshot?.summary.warnings)}>
-          <span>{t("audit-warnings")}</span>
-          <strong>{l10n.formatNumber(snapshot?.summary.warnings ?? 0)}</strong>
+        <article class:warning={Boolean(snapshot?.summary.needsReview)}>
+          <span>{t("audit-needs-review")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.needsReview ?? 0)}</strong>
         </article>
-        <article aria-label={t("audit-info-count", { count: snapshot?.summary.info ?? 0 })}>
-          <span>{t("audit-informational")}</span>
-          <strong>{l10n.formatNumber(snapshot?.summary.info ?? 0)}</strong>
+        <article class:error={Boolean(snapshot?.summary.engineErrors)}>
+          <span>{t("audit-engine-errors")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.engineErrors ?? 0)}</strong>
+        </article>
+        <article>
+          <span>{t("audit-passed")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.passed ?? 0)}</strong>
+        </article>
+        <article>
+          <span>{t("audit-not-applicable")}</span>
+          <strong>{l10n.formatNumber(snapshot?.summary.notApplicable ?? 0)}</strong>
         </article>
         <article aria-label={t("audit-files-count", { count: snapshot?.summary.affectedFiles ?? 0 })}>
           <span>{t("audit-affected-files")}</span>
           <strong>{l10n.formatNumber(snapshot?.summary.affectedFiles ?? 0)}</strong>
         </article>
         <article
-          aria-label={t("audit-build-label", {
-            status: zolaLabel,
-            message: app.controlledPreview.validationMessage,
-          })}
-          class:zola-error={zolaTone === "error"}
-          class:zola-success={zolaTone === "success"}
+          class:zola-error={buildProvider?.status === "failed"}
+          class:zola-success={buildProvider?.status === "complete"}
         >
-          <span>{t("audit-build")}</span>
-          <strong>{zolaLabel}</strong>
-          <small>{app.controlledPreview.validationMessage}</small>
+          <span>{t("audit-coverage")}</span>
+          <strong>{snapshot?.completeness ?? t("audit-not-run")}</strong>
+          <small>{t("audit-provider-incomplete-count", { count: incompleteProviderCount })}</small>
         </article>
       </section>
+
+      {#if snapshot}
+        <section class="provider-strip" aria-label={t("audit-providers-label")}>
+          {#each snapshot.providers as provider (provider.id)}
+            <span
+              class:incomplete={provider.status !== "complete"}
+              title={provider.coverage.limitations.map(errorMessage).join("\n")}
+            >
+              <strong>{provider.id.replaceAll("_", " ")}</strong>
+              {providerStatusLabels[provider.status]} · {provider.coverage.analyzed}/{provider.coverage.eligible}
+              · {provider.publishCoverageRequirement === "required"
+                ? t("audit-provider-coverage-required")
+                : t("audit-provider-coverage-advisory")}
+              {#each provider.coverage.limitations as limitation}
+                <small>{errorMessage(limitation)}</small>
+              {/each}
+            </span>
+          {/each}
+        </section>
+      {/if}
 
       <section class="diagnostics-card" aria-labelledby="diagnostics-title">
         <header class="diagnostics-toolbar">
           <div>
             <h2 id="diagnostics-title">{t("audit-diagnostics")}</h2>
             <span>{t("audit-visible-count", {
-              visible: l10n.formatNumber(diagnostics.length),
+              visible: l10n.formatNumber(findings.length),
               total: l10n.formatNumber(snapshot?.summary.total ?? 0),
             })}</span>
           </div>
@@ -282,12 +380,33 @@
             <input class="ui-field toolbar" bind:value={query} type="search" placeholder={t("audit-search-placeholder")} />
           </label>
           <label>
-            <span>{t("audit-severity")}</span>
-            <select class="ui-field toolbar" bind:value={severityFilter}>
+            <span>{t("audit-outcome")}</span>
+            <select class="ui-field toolbar" bind:value={outcomeFilter}>
               <option value="all">{t("audit-all")}</option>
-              <option value="error">{t("audit-errors")}</option>
-              <option value="warning">{t("audit-warnings")}</option>
-              <option value="info">{t("audit-informational")}</option>
+              {#each Object.entries(outcomeLabels) as [value, label]}
+                <option {value}>{label}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            <span>{t("audit-impact")}</span>
+            <select class="ui-field toolbar" bind:value={impactFilter}>
+              <option value="all">{t("audit-all")}</option>
+              <option value="critical">critical</option>
+              <option value="serious">serious</option>
+              <option value="moderate">moderate</option>
+              <option value="minor">minor</option>
+              <option value="info">info</option>
+            </select>
+          </label>
+          <label>
+            <span>{t("audit-policy")}</span>
+            <select class="ui-field toolbar" bind:value={policyFilter}>
+              <option value="all">{t("audit-all")}</option>
+              <option value="blocking">blocking</option>
+              <option value="budget">budget</option>
+              <option value="advisory">advisory</option>
+              <option value="off">off</option>
             </select>
           </label>
           <label>
@@ -300,6 +419,31 @@
               <option value="seo">{categoryLabels.seo}</option>
               <option value="assets">{categoryLabels.assets}</option>
               <option value="workspace">{categoryLabels.workspace}</option>
+              <option value="components">{categoryLabels.components}</option>
+              <option value="content">{categoryLabels.content}</option>
+              <option value="data">{categoryLabels.data}</option>
+              <option value="deploy">{categoryLabels.deploy}</option>
+              <option value="performance">{categoryLabels.performance}</option>
+              <option value="crawl">{categoryLabels.crawl}</option>
+            </select>
+          </label>
+          <label>
+            <span>{t("audit-provider")}</span>
+            <select class="ui-field toolbar" bind:value={providerFilter}>
+              <option value="all">{t("audit-all")}</option>
+              {#each snapshot?.providers ?? [] as provider (provider.id)}
+                <option value={provider.id}>{provider.id.replaceAll("_", " ")}</option>
+              {/each}
+            </select>
+          </label>
+          <label>
+            <span>{t("audit-scope")}</span>
+            <select class="ui-field toolbar" bind:value={originFilter}>
+              <option value="all">{t("audit-all")}</option>
+              <option value="project">project</option>
+              <option value="theme">theme</option>
+              <option value="workspace">workspace</option>
+              <option value="generated">generated</option>
             </select>
           </label>
         </header>
@@ -310,48 +454,73 @@
               <IconAlertTriangle size={22} stroke={1.8} />
               <strong>{t("audit-rust-failed")}</strong>
               <span>{app.projectAuditError}</span>
-              <button class="ui-button toolbar" type="button" onclick={() => { void app.refreshProjectAudit(true); }}>{t("audit-retry")}</button>
+              <button class="ui-button toolbar" type="button" onclick={() => { void app.refreshProjectAudit(true, "quick"); }}>{t("audit-retry")}</button>
             </div>
           {:else if app.projectAuditLoading && !snapshot}
             <div class="empty-state">{t("audit-building")}</div>
-          {:else if diagnostics.length === 0 && (snapshot?.summary.total ?? 0) > 0}
+          {:else if findings.length === 0 && (snapshot?.summary.total ?? 0) > 0}
             <div class="empty-state">
               <IconSearch size={22} stroke={1.8} />
               <strong>{t("audit-no-filter-results")}</strong>
-              <button class="ui-button toolbar" type="button" onclick={() => { severityFilter = "all"; categoryFilter = "all"; query = ""; }}>{t("audit-reset-filters")}</button>
+              <button class="ui-button toolbar" type="button" onclick={resetFilters}>{t("audit-reset-filters")}</button>
             </div>
-          {:else if diagnostics.length === 0}
+          {:else if findings.length === 0}
             <div class="empty-state success">
               <IconCircleCheck size={24} stroke={1.8} />
               <strong>{t("audit-no-known-problems")}</strong>
               <span>{t("audit-run-full-help")}</span>
             </div>
           {:else}
-            {#each diagnostics as diagnostic (diagnostic.id)}
+            {#each findings as finding (finding.id)}
               <article
-                aria-label={`${diagnosticTitle(diagnostic)}. ${diagnosticMessage(diagnostic)}. ${diagnosticLocation(diagnostic)}`}
-                class:error={diagnostic.severity === "error"}
-                class:warning={diagnostic.severity === "warning"}
+                aria-label={`${findingTitle(finding)}. ${findingMessage(finding)}. ${findingLocation(finding)}`}
+                class:error={finding.outcome === "violation" || finding.outcome === "engine_error"}
+                class:warning={finding.outcome === "needs_review"}
               >
-                <span class="severity" aria-label={t("audit-severity-label", { severity: diagnostic.severity })}>
-                  {#if diagnostic.severity === "error"}
+                <span class="severity" aria-label={`${finding.outcome}, ${finding.impact}, ${finding.policy}`}>
+                  {#if finding.outcome === "violation" || finding.outcome === "engine_error"}
                     <IconAlertTriangle size={16} stroke={2} />
-                  {:else if diagnostic.severity === "warning"}
+                  {:else if finding.outcome === "needs_review"}
                     <IconAlertTriangle size={16} stroke={1.8} />
+                  {:else if finding.outcome === "pass"}
+                    <IconCircleCheck size={16} stroke={1.8} />
                   {:else}
                     <IconInfoCircle size={16} stroke={1.8} />
                   {/if}
                 </span>
                 <div class="diagnostic-copy">
-                  <div><strong>{diagnosticTitle(diagnostic)}</strong><code>{diagnostic.code}</code></div>
-                  <p>{diagnosticMessage(diagnostic)}</p>
-                  <span>{categoryLabels[diagnostic.category]} · {diagnosticLocation(diagnostic)}</span>
+                  <div><strong>{findingTitle(finding)}</strong><code>{finding.ruleCode}</code></div>
+                  <p>{findingMessage(finding)}</p>
+                  <span>{categoryLabels[finding.category]} · {finding.providerId} · {finding.outcome}/{finding.impact}/{finding.policy} · {findingLocation(finding)}</span>
+                  {#each finding.fixes.filter((fix) => expandedFixId === fix.id) as fix (fix.id)}
+                    <div class="fix-preview">
+                      <strong>{t("audit-fix-preview-title")}</strong>
+                      {#each fix.edits as edit, index (`${edit.location.file}:${edit.location.range?.start ?? index}`)}
+                        <code>{edit.location.file}:{edit.location.range?.line ?? 1} · {visibleReplacement(edit.replacement)}</code>
+                      {/each}
+                    </div>
+                  {/each}
                 </div>
-                {#if diagnostic.file}
-                  <button class="ui-button compact" type="button" onclick={() => { void openDiagnostic(diagnostic); }}>
-                    {t("audit-open")} <IconExternalLink size={13} stroke={1.9} />
-                  </button>
-                {/if}
+                <div class="diagnostic-actions">
+                  {#if finding.primaryLocation}
+                    <button class="ui-button compact" type="button" onclick={() => { void openFinding(finding); }}>
+                      {t("audit-open")} <IconExternalLink size={13} stroke={1.9} />
+                    </button>
+                  {/if}
+                  {#each finding.fixes.filter((fix) => fix.applicability === "safe") as fix (fix.id)}
+                    <button
+                      class="ui-button compact"
+                      type="button"
+                      onclick={() => { expandedFixId = expandedFixId === fix.id ? null : fix.id; }}
+                    >{t("audit-fix-preview")}</button>
+                    <button
+                      class="ui-button primary compact"
+                      type="button"
+                      disabled={Boolean(applyingFixId)}
+                      onclick={() => { void applySafeFix(finding, fix.id); }}
+                    >{applyingFixId === fix.id ? t("audit-fix-applying") : t("audit-fix-apply-safe")}</button>
+                  {/each}
+                </div>
               </article>
             {/each}
           {/if}
@@ -368,7 +537,7 @@
   .search-field,
   .diagnostics-list article,
   .diagnostic-copy > div,
-  .diagnostics-list article > button,
+  .diagnostic-actions,
   .empty-state {
     display: flex;
     align-items: center;
@@ -382,7 +551,7 @@
   .overview-panel { min-width: 0; min-height: 0; overflow: auto; padding: 12px; }
   .runtime-panel { min-width: 0; min-height: 0; overflow: hidden; padding: 10px; }
 
-  .audit-summary { display: grid; grid-template-columns: repeat(4, minmax(100px, 0.6fr)) minmax(220px, 1.7fr); gap: 8px; }
+  .audit-summary { display: grid; grid-template-columns: repeat(7, minmax(92px, 0.6fr)) minmax(220px, 1.7fr); gap: 8px; }
   .audit-summary article { display: grid; align-content: center; gap: 3px; min-height: 70px; padding: 10px 12px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--radius-control); background: var(--wb-surface-chrome, var(--surface-2)); }
   .audit-summary article.error { border-color: color-mix(in srgb, var(--danger, #dc2626) 48%, var(--wb-border-subtle)); }
   .audit-summary article.warning { border-color: color-mix(in srgb, var(--wb-warning, #d97706) 48%, var(--wb-border-subtle)); }
@@ -392,6 +561,12 @@
   .audit-summary strong { color: var(--text-strong); font-size: 20px; }
   .audit-summary article:last-child strong { font-size: 12px; }
   .audit-summary small { overflow: hidden; color: var(--wb-text-muted, var(--text-muted)); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+
+  .provider-strip { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; }
+  .provider-strip span { display: grid; flex: 0 0 auto; gap: 2px; padding: 5px 7px; border: 1px solid color-mix(in srgb, var(--success, #0f766e) 40%, var(--wb-border-subtle)); border-radius: var(--radius-control); color: var(--wb-text-muted, var(--text-muted)); background: var(--wb-surface-chrome, var(--surface-2)); font-size: 11px; }
+  .provider-strip span.incomplete { border-color: color-mix(in srgb, var(--wb-warning, #d97706) 48%, var(--wb-border-subtle)); }
+  .provider-strip strong { margin-right: 4px; color: var(--text-strong); text-transform: capitalize; }
+  .provider-strip small { max-width: 320px; white-space: normal; }
 
   .diagnostics-card { margin-top: 10px; overflow: hidden; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--radius-panel); background: var(--wb-surface-document, var(--surface)); }
   .diagnostics-toolbar { gap: 8px; min-height: 48px; padding: 7px 9px; border-bottom: 1px solid var(--wb-border-subtle, var(--border)); background: var(--wb-surface-chrome, var(--surface-2)); }
@@ -416,7 +591,10 @@
   .diagnostic-copy code { padding: 1px 4px; border-radius: 4px; color: var(--wb-text-muted, var(--text-muted)); background: var(--surface-4); font-size: 12px; }
   .diagnostic-copy p { margin: 4px 0; color: var(--wb-text-primary, var(--text)); font-size: 12px; line-height: 1.35; }
   .diagnostic-copy > span { color: var(--wb-text-muted, var(--text-muted)); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
-  .diagnostics-list article > button { align-self: center; min-height: 26px; }
+  .diagnostic-actions { align-self: center; justify-content: flex-end; gap: 5px; }
+  .diagnostic-actions button { min-height: 26px; }
+  .diagnostic-copy > .fix-preview { display: grid; align-items: initial; gap: 4px; margin-top: 7px; padding: 7px; border: 1px solid var(--wb-border-subtle, var(--border)); border-radius: var(--radius-control); background: var(--surface-2); }
+  .fix-preview code { display: block; overflow: hidden; color: var(--wb-text-muted, var(--text-muted)); text-overflow: ellipsis; white-space: nowrap; }
 
   .empty-state { justify-content: center; flex-direction: column; gap: 6px; min-height: 190px; padding: 24px; color: var(--wb-text-muted, var(--text-muted)); text-align: center; font-size: 12px; }
   .empty-state strong { color: var(--text-strong); font-size: 12px; }

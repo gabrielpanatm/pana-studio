@@ -187,7 +187,6 @@ impl FileBufferDiagnostic {
         message: impl Into<String>,
     ) -> Self {
         let code = code.into();
-        let relative_path = relative_path;
         Self {
             severity: FileBufferDiagnosticSeverity::Warning,
             message_diagnostic: file_buffer_message_diagnostic(&code, relative_path.as_deref()),
@@ -203,7 +202,6 @@ impl FileBufferDiagnostic {
         message: impl Into<String>,
     ) -> Self {
         let code = code.into();
-        let relative_path = relative_path;
         Self {
             severity: FileBufferDiagnosticSeverity::Error,
             message_diagnostic: file_buffer_message_diagnostic(&code, relative_path.as_deref()),

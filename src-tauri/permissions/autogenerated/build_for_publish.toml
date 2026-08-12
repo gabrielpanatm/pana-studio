@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-build-for-publish"
+description = "Enables the build_for_publish command without any pre-configured scope."
+commands.allow = ["build_for_publish"]
+
+[[permission]]
+identifier = "deny-build-for-publish"
+description = "Denies the build_for_publish command without any pre-configured scope."
+commands.deny = ["build_for_publish"]

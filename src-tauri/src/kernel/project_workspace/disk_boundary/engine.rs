@@ -14,9 +14,12 @@ use crate::{
 };
 
 #[cfg(test)]
+type FileBufferProjectionHook = Box<dyn Fn(&mut FileBufferStore, &str)>;
+
+#[cfg(test)]
 thread_local! {
     static AFTER_TEXT_WRITE_BEFORE_FILE_BUFFER_PROJECTION_HOOK: std::cell::RefCell<
-        Option<Box<dyn Fn(&mut FileBufferStore, &str)>>,
+        Option<FileBufferProjectionHook>,
     > = std::cell::RefCell::new(None);
 }
 
@@ -515,30 +518,30 @@ fn validate_save_preconditions(
     relative_path: &str,
     baseline_before: Option<&FileBufferBaseline>,
     disk_before: Option<&DiskTextBaseline>,
-) -> Result<SaveTextFileStatus, SaveConflictDiagnostic> {
+) -> Result<SaveTextFileStatus, Box<SaveConflictDiagnostic>> {
     match (baseline_before, disk_before) {
         (None, None) => Ok(SaveTextFileStatus::Created),
-        (None, Some(disk)) => Err(SaveConflictDiagnostic::missing_tracked_baseline(
+        (None, Some(disk)) => Err(Box::new(SaveConflictDiagnostic::missing_tracked_baseline(
             relative_path,
             Some(disk.baseline.clone()),
-        )),
-        (Some(expected), None) => Err(SaveConflictDiagnostic::missing_disk_file(
+        ))),
+        (Some(expected), None) => Err(Box::new(SaveConflictDiagnostic::missing_disk_file(
             relative_path,
             expected.clone(),
-        )),
+        ))),
         (Some(expected), Some(disk)) => {
             if disk.baseline.readonly {
-                return Err(SaveConflictDiagnostic::readonly_target(
+                return Err(Box::new(SaveConflictDiagnostic::readonly_target(
                     relative_path,
                     disk.baseline.clone(),
-                ));
+                )));
             }
             if disk.baseline.hash != expected.hash {
-                return Err(SaveConflictDiagnostic::disk_changed(
+                return Err(Box::new(SaveConflictDiagnostic::disk_changed(
                     relative_path,
                     expected.clone(),
                     disk.baseline.clone(),
-                ));
+                )));
             }
             Ok(SaveTextFileStatus::Saved)
         }

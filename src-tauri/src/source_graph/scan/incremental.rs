@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::source_graph::{
+    identity::{reconcile_fragment_source_node_ids, SourceChangeSet},
     model::{SourceGraph, SourceGraphTemplate, SourceOrigin, SourceRelation, SourceRelationKind},
     scan::{builder::SourceGraphBuilder, graph_template_from_summary, template::scan_template},
 };
@@ -57,7 +58,9 @@ pub(crate) fn rebuild_local_template_graph(
     project_root: &Path,
     zola_root: &Path,
     relative_path: &str,
+    previous_source: &str,
     projected_sources: &HashMap<String, String>,
+    supplied_source_change: Option<SourceChangeSet>,
 ) -> Result<(SourceGraph, SourceGraphIncrementalTemplateReport), SourceGraphIncrementalFallback> {
     if graph.project_root != project_root.to_string_lossy()
         || graph.zola_root != zola_root.to_string_lossy()
@@ -105,7 +108,7 @@ pub(crate) fn rebuild_local_template_graph(
         &mut fragment_builder,
     );
     let next_template = graph_template_from_summary(summary);
-    let fragment = fragment_builder.finish(
+    let mut fragment = fragment_builder.finish(
         Vec::new(),
         vec![next_template.clone()],
         Vec::new(),
@@ -114,6 +117,22 @@ pub(crate) fn rebuild_local_template_graph(
         Vec::new(),
         Vec::new(),
     );
+    let next_source = projected_sources
+        .get(relative_path)
+        .ok_or(SourceGraphIncrementalFallback::MissingTemplate)?;
+    let mut source_change_set = supplied_source_change
+        .filter(|change| change.file == relative_path)
+        .unwrap_or_else(|| SourceChangeSet::between(relative_path, previous_source, next_source));
+    source_change_set
+        .require_sources(previous_source, next_source)
+        .map_err(|_| SourceGraphIncrementalFallback::IdentityCollision)?;
+    reconcile_fragment_source_node_ids(&graph, &mut fragment, &mut source_change_set)
+        .map_err(|_| SourceGraphIncrementalFallback::IdentityCollision)?;
+    let next_template = fragment
+        .templates
+        .first()
+        .cloned()
+        .ok_or(SourceGraphIncrementalFallback::MissingTemplate)?;
     let template_parse_ms = elapsed_ms(template_parse_started);
     if fragment
         .diagnostics
@@ -191,19 +210,24 @@ pub(crate) fn rebuild_local_template_graph(
         &mut content_models,
     );
     graph.content_models = content_models;
-    graph.listing_items = crate::kernel::listing_items::build_listing_item_catalog(
-        project_root,
-        projected_sources,
-        &HashSet::new(),
-        &graph,
-    );
-    graph.dynamic_widget_graph = crate::kernel::dynamic_widgets::build_dynamic_widget_graph(
-        project_root,
-        projected_sources,
-        &HashSet::new(),
-        &graph,
-    );
+    graph.listing_items =
+        crate::kernel::listing_items::build_listing_item_catalog_from_workspace_projection(
+            project_root,
+            projected_sources,
+            &HashSet::new(),
+            &graph,
+        );
+    graph.dynamic_widget_graph =
+        crate::kernel::dynamic_widgets::build_dynamic_widget_graph_from_workspace_projection(
+            project_root,
+            projected_sources,
+            &HashSet::new(),
+            &graph,
+        );
     graph.markdown_projections = crate::source_graph::markdown::build_markdown_projections(&graph);
+    graph
+        .rebuild_node_index()
+        .map_err(|_| SourceGraphIncrementalFallback::IdentityCollision)?;
 
     Ok((
         graph,
@@ -241,6 +265,9 @@ fn same_dependency_contract(previous: &SourceGraphTemplate, next: &SourceGraphTe
         && previous.internal_links == next.internal_links
         && previous.asset_urls == next.asset_urls
         && previous.asset_hashes == next.asset_hashes
+        && previous.literal_asset_references == next.literal_asset_references
+        && previous.asset_reference_eligible == next.asset_reference_eligible
+        && previous.asset_reference_unanalysable == next.asset_reference_unanalysable
         && previous.data_loads == next.data_loads
         && previous.image_metadata == next.image_metadata
         && previous.image_resizes == next.image_resizes
@@ -286,6 +313,7 @@ fn relation_kind_key(kind: &SourceRelationKind) -> &'static str {
         SourceRelationKind::InternalContentLink => "internal_content_link",
         SourceRelationKind::AssetUrl => "asset_url",
         SourceRelationKind::AssetHash => "asset_hash",
+        SourceRelationKind::AssetReference => "asset_reference",
         SourceRelationKind::DataLoad => "data_load",
         SourceRelationKind::DataFileLoad => "data_file_load",
         SourceRelationKind::ContentDataLoad => "content_data_load",

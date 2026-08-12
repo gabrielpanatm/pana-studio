@@ -247,6 +247,9 @@ fn validate_option_value(
                     option.maximum_length.unwrap_or_default()
                 ));
             }
+            if option.id == "accessibleLabel" && value.trim().is_empty() {
+                return Err("Eticheta accesibilă a blocului nu poate fi goală.".to_string());
+            }
             if !option.choices.is_empty()
                 && !option
                     .choices

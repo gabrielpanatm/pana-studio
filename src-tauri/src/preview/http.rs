@@ -194,8 +194,7 @@ mod tests {
     fn oversized_upstream_header_is_rejected() {
         let response = vec![b'a'; MAX_PREVIEW_UPSTREAM_HEADER_BYTES + 1];
         let error = read_bounded_http_response(&mut Cursor::new(response))
-            .err()
-            .expect("oversized header must fail");
+            .expect_err("oversized header must fail");
         assert!(error.contains("Headerul răspunsului"), "{error}");
     }
 

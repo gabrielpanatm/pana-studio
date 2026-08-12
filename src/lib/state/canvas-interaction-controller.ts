@@ -23,6 +23,7 @@ import {
   resolveCanvasInteractionIntent,
 } from "$lib/project/io";
 import { t } from "$lib/i18n/runtime.svelte";
+import { SELECTION_COORDINATOR_SCHEMA_VERSION } from "$lib/types";
 import type { AppState } from "$lib/state/app.svelte";
 import type {
   CanvasInteractionBindingReceipt,
@@ -37,6 +38,11 @@ import type {
   SelectionSnapshot,
 } from "$lib/types";
 import { errorMessage } from "$lib/util";
+import {
+  primarySelectionEditorNodeId,
+  primarySelectionRenderInstanceId,
+  selectionResolution,
+} from "$lib/kernel/selection-read-model";
 
 type PendingInspection = {
   target: CanvasInteractionTarget;
@@ -880,23 +886,39 @@ async function resolveGesture(
     return;
   }
 
-  const selectionSnapshot = await app.applySelectionIntent({
-    kind: "selectEditorNode",
-    editorNodeId: receipt.target.editorNodeId,
-  });
+  const targetAlreadySelected = app.selectionSnapshot?.members.some(
+    (member) => member.anchor.editorNodeId === receipt.target?.editorNodeId,
+  ) === true;
+  const intent = message.gesture === "contextMenu" && targetAlreadySelected
+    ? {
+        kind: "setPrimaryEditorNode" as const,
+        editorNodeId: receipt.target.editorNodeId,
+      }
+    : message.pointer.modifiers.shift
+      ? {
+          kind: "extendRangeToEditorNode" as const,
+          editorNodeId: receipt.target.editorNodeId,
+        }
+      : message.pointer.modifiers.control || message.pointer.modifiers.meta
+        ? {
+            kind: "toggleEditorNode" as const,
+            editorNodeId: receipt.target.editorNodeId,
+          }
+        : {
+            kind: "selectEditorNode" as const,
+            editorNodeId: receipt.target.editorNodeId,
+          };
+  const selectionSnapshot = await app.applySelectionIntent(intent);
   if (
     generation !== runtime.interactionGeneration
     || !selectionSnapshot
-    || selectionSnapshot.projections.layers.editorNodeId !== receipt.target.editorNodeId
   ) return;
 
-  renderReceiptOverlay(
-    app,
-    binding,
-    "selection",
-    receipt,
-    selectionSnapshot.selectionRevision,
-  );
+  projectSelectionSnapshotOnCanvas(app, selectionSnapshot, {
+    pointer: message.pointer,
+    openContextMenu: message.gesture === "contextMenu",
+  });
+  if (selectionSnapshot.primaryMemberId !== receipt.target.editorNodeId) return;
   if (
     receipt.target.kind === "teraBoundary"
     || receipt.target.kind === "markdownBoundary"
@@ -908,12 +930,6 @@ async function resolveGesture(
   }
 
   if (!receipt.target.renderInstanceId || !receipt.target.actions.canInspect) return;
-  requestDomInspection(app, runtime, receipt.target, {
-    selectionRevision: selectionSnapshot.selectionRevision,
-    pointer: message.pointer,
-    openContextMenu: message.gesture === "contextMenu",
-    revealCode: false,
-  });
 }
 
 function requestDomInspection(
@@ -1372,7 +1388,7 @@ async function enterBoundaryFromAgentAction(
     binding.identity.route,
     activeDocumentPath,
     target.requiredEditScopeId,
-    coordinated.selection.projections.preview.primaryRenderInstanceId,
+    primarySelectionRenderInstanceId(coordinated.selection),
   );
   if (
     generation !== runtime.interactionGeneration
@@ -1426,10 +1442,8 @@ async function deleteSelectionFromAgentAction(
     type: "delete-tera",
     surface: "shortcut",
     target: teraTargetFromBoundary({
-      selector: coordinated.selection.projections.preview.primaryRenderInstanceId
-        ? `[data-pana-render-instance-id="${CSS.escape(coordinated.selection.projections.preview.primaryRenderInstanceId)}"]`
-        : null,
       sourceId: target.sourceNodeId,
+      renderInstanceId: primarySelectionRenderInstanceId(coordinated.selection),
       origin: target.origin === "theme" ? "theme" : "current",
       themeName: target.themeName,
     }, {
@@ -1450,9 +1464,9 @@ function coordinatedActionTarget(
   if (
     !binding
     || !selection
-    || selection.resolution !== "resolved"
+    || selectionResolution(selection) !== "resolved"
     || selection.selectionRevision !== message.selectionRevision
-    || selection.projections.layers.editorNodeId !== message.editorNodeId
+    || primarySelectionEditorNodeId(selection) !== message.editorNodeId
     || !sameCanvasIdentity(selection.canvasIdentity, binding.identity.canvas)
   ) return null;
   const node = app.editorNavigationSnapshot?.nodes.find(
@@ -1483,7 +1497,7 @@ async function applyDomInspection(
 
   const observation = message.observation;
   const accepted = await app.acceptSelectionObservation({
-    schemaVersion: 1,
+    schemaVersion: SELECTION_COORDINATOR_SCHEMA_VERSION,
     selectionRevision: pending.selectionRevision,
     canvasIdentity: app.selectionSnapshot.canvasIdentity,
     documentEpoch: message.documentEpoch,
@@ -1571,45 +1585,13 @@ function projectCurrentSelectionOverlay(
   binding: CanvasInteractionBindingReceipt,
 ) {
   const selection = app.selectionSnapshot;
-  const editorNodeId = selection?.projections.preview.editorNodeId;
   if (
     !selection
-    || selection.resolution !== "resolved"
-    || !editorNodeId
     || !sameCanvasIdentity(selection.canvasIdentity, binding.identity.canvas)
   ) return;
-  const node = app.editorNavigationSnapshot?.nodes.find(
-    (candidate) => candidate.id === editorNodeId,
-  ) ?? null;
-  if (!node) return;
-  const target = canvasTargetFromNavigationNode(app, node);
-  app.postPreviewMessage({
-    type: "render-canvas-interaction-overlay",
-    agentInstanceId: binding.identity.agentInstanceId,
-    documentEpoch: binding.identity.documentEpoch,
-    channel: "selection",
-    targetKind: target.kind,
-    editorNodeId: target.editorNodeId,
-    actions: target.actions,
-    selectionRevision: selection.selectionRevision,
-    projection: canvasOverlayFromNavigationNode(node),
-  });
+  projectSelectionSnapshotOnCanvas(app, selection);
   if (app.gridOverlayEnabled) {
     app.postPreviewMessage({ type: "set-canvas-grid-overlay", enabled: true });
-  }
-  if (target.kind !== "teraBoundary" && target.kind !== "markdownBoundary") {
-    requestDomInspection(app, runtimeFor(app), target, {
-      selectionRevision: selection.selectionRevision,
-      pointer: {
-        clientX: 0,
-        clientY: 0,
-        button: "none",
-        buttons: 0,
-        modifiers: { alt: false, control: false, meta: false, shift: false },
-      },
-      openContextMenu: false,
-      revealCode: false,
-    });
   }
 }
 
@@ -1666,16 +1648,22 @@ export function hoverCanvasNavigationNode(
   });
 }
 
-export function selectCanvasNavigationNode(
+export async function selectCanvasNavigationNode(
   app: AppState,
   requested: EditorNavigationNode,
-) {
+  options: {
+    toggle?: boolean;
+    extendRange?: boolean;
+    setPrimary?: boolean;
+    revealCode?: boolean;
+  } = {},
+): Promise<SelectionSnapshot | null> {
   const runtime = runtimeFor(app);
   const binding = currentBinding(app, runtime);
   const node = currentNavigationNode(app, requested);
-  if (!binding || !node || !node.capabilities.canSelect) return;
+  if (!binding || !node || !node.capabilities.canSelect) return null;
   const target = canvasTargetFromNavigationNode(app, node);
-  void commitNavigationSelection(app, runtime, binding, node, target, false);
+  return await commitNavigationSelection(app, runtime, binding, node, target, options);
 }
 
 export function selectCanvasPreviewElement(
@@ -1701,7 +1689,7 @@ export function selectCanvasPreviewElement(
     binding,
     currentNode,
     target,
-    options.revealCode === true,
+    { revealCode: options.revealCode === true },
   );
   return true;
 }
@@ -1709,46 +1697,68 @@ export function selectCanvasPreviewElement(
 export function projectSelectionSnapshotOnCanvas(
   app: AppState,
   selection: SelectionSnapshot,
-  options: { revealCode?: boolean } = {},
+  options: {
+    revealCode?: boolean;
+    pointer?: CanvasPointerSample;
+    openContextMenu?: boolean;
+  } = {},
 ) {
-  if (
-    selection.resolution !== "resolved"
-    || !selection.projections.layers.editorNodeId
-  ) return false;
+  if (selection.members.length === 0) return false;
   const runtime = runtimeFor(app);
   const binding = currentBinding(app, runtime);
   if (
     !binding
     || !sameCanvasIdentity(binding.identity.canvas, selection.canvasIdentity)
   ) return false;
-  const node = app.editorNavigationSnapshot?.nodes.find(
-    (candidate) => candidate.id === selection.projections.layers.editorNodeId,
-  ) ?? null;
-  if (!node) return false;
-  const target = canvasTargetFromNavigationNode(app, node);
+  const navigationNodes = new Map(
+    app.editorNavigationSnapshot?.nodes.map((node) => [node.id, node]) ?? [],
+  );
+  const members = selection.members.flatMap((member) => {
+    if (member.resolution !== "resolved" || !member.anchor.editorNodeId) return [];
+    const node = navigationNodes.get(member.anchor.editorNodeId);
+    if (!node) return [];
+    const target = canvasTargetFromNavigationNode(app, node);
+    return [{
+      memberId: member.memberId,
+      targetKind: target.kind,
+      editorNodeId: target.editorNodeId,
+      actions: target.actions,
+      selectionRevision: selection.selectionRevision,
+      projection: canvasOverlayFromNavigationNode(node),
+    }];
+  });
+  if (members.length === 0) return false;
   runtime.pendingInspections.clear();
   app.postPreviewMessage({
     type: "render-canvas-interaction-overlay",
     agentInstanceId: binding.identity.agentInstanceId,
     documentEpoch: binding.identity.documentEpoch,
     channel: "selection",
-    targetKind: target.kind,
-    editorNodeId: target.editorNodeId,
-    actions: target.actions,
     selectionRevision: selection.selectionRevision,
-    projection: canvasOverlayFromNavigationNode(node),
+    primaryMemberId: selection.primaryMemberId,
+    members,
   });
-  if (target.kind === "teraBoundary" || target.kind === "markdownBoundary") return true;
-  requestDomInspection(app, runtime, target, {
+  const primaryMember = members.find(
+    (member) => member.memberId === selection.primaryMemberId,
+  );
+  if (
+    !primaryMember
+    || primaryMember.targetKind === "teraBoundary"
+    || primaryMember.targetKind === "markdownBoundary"
+  ) return true;
+  const primaryNode = navigationNodes.get(primaryMember.editorNodeId);
+  if (!primaryNode) return true;
+  const primaryTarget = canvasTargetFromNavigationNode(app, primaryNode);
+  requestDomInspection(app, runtime, primaryTarget, {
     selectionRevision: selection.selectionRevision,
-    pointer: {
+    pointer: options.pointer ?? {
       clientX: 0,
       clientY: 0,
       button: "none",
       buttons: 0,
       modifiers: { alt: false, control: false, meta: false, shift: false },
     },
-    openContextMenu: false,
+    openContextMenu: options.openContextMenu === true,
     revealCode: options.revealCode === true,
   });
   return true;
@@ -1759,44 +1769,30 @@ async function commitNavigationSelection(
   runtime: CanvasInteractionFrontendRuntime,
   binding: CanvasInteractionBindingReceipt,
   node: EditorNavigationNode,
-  target: CanvasInteractionTarget,
-  revealCode: boolean,
+  _target: CanvasInteractionTarget,
+  options: {
+    toggle?: boolean;
+    extendRange?: boolean;
+    setPrimary?: boolean;
+    revealCode?: boolean;
+  },
 ) {
-  const selectionSnapshot = await app.applySelectionIntent({
-    kind: "selectEditorNode",
-    editorNodeId: node.id,
-  });
+  const kind = options.setPrimary
+    ? "setPrimaryEditorNode"
+    : options.extendRange
+      ? "extendRangeToEditorNode"
+      : options.toggle
+        ? "toggleEditorNode"
+        : "selectEditorNode";
+  const selectionSnapshot = await app.applySelectionIntent({ kind, editorNodeId: node.id });
   if (
     !selectionSnapshot
-    || selectionSnapshot.projections.layers.editorNodeId !== node.id
     || currentBinding(app, runtime) !== binding
-  ) return;
-
-  runtime.pendingInspections.clear();
-  app.postPreviewMessage({
-    type: "render-canvas-interaction-overlay",
-    agentInstanceId: binding.identity.agentInstanceId,
-    documentEpoch: binding.identity.documentEpoch,
-    channel: "selection",
-    targetKind: target.kind,
-    editorNodeId: target.editorNodeId,
-    actions: target.actions,
-    selectionRevision: selectionSnapshot.selectionRevision,
-    projection: canvasOverlayFromNavigationNode(node),
+  ) return null;
+  projectSelectionSnapshotOnCanvas(app, selectionSnapshot, {
+    revealCode: options.revealCode === true,
   });
-  if (target.kind === "teraBoundary" || target.kind === "markdownBoundary") return;
-  requestDomInspection(app, runtime, target, {
-    selectionRevision: selectionSnapshot.selectionRevision,
-    pointer: {
-      clientX: 0,
-      clientY: 0,
-      button: "none",
-      buttons: 0,
-      modifiers: { alt: false, control: false, meta: false, shift: false },
-    },
-    openContextMenu: false,
-    revealCode,
-  });
+  return selectionSnapshot;
 }
 
 function contextMenuPosition(app: AppState, pointer: CanvasPointerSample) {
@@ -1843,8 +1839,8 @@ function openTeraContextMenu(
     items: teraContextMenuItems(
       app.editorRuntime,
       teraTargetFromBoundary({
-        selector: null,
         sourceId: target.sourceNodeId,
+        renderInstanceId: target.renderInstanceId,
         origin: target.origin === "theme" ? "theme" : "current",
         themeName: target.themeName,
         editorNodeId: target.editorNodeId,

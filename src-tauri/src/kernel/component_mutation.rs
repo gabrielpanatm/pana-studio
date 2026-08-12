@@ -1013,6 +1013,8 @@ enum ComponentCompanionTransfer {
     Relocate,
 }
 
+// Keep causal source, destination and the three independent mutation accumulators explicit.
+#[allow(clippy::too_many_arguments)]
 fn plan_component_companion_bundle(
     workspace: &ProjectWorkspace,
     graph: &SourceGraph,
@@ -1346,7 +1348,7 @@ fn plan_shortcode_reference_rewrites(
         if replacements.is_empty() {
             continue;
         }
-        replacements.sort_by(|left, right| right.0.cmp(&left.0));
+        replacements.sort_by_key(|right| std::cmp::Reverse(right.0));
         let mut rewritten = source.to_string();
         for (start, end) in replacements {
             rewritten.replace_range(start..end, new_name);

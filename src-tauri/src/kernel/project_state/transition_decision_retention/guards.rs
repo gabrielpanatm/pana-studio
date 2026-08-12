@@ -65,11 +65,7 @@ pub(super) fn validate_hot_journal_payload_budget(
 }
 
 pub(super) fn normalize_operator_diagnostic(value: String) -> Result<String, String> {
-    let value = value
-        .trim()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if value.len() < 12 {
         return Err(
             "ProjectTransition Decision retention cere diagnostic operator concret, minimum 12 caractere."

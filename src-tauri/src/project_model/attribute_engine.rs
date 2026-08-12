@@ -1,18 +1,21 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{
-    blocks::{plan_native_block_option_attribute, NativeBlockOptionIntent},
+    blocks::{
+        inspect_native_icon_source, plan_native_block_option_attribute, NativeBlockOptionIntent,
+        NativeIconMutationIntent, NativeIconState,
+    },
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
     source_graph::model::SourceNode,
 };
 
 use super::html_editor_schema::validate_visual_attribute_mutation;
 use super::move_engine::{
-    content_revision, direct_location_without_source_id, html_tag_at, offset_for_source_location,
-    parse_html_tag_at, resolve_html_node_for_anchor, same_model_path, source_location_at_offset,
-    source_missing_message, ProjectSourceEditLocation,
+    content_revision, html_tag_at, parse_html_tag_at, resolve_html_node_for_anchor,
+    same_model_path, source_location_at_offset, source_missing_message, ProjectSourceEditLocation,
 };
 use super::zola_image_engine::{
     apply_zola_image_contract, inspect_zola_image_at, ProjectZolaImageIntent, ZolaImagePresentation,
@@ -22,15 +25,40 @@ use super::zola_image_engine::{
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHtmlAttributeIntent {
     pub target_source_id: Option<String>,
-    pub target_location: Option<ProjectSourceEditLocation>,
     pub target_tag: Option<String>,
-    pub target_selector: Option<String>,
     #[serde(default)]
     pub attributes: Vec<ProjectHtmlAttributeMutation>,
     #[serde(default)]
     pub zola_image: Option<ProjectZolaImageIntent>,
     #[serde(default)]
     pub native_block_option: Option<NativeBlockOptionIntent>,
+    #[serde(default)]
+    pub native_icon: Option<NativeIconMutationIntent>,
+    #[serde(default)]
+    pub generated_identity: Option<ProjectGeneratedIdentityIntent>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectGeneratedIdentityKind {
+    Class,
+    DataAnim,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGeneratedIdentityIntent {
+    pub kind: ProjectGeneratedIdentityKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectGeneratedIdentityProjection {
+    pub kind: ProjectGeneratedIdentityKind,
+    pub value: String,
+    pub classes: Vec<String>,
+    pub data_anim: Option<String>,
+    pub already_present: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -78,6 +106,18 @@ pub struct ProjectHtmlAttributePatch {
     pub attributes: BTreeMap<String, Option<String>>,
     pub zola_image_contract: bool,
     pub zola_image: Option<ZolaImagePresentation>,
+    pub managed_icon: Option<ProjectManagedIconPatch>,
+    pub generated_identity: Option<ProjectGeneratedIdentityProjection>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectManagedIconPatch {
+    pub state: NativeIconState,
+    pub previous_state: NativeIconState,
+    pub previous_attributes: BTreeMap<String, Option<String>>,
+    pub children_html: String,
+    pub previous_children_html: String,
 }
 
 struct AttributeApplication {
@@ -86,12 +126,16 @@ struct AttributeApplication {
     source_start_line: usize,
 }
 
+struct GeneratedIdentityAttributeResolution {
+    attributes: BTreeMap<String, Option<String>>,
+    projection: Option<ProjectGeneratedIdentityProjection>,
+}
+
 pub fn plan_html_attributes(
     model: &ProjectModel,
     intent: &ProjectHtmlAttributeIntent,
-    aliases: &HashMap<String, String>,
 ) -> ProjectHtmlAttributePlan {
-    match plan_html_attributes_inner(model, intent, aliases) {
+    match plan_html_attributes_inner(model, intent) {
         Ok(patch) => ProjectHtmlAttributePlan {
             allowed: true,
             diagnostic: None,
@@ -110,10 +154,11 @@ pub fn plan_html_attributes(
 fn plan_html_attributes_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlAttributeIntent,
-    aliases: &HashMap<String, String>,
 ) -> Result<ProjectHtmlAttributePatch, String> {
     let specialized_contracts = usize::from(intent.zola_image.is_some())
-        + usize::from(intent.native_block_option.is_some());
+        + usize::from(intent.native_block_option.is_some())
+        + usize::from(intent.native_icon.is_some())
+        + usize::from(intent.generated_identity.is_some());
     if specialized_contracts > 1 {
         return Err(
             "O intenție de atribute poate aplica un singur contract specializat.".to_string(),
@@ -133,25 +178,14 @@ fn plan_html_attributes_inner(
     if let Some(target_node) = resolve_html_node_for_anchor(
         model,
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
         intent.target_tag.as_deref(),
-        aliases,
     ) {
         return plan_html_attributes_from_source_node(model, intent, target_node, attributes);
-    }
-
-    if let Some(location) = direct_location_without_source_id(
-        intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-    ) {
-        return plan_html_attributes_from_direct_location(model, intent, location, attributes);
     }
 
     Err(source_missing_message(
         "țintă de atribute",
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-        intent.target_selector.as_deref(),
     ))
 }
 
@@ -211,8 +245,32 @@ fn plan_html_attributes_from_source_node(
             attributes,
             zola_image_contract: true,
             zola_image: applied.presentation,
+            managed_icon: None,
+            generated_identity: None,
         });
     }
+    if let Some(icon_intent) = intent.native_icon.as_ref() {
+        return plan_native_icon_from_source_node(
+            file,
+            target_node,
+            target_range.start,
+            target_range.end,
+            &target_tag,
+            icon_intent,
+        );
+    }
+    let GeneratedIdentityAttributeResolution {
+        attributes,
+        projection: generated_identity,
+    } = resolve_generated_identity_attributes(
+        model,
+        &file.contents,
+        target_range.start,
+        &target_tag,
+        &target_node.id,
+        intent,
+        attributes,
+    )?;
     let attributes = resolve_native_block_option_attributes(
         &file.contents,
         target_range.start,
@@ -242,101 +300,310 @@ fn plan_html_attributes_from_source_node(
         attributes,
         zola_image_contract: false,
         zola_image: None,
+        managed_icon: None,
+        generated_identity,
     })
 }
 
-fn plan_html_attributes_from_direct_location(
-    model: &ProjectModel,
-    intent: &ProjectHtmlAttributeIntent,
-    location: &ProjectSourceEditLocation,
-    attributes: BTreeMap<String, Option<String>>,
+fn plan_native_icon_from_source_node(
+    file: &ProjectModelFile,
+    target_node: &SourceNode,
+    element_start: usize,
+    element_end: usize,
+    target_tag: &str,
+    intent: &NativeIconMutationIntent,
 ) -> Result<ProjectHtmlAttributePatch, String> {
-    let file = model
-        .files
-        .iter()
-        .find(|file| same_model_path(&file.relative_path, &location.file))
-        .ok_or_else(|| format!("Nu am găsit fișierul {} în Project Model.", location.file))?;
-
-    if let Some(zola_image) = intent.zola_image.as_ref() {
-        if file.kind != ProjectModelFileKind::Template {
-            return Err(
-                "Procesarea Zola resize_image este activă numai în template-uri Tera.".to_string(),
-            );
-        }
-        let offset = offset_for_source_location(&file.contents, location)?;
-        let tag = parse_html_tag_at(&file.contents, offset).ok_or_else(|| {
-            "Locația nu indică începutul unui tag <img> pentru procesarea Zola.".to_string()
-        })?;
-        validate_target_tag(intent, &tag.tag)?;
-        let applied = apply_zola_image_contract(
-            model,
-            &file.relative_path,
-            &file.contents,
-            tag.start,
-            zola_image,
-        )?;
-        let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
-            format!(
-                "location:{}:{}:{}",
-                location.file, location.line, location.column
-            )
-        });
-        return Ok(ProjectHtmlAttributePatch {
-            file: file.relative_path.clone(),
-            resolved_target_id,
-            before_revision: file.revision.clone(),
-            after_revision: content_revision(&applied.contents),
-            contents: applied.contents,
-            target_location: applied.target_location,
-            source_start_line: applied.source_start_line,
-            tag: tag.tag,
-            attributes,
-            zola_image_contract: true,
-            zola_image: applied.presentation,
-        });
+    if target_tag != "svg" {
+        return Err("Providerul Icon cere o rădăcină <svg>.".to_string());
     }
-
-    if intent.native_block_option.is_none() && !is_direct_html_attribute_file(file) {
+    let opening = parse_html_tag_at(&file.contents, element_start)
+        .ok_or_else(|| "Range-ul iconului nu mai indică un <svg> stabil.".to_string())?;
+    let opening_source = file
+        .contents
+        .get(opening.start..opening.end)
+        .ok_or_else(|| "Rădăcina iconului nu poate fi citită din sursa canonică.".to_string())?;
+    let previous_state = inspect_native_icon_source(opening_source)?
+        .ok_or_else(|| "Ținta nu este un block Icon canonic.".to_string())?;
+    let planned = crate::blocks::icons::plan_native_icon_mutation(opening_source, intent)?;
+    let original_attributes = raw_tag_attributes(opening_source)
+        .into_iter()
+        .map(|attribute| (attribute.name, attribute.value))
+        .collect::<BTreeMap<_, _>>();
+    let previous_attributes = planned
+        .attributes
+        .keys()
+        .map(|name| {
+            (
+                name.clone(),
+                original_attributes
+                    .get(&name.to_ascii_lowercase())
+                    .cloned()
+                    .flatten()
+                    .map(|value| crate::blocks::icons::decode_icon_attribute_value(&value)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut updated_opening = opening_source.to_string();
+    for (name, value) in &planned.attributes {
+        updated_opening = match value {
+            Some(value) => set_tag_attribute_value(&updated_opening, name, value),
+            None => remove_tag_attribute(&updated_opening, name),
+        };
+    }
+    let element_source = file
+        .contents
+        .get(element_start..element_end)
+        .ok_or_else(|| "Range-ul complet al iconului este invalid.".to_string())?;
+    let normalized = element_source.to_ascii_lowercase();
+    let closing_relative = normalized
+        .rfind("</svg>")
+        .ok_or_else(|| "Block-ul Icon nu mai are închiderea </svg> canonică.".to_string())?;
+    let children_start = opening.end - element_start;
+    if children_start > closing_relative {
+        return Err("Interiorul block-ului Icon are un range invalid.".to_string());
+    }
+    let previous_children_html = element_source[children_start..closing_relative].to_string();
+    let expected_previous_children =
+        crate::blocks::icons::render_icon_children_by_identity(&previous_state.icon_identity)?;
+    if previous_children_html.trim() != expected_previous_children {
         return Err(
-            "Atributele prin locație directă sunt active doar pentru fișiere HTML 1:1 din proiect, nu pentru template-uri Tera.".to_string(),
+            "Geometria block-ului Icon nu mai corespunde registrului Rust și nu poate fi suprascrisă automat."
+                .to_string(),
+        );
+    }
+    let closing = &element_source[closing_relative..];
+    let replacement = format!("{}{}{}", updated_opening, planned.children_html, closing);
+    let contents = replace_range(&file.contents, element_start, element_end, &replacement);
+    let target_location =
+        source_location_at_offset(&file.contents, &file.relative_path, element_start);
+    let source_start_line = target_location.line;
+    Ok(ProjectHtmlAttributePatch {
+        file: target_node.file.clone(),
+        resolved_target_id: target_node.id.clone(),
+        before_revision: file.revision.clone(),
+        after_revision: content_revision(&contents),
+        contents,
+        target_location,
+        source_start_line,
+        tag: target_tag.to_string(),
+        attributes: planned.attributes,
+        zola_image_contract: false,
+        zola_image: None,
+        managed_icon: Some(ProjectManagedIconPatch {
+            state: planned.state,
+            previous_state,
+            previous_attributes,
+            children_html: planned.children_html,
+            previous_children_html,
+        }),
+        generated_identity: None,
+    })
+}
+
+fn resolve_generated_identity_attributes(
+    model: &ProjectModel,
+    source: &str,
+    opening_start: usize,
+    target_tag: &str,
+    target_identity: &str,
+    intent: &ProjectHtmlAttributeIntent,
+    generic_attributes: BTreeMap<String, Option<String>>,
+) -> Result<GeneratedIdentityAttributeResolution, String> {
+    let Some(generated_intent) = intent.generated_identity.as_ref() else {
+        return Ok(GeneratedIdentityAttributeResolution {
+            attributes: generic_attributes,
+            projection: None,
+        });
+    };
+    if !generic_attributes.is_empty() {
+        return Err(
+            "Generarea identității HTML nu poate fi combinată cu atribute generice.".to_string(),
         );
     }
 
-    let offset = offset_for_source_location(&file.contents, location)?;
-    let tag = parse_html_tag_at(&file.contents, offset)
-        .ok_or_else(|| "Locația nu indică începutul unui tag HTML pentru atribute.".to_string())?;
-    if tag.is_closing {
-        return Err("Locația indică un tag de închidere, nu un element mutabil.".to_string());
+    let opening = parse_html_tag_at(source, opening_start).ok_or_else(|| {
+        "Range-ul elementului nu mai indică un tag HTML stabil pentru identitate.".to_string()
+    })?;
+    if opening.is_closing {
+        return Err("Identitatea nu poate fi generată pe un tag de închidere.".to_string());
     }
-    validate_target_tag(intent, &tag.tag)?;
-    let attributes =
-        resolve_native_block_option_attributes(&file.contents, tag.start, intent, attributes)?;
-    validate_zola_managed_attributes(&file.contents, tag.start, &attributes)?;
-    if intent.native_block_option.is_none() {
-        validate_schema_attributes(&tag.tag, &attributes)?;
-    }
-    let applied =
-        apply_html_attributes(&file.contents, &file.relative_path, tag.start, &attributes)?;
-    let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
-        format!(
-            "location:{}:{}:{}",
-            location.file, location.line, location.column
-        )
-    });
+    let opening_source = source
+        .get(opening.start..opening.end)
+        .ok_or_else(|| "Tag-ul HTML pentru identitate nu poate fi citit.".to_string())?;
+    let class_source = tag_attribute_value(opening_source, "class").unwrap_or_default();
+    let mut source_class_tokens = class_source
+        .split_ascii_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let current_data_anim = tag_attribute_value(opening_source, "data-anim")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
-    Ok(ProjectHtmlAttributePatch {
-        file: file.relative_path.clone(),
-        resolved_target_id,
-        before_revision: file.revision.clone(),
-        after_revision: content_revision(&applied.contents),
-        contents: applied.contents,
-        target_location: applied.target_location,
-        source_start_line: applied.source_start_line,
-        tag: tag.tag,
+    let (value, already_present) = match generated_intent.kind {
+        ProjectGeneratedIdentityKind::Class => {
+            if let Some(existing) = source_class_tokens
+                .iter()
+                .find(|class_name| is_generated_pana_identity(class_name))
+            {
+                (existing.clone(), true)
+            } else if let Some(reusable) = current_data_anim
+                .as_ref()
+                .filter(|value| is_generated_pana_identity(value) && valid_class_token(value))
+            {
+                (reusable.clone(), false)
+            } else {
+                (
+                    generate_unique_pana_identity(
+                        model,
+                        target_tag,
+                        target_identity,
+                        generated_intent.kind,
+                    )?,
+                    false,
+                )
+            }
+        }
+        ProjectGeneratedIdentityKind::DataAnim => {
+            if let Some(existing) = current_data_anim.as_ref() {
+                (existing.clone(), true)
+            } else if let Some(reusable) = source_class_tokens
+                .iter()
+                .find(|class_name| is_generated_pana_identity(class_name))
+            {
+                (reusable.clone(), false)
+            } else {
+                (
+                    generate_unique_pana_identity(
+                        model,
+                        target_tag,
+                        target_identity,
+                        generated_intent.kind,
+                    )?,
+                    false,
+                )
+            }
+        }
+    };
+
+    let mut attributes = BTreeMap::new();
+    let data_anim = match generated_intent.kind {
+        ProjectGeneratedIdentityKind::Class => {
+            if !source_class_tokens.iter().any(|token| token == &value) {
+                source_class_tokens.push(value.clone());
+            }
+            attributes.insert("class".to_string(), Some(source_class_tokens.join(" ")));
+            current_data_anim
+        }
+        ProjectGeneratedIdentityKind::DataAnim => {
+            attributes.insert("data-anim".to_string(), Some(value.clone()));
+            Some(value.clone())
+        }
+    };
+    let classes = source_class_tokens
+        .iter()
+        .filter(|token| valid_class_token(token))
+        .cloned()
+        .collect();
+    Ok(GeneratedIdentityAttributeResolution {
         attributes,
-        zola_image_contract: false,
-        zola_image: None,
+        projection: Some(ProjectGeneratedIdentityProjection {
+            kind: generated_intent.kind,
+            value,
+            classes,
+            data_anim,
+            already_present,
+        }),
     })
+}
+
+fn tag_attribute_value(opening_tag: &str, expected_name: &str) -> Option<String> {
+    raw_tag_attributes(opening_tag)
+        .into_iter()
+        .find(|attribute| attribute.name.eq_ignore_ascii_case(expected_name))
+        .and_then(|attribute| attribute.value)
+}
+
+fn valid_class_token(value: &str) -> bool {
+    let mut characters = value.chars();
+    let Some(first) = characters.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || matches!(first, '_' | '-'))
+        && characters
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+}
+
+fn is_generated_pana_identity(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    if !valid_class_token(&normalized) {
+        return false;
+    }
+    let Some(remainder) = normalized.strip_prefix("ps-") else {
+        return false;
+    };
+    let Some((tag, token)) = remainder.rsplit_once('-') else {
+        return false;
+    };
+    !tag.is_empty()
+        && tag
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        && token.len() >= 6
+        && token
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+}
+
+fn generate_unique_pana_identity(
+    model: &ProjectModel,
+    target_tag: &str,
+    target_identity: &str,
+    kind: ProjectGeneratedIdentityKind,
+) -> Result<String, String> {
+    let normalized_tag = target_tag
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    let normalized_tag = if normalized_tag.is_empty() {
+        "el"
+    } else {
+        &normalized_tag
+    };
+    let kind_label = match kind {
+        ProjectGeneratedIdentityKind::Class => "class",
+        ProjectGeneratedIdentityKind::DataAnim => "data-anim",
+    };
+
+    for attempt in 0_u16..=255 {
+        let digest = Sha256::digest(format!(
+            "pana-generated-identity-v1\0{}\0{}\0{}\0{}\0{}",
+            model.revision, target_identity, normalized_tag, kind_label, attempt
+        ));
+        let token = digest[..4]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let candidate = format!("ps-{normalized_tag}-{token}");
+        if !model
+            .files
+            .iter()
+            .any(|file| file.contents.contains(&candidate))
+        {
+            return Ok(candidate);
+        }
+    }
+
+    Err("ProjectModel nu a putut aloca o identitate HTML unică.".to_string())
 }
 
 fn resolve_native_block_option_attributes(
@@ -505,18 +772,6 @@ fn is_protected_attribute(name: &str) -> bool {
     // The entire namespace is owned by the editor runtime. A prefix invariant
     // remains safe when new Canvas/Workbench identities are introduced.
     name.starts_with("data-pana-")
-}
-
-fn is_direct_html_attribute_file(file: &ProjectModelFile) -> bool {
-    matches!(
-        file.kind,
-        ProjectModelFileKind::StaticText | ProjectModelFileKind::OtherText
-    ) && is_html_path(&file.relative_path)
-}
-
-fn is_html_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.ends_with(".html") || lower.ends_with(".htm")
 }
 
 pub(crate) fn remove_tag_attribute(tag: &str, attr: &str) -> String {
@@ -875,28 +1130,24 @@ fn skip_ascii_whitespace(source: &str, mut cursor: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use crate::project_model::{
-        build_project_model,
-        move_engine::{
-            html_identity_aliases, plan_html_move, ProjectHtmlMoveIntent, ProjectMovePosition,
-        },
+        test_support::ProjectModelTestFixture,
         zola_image_engine::{ProjectZolaImageIntent, ZolaImageFormat, ZolaImageOperation},
     };
-    use crate::source_graph::model::BlockOptionValue;
+    use crate::source_graph::model::{BlockOptionValue, SourceNodeKind};
 
     use super::*;
 
     #[test]
     fn plan_html_attributes_updates_template_anchor() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\" title=\"Old\">\n",
@@ -904,8 +1155,9 @@ mod tests {
                 "</section>\n",
                 "{% endblock %}\n",
             ),
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let section = model
             .source_graph
             .nodes
@@ -917,9 +1169,7 @@ mod tests {
             &model,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(section.id.clone()),
-                target_location: None,
                 target_tag: Some("section".to_string()),
-                target_selector: Some(".hero".to_string()),
                 attributes: vec![
                     ProjectHtmlAttributeMutation::set("class", "hero hero--mare"),
                     ProjectHtmlAttributeMutation::remove("title"),
@@ -927,8 +1177,9 @@ mod tests {
                 ],
                 zola_image: None,
                 native_block_option: None,
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -943,6 +1194,174 @@ mod tests {
     }
 
     #[test]
+    fn generated_class_is_allocated_by_project_model_and_preserves_source_classes() {
+        let root = unique_test_dir();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<main><div class=\"layout\">Conținut</div></main>\n",
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
+        let target = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<div .layout>")
+            .expect("div source node");
+
+        let plan = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(target.id.clone()),
+                target_tag: Some("div".to_string()),
+                attributes: Vec::new(),
+                zola_image: None,
+                native_block_option: None,
+                native_icon: None,
+                generated_identity: Some(ProjectGeneratedIdentityIntent {
+                    kind: ProjectGeneratedIdentityKind::Class,
+                }),
+            },
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.expect("generated class patch");
+        let projection = patch
+            .generated_identity
+            .expect("generated identity receipt");
+        assert_eq!(projection.kind, ProjectGeneratedIdentityKind::Class);
+        assert!(projection.value.starts_with("ps-div-"));
+        assert_eq!(projection.value.len(), "ps-div-".len() + 8);
+        assert_eq!(
+            projection.classes,
+            vec!["layout", projection.value.as_str()]
+        );
+        assert_eq!(projection.data_anim, None);
+        assert!(!projection.already_present);
+        assert_eq!(
+            patch
+                .attributes
+                .get("class")
+                .and_then(|value| value.as_deref()),
+            Some(format!("layout {}", projection.value).as_str()),
+        );
+        assert!(patch
+            .contents
+            .contains(&format!("class=\"layout {}\"", projection.value)));
+    }
+
+    #[test]
+    fn generated_data_anim_reuses_the_project_model_generated_class() {
+        let root = unique_test_dir();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<main><div class=\"layout ps-div-a1b2c3d4\">Conținut</div></main>\n",
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
+        let target = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label.contains("<div"))
+            .expect("div source node");
+
+        let plan = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(target.id.clone()),
+                target_tag: Some("div".to_string()),
+                attributes: Vec::new(),
+                zola_image: None,
+                native_block_option: None,
+                native_icon: None,
+                generated_identity: Some(ProjectGeneratedIdentityIntent {
+                    kind: ProjectGeneratedIdentityKind::DataAnim,
+                }),
+            },
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.expect("data-anim patch");
+        let projection = patch
+            .generated_identity
+            .expect("generated identity receipt");
+        assert_eq!(projection.kind, ProjectGeneratedIdentityKind::DataAnim);
+        assert_eq!(projection.value, "ps-div-a1b2c3d4");
+        assert_eq!(projection.data_anim.as_deref(), Some("ps-div-a1b2c3d4"));
+        assert_eq!(
+            projection.classes,
+            vec!["layout".to_string(), "ps-div-a1b2c3d4".to_string()]
+        );
+        assert!(!projection.already_present);
+        assert!(patch.contents.contains("data-anim=\"ps-div-a1b2c3d4\""));
+    }
+
+    #[test]
+    fn generated_class_reuses_data_anim_and_reports_existing_identity_as_noop() {
+        let root = unique_test_dir();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<main><div class=\"layout\" data-anim=\"ps-div-deadbeef\">Conținut</div></main>\n",
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
+        let target = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label.contains("<div"))
+            .expect("div source node");
+        let intent = ProjectHtmlAttributeIntent {
+            target_source_id: Some(target.id.clone()),
+            target_tag: Some("div".to_string()),
+            attributes: Vec::new(),
+            zola_image: None,
+            native_block_option: None,
+            native_icon: None,
+            generated_identity: Some(ProjectGeneratedIdentityIntent {
+                kind: ProjectGeneratedIdentityKind::Class,
+            }),
+        };
+
+        let first = plan_html_attributes(&model, &intent);
+        assert!(first.allowed, "{:?}", first.diagnostic);
+        let first_patch = first.patch.expect("class patch");
+        let first_projection = first_patch
+            .generated_identity
+            .as_ref()
+            .expect("generated identity receipt");
+        assert_eq!(first_projection.value, "ps-div-deadbeef");
+        assert_eq!(
+            first_projection.classes,
+            vec!["layout".to_string(), "ps-div-deadbeef".to_string()]
+        );
+        assert!(!first_projection.already_present);
+
+        let mut committed_model = model.clone();
+        let committed_file = committed_model
+            .files
+            .iter_mut()
+            .find(|file| file.relative_path == first_patch.file)
+            .expect("committed model file");
+        committed_file.contents = first_patch.contents;
+        committed_file.revision = first_patch.after_revision;
+        let second = plan_html_attributes(&committed_model, &intent);
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(second.allowed, "{:?}", second.diagnostic);
+        let second_patch = second.patch.expect("existing class patch");
+        let second_projection = second_patch
+            .generated_identity
+            .expect("existing identity receipt");
+        assert_eq!(second_projection.value, "ps-div-deadbeef");
+        assert!(second_projection.already_present);
+        assert_eq!(second_patch.before_revision, second_patch.after_revision);
+    }
+
+    #[test]
     fn plan_html_attributes_accepts_preview_identity_for_html_wrapping_tera_text() {
         let root = unique_test_dir();
         let source = concat!(
@@ -953,12 +1372,13 @@ mod tests {
             "</h1>\n",
             "</section>\n",
         );
-        write_project(&root, source);
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
-        let preview_index = crate::preview::preprocess::SourceIdIndex::for_template_source(
-            "templates/index.html",
-            source,
-        );
+        let fixture = ProjectModelTestFixture::standard_zola(root.clone(), source).unwrap();
+        let model = fixture.build_model().unwrap();
+        let preview_index = crate::preview::preprocess::SourceIdIndex::for_source_graph(
+            &model.source_graph,
+            [("templates/index.html", source)],
+        )
+        .unwrap();
         let preview_source_id = preview_index
             .source_id_for("templates/index.html:3:1")
             .expect("preview span source identity")
@@ -968,21 +1388,16 @@ mod tests {
             &model,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(preview_source_id),
-                target_location: Some(ProjectSourceEditLocation {
-                    file: "templates/index.html".to_string(),
-                    line: 3,
-                    column: 1,
-                }),
                 target_tag: Some("span".to_string()),
-                target_selector: Some("h1#title > span:nth-of-type(1)".to_string()),
                 attributes: vec![ProjectHtmlAttributeMutation::set(
                     "class",
                     "ps-build-visually-a1b2c3",
                 )],
                 zola_image: None,
                 native_block_option: None,
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -995,92 +1410,18 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_attributes_prefers_committed_alias_over_pre_move_location() {
-        let root = unique_test_dir();
-        write_project(
-            &root,
-            concat!(
-                "<main>\n",
-                "<span>A</span>\n",
-                "<span>B</span>\n",
-                "<span>C</span>\n",
-                "</main>\n",
-            ),
-        );
-        let before = build_project_model(&root, &HashMap::new()).unwrap();
-        let mut spans = before
-            .source_graph
-            .nodes
-            .iter()
-            .filter(|node| node.label == "<span>")
-            .collect::<Vec<_>>();
-        spans.sort_by_key(|node| node.range.as_ref().expect("span range").start);
-        let moved_id = spans[0].id.clone();
-        let moved_range = spans[0].range.as_ref().expect("moved span range");
-        let old_location = ProjectSourceEditLocation {
-            file: spans[0].file.clone(),
-            line: moved_range.line,
-            column: moved_range.column,
-        };
-        let move_plan = plan_html_move(
-            &before,
-            &ProjectHtmlMoveIntent {
-                source_source_id: Some(moved_id.clone()),
-                target_source_id: Some(spans[2].id.clone()),
-                source_location: Some(old_location.clone()),
-                target_location: None,
-                source_tag: Some("span".to_string()),
-                target_tag: Some("span".to_string()),
-                source_selector: Some("main > span:nth-of-type(1)".to_string()),
-                target_selector: Some("main > span:nth-of-type(3)".to_string()),
-                position: ProjectMovePosition::After,
-            },
-            &HashMap::new(),
-        );
-        assert!(move_plan.allowed, "{:?}", move_plan.diagnostic);
-        let move_patch = move_plan.patch.expect("move patch");
-        let mut drafts = HashMap::new();
-        drafts.insert(move_patch.file, move_patch.contents);
-        let after_move = build_project_model(&root, &drafts).unwrap();
-        let aliases = html_identity_aliases(&before, &after_move);
-        assert!(aliases.contains_key(&moved_id), "missing moved span alias");
-
-        let attribute_plan = plan_html_attributes(
-            &after_move,
-            &ProjectHtmlAttributeIntent {
-                target_source_id: Some(moved_id),
-                target_location: Some(old_location),
-                target_tag: Some("span".to_string()),
-                target_selector: Some("main > span:nth-of-type(3)".to_string()),
-                attributes: vec![ProjectHtmlAttributeMutation::set(
-                    "class",
-                    "ps-title-a1b2c3",
-                )],
-                zola_image: None,
-                native_block_option: None,
-            },
-            &aliases,
-        );
-
-        fs::remove_dir_all(&root).unwrap();
-        assert!(attribute_plan.allowed, "{:?}", attribute_plan.diagnostic);
-        let contents = attribute_plan.patch.expect("attribute patch").contents;
-        assert!(contents.contains("<span class=\"ps-title-a1b2c3\">A</span>"));
-        assert!(contents.contains("<span>B</span>"));
-    }
-
-    #[test]
     fn native_block_option_uses_rust_registry_to_mutate_protected_attribute() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<div class=\"offcanvas\" data-pana-block=\"offcanvas\" data-pana-offcanvas-side=\"end\"></div>\n",
                 "{% endblock %}\n",
             ),
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let block_root = model
             .source_graph
             .nodes
@@ -1092,9 +1433,7 @@ mod tests {
             &model,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(block_root.id.clone()),
-                target_location: None,
                 target_tag: Some("div".to_string()),
-                target_selector: Some(".offcanvas".to_string()),
                 attributes: Vec::new(),
                 zola_image: None,
                 native_block_option: Some(NativeBlockOptionIntent {
@@ -1102,8 +1441,9 @@ mod tests {
                     option_id: "side".to_string(),
                     value: BlockOptionValue::Text("start".to_string()),
                 }),
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -1116,12 +1456,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_attributes_resolves_active_html_by_direct_location() {
+    fn plan_html_attributes_rejects_location_without_source_id() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("static")).unwrap();
-        fs::write(
-            root.join("static/plain.html"),
+        let mut fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
+        fixture.source(
+            "static/plain.html",
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -1130,39 +1470,28 @@ mod tests {
                 "</body>\n",
                 "</html>\n",
             ),
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_attributes(
             &model,
             &ProjectHtmlAttributeIntent {
                 target_source_id: None,
-                target_location: Some(ProjectSourceEditLocation {
-                    file: "static/plain.html".to_string(),
-                    line: 4,
-                    column: 3,
-                }),
                 target_tag: Some("img".to_string()),
-                target_selector: Some("body:nth-of-type(1) > img:nth-of-type(1)".to_string()),
                 attributes: vec![
                     ProjectHtmlAttributeMutation::set("src", "nou.jpg"),
                     ProjectHtmlAttributeMutation::set("alt", "Imagine nouă"),
                 ],
                 zola_image: None,
                 native_block_option: None,
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "static/plain.html");
-        assert_eq!(patch.resolved_target_id, "location:static/plain.html:4:3");
-        assert!(patch.contents.contains(r#"src="nou.jpg""#));
-        assert!(patch.contents.contains(r#"alt="Imagine nouă""#));
-        assert_eq!(patch.source_start_line, 4);
+        assert!(!plan.allowed);
+        assert!(plan.patch.is_none());
     }
 
     #[test]
@@ -1258,10 +1587,13 @@ mod tests {
     #[test]
     fn managed_zola_image_attributes_cannot_be_overwritten_generically() {
         let root = unique_test_dir();
-        write_project(&root, "<img src=\"/images/hero.jpg\" alt=\"Inițial\">\n");
-        fs::create_dir_all(root.join("static/images")).unwrap();
-        fs::write(root.join("static/images/hero.jpg"), b"image").unwrap();
-        let before = build_project_model(&root, &HashMap::new()).unwrap();
+        let mut fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<img src=\"/images/hero.jpg\" alt=\"Inițial\">\n",
+        )
+        .unwrap();
+        fixture.accepted_resource("static/images/hero.jpg", 5);
+        let before = fixture.build_model().unwrap();
         let image = before
             .source_graph
             .nodes
@@ -1272,9 +1604,7 @@ mod tests {
             &before,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(image.id.clone()),
-                target_location: None,
                 target_tag: Some("img".to_string()),
-                target_selector: None,
                 attributes: Vec::new(),
                 zola_image: Some(ProjectZolaImageIntent {
                     enabled: true,
@@ -1287,16 +1617,14 @@ mod tests {
                     quality: Some(82),
                 }),
                 native_block_option: None,
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
         assert!(enable.allowed, "{:?}", enable.diagnostic);
         let enabled = enable.patch.unwrap();
-        let projected = build_project_model(
-            &root,
-            &HashMap::from([(enabled.file.clone(), enabled.contents.clone())]),
-        )
-        .unwrap();
+        fixture.draft(enabled.file.clone(), enabled.contents.clone());
+        let projected = fixture.build_model().unwrap();
         let projected_image = projected
             .source_graph
             .nodes
@@ -1308,14 +1636,13 @@ mod tests {
             &projected,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(projected_image.id.clone()),
-                target_location: None,
                 target_tag: Some("img".to_string()),
-                target_selector: None,
                 attributes: vec![ProjectHtmlAttributeMutation::set("src", "/other.jpg")],
                 zola_image: None,
                 native_block_option: None,
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
         assert!(!overwrite.allowed);
         assert!(overwrite
@@ -1327,14 +1654,13 @@ mod tests {
             &projected,
             &ProjectHtmlAttributeIntent {
                 target_source_id: Some(projected_image.id.clone()),
-                target_location: None,
                 target_tag: Some("img".to_string()),
-                target_selector: None,
                 attributes: vec![ProjectHtmlAttributeMutation::set("alt", "Nou")],
                 zola_image: None,
                 native_block_option: None,
+                native_icon: None,
+                generated_identity: None,
             },
-            &HashMap::new(),
         );
         fs::remove_dir_all(root).unwrap();
         assert!(alt.allowed, "{:?}", alt.diagnostic);
@@ -1344,20 +1670,124 @@ mod tests {
         assert!(alt_contents.contains(".url | safe"));
     }
 
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
+    #[test]
+    fn native_icon_mutation_replaces_geometry_and_preserves_user_root_attributes() {
+        let root = unique_test_dir();
+        let icon = crate::blocks::icons::render_icon_block_html(
+            "home",
+            "ps-icon-test custom",
+            "ps-icon-test",
+            "icon-test",
+        )
+        .unwrap()
+        .replacen(">", " style=\"color: rebeccapurple\">", 1);
+        let fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), format!("<main>{icon}</main>\n"))
+                .unwrap();
+        let model = fixture.build_model().unwrap();
+        let marker = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.kind == SourceNodeKind::BlockMarker && node.label == "icon")
+            .expect("icon marker");
+        let icon_root = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| marker.parent.as_deref() == Some(node.id.as_str()))
+            .expect("icon root");
+        let plan = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some(icon_root.id.clone()),
+                target_tag: Some("svg".to_string()),
+                attributes: Vec::new(),
+                zola_image: None,
+                native_block_option: None,
+                native_icon: Some(NativeIconMutationIntent {
+                    icon_identity: "tabler-outline:star".to_string(),
+                    size: 32,
+                    stroke_width: "1.5".to_string(),
+                    decorative: false,
+                    accessible_label: Some("Favorite".to_string()),
+                }),
+                generated_identity: None,
+            },
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.expect("icon patch");
+        let managed = patch.managed_icon.expect("managed icon");
+        assert_eq!(managed.previous_state.icon_id, "home");
+        assert_eq!(managed.state.icon_id, "star");
+        assert!(patch
+            .contents
+            .contains("class=\"icon ps-icon-test custom\""));
+        assert!(patch.contents.contains("style=\"color: rebeccapurple\""));
+        assert!(patch
+            .contents
+            .contains("data-pana-icon=\"tabler-outline:star\""));
+        assert!(patch.contents.contains("width=\"32\""));
+        assert!(patch.contents.contains("role=\"img\""));
+        assert!(patch.contents.contains("aria-label=\"Favorite\""));
+        assert!(!patch.contents.contains("aria-hidden=\"true\""));
+        assert_ne!(managed.children_html, managed.previous_children_html);
+    }
+
+    #[test]
+    fn native_icon_mutation_rejects_stale_or_missing_source_node_id() {
+        let root = unique_test_dir();
+        let icon = crate::blocks::icons::render_icon_block_html(
+            "home",
+            "ps-icon-test",
+            "ps-icon-test",
+            "icon-test",
         )
         .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
+        let fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), format!("<main>{icon}</main>\n"))
+                .unwrap();
+        let model = fixture.build_model().unwrap();
+        let intent = NativeIconMutationIntent {
+            icon_identity: "tabler-outline:star".to_string(),
+            size: 24,
+            stroke_width: "2".to_string(),
+            decorative: true,
+            accessible_label: None,
+        };
+
+        let stale = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: Some("sg_stale_icon_identity".to_string()),
+                target_tag: Some("svg".to_string()),
+                attributes: Vec::new(),
+                zola_image: None,
+                native_block_option: None,
+                native_icon: Some(intent.clone()),
+                generated_identity: None,
+            },
+        );
+        let location_only = plan_html_attributes(
+            &model,
+            &ProjectHtmlAttributeIntent {
+                target_source_id: None,
+                target_tag: Some("svg".to_string()),
+                attributes: Vec::new(),
+                zola_image: None,
+                native_block_option: None,
+                native_icon: Some(intent),
+                generated_identity: None,
+            },
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(!stale.allowed);
+        assert!(stale.patch.is_none());
+        assert!(!location_only.allowed);
+        assert!(location_only.patch.is_none());
     }
 
     fn unique_test_dir() -> PathBuf {

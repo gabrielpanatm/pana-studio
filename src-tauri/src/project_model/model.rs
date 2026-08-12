@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
 use serde::Serialize;
 
@@ -13,6 +13,10 @@ pub struct ProjectModel {
     pub zola_root: PathBuf,
     pub revision: String,
     pub files: Vec<ProjectModelFile>,
+    /// Complete path namespace captured by the immutable workspace projection.
+    /// Semantic validators must use this authority instead of consulting the
+    /// live project disk.
+    pub(crate) workspace_paths: HashSet<String>,
     pub source_graph: SourceGraph,
     pub tera_graph: TeraGraph,
     pub diagnostics: Vec<ProjectModelDiagnostic>,

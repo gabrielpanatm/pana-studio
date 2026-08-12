@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::css::variables::{parse_variables_from_source, update_variable_in_source, ScssVariable};
 
-use super::LocalFontFamily;
+use super::{normalize_font_family_name, FontDeliveryKind, FontFaceFamily};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,14 +61,24 @@ pub struct FontRoleAssignment {
     pub value: Option<String>,
     pub family: Option<String>,
     pub source_path: Option<String>,
+    pub delivery: FontRoleDeliveryKind,
     pub installed: bool,
     pub assignable: bool,
     pub diagnostic: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FontRoleDeliveryKind {
+    Local,
+    External,
+    System,
+    Missing,
+}
+
 pub fn read_font_roles<'a>(
     sources: impl Iterator<Item = (&'a str, &'a str)>,
-    families: &[LocalFontFamily],
+    families: &[FontFaceFamily],
 ) -> Vec<FontRoleAssignment> {
     let variables = collect_font_variables(sources);
     [FontRoleId::Text, FontRoleId::Titles, FontRoleId::Ui, FontRoleId::Mono]
@@ -81,11 +91,23 @@ pub fn read_font_roles<'a>(
             let variable = matches.first();
             let value = variable.map(|variable| variable.value.clone());
             let family = value.as_deref().and_then(primary_font_family);
-            let installed = family.as_deref().is_some_and(|role_family| {
-                families
-                    .iter()
-                    .any(|candidate| normalize_font_name(&candidate.family) == normalize_font_name(role_family))
+            let graph_family = family.as_deref().and_then(|role_family| {
+                families.iter().find(|candidate| {
+                    normalize_font_family_name(&candidate.family)
+                        == normalize_font_family_name(role_family)
+                })
             });
+            let delivery = match graph_family.map(|candidate| &candidate.delivery) {
+                Some(FontDeliveryKind::Local) => FontRoleDeliveryKind::Local,
+                Some(FontDeliveryKind::System) => FontRoleDeliveryKind::System,
+                Some(FontDeliveryKind::External) => FontRoleDeliveryKind::External,
+                Some(FontDeliveryKind::Missing) => FontRoleDeliveryKind::Missing,
+                None if family.as_deref().is_some_and(is_known_system_family) => {
+                    FontRoleDeliveryKind::System
+                }
+                None => FontRoleDeliveryKind::Missing,
+            };
+            let installed = !matches!(delivery, FontRoleDeliveryKind::Missing);
             let diagnostic = if matches.len() > 1 {
                 Some(format!(
                     "${} este definit de {} ori; atribuirea este blocată până la eliminarea duplicatelor.",
@@ -109,6 +131,7 @@ pub fn read_font_roles<'a>(
                 value,
                 family,
                 source_path: variable.map(|variable| variable.file.clone()),
+                delivery,
                 installed,
                 assignable: matches.len() == 1,
                 diagnostic,
@@ -232,12 +255,36 @@ fn primary_font_family(value: &str) -> Option<String> {
     (!family.is_empty()).then_some(family)
 }
 
-fn normalize_font_name(value: &str) -> String {
-    value
+fn is_known_system_family(value: &str) -> bool {
+    let key = normalize_font_family_name(value)
         .chars()
         .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+        .collect::<String>();
+    matches!(
+        key.as_str(),
+        "systemui"
+            | "uisansserif"
+            | "uiserif"
+            | "uimonospace"
+            | "sansserif"
+            | "serif"
+            | "monospace"
+            | "cursive"
+            | "fantasy"
+            | "arial"
+            | "helvetica"
+            | "verdana"
+            | "tahoma"
+            | "trebuchetms"
+            | "georgia"
+            | "timesnewroman"
+            | "couriernew"
+            | "sfmono"
+            | "sfmonoregular"
+            | "menlo"
+            | "monaco"
+            | "consolas"
+    )
 }
 
 #[cfg(test)]
@@ -245,13 +292,22 @@ mod tests {
     use super::*;
     use crate::fonts::{FontCssRegistration, FontLicenseMetadata, FontOrigin};
 
-    fn family(name: &str) -> LocalFontFamily {
-        LocalFontFamily {
+    fn family(name: &str) -> FontFaceFamily {
+        FontFaceFamily {
+            id: format!("css:{}", normalize_font_family_name(name)),
             family: name.to_string(),
-            directory: format!("static/fonturi/{}", normalize_font_name(name)),
+            directories: vec![format!(
+                "static/fonturi/{}",
+                normalize_font_family_name(name)
+            )],
             origin: FontOrigin::Local,
             theme_name: None,
+            delivery: FontDeliveryKind::Local,
+            ownership: crate::fonts::FontOwnership::Managed,
+            romanian_supported: Some(true),
             files: Vec::new(),
+            faces: Vec::new(),
+            issues: Vec::new(),
             license: FontLicenseMetadata::default(),
             registration: FontCssRegistration::default(),
         }
@@ -279,5 +335,23 @@ mod tests {
             primary_font_family("'Bricolage Grotesque', system-ui, sans-serif").as_deref(),
             Some("Bricolage Grotesque")
         );
+    }
+
+    #[test]
+    fn system_stack_is_installed_without_requiring_a_local_asset() {
+        let roles = read_font_roles(
+            [(
+                "sass/_variabile.scss",
+                "$font-mono: 'SF Mono', Consolas, monospace;",
+            )]
+            .into_iter(),
+            &[],
+        );
+        let mono = roles
+            .iter()
+            .find(|role| role.id == FontRoleId::Mono)
+            .expect("mono role");
+        assert_eq!(mono.delivery, FontRoleDeliveryKind::System);
+        assert!(mono.installed);
     }
 }

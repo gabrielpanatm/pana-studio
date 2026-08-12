@@ -10,7 +10,7 @@ use crate::{
             style::{
                 conventional_script_files_for_template, conventional_style_files_for_template,
             },
-            summary::{AssetSummary, DataFileSummary, TemplateSummary},
+            summary::{AssetSummary, DataFileSummary, StyleSummary, TemplateSummary},
         },
         zola::{
             data_file_reference_keys, normalize_static_asset_reference,
@@ -148,6 +148,15 @@ pub(super) fn add_template_asset_relations(
     builder: &mut SourceGraphBuilder,
 ) {
     for template in templates {
+        for path in &template.literal_asset_references {
+            add_asset_relation(
+                &template.node_id,
+                path,
+                SourceRelationKind::AssetReference,
+                asset_node_by_reference,
+                builder,
+            );
+        }
         for path in &template.asset_urls {
             add_asset_target_relation(
                 template,
@@ -180,6 +189,24 @@ pub(super) fn add_template_asset_relations(
                 template,
                 path,
                 SourceRelationKind::ImageResize,
+                asset_node_by_reference,
+                builder,
+            );
+        }
+    }
+}
+
+pub(super) fn add_style_asset_relations(
+    styles: &[StyleSummary],
+    asset_node_by_reference: &HashMap<String, String>,
+    builder: &mut SourceGraphBuilder,
+) {
+    for style in styles {
+        for path in &style.literal_asset_references {
+            add_asset_relation(
+                &style.node_id,
+                path,
+                SourceRelationKind::AssetReference,
                 asset_node_by_reference,
                 builder,
             );
@@ -334,6 +361,22 @@ fn add_asset_target_relation(
     asset_node_by_reference: &HashMap<String, String>,
     builder: &mut SourceGraphBuilder,
 ) {
+    add_asset_relation(
+        &template.node_id,
+        target,
+        kind,
+        asset_node_by_reference,
+        builder,
+    );
+}
+
+fn add_asset_relation(
+    source_node_id: &str,
+    target: &str,
+    kind: SourceRelationKind,
+    asset_node_by_reference: &HashMap<String, String>,
+    builder: &mut SourceGraphBuilder,
+) {
     let normalized = normalize_static_asset_reference(target);
     if let Some(target_node_id) = asset_node_by_reference.get(&normalized) {
         if normalized
@@ -342,14 +385,14 @@ fn add_asset_target_relation(
             .is_some_and(|path| path.to_ascii_lowercase().ends_with(".js"))
         {
             builder.add_relation(
-                template.node_id.clone(),
+                source_node_id.to_string(),
                 target_node_id.clone(),
                 SourceRelationKind::UsesScript,
                 normalized.clone(),
             );
         }
         builder.add_relation(
-            template.node_id.clone(),
+            source_node_id.to_string(),
             target_node_id.clone(),
             kind,
             normalized,
@@ -424,5 +467,38 @@ fn add_block_override_relations(
                 block_name.clone(),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source_graph::model::SourceOrigin;
+
+    fn asset(node_id: &str, origin: SourceOrigin) -> AssetSummary {
+        AssetSummary {
+            file: format!("static/images/{node_id}.png"),
+            node_id: node_id.to_string(),
+            origin,
+            theme_name: None,
+            logical_path: "images/shared.png".to_string(),
+            is_script: false,
+        }
+    }
+
+    #[test]
+    fn local_asset_exactly_shadows_theme_asset_with_same_runtime_path() {
+        let map = asset_reference_map(&[
+            asset("local", SourceOrigin::Local),
+            asset("theme", SourceOrigin::Theme),
+        ]);
+        assert_eq!(
+            map.get("images/shared.png").map(String::as_str),
+            Some("local")
+        );
+        assert_eq!(
+            map.get("static/images/shared.png").map(String::as_str),
+            Some("local")
+        );
     }
 }

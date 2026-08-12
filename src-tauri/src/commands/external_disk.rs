@@ -143,10 +143,10 @@ fn reconcile_clean_external_project_files_impl<R: Runtime>(
         plan_clean_external_reconcile(store, input, started_at_ms)
     };
     let plan = match plan {
-        CleanExternalReconcilePlanResult::Ready(plan) => plan,
+        CleanExternalReconcilePlanResult::Ready(plan) => *plan,
         CleanExternalReconcilePlanResult::Terminal(receipt) => {
             log_external_reconcile_receipt(app, &receipt);
-            return Ok(receipt);
+            return Ok(*receipt);
         }
     };
     log_external_reconcile_planned(app, &plan);

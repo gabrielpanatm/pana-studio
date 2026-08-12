@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
-    fs,
     path::Path,
 };
 
@@ -74,8 +73,8 @@ pub struct ListingItemDiagnostic {
     pub item_id: Option<String>,
 }
 
-pub fn build_listing_item_catalog(
-    project_root: &Path,
+pub(crate) fn build_listing_item_catalog_from_workspace_projection(
+    _project_root: &Path,
     projected_sources: &HashMap<String, String>,
     deleted_sources: &HashSet<String>,
     graph: &SourceGraph,
@@ -83,10 +82,7 @@ pub fn build_listing_item_catalog(
     let source = if deleted_sources.contains(LISTING_ITEM_METADATA_PATH) {
         None
     } else {
-        projected_sources
-            .get(LISTING_ITEM_METADATA_PATH)
-            .cloned()
-            .or_else(|| read_safe_text(project_root, LISTING_ITEM_METADATA_PATH))
+        projected_sources.get(LISTING_ITEM_METADATA_PATH).cloned()
     };
     let metadata_present = source.is_some();
     let mut diagnostics = Vec::new();
@@ -373,18 +369,6 @@ fn valid_id(value: &str) -> bool {
         && value.chars().all(|character| {
             character.is_ascii_alphanumeric() || character == '-' || character == '_'
         })
-}
-
-fn read_safe_text(project_root: &Path, relative: &str) -> Option<String> {
-    let path = project_root.join(relative);
-    let metadata = fs::symlink_metadata(&path).ok()?;
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() > 1024 * 1024
-    {
-        return None;
-    }
-    fs::read_to_string(path).ok()
 }
 
 fn diagnostic(

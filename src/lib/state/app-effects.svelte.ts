@@ -306,6 +306,14 @@ export function registerAppEffects(app: AppState) {
     app.applyPendingBootstrapDiagnosticReveal();
   });
 
+  $effect(() => {
+    app.pendingSourceRangeReveal;
+    app.activeScannedPath;
+    app.source;
+    app.codeEditorController;
+    app.applyPendingSourceRangeReveal();
+  });
+
   // Sync code selection highlight.
   $effect(() => {
     if (!app.codeEditorController) return;

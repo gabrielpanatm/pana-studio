@@ -3,8 +3,8 @@ use serde::Serialize;
 use crate::localization::LocalizedDiagnostic;
 
 use super::{
-    managed_font_end_marker, managed_font_start_marker, FontRoleAssignment, LocalFontFamily,
-    LocalFontFile,
+    managed_font_end_marker, managed_font_start_marker, normalize_font_family_name, FontFaceFamily,
+    FontFaceIssueSeverity, FontRoleAssignment, LocalFontFile,
 };
 
 const PRELOAD_START: &str = "<!-- pana-studio-font-preload:start -->";
@@ -71,9 +71,9 @@ pub struct FontDeliveryDiagnostic {
 }
 
 pub fn annotate_font_preloads<'a>(
-    mut families: Vec<LocalFontFamily>,
+    mut families: Vec<FontFaceFamily>,
     sources: impl Iterator<Item = (&'a str, &'a str)>,
-) -> Vec<LocalFontFamily> {
+) -> Vec<FontFaceFamily> {
     let templates = sources
         .filter(|(path, _)| is_template_path(path))
         .collect::<Vec<_>>();
@@ -144,7 +144,7 @@ pub fn select_font_preload_template<'a>(
 ) -> Option<String> {
     sources
         .filter(|(path, source)| is_template_path(path) && contains_ascii_case(source, "</head>"))
-        .filter_map(|(path, source)| {
+        .map(|(path, source)| {
             let normalized = path.replace('\\', "/");
             let local = !normalized.starts_with("themes/") && !normalized.contains("/themes/");
             let score = if source.contains(PRELOAD_START) {
@@ -164,7 +164,7 @@ pub fn select_font_preload_template<'a>(
             } else {
                 80
             };
-            Some((score, normalized.len(), normalized))
+            (score, normalized.len(), normalized)
         })
         .min()
         .map(|(_, _, path)| path)
@@ -172,17 +172,15 @@ pub fn select_font_preload_template<'a>(
 
 pub fn prepare_font_preload_update(
     source: &str,
-    inventory: &[LocalFontFamily],
+    graph_families: &[FontFaceFamily],
     target_file: &str,
     enabled: bool,
 ) -> Result<String, String> {
-    let target = inventory
+    let target = graph_families
         .iter()
         .flat_map(|family| family.files.iter())
         .find(|file| file.file == target_file)
-        .ok_or_else(|| {
-            format!("Fișierul {target_file} nu mai există în inventarul autoritativ al fonturilor.")
-        })?;
+        .ok_or_else(|| format!("Fișierul {target_file} nu mai există în FontFaceGraph."))?;
     if target.preload.preloaded && !target.preload.managed {
         return Err(format!(
             "{} este preîncărcat prin cod extern blocului gestionat. Pană Studio nu îl poate modifica fără să preia autoritatea asupra acelui cod.",
@@ -192,7 +190,7 @@ pub fn prepare_font_preload_update(
 
     let managed_source = managed_preload_source(source)?;
     let managed_hrefs = managed_source.map(font_preload_hrefs).unwrap_or_default();
-    let mut selected = inventory
+    let mut selected = graph_families
         .iter()
         .flat_map(|family| family.files.iter())
         .filter(|file| {
@@ -214,27 +212,44 @@ pub fn prepare_font_preload_update(
 }
 
 pub fn font_delivery_diagnostics(
-    families: &[LocalFontFamily],
+    families: &[FontFaceFamily],
     roles: &[FontRoleAssignment],
 ) -> Vec<FontDeliveryDiagnostic> {
     let active_families = roles
         .iter()
         .filter_map(|role| role.family.as_deref())
-        .map(normalize_font_name)
+        .map(normalize_font_family_name)
         .collect::<Vec<_>>();
     let mut diagnostics = Vec::new();
     let mut preload_count = 0usize;
 
     for family in families {
-        if !family.registration.registered {
+        for issue in &family.issues {
+            let severity = match issue.severity {
+                FontFaceIssueSeverity::Info => FontDeliveryDiagnosticSeverity::Info,
+                FontFaceIssueSeverity::Warning => FontDeliveryDiagnosticSeverity::Warning,
+                FontFaceIssueSeverity::Error => FontDeliveryDiagnosticSeverity::Error,
+            };
             diagnostics.push(FontDeliveryDiagnostic {
-                severity: FontDeliveryDiagnosticSeverity::Error,
-                code: "font_face_missing".to_string(),
-                message_diagnostic: LocalizedDiagnostic::new("font-delivery-face-missing")
-                    .with_argument("family", family.family.clone()),
+                severity,
+                code: issue.code.clone(),
+                message_diagnostic: LocalizedDiagnostic::new("font-face-graph-issue")
+                    .with_argument("message", issue.message.clone()),
                 family: Some(family.family.clone()),
-                file: None,
+                file: issue.file.clone(),
             });
+        }
+        if !family.registration.registered {
+            if family.issues.is_empty() {
+                diagnostics.push(FontDeliveryDiagnostic {
+                    severity: FontDeliveryDiagnosticSeverity::Error,
+                    code: "font_face_missing".to_string(),
+                    message_diagnostic: LocalizedDiagnostic::new("font-delivery-face-missing")
+                        .with_argument("family", family.family.clone()),
+                    family: Some(family.family.clone()),
+                    file: None,
+                });
+            }
         } else if family.registration.display_modes.is_empty() {
             diagnostics.push(FontDeliveryDiagnostic {
                 severity: FontDeliveryDiagnosticSeverity::Warning,
@@ -256,7 +271,7 @@ pub fn font_delivery_diagnostics(
             });
         }
 
-        let active = active_families.contains(&normalize_font_name(&family.family));
+        let active = active_families.contains(&normalize_font_family_name(&family.family));
         for file in &family.files {
             if !file.preload.preloaded {
                 continue;
@@ -560,14 +575,6 @@ fn line_indent_at(source: &str, index: usize) -> String {
         .collect()
 }
 
-fn normalize_font_name(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -583,6 +590,7 @@ mod tests {
             extension: "woff2".to_string(),
             format: "woff2".to_string(),
             text_optimized: false,
+            content_hash: "hash".to_string(),
             internal_family: Some("Geist".to_string()),
             subfamily: Some("Regular".to_string()),
             weight: Some(400),
@@ -591,17 +599,27 @@ mod tests {
             axes: Vec::<FontVariationAxis>::new(),
             license: FontLicenseMetadata::default(),
             unicode_range: None,
+            romanian_glyphs: crate::fonts::ROMANIAN_GLYPHS.to_vec(),
+            declared_weight: Some(400),
+            declared_weight_range: None,
+            declared_style: Some("normal".to_string()),
             preload: FontPreloadRegistration::default(),
         }
     }
 
-    fn family(font_file: LocalFontFile) -> LocalFontFamily {
-        LocalFontFamily {
+    fn family(font_file: LocalFontFile) -> FontFaceFamily {
+        FontFaceFamily {
+            id: "css:geist".to_string(),
             family: "Geist".to_string(),
-            directory: "static/fonturi/geist".to_string(),
+            directories: vec!["static/fonturi/geist".to_string()],
             origin: FontOrigin::Local,
             theme_name: None,
+            delivery: crate::fonts::FontDeliveryKind::Local,
+            ownership: crate::fonts::FontOwnership::Managed,
+            romanian_supported: Some(true),
             files: vec![font_file],
+            faces: Vec::new(),
+            issues: Vec::new(),
             license: FontLicenseMetadata::default(),
             registration: FontCssRegistration::default(),
         }
@@ -621,12 +639,13 @@ mod tests {
         assert!(inserted.contains("href=\"/fonturi/geist/geist-400.woff2\""));
         assert!(inserted.find(PRELOAD_START) < inserted.find("</head>"));
 
-        let inventory = annotate_font_preloads(
+        let graph_families = annotate_font_preloads(
             vec![family(font_file.clone())],
             [("templates/base.html", inserted.as_str())].into_iter(),
         );
-        let removed = prepare_font_preload_update(&inserted, &inventory, &font_file.file, false)
-            .expect("remove preload");
+        let removed =
+            prepare_font_preload_update(&inserted, &graph_families, &font_file.file, false)
+                .expect("remove preload");
         assert!(!removed.contains(PRELOAD_START));
         assert!(!removed.contains("geist-400.woff2"));
     }

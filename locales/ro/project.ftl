@@ -587,6 +587,7 @@ source-view-origin-local = Local
 source-view-relation-page-template = template
 source-view-relation-section-template = template pagini secțiune
 source-view-relation-internal-link = link intern
+source-view-relation-asset-reference = referință resursă
 source-view-relation-data-file-load = date load_data
 source-view-relation-content-data-load = conținut load_data
 source-view-relation-extends = extinde

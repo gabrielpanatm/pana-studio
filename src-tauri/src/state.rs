@@ -7,12 +7,19 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 use crate::kernel::{
-    ai_coordination::AiCoordinationRuntime, canvas_interaction::CanvasInteractionRuntime,
-    context_hub::ContextHubRuntime, editor_navigation::EditorNavigationRuntime,
-    file_explorer::FileExplorerRuntime, global_status::GlobalStatusRuntime,
-    project_workspace::ProjectWorkspace, publish_operation::PublishOperationControl,
+    ai_coordination::AiCoordinationRuntime,
+    audit::{AuditRequest, AuditRunReceipt},
+    canvas_interaction::CanvasInteractionRuntime,
+    context_hub::ContextHubRuntime,
+    editor_navigation::EditorNavigationRuntime,
+    file_explorer::FileExplorerRuntime,
+    global_status::GlobalStatusRuntime,
+    project_workspace::ProjectWorkspace,
+    publish_operation::PublishOperationControl,
+    publish_preflight::{PublishBuildReceipt, PublishPreflightReceipt},
     recovery_coordinator::RecoveryCoordinatorScan,
-    selection_coordinator::SelectionCoordinatorRuntime, workbench::WorkbenchRuntime,
+    selection_coordinator::SelectionCoordinatorRuntime,
+    workbench::WorkbenchRuntime,
 };
 use crate::preview::{PersistentZolaPreviewEngine, SourceBrowserEngine};
 use crate::project::{ProjectDiskWatchHandle, ProjectLifecycleRuntime, StartupFlowRuntime};
@@ -21,6 +28,12 @@ use crate::versioning::VersionNetworkOperationControl;
 pub struct McpServerHandle {
     pub cancellation_token: CancellationToken,
     pub thread: Option<JoinHandle<()>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ProjectAuditAuthority {
+    pub request: AuditRequest,
+    pub receipt: AuditRunReceipt,
 }
 
 impl McpServerHandle {
@@ -77,8 +90,12 @@ pub struct AppState {
     pub project_disk_watch: Mutex<Option<ProjectDiskWatchHandle>>,
     pub project_disk_watch_transition: Mutex<()>,
     pub project_workspace: Mutex<Option<ProjectWorkspace>>,
+    pub(crate) project_audit_authority: Mutex<Option<ProjectAuditAuthority>>,
     pub workbench: WorkbenchRuntime,
     pub publish_operation: Mutex<Option<PublishOperationControl>>,
+    pub publish_authorization_gate: Mutex<()>,
+    pub publish_preflight_receipt: Mutex<Option<PublishPreflightReceipt>>,
+    pub publish_build_receipt: Mutex<Option<PublishBuildReceipt>>,
     pub versioning_operation: Mutex<()>,
     pub versioning_network_operation: Mutex<Option<VersionNetworkOperationControl>>,
     pub recovery_coordinator_scan: Mutex<Option<RecoveryCoordinatorScan>>,
@@ -110,8 +127,12 @@ impl Default for AppState {
             project_disk_watch: Mutex::new(None),
             project_disk_watch_transition: Mutex::new(()),
             project_workspace: Mutex::new(None),
+            project_audit_authority: Mutex::new(None),
             workbench: WorkbenchRuntime::default(),
             publish_operation: Mutex::new(None),
+            publish_authorization_gate: Mutex::new(()),
+            publish_preflight_receipt: Mutex::new(None),
+            publish_build_receipt: Mutex::new(None),
             versioning_operation: Mutex::new(()),
             versioning_network_operation: Mutex::new(None),
             recovery_coordinator_scan: Mutex::new(None),
@@ -123,5 +144,19 @@ impl Default for AppState {
             version_preview_engine: Mutex::new(None),
             mcp_server: Mutex::new(None),
         }
+    }
+}
+
+impl AppState {
+    pub fn clear_publish_authorization(&self) -> Result<(), String> {
+        self.publish_preflight_receipt
+            .lock()
+            .map_err(|_| "Nu am putut invalida Publish Preflight.".to_string())?
+            .take();
+        self.publish_build_receipt
+            .lock()
+            .map_err(|_| "Nu am putut invalida buildul pentru publicare.".to_string())?
+            .take();
+        Ok(())
     }
 }

@@ -10,6 +10,10 @@ use crate::{
             INSERT_CATALOG_SCHEMA_VERSION,
         },
     },
+    project_model::cache::{
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
+    },
     state::AppState,
 };
 
@@ -27,7 +31,7 @@ pub fn read_insert_catalog(
     request: InsertCatalogRequest,
     state: State<AppState>,
 ) -> Result<InsertCatalogSnapshot, String> {
-    let (root, projection, project_root, runtime_session_id, workspace_revision) = {
+    let (bound_root, project_root, runtime_session_id, workspace_revision) = {
         let (root, workspace) = require_bound_workspace(state.inner(), &request.identity)?;
         let workspace = workspace.as_ref().ok_or_else(|| {
             "ProjectWorkspace nu este inițializat pentru catalogul de inserare.".to_string()
@@ -40,15 +44,22 @@ pub fn read_insert_catalog(
         }
         (
             root,
-            workspace.capture_projection_snapshot()?,
             workspace.session.project_root.clone(),
             workspace.runtime_session_id(),
             workspace.revision,
         )
     };
-
-    let model =
-        crate::project_model::build_project_model_from_workspace_projection(&root, &projection)?;
+    let (root, session, context) = capture_project_model_build_context(&state)?;
+    if root != bound_root
+        || session.runtime_instance_id() != runtime_session_id
+        || context.projection().revision != workspace_revision
+    {
+        return Err(stale_revision_error(
+            request.expected_workspace_revision,
+            context.projection().revision,
+        ));
+    }
+    let model = build_project_model_from_context(&root, &context)?;
 
     // Building ProjectModel may overlap with a mutation. Rebind after the
     // projection work so a catalog can never be published for an obsolete
@@ -62,6 +73,7 @@ pub fn read_insert_catalog(
             return Err(stale_revision_error(workspace_revision, workspace.revision));
         }
     }
+    publish_project_model_if_current(&state, &context, model.clone())?;
 
     let snapshot = build_insert_catalog(
         &model,

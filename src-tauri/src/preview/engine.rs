@@ -213,6 +213,7 @@ impl PersistentZolaPreviewEngine {
         model: &ProjectModel,
         plan: &TemplateWorkbenchPlan,
     ) -> Result<TemplateWorkbenchPublication, String> {
+        #[cfg(debug_assertions)]
         let started = Instant::now();
         self.require_projection_owner(projection)?;
         if model.project_root != Path::new(&projection.project_root) {
@@ -268,11 +269,14 @@ impl PersistentZolaPreviewEngine {
         let site = self.site.as_ref().ok_or_else(|| {
             "Motorul Zola embedded nu are site activ pentru Workbench.".to_string()
         })?;
+        #[cfg(debug_assertions)]
         let render_started = Instant::now();
         let (rendered, _canvas_route) = with_zola_engine("Context de template Preview", || {
-            render_template_workbench_document(site, &self.raw_content, &model, plan)
+            render_template_workbench_document(site, &self.raw_content, model, plan)
         })?;
+        #[cfg(debug_assertions)]
         let render_ms = elapsed_ms(render_started);
+        #[cfg(debug_assertions)]
         let graph_started = Instant::now();
         let annotated = CanvasGraph::annotate_rendered_document(model, &route, &rendered)?;
         let graph = CanvasGraph::from_rendered_documents(
@@ -281,7 +285,9 @@ impl PersistentZolaPreviewEngine {
             &generation.preview_revision,
             [(route.as_str(), annotated.as_str())],
         )?;
+        #[cfg(debug_assertions)]
         let graph_ms = elapsed_ms(graph_started);
+        #[cfg(debug_assertions)]
         let prepare_started = Instant::now();
         let resource_versions = PreviewResourceVersions::from_entries(
             generation
@@ -301,6 +307,7 @@ impl PersistentZolaPreviewEngine {
             &mut prepared,
             &generation.canvas_transaction.identity,
         )?;
+        #[cfg(debug_assertions)]
         let prepare_ms = elapsed_ms(prepare_started);
 
         generation
@@ -339,20 +346,24 @@ impl PersistentZolaPreviewEngine {
         app: &AppHandle<R>,
         projection: &WorkspaceProjectionSnapshot,
     ) -> Result<PersistentPreviewCandidate, String> {
-        self.render_candidate_with_project_model_and_pending_authority(app, projection, None, None)
+        self.render_candidate_with_project_model_and_pending_authority(
+            app, projection, None, None, None,
+        )
     }
 
     pub fn render_candidate_with_project_model<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
         projection: &WorkspaceProjectionSnapshot,
-        project_model: Option<&ProjectModel>,
+        project_model: &ProjectModel,
+        project_model_cache_hit: bool,
     ) -> Result<PersistentPreviewCandidate, String> {
         self.render_candidate_with_project_model_and_pending_authority(
             app,
             projection,
-            project_model,
+            Some(project_model),
             None,
+            Some(project_model_cache_hit),
         )
     }
 
@@ -367,6 +378,7 @@ impl PersistentZolaPreviewEngine {
             projection,
             None,
             Some(pending_project_authority),
+            None,
         )
     }
 
@@ -376,45 +388,44 @@ impl PersistentZolaPreviewEngine {
         projection: &WorkspaceProjectionSnapshot,
         project_model: Option<&ProjectModel>,
         pending_project_authority: Option<&PendingProjectAuthority>,
+        project_model_cache_hit: Option<bool>,
     ) -> Result<PersistentPreviewCandidate, String> {
-        let model_root = PathBuf::from(&projection.project_root);
-        thread::scope(|scope| {
-            let model_task = if project_model.is_none() {
-                Some(scope.spawn(move || {
-                    let started = Instant::now();
-                    (
-                        build_project_model_from_workspace_projection(&model_root, projection),
-                        elapsed_ms(started),
-                    )
-                }))
-            } else {
-                None
-            };
-            self.render_candidate_with_model_task(
-                app,
-                projection,
-                project_model,
-                model_task,
-                pending_project_authority,
-            )
-        })
+        self.render_candidate_with_canonical_model(
+            app,
+            projection,
+            project_model,
+            pending_project_authority,
+            project_model_cache_hit,
+        )
     }
 
-    fn render_candidate_with_model_task<R: Runtime>(
+    fn render_candidate_with_canonical_model<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
         projection: &WorkspaceProjectionSnapshot,
         project_model: Option<&ProjectModel>,
-        model_task: Option<thread::ScopedJoinHandle<'_, (Result<ProjectModel, String>, u64)>>,
         pending_project_authority: Option<&PendingProjectAuthority>,
+        project_model_cache_hit: Option<bool>,
     ) -> Result<PersistentPreviewCandidate, String> {
         let candidate_started = Instant::now();
         let mut timings = PersistentPreviewCandidateTimings {
-            project_model_cache_hit: project_model.is_some(),
+            project_model_cache_hit: project_model_cache_hit.unwrap_or(project_model.is_some()),
             ..PersistentPreviewCandidateTimings::default()
         };
         self.require_projection_owner(projection)?;
         self.collect_retired(app);
+        // Preview annotation consumes the same canonical SourceGraph as every
+        // mutation command. Resolve it before materialization so a parser-local
+        // reconstruction can never become a second identity authority.
+        let project_model = if let Some(project_model) = project_model {
+            project_model.clone()
+        } else {
+            let model_started = Instant::now();
+            let model_root = PathBuf::from(&projection.project_root);
+            let model = build_project_model_from_workspace_projection(&model_root, projection)?;
+            timings.project_model_build_ms = elapsed_ms(model_started);
+            model
+        };
 
         let source_publication_started = Instant::now();
         let (mut update, source_publication) = match sync_persistent_project_workspace(
@@ -423,6 +434,7 @@ impl PersistentZolaPreviewEngine {
             &self.session_root,
             self.projection_manifest.as_ref(),
             projection,
+            &project_model.source_graph,
             pending_project_authority,
         ) {
             Ok(update) => update,
@@ -455,7 +467,6 @@ impl PersistentZolaPreviewEngine {
                 projection,
                 &preview_revision,
                 project_model,
-                model_task,
                 &mut timings,
             ) {
                 Ok(result) => result,
@@ -572,6 +583,8 @@ impl PersistentZolaPreviewEngine {
         remove_persistent_preview_session(app, &self.zola_root, &self.session_root)
     }
 
+    // Rendering keeps projection evidence, optional model work and timing output independently typed.
+    #[allow(clippy::too_many_arguments)]
     fn render_zola_generation<R: Runtime>(
         &mut self,
         app: &AppHandle<R>,
@@ -579,8 +592,7 @@ impl PersistentZolaPreviewEngine {
         artifact_root: &Path,
         projection: &WorkspaceProjectionSnapshot,
         preview_revision: &str,
-        cached_project_model: Option<&ProjectModel>,
-        model_task: Option<thread::ScopedJoinHandle<'_, (Result<ProjectModel, String>, u64)>>,
+        project_model: ProjectModel,
         timings: &mut PersistentPreviewCandidateTimings,
     ) -> Result<(ActivePreviewGeneration, ProjectModel), String> {
         let base_url = self.url()?;
@@ -657,25 +669,6 @@ impl PersistentZolaPreviewEngine {
                 return Err(error);
             }
         };
-        // ProjectModel and Zola consume the same immutable WorkspaceProjection
-        // but do not depend on one another. Join the model task only after Zola
-        // has finished so their CPU work overlaps on project-open.
-        let model_join_started = Instant::now();
-        let built_model = match model_task {
-            Some(task) => {
-                let (model, build_ms) = task
-                    .join()
-                    .map_err(|_| "ProjectModel Preview task a eșuat irecuperabil.".to_string())?;
-                timings.project_model_build_ms = build_ms;
-                Some(model?)
-            }
-            None => None,
-        };
-        timings.project_model_join_wait_ms = elapsed_ms(model_join_started);
-        let project_model = cached_project_model
-            .cloned()
-            .or(built_model)
-            .ok_or_else(|| "Preview-ul nu a putut rezolva ProjectModel-ul exact.".to_string())?;
         let rendered_content_clone_started = Instant::now();
         self.raw_content = rendered.clone();
         timings.rendered_content_clone_ms = elapsed_ms(rendered_content_clone_started);
@@ -1682,6 +1675,7 @@ mod tests {
         },
         preview::read_http_document,
         project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
+        project_model::test_support::ProjectModelTestFixture,
         zola_engine::acquire_zola_engine_for_test,
     };
 
@@ -1738,7 +1732,10 @@ mod tests {
         let zola_root = project.to_path_buf();
         let artifacts = fixture.join("artifacts");
         create_workbench_render_project(&zola_root);
-        let model = crate::project_model::build_project_model(&project, &HashMap::new()).unwrap();
+        let model = ProjectModelTestFixture::from_integration_disk_boundary(&project)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let _render_guard = acquire_zola_engine_for_test();
         let (site, canonical) = build_new_official_zola_site(
             &zola_root,
@@ -1828,7 +1825,10 @@ mod tests {
         let project = fixture.join("project");
         let artifacts = fixture.join("artifacts");
         create_taxonomy_workbench_project(&project);
-        let model = crate::project_model::build_project_model(&project, &HashMap::new()).unwrap();
+        let model = ProjectModelTestFixture::from_integration_disk_boundary(&project)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let _render_guard = acquire_zola_engine_for_test();
         let (site, canonical) = build_new_official_zola_site(
             &project,
@@ -1889,7 +1889,10 @@ mod tests {
         let project = fixture.join("project");
         let zola_root = project.to_path_buf();
         create_workbench_render_project(&zola_root);
-        let model = crate::project_model::build_project_model(&project, &HashMap::new()).unwrap();
+        let model = ProjectModelTestFixture::from_integration_disk_boundary(&project)
+            .unwrap()
+            .build_model()
+            .unwrap();
         let article = model
             .source_graph
             .nodes

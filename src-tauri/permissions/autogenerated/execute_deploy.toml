@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-execute-deploy"
+description = "Enables the execute_deploy command without any pre-configured scope."
+commands.allow = ["execute_deploy"]
+
+[[permission]]
+identifier = "deny-execute-deploy"
+description = "Denies the execute_deploy command without any pre-configured scope."
+commands.deny = ["execute_deploy"]

@@ -1038,9 +1038,7 @@ fn target_matches_page(
     target_id: Option<&str>,
     page: &crate::source_graph::model::SourceGraphPage,
 ) -> bool {
-    target_id.map_or(true, |target| {
-        target == page.id || target == page.file || target == page.url
-    })
+    target_id.is_none_or(|target| target == page.id || target == page.file || target == page.url)
 }
 
 fn local_template_path(name: &str) -> Result<String, String> {
@@ -1878,14 +1876,7 @@ mod tests {
             },
         );
         for (relative_path, text, language, role) in files {
-            insert_text(
-                &mut documents,
-                root,
-                relative_path,
-                text,
-                language.clone(),
-                role.clone(),
-            );
+            insert_text(&mut documents, root, relative_path, text, *language, *role);
         }
         let accepted = AcceptedProjectDiskManifest::new(
             session.runtime_instance_id(),

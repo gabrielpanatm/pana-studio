@@ -79,7 +79,7 @@ const initialDocument = `<!doctype html>
       data-pana-canvas-workspace-revision="1"
       data-pana-canvas-transaction-id="canvas_active_browser_real">
   <head><meta name="description" content="Before"><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="${oldCss}"><style>html,body,h1{margin:0}header{height:72px}main{min-height:calc(100vh - 136px)}footer{height:64px}</style></head>
-  <body><header><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/servicii">Servicii</a></header><main><!-- pana-template-source-start:source-empty-content --><div hidden class="pana-studio-empty-editable pana-studio-empty-tera-slot" data-pana-empty-tera-slot="source-empty-content" data-pana-empty-tera-slot-static="true" data-pana-source-id="source-empty-content" data-pana-template-source-id="source-empty-content"></div><!-- pana-template-source-end:source-empty-content --></main><footer id="flow-footer">Footer extern</footer><!-- pana-template-source-start:source-external-scripts --><!-- pana-template-source-end:source-external-scripts -->
+  <body><header><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">Before</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/servicii">Servicii</a><svg id="icon-probe" class="icon custom-icon" style="color: rgb(194, 65, 12)" data-pana-block="icon" data-pana-instance="icon-browser-real" data-pana-icon="tabler-outline:home" data-pana-source-id="source-icon" data-pana-render-instance-id="render-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path fill="currentColor" d="M 3 3 H 21 V 21 H 3 Z"></path></svg></header><main><!-- pana-template-source-start:source-empty-content --><div hidden class="pana-studio-empty-editable pana-studio-empty-tera-slot" data-pana-empty-tera-slot="source-empty-content" data-pana-empty-tera-slot-static="true" data-pana-source-id="source-empty-content" data-pana-template-source-id="source-empty-content"></div><!-- pana-template-source-end:source-empty-content --></main><footer id="flow-footer">Footer extern</footer><!-- pana-template-source-start:source-external-scripts --><!-- pana-template-source-end:source-external-scripts -->
   <script>
     window.addEventListener("error", function (event) {
       window.parent.postMessage({source:"pana-browser-harness",type:"child-error",message:String(event.message || "error"),line:event.lineno,column:event.colno}, "*");
@@ -100,7 +100,7 @@ const canonicalDocument = `<!doctype html>
       data-pana-canvas-workspace-transaction-id="workspace-browser-real-107"
       data-pana-canvas-transaction-id="${identity.transactionId}">
   <head><!-- pana-template-source-start:sg_head_description --><meta name="description" content="After"><!-- pana-template-source-end:sg_head_description --><link rel="preload" href="/font-probe.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="${nextCss}"></head>
-  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">After</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/despre">Servicii</a></main></body>
+  <body><main><h1 id="probe" data-pana-source-id="source-title" data-pana-render-instance-id="render-title">After</h1><a id="nav-probe" data-pana-source-id="source-nav" data-pana-render-instance-id="render-nav" href="/despre">Servicii</a><svg id="icon-probe" class="icon custom-icon" style="color: rgb(194, 65, 12)" data-pana-block="icon" data-pana-instance="icon-browser-real" data-pana-icon="tabler-outline:home" data-pana-source-id="source-icon" data-pana-render-instance-id="render-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path fill="currentColor" d="M 3 3 H 21 V 21 H 3 Z"></path></svg></main></body>
 </html>`;
 
 const reorderedResourceDocument = `<!doctype html>
@@ -147,11 +147,46 @@ const interactiveDocument = `<!doctype html>
         <div data-pana-accordion-panel hidden>Panel 2</div>
       </div>
     </section>
+    <div data-pana-block="slider" data-pana-source-id="source-slider" aria-label="Slider test">
+      <div data-pana-slider-viewport><div data-pana-slider-track data-pana-slot="slides">
+        <div data-pana-slider-slide data-pana-source-id="source-slide-1">Slide 1</div>
+        <div data-pana-slider-slide data-pana-source-id="source-slide-2">Slide 2</div>
+      </div></div>
+      <div data-pana-slider-controls>
+        <button data-pana-slider-previous>Previous</button>
+        <div data-pana-slider-indicators></div>
+        <button data-pana-slider-next>Next</button>
+        <button data-pana-slider-autoplay hidden>Stop</button>
+      </div>
+    </div>
+    <div data-pana-block="slider" data-pana-source-id="source-slider-autoplay" data-autoplay="true" data-interval="1000" aria-label="Slider autoplay test">
+      <div data-pana-slider-viewport><div data-pana-slider-track data-pana-slot="slides">
+        <div data-pana-slider-slide data-pana-source-id="source-auto-slide-1">Auto 1</div>
+        <div data-pana-slider-slide data-pana-source-id="source-auto-slide-2">Auto 2</div>
+      </div></div>
+      <div data-pana-slider-controls>
+        <button data-pana-slider-previous>Previous</button>
+        <div data-pana-slider-indicators></div>
+        <button data-pana-slider-next>Next</button>
+        <button data-pana-slider-autoplay hidden>Stop</button>
+      </div>
+    </div>
+    <script>
+      window.__panaReducedMotion = false;
+      window.__panaMotionListeners = [];
+      window.matchMedia = function () {
+        return {
+          get matches() { return window.__panaReducedMotion; },
+          addEventListener: function (type, listener) { if (type === "change") window.__panaMotionListeners.push(listener); },
+          removeEventListener: function (type, listener) { window.__panaMotionListeners = window.__panaMotionListeners.filter(function (candidate) { return candidate !== listener; }); }
+        };
+      };
+    </script>
     <script>${escapeInlineScript(blockRuntime)}</script>
     <script>${escapeInlineScript(interactiveRuntime)}</script>
     <script>window.PanaBlockRuntime.installPageConfig({
       version:2,
-      blocks:[{id:"accordion"}],
+      blocks:[{id:"accordion"},{id:"slider"}],
       motion:{
         schemaVersion:2,
         animeVersion:"4.4.1",
@@ -546,6 +581,57 @@ const harness = `<!doctype html>
     if (hoverTarget?.getAttribute("data-pana-canvas-agent-hover") !== "html") {
       throw new Error("CanvasAgent did not project the Rust-owned hover overlay target");
     }
+    const overlayBenchmarkHost = frame.contentDocument.createElement("div");
+    overlayBenchmarkHost.style.cssText = "position:fixed;left:-10000px;top:0;width:1000px;display:grid;grid-template-columns:repeat(10,10px)";
+    const overlayBenchmarkMembers = [];
+    for (let index = 0; index < 100; index += 1) {
+      const target = frame.contentDocument.createElement("span");
+      const renderInstanceId = "render-overlay-benchmark-" + index;
+      target.setAttribute("data-pana-render-instance-id", renderInstanceId);
+      target.style.cssText = "display:block;width:10px;height:10px";
+      overlayBenchmarkHost.appendChild(target);
+      overlayBenchmarkMembers.push({
+        memberId: "editor-overlay-benchmark-" + index,
+        targetKind: "htmlElement",
+        editorNodeId: "editor-overlay-benchmark-" + index,
+        actions: { canEnterBoundary: false },
+        selectionRevision: 40,
+        projection: {
+          primaryRenderInstanceId: renderInstanceId,
+          renderInstanceIds: [renderInstanceId],
+          boundaryInstanceId: null
+        }
+      });
+    }
+    frame.contentDocument.body.appendChild(overlayBenchmarkHost);
+    const overlayDurations = [];
+    for (let sample = 0; sample < 108; sample += 1) {
+      const measurementId = "selection-overlay-" + sample;
+      frame.contentWindow.postMessage({
+        source: "pana-studio-app",
+        type: "render-canvas-interaction-overlay",
+        agentInstanceId: agentReady.agentInstanceId,
+        documentEpoch: 1,
+        channel: "selection",
+        selectionRevision: 40,
+        primaryMemberId: overlayBenchmarkMembers[0].memberId,
+        members: overlayBenchmarkMembers,
+        measurementId
+      }, "*");
+      const measured = await waitForCanvasAgentMessage((data) =>
+        data?.type === "selectionOverlayRendered" && data.measurementId === measurementId
+      );
+      if (measured.memberCount !== 100 || !Number.isFinite(measured.renderDurationMs)) {
+        throw new Error("CanvasAgent did not confirm the 100-member overlay projection");
+      }
+      if (sample >= 8) overlayDurations.push(measured.renderDurationMs);
+    }
+    overlayDurations.sort((left, right) => left - right);
+    const overlayP95Ms = overlayDurations[Math.ceil(overlayDurations.length * 0.95) - 1];
+    if (!Number.isFinite(overlayP95Ms) || overlayP95Ms >= 16) {
+      throw new Error("100-member selection overlay p95 exceeded 16 ms: " + overlayP95Ms);
+    }
+    overlayBenchmarkHost.remove();
     result.textContent = "canvas-agent-native-click";
     document.title = "AGENT_WAIT";
     const agentClick = await waitForCanvasAgentMessage((data) =>
@@ -604,6 +690,20 @@ const harness = `<!doctype html>
     );
     if (!agentOverlay || agentOverlay.style.display !== "block") {
       throw new Error("CanvasAgent did not project the Rust-owned overlay target");
+    }
+    result.textContent = "canvas-agent-icon-descendant-click";
+    document.title = "AGENT_ICON_WAIT";
+    const iconClick = await waitForCanvasAgentMessage((data) =>
+      data?.type === "gesture"
+        && data.gesture === "click"
+        && data.gestureSequence > agentClick.gestureSequence
+    );
+    if (
+      iconClick.hitPath?.[0]?.kind !== "renderInstance"
+      || iconClick.hitPath?.[0]?.id !== "render-icon"
+      || iconClick.hitPath?.some((entry) => entry.id !== "render-icon")
+    ) {
+      throw new Error("SVG descendant click did not resolve the atomic Icon root");
     }
     result.textContent = "canvas-agent-native-drag";
     document.title = "AGENT_DRAG_WAIT";
@@ -939,7 +1039,6 @@ const harness = `<!doctype html>
           target: {
             sourceId: "source-title",
             renderInstanceId: null,
-            selectorFallback: "#probe",
             expectedTag: "h1"
           },
           text: workspaceRevision === 106 ? "After" : "After " + workspaceRevision
@@ -991,7 +1090,6 @@ const harness = `<!doctype html>
         target: {
           sourceId: "source-nav",
           renderInstanceId: null,
-          selectorFallback: "#nav-probe",
           expectedTag: "a"
         },
         attributes: { href: "/despre" }
@@ -1031,20 +1129,180 @@ const harness = `<!doctype html>
         ack.canvasPatchReceipt?.bridgeCommitDurationMs ?? Number.POSITIVE_INFINITY
       );
     }
+    const iconTarget = {
+      sourceId: "source-icon",
+      renderInstanceId: "render-icon",
+      expectedTag: "svg"
+    };
+    const iconManagedBase = {
+      xmlns: "http://www.w3.org/2000/svg",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-linecap": "round",
+      "stroke-linejoin": "round",
+      focusable: "false"
+    };
+    const iconPatchBase = {
+      schemaVersion: 1,
+      projectRoot: "/project",
+      runtimeSessionId: "runtime-browser-real",
+      issuedAtMs: Date.now(),
+      beforeModelRevision: "icon-before",
+      afterModelRevision: "icon-after"
+    };
+    const starChildren = '<path d="M 12 2 L 15 8 L 22 9 L 17 14 L 18 21 L 12 18 L 6 21 L 7 14 L 2 9 L 9 8 Z"></path>';
+    const homeChildren = '<path d="M 3 3 H 21 V 21 H 3 Z" fill="currentColor"></path>';
+    await applyHistoryPatch(855, {
+      ...iconPatchBase,
+      patchId: "canvas_patch_" + "d".repeat(64),
+      baseWorkspaceRevision: 107,
+      workspaceRevision: 108,
+      workspaceTransactionId: "icon-forward-108",
+      operation: {
+        kind: "setIcon",
+        target: iconTarget,
+        providerId: "icon",
+        iconIdentity: "tabler-outline:star",
+        attributes: {
+          ...iconManagedBase,
+          "data-pana-icon": "tabler-outline:star",
+          width: "32",
+          height: "32",
+          "stroke-width": "1.5",
+          "aria-hidden": null,
+          role: "img",
+          "aria-label": "Favorite & More"
+        },
+        childrenHtml: starChildren
+      }
+    });
+    let iconProbe = frame.contentDocument.getElementById("icon-probe");
+    if (
+      iconProbe?.getAttribute("data-pana-icon") !== "tabler-outline:star"
+      || iconProbe.getAttribute("width") !== "32"
+      || iconProbe.getAttribute("role") !== "img"
+      || iconProbe.getAttribute("aria-label") !== "Favorite & More"
+      || iconProbe.children.length !== 1
+      || iconProbe.firstElementChild?.getAttribute("d") !== "M 12 2 L 15 8 L 22 9 L 17 14 L 18 21 L 12 18 L 6 21 L 7 14 L 2 9 L 9 8 Z"
+      || !iconProbe.classList.contains("custom-icon")
+      || iconProbe.style.color !== "rgb(194, 65, 12)"
+      || iconProbe.getAttribute("data-pana-instance") !== "icon-browser-real"
+    ) {
+      throw new Error("atomic Icon CanvasPatch did not preserve the user-owned root contract");
+    }
+    await applyHistoryPatch(856, {
+      ...iconPatchBase,
+      patchId: "canvas_patch_" + "e".repeat(64),
+      baseWorkspaceRevision: 108,
+      workspaceRevision: 109,
+      workspaceTransactionId: "icon-undo-109",
+      operation: {
+        kind: "setIcon",
+        target: iconTarget,
+        providerId: "icon",
+        iconIdentity: "tabler-outline:home",
+        attributes: {
+          ...iconManagedBase,
+          "data-pana-icon": "tabler-outline:home",
+          width: "24",
+          height: "24",
+          "stroke-width": "2",
+          "aria-hidden": "true",
+          role: null,
+          "aria-label": null
+        },
+        childrenHtml: homeChildren
+      }
+    });
+    iconProbe = frame.contentDocument.getElementById("icon-probe");
+    if (
+      iconProbe?.getAttribute("data-pana-icon") !== "tabler-outline:home"
+      || iconProbe.getAttribute("aria-hidden") !== "true"
+      || iconProbe.hasAttribute("role")
+      || iconProbe.hasAttribute("aria-label")
+      || iconProbe.firstElementChild?.getAttribute("d") !== "M 3 3 H 21 V 21 H 3 Z"
+    ) {
+      throw new Error("inverse Icon CanvasPatch did not restore the exact managed state");
+    }
+    await applyHistoryPatch(857, {
+      ...iconPatchBase,
+      patchId: "canvas_patch_" + "1".repeat(64),
+      baseWorkspaceRevision: 109,
+      workspaceRevision: 110,
+      workspaceTransactionId: "icon-redo-110",
+      operation: {
+        kind: "setIcon",
+        target: iconTarget,
+        providerId: "icon",
+        iconIdentity: "tabler-outline:star",
+        attributes: {
+          ...iconManagedBase,
+          "data-pana-icon": "tabler-outline:star",
+          width: "32",
+          height: "32",
+          "stroke-width": "1.5",
+          "aria-hidden": null,
+          role: "img",
+          "aria-label": "Favorite & More"
+        },
+        childrenHtml: starChildren
+      }
+    });
+    const unsafeIconPatch = {
+      ...iconPatchBase,
+      patchId: "canvas_patch_" + "2".repeat(64),
+      baseWorkspaceRevision: 110,
+      workspaceRevision: 111,
+      workspaceTransactionId: "icon-unsafe-111",
+      operation: {
+        kind: "setIcon",
+        target: iconTarget,
+        providerId: "icon",
+        iconIdentity: "tabler-outline:star",
+        attributes: {
+          ...iconManagedBase,
+          "data-pana-icon": "tabler-outline:star",
+          width: "32",
+          height: "32",
+          "stroke-width": "1.5",
+          "aria-hidden": "true",
+          role: null,
+          "aria-label": null
+        },
+        childrenHtml: '<script>alert(1)<\\/script>'
+      }
+    };
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "apply-canvas-patch",
+      previewRevision: 858,
+      patch: unsafeIconPatch
+    }, "*");
+    const unsafeIconAck = await waitForMessage((data) =>
+      data?.type === "preview-operation-complete"
+        && data.operation === "apply-canvas-patch"
+        && data.previewRevision === 858
+    );
+    iconProbe = frame.contentDocument.getElementById("icon-probe");
+    if (
+      unsafeIconAck.ok
+      || iconProbe?.getAttribute("data-pana-icon") !== "tabler-outline:star"
+      || iconProbe.querySelector("script")
+    ) {
+      throw new Error("arbitrary Icon SVG geometry was not rejected fail-closed");
+    }
     const historyTarget = {
       sourceId: "source-nav",
-      alternateSourceIds: [],
       renderInstanceId: null,
-      selectorFallback: "#nav-probe",
       expectedTag: "a"
     };
     const historyInserted = {
-      sourceId: "source-history-node",
-      alternateSourceIds: [],
-      renderInstanceId: null,
-      selectorFallback: null,
-      expectedTag: "span"
+      sourceId: "source-history-icon",
+      renderInstanceId: "render-history-icon",
+      expectedTag: "svg"
     };
+    const insertedIconHtml = '<svg class="icon ps-icon-history" data-anim="ps-icon-history" data-pana-block="icon" data-pana-instance="icon-ps-icon-history" data-pana-icon="tabler-outline:home" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M 3 3 H 21 V 21 H 3 Z" fill="currentColor"></path></svg>';
     const historyPatchBase = {
       schemaVersion: 1,
       projectRoot: "/project",
@@ -1056,47 +1314,131 @@ const harness = `<!doctype html>
     await applyHistoryPatch(860, {
       ...historyPatchBase,
       patchId: "canvas_patch_" + "a".repeat(64),
-      baseWorkspaceRevision: 107,
-      workspaceRevision: 108,
-      workspaceTransactionId: "history-forward-108",
+      baseWorkspaceRevision: 110,
+      workspaceRevision: 111,
+      workspaceTransactionId: "history-forward-111",
       operation: {
         kind: "insert",
         target: historyTarget,
         position: "after",
-        html: "<span>History</span>",
+        html: insertedIconHtml,
         inserted: historyInserted
       }
     });
-    if (frame.contentDocument.querySelectorAll('[data-pana-source-id="source-history-node"]').length !== 1) {
-      throw new Error("forward History patch did not publish the inserted Rust identity");
+    const insertedHistoryIcon = frame.contentDocument.querySelector('[data-pana-source-id="source-history-icon"]');
+    if (
+      !insertedHistoryIcon
+      || insertedHistoryIcon.getAttribute("data-pana-icon") !== "tabler-outline:home"
+      || insertedHistoryIcon.getAttribute("data-pana-render-instance-id") !== "render-history-icon"
+      || insertedHistoryIcon.children.length !== 1
+    ) {
+      throw new Error("forward History patch did not publish the inserted atomic Icon identity");
     }
     await applyHistoryPatch(861, {
       ...historyPatchBase,
       patchId: "canvas_patch_" + "b".repeat(64),
-      baseWorkspaceRevision: 108,
-      workspaceRevision: 109,
-      workspaceTransactionId: "history-undo-109",
+      baseWorkspaceRevision: 111,
+      workspaceRevision: 112,
+      workspaceTransactionId: "history-undo-112",
       operation: { kind: "delete", target: historyInserted }
     });
-    if (frame.contentDocument.querySelector('[data-pana-source-id="source-history-node"]')) {
-      throw new Error("inverse History patch did not remove the inserted node");
+    if (frame.contentDocument.querySelector('[data-pana-source-id="source-history-icon"]')) {
+      throw new Error("inverse History patch did not remove the inserted Icon");
     }
     await applyHistoryPatch(862, {
       ...historyPatchBase,
       patchId: "canvas_patch_" + "c".repeat(64),
-      baseWorkspaceRevision: 109,
-      workspaceRevision: 110,
-      workspaceTransactionId: "history-redo-110",
+      baseWorkspaceRevision: 112,
+      workspaceRevision: 113,
+      workspaceTransactionId: "history-redo-113",
       operation: {
         kind: "insert",
         target: historyTarget,
         position: "after",
-        html: "<span>History</span>",
+        html: insertedIconHtml,
         inserted: historyInserted
       }
     });
-    if (frame.contentDocument.querySelectorAll('[data-pana-source-id="source-history-node"]').length !== 1) {
-      throw new Error("rapid History redo lost the inserted Rust identity");
+    if (frame.contentDocument.querySelectorAll('[data-pana-source-id="source-history-icon"]').length !== 1) {
+      throw new Error("rapid History redo lost the inserted Rust Icon identity");
+    }
+
+    const batchPatchBase = {
+      schemaVersion: 1,
+      projectRoot: "/project",
+      runtimeSessionId: "runtime-browser-real",
+      issuedAtMs: Date.now(),
+      beforeModelRevision: "batch-before",
+      afterModelRevision: "batch-after"
+    };
+    await applyHistoryPatch(863, {
+      ...batchPatchBase,
+      patchId: "canvas_patch_" + "3".repeat(64),
+      baseWorkspaceRevision: 113,
+      workspaceRevision: 114,
+      workspaceTransactionId: "batch-forward-114",
+      operation: {
+        kind: "batch",
+        operations: [
+          {
+            kind: "setAttributes",
+            target: { sourceId: "source-title", renderInstanceId: null, expectedTag: "h1" },
+            attributes: { "data-batch-proof": "title" }
+          },
+          {
+            kind: "setAttributes",
+            target: { sourceId: "source-nav", renderInstanceId: null, expectedTag: "a" },
+            attributes: { "data-batch-proof": "nav" }
+          }
+        ]
+      }
+    });
+    if (
+      frame.contentDocument.getElementById("probe")?.getAttribute("data-batch-proof") !== "title"
+      || frame.contentDocument.getElementById("nav-probe")?.getAttribute("data-batch-proof") !== "nav"
+    ) {
+      throw new Error("CanvasPatch batch did not commit every operation atomically");
+    }
+
+    const rejectedBatchPatch = {
+      ...batchPatchBase,
+      patchId: "canvas_patch_" + "4".repeat(64),
+      baseWorkspaceRevision: 114,
+      workspaceRevision: 115,
+      workspaceTransactionId: "batch-rejected-115",
+      operation: {
+        kind: "batch",
+        operations: [
+          {
+            kind: "setAttributes",
+            target: { sourceId: "source-title", renderInstanceId: null, expectedTag: "h1" },
+            attributes: { "data-batch-rollback": "must-disappear" }
+          },
+          {
+            kind: "setAttributes",
+            target: { sourceId: "source-does-not-exist", renderInstanceId: null, expectedTag: "div" },
+            attributes: { "data-batch-rollback": "unreachable" }
+          }
+        ]
+      }
+    };
+    frame.contentWindow.postMessage({
+      source: "pana-studio-app",
+      type: "apply-canvas-patch",
+      previewRevision: 864,
+      patch: rejectedBatchPatch
+    }, "*");
+    const rejectedBatchAck = await waitForMessage((data) =>
+      data?.type === "preview-operation-complete"
+        && data.operation === "apply-canvas-patch"
+        && data.previewRevision === 864
+    );
+    if (
+      rejectedBatchAck.ok
+      || frame.contentDocument.getElementById("probe")?.hasAttribute("data-batch-rollback")
+      || frame.contentDocument.documentElement.getAttribute("data-pana-canvas-workspace-revision") !== "114"
+    ) {
+      throw new Error("CanvasPatch batch failure did not rollback the complete transaction");
     }
 
     frame.contentWindow.postMessage({
@@ -1106,9 +1448,8 @@ const harness = `<!doctype html>
       editSessionId: "unsafe_href_browser_real",
       draftEpoch: 1,
       target: {
-        selector: "#nav-probe",
         sourceId: "source-nav",
-        sessionId: null,
+        renderInstanceId: "render-nav",
         expectedTag: "a"
       },
       attributes: { href: "javascript:alert(1)" },
@@ -1129,9 +1470,8 @@ const harness = `<!doctype html>
       previewRevision: 900,
       editSessionId: "text_browser_real_1",
       target: {
-        selector: "#probe",
         sourceId: "source-title",
-        sessionId: null,
+        renderInstanceId: "render-title",
         expectedTag: "h1"
       },
       text: "Live draft"
@@ -1152,9 +1492,8 @@ const harness = `<!doctype html>
       editSessionId: "attr_browser_real_1",
       draftEpoch: 1,
       target: {
-        selector: "#probe",
         sourceId: "source-title",
-        sessionId: null,
+        renderInstanceId: "render-title",
         expectedTag: "h1"
       },
       attributes: { title: "Draft title" },
@@ -1517,7 +1856,7 @@ const harness = `<!doctype html>
       throw new Error("interactive ready revision mismatch");
     }
     if (
-      configReceipt.blockCount !== 1
+      configReceipt.blockCount !== 2
       || configReceipt.motionInteractionCount !== 1
       || configReceipt.motionBehaviorCount !== 0
       || configReceipt.motionCustomCodeCount !== 0
@@ -1557,6 +1896,71 @@ const harness = `<!doctype html>
         || panels.some((panel) => panel.hidden)) {
       throw new Error("runtime option update did not remount the accordion contract");
     }
+
+    const slider = interactiveDoc.querySelector("[data-pana-source-id='source-slider']");
+    const sliderTrack = slider.querySelector("[data-pana-slider-track]");
+    const sliderNext = slider.querySelector("[data-pana-slider-next]");
+    if (sliderTrack.getAttribute("aria-live") !== "polite"
+        || slider.querySelectorAll("[data-pana-slider-indicators] button").length !== 2) {
+      throw new Error("slider default accessibility contract was not mounted");
+    }
+    sliderNext.click();
+    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "1") {
+      throw new Error("slider next navigation did not activate exactly one slide");
+    }
+    slider.querySelectorAll("[data-pana-slider-slide]")[1].dispatchEvent(
+      new interactiveWindow.KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+    );
+    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "1") {
+      throw new Error("slider intercepted keyboard navigation from editable slide content");
+    }
+    slider.dispatchEvent(new interactiveWindow.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "0") {
+      throw new Error("slider keyboard navigation did not return to the first slide");
+    }
+    const insertedSlide = interactiveDoc.createElement("div");
+    insertedSlide.setAttribute("data-pana-slider-slide", "");
+    insertedSlide.setAttribute("data-pana-source-id", "source-slide-3");
+    insertedSlide.textContent = "Slide 3";
+    sliderTrack.appendChild(insertedSlide);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    if (slider.querySelectorAll("[data-pana-slider-indicators] button").length !== 3
+        || !interactiveMessages.some((message) => message.type === "lifecycle"
+          && message.blockId === "slider" && message.phase === "remount-structure")) {
+      throw new Error("slider structural change did not remount the runtime instance");
+    }
+    sliderNext.click();
+    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "1") {
+      throw new Error("slider structural remount duplicated navigation listeners");
+    }
+
+    const autoplaySlider = interactiveDoc.querySelector("[data-pana-source-id='source-slider-autoplay']");
+    const autoplayTrack = autoplaySlider.querySelector("[data-pana-slider-track]");
+    const autoplayNext = autoplaySlider.querySelector("[data-pana-slider-next]");
+    const autoplayControl = autoplaySlider.querySelector("[data-pana-slider-autoplay]");
+    if (autoplayControl.hidden || autoplayTrack.getAttribute("aria-live") !== "off") {
+      throw new Error("configured autoplay did not expose Start/Stop with aria-live off");
+    }
+    autoplayNext.focus();
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    if (autoplayTrack.style.getPropertyValue("--pana-slider-index") !== "0"
+        || autoplayTrack.getAttribute("aria-live") !== "polite") {
+      throw new Error("slider autoplay did not pause while focus remained inside");
+    }
+    interactiveDoc.body.tabIndex = -1;
+    interactiveDoc.body.focus();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    autoplayControl.click();
+    if (autoplayTrack.getAttribute("aria-live") !== "polite"
+        || autoplayControl.textContent !== "Porneste") {
+      throw new Error("explicit autoplay Stop did not pause rotation");
+    }
+    autoplayControl.click();
+    interactiveWindow.__panaReducedMotion = true;
+    interactiveWindow.__panaMotionListeners.forEach((listener) => listener({ matches: true }));
+    if (autoplayTrack.getAttribute("aria-live") !== "polite") {
+      throw new Error("prefers-reduced-motion did not suppress slider autoplay");
+    }
     interactiveDoc.dispatchEvent(new interactiveWindow.CustomEvent("pana:blocks:dispose", {
       detail: { root: interactiveDoc }
     }));
@@ -1580,6 +1984,8 @@ const harness = `<!doctype html>
       missingFontFallback: "styledReady-with-diagnostic",
       patchSamples: patchRoundTrips.length,
       patchP95Ms,
+      selectionOverlayMembers: 100,
+      selectionOverlayP95Ms: overlayP95Ms,
       bridgeP95Ms,
       historyPatchMaxMs,
       historyBridgeMaxMs,
@@ -1591,11 +1997,13 @@ const harness = `<!doctype html>
       motionInteractions: interactiveWindow.__panaMotionV2Config.interactions.length,
       canvasAgentHover: "trusted-hover",
       canvasAgentGesture: "trusted-click",
+      canvasAgentIconDescendant: "atomic-root",
       canvasAgentDrag: "trusted-drag",
       canvasAgentDragIndicator: "rust-projected",
       canvasAgentBoundaryAction: "rust-projected",
       canvasAgentInspection: "physical-only",
       historyCanvasPatch: "forward/inverse/redo",
+      iconCanvasPatch: "forward/inverse/redo/fail-closed",
     });
   }
 
@@ -1731,6 +2139,7 @@ try {
   let canvasAgentAuthoringClicked = false;
   let canvasAgentHovered = false;
   let canvasAgentClicked = false;
+  let canvasAgentIconClicked = false;
   let canvasAgentDragged = false;
   let canvasAgentDropReleased = false;
   let canvasAgentActionClicked = false;
@@ -1844,6 +2253,40 @@ try {
             parameters: { pointerType: "mouse" },
             actions: [
               { type: "pointerMove", duration: 0, origin: probeElement, x: 0, y: 0 },
+              { type: "pointerDown", button: 0 },
+              { type: "pointerUp", button: 0 },
+            ],
+          }],
+        }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: null }),
+      });
+    }
+    if (title === "AGENT_ICON_WAIT" && !canvasAgentIconClicked) {
+      canvasAgentIconClicked = true;
+      const frameElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#canvas" }),
+      });
+      await webdriver(`/session/${sessionId}/frame`, {
+        method: "POST",
+        body: JSON.stringify({ id: frameElement }),
+      });
+      const iconPathElement = await webdriver(`/session/${sessionId}/element`, {
+        method: "POST",
+        body: JSON.stringify({ using: "css selector", value: "#icon-probe > path" }),
+      });
+      await webdriver(`/session/${sessionId}/actions`, {
+        method: "POST",
+        body: JSON.stringify({
+          actions: [{
+            type: "pointer",
+            id: "canvas-icon-mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              { type: "pointerMove", duration: 0, origin: iconPathElement, x: 0, y: 0 },
               { type: "pointerDown", button: 0 },
               { type: "pointerUp", button: 0 },
             ],

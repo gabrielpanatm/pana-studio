@@ -6,7 +6,6 @@ import {
 } from "$lib/project/files";
 import type { SourceGraph, SourceGraphNode, SourceGraphTemplate } from "$lib/types";
 import type { TeraDropRequest, TeraDropResolution } from "$lib/tera/model";
-import { teraSnippetForItem } from "$lib/tera/palette";
 import { t } from "$lib/i18n/runtime.svelte";
 
 function nodeById(graph: SourceGraph | null, id: string | null | undefined) {
@@ -109,14 +108,6 @@ function validateTeraDrop(
     return {
       allowed: false,
       reason: t("tera-drop-anchor-missing"),
-    };
-  }
-
-  if (!anchor.range) {
-    return {
-      allowed: false,
-      reason: t("tera-drop-range-missing"),
-      anchor,
     };
   }
 
@@ -250,7 +241,6 @@ export function resolveTeraDropTarget(graph: SourceGraph | null, request: TeraDr
     anchor: anchor!,
     position: request.position,
     item: request.item,
-    snippet: teraSnippetForItem(request.item),
     label: request.item.label,
   };
 }

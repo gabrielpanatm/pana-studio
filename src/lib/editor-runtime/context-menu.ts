@@ -27,7 +27,7 @@ export function htmlElementContextMenuItems(
     {
       id: `${surface}-select-html`,
       label: options.selectLabel ?? t("context-menu-select-element"),
-      disabled: !capturedTarget.selector || options.canSelect === false,
+      disabled: !capturedTarget.sourceId || options.canSelect === false,
       action: async () => {
         await runtime.dispatch({ type: "select-html", surface, target: capturedTarget });
       },
@@ -35,7 +35,7 @@ export function htmlElementContextMenuItems(
     {
       id: `${surface}-open-html-code`,
       label: t("context-menu-open-code"),
-      disabled: !capturedTarget.selector || options.canOpenInCode === false,
+      disabled: !capturedTarget.sourceId || options.canOpenInCode === false,
       action: async () => {
         await runtime.dispatch({ type: "open-html-code", surface, target: capturedTarget });
       },

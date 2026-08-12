@@ -268,6 +268,7 @@ impl PreviewHtmlSurface {
 /// Sanitizes and annotates a rendered Zola document once, at candidate-build
 /// time. The persistent server can then answer requests without reparsing the
 /// document and without consulting mutable renderer state.
+#[cfg(test)]
 pub(crate) fn prepare_design_safe_html(
     html: &str,
     preview_revision: &str,
@@ -324,6 +325,7 @@ pub(crate) fn prepare_design_safe_html_with_resources(
 /// Motion and Interactive are derived from the retained exact source only if
 /// the user requests those modes, avoiding two full DOM parses per route at
 /// project open.
+#[cfg(test)]
 pub(crate) fn prepare_initial_preview_html(
     html: &str,
     preview_revision: &str,

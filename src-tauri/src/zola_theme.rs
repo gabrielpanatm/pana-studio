@@ -251,8 +251,7 @@ pub fn theme_name_for_template_path(template_path: &str) -> Option<String> {
 pub fn template_to_page_slug(template_path: &str) -> String {
     let normalized = logical_template_name(template_path)
         .trim_end_matches(".html")
-        .replace('/', "-")
-        .replace('_', "-");
+        .replace(['/', '_'], "-");
     if normalized.is_empty() {
         "index".to_string()
     } else {

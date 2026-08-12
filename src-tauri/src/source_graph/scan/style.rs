@@ -1,12 +1,13 @@
 use std::path::Path;
 
 use crate::source_graph::{
+    asset_references::scan_css_asset_references,
     model::{
         SourceCapabilities, SourceCapabilityReason, SourceNodeKind, SourceOrigin, SourceStyleScope,
     },
     scan::{
         builder::SourceGraphBuilder,
-        files::relative_project_path,
+        files::{read_source, relative_project_path},
         summary::{StyleSummary, TemplateSummary},
     },
 };
@@ -17,6 +18,7 @@ pub(super) fn scan_style(
     path: &Path,
     origin: SourceOrigin,
     theme_name: Option<String>,
+    draft_sources: &std::collections::HashMap<String, String>,
     builder: &mut SourceGraphBuilder,
 ) -> StyleSummary {
     let file = relative_project_path(project_root, path);
@@ -30,11 +32,16 @@ pub(super) fn scan_style(
         None,
         SourceCapabilities::code_only(SourceCapabilityReason::StyleFile),
     );
+    let source = read_source(&file, draft_sources, builder);
+    let asset_references = scan_css_asset_references(&source, &file);
     StyleSummary {
         file,
         node_id,
         origin,
         theme_name,
+        asset_reference_eligible: asset_references.eligible(),
+        asset_reference_unanalysable: asset_references.unanalysable,
+        literal_asset_references: asset_references.references,
     }
 }
 

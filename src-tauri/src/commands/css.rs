@@ -586,7 +586,7 @@ pub(crate) fn execute_css_workspace_mutation_with_metadata<R>(
     }
 
     let current_model = (workspace.project_model_source_revision == Some(workspace.revision))
-        .then(|| workspace.project_model.as_ref())
+        .then_some(workspace.project_model.as_ref())
         .flatten();
     let (input, result_value) = build(
         project_root,
@@ -752,14 +752,7 @@ fn execute_selection_bound_css_workspace_mutation<R>(
     };
     state
         .selection_coordinator
-        .with_stable_semantic_mutation_target(
-            &identity.expected_session_id,
-            expected.selection_revision,
-            expected.editor_node_id.as_deref(),
-            expected.source_node_id.as_deref(),
-            expected.render_instance_id.as_deref(),
-            execute,
-        )
+        .with_stable_semantic_mutation_target(&identity.expected_session_id, expected, execute)
 }
 
 fn execute_selection_bound_css_workspace_mutation_with_model<R>(
@@ -790,14 +783,7 @@ fn execute_selection_bound_css_workspace_mutation_with_model<R>(
     };
     state
         .selection_coordinator
-        .with_stable_semantic_mutation_target(
-            &identity.expected_session_id,
-            expected.selection_revision,
-            expected.editor_node_id.as_deref(),
-            expected.source_node_id.as_deref(),
-            expected.render_instance_id.as_deref(),
-            execute,
-        )
+        .with_stable_semantic_mutation_target(&identity.expected_session_id, expected, execute)
 }
 
 fn collect_media_query_migration_changes(
@@ -1081,6 +1067,9 @@ fn css_has_effective_rules(source: &str) -> bool {
     false
 }
 
+// Tauri derives the IPC field names from this flat signature; grouping them would break the
+// established frontend command contract.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn resolve_css_inspector_context(
     template_path: Option<String>,
@@ -1096,10 +1085,7 @@ pub fn resolve_css_inspector_context(
     let runtime_session_id = identity.expected_session_id.clone();
     state.selection_coordinator.with_selection_target(
         &runtime_session_id,
-        expected_selection.selection_revision,
-        expected_selection.editor_node_id.as_deref(),
-        expected_selection.source_node_id.as_deref(),
-        expected_selection.render_instance_id.as_deref(),
+        &expected_selection,
         || {
             with_bound_css_file_buffer_revision_and_model(
                 state.inner(),
@@ -1659,6 +1645,8 @@ fn set_css_rule_impl(
 /// Write a CSS rule at the correct breakpoint level.
 /// viewport: "desktop" → base rule (no media), "tablet" / "mobile" → inside @media block.
 /// Breakpoint values are read from $bp-tableta / $bp-mobil in the project's SCSS files.
+// Keep the stable Tauri IPC keys flat at the command boundary.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn set_css_rule_at_viewport(
     relative_path: String,
@@ -1682,6 +1670,8 @@ pub fn set_css_rule_at_viewport(
     )
 }
 
+// This adapter intentionally mirrors the IPC boundary while borrowing native dependencies.
+#[allow(clippy::too_many_arguments)]
 fn set_css_rule_at_viewport_impl(
     relative_path: String,
     selector: String,
@@ -1742,6 +1732,8 @@ fn set_css_rule_at_viewport_impl(
 /// Writes a rule owned by an included/reusable template and atomically wires
 /// that partial into every real page template which consumes it. The active
 /// Code tab is never used as an ownership fallback.
+// Keep the stable Tauri IPC keys flat at the command boundary.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn set_reusable_css_rule_at_viewport(
     template_path: String,
@@ -1886,6 +1878,8 @@ pub fn set_reusable_css_rule_at_viewport(
 /// Write a CSS rule in a page-owned stylesheet and make sure the page template
 /// links the compiled stylesheet. Used when a selector does not already belong
 /// to an existing global/framework rule.
+// Keep the stable Tauri IPC keys flat at the command boundary.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async)]
 pub fn set_page_css_rule_at_viewport(
     template_path: String,
@@ -1913,6 +1907,8 @@ pub fn set_page_css_rule_at_viewport(
     )
 }
 
+// This adapter intentionally mirrors the IPC boundary while borrowing native dependencies.
+#[allow(clippy::too_many_arguments)]
 fn set_page_css_rule_at_viewport_impl(
     template_path: String,
     relative_path: String,
@@ -2074,12 +2070,12 @@ fn set_page_css_rule_at_viewport_impl(
 #[cfg(test)]
 mod css_inspector_context_tests {
     use std::{
-        collections::HashMap,
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     #[test]
     fn atomic_candidates_keep_the_exact_file_and_viewport_context() {
@@ -2220,36 +2216,26 @@ mod css_inspector_context_tests {
                 .unwrap()
                 .as_nanos()
         ));
-        fs::create_dir_all(root.join("content/servicii")).unwrap();
-        fs::create_dir_all(root.join("templates/servicii")).unwrap();
-        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = 'https://example.test'\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/servicii/_index.md"),
+        let mut fixture = ProjectModelTestFixture::new(root.clone()).unwrap();
+        fixture.source("zola.toml", "base_url = 'https://example.test'\n");
+        fixture.source(
+            "content/servicii/_index.md",
             "+++\ntitle = 'Servicii'\ntemplate = 'servicii/arhiva.html'\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/layout.html"),
+        );
+        fixture.source(
+            "templates/layout.html",
             "<!doctype html><body>{% block content %}{% endblock %}</body>",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/servicii/arhiva.html"),
+        );
+        fixture.source(
+            "templates/servicii/arhiva.html",
             "{% extends 'layout.html' %}{% block content %}{% include 'listing-items/card.html' %}{% endblock %}",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/listing-items/card.html"),
+        );
+        fixture.source(
+            "templates/listing-items/card.html",
             "<article class='ps-card'></article>",
-        )
-        .unwrap();
+        );
 
-        let model = crate::project_model::build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let consumers =
             reusable_css_consumers(&model, "templates/listing-items/card.html").unwrap();
         assert_eq!(consumers.len(), 1);

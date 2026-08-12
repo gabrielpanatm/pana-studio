@@ -40,6 +40,17 @@ test("Straturi păstrează Canvas global și proiectează separat documentul act
   assert.doesNotMatch(pane, /<ProjectLayersTab/);
 });
 
+test("Shift-range rămâne structural Rust chiar când ramuri din Straturi sunt colapsate", () => {
+  const tree = source("../src/lib/components/project/EditorNavigationTree.svelte");
+  const selectStart = tree.indexOf("function selectViewNode(");
+  const selectEnd = tree.indexOf("function openViewNodeContextMenu(", selectStart);
+  const selectionGesture = tree.slice(selectStart, selectEnd);
+
+  assert.match(tree, /let collapsed = \$state\(new Set<string>\(\)\)/);
+  assert.match(selectionGesture, /extendRange:\s*Boolean\(event\?\.shiftKey\)/);
+  assert.doesNotMatch(selectionGesture, /collapsed|rows|selectedNodeIds|\.map\(/);
+});
+
 test("click-dreapta în Straturi deschide meniul aplicației pentru nodul Rust curent", () => {
   const tree = source("../src/lib/components/project/EditorNavigationTree.svelte");
   const pane = source("../src/lib/components/ProjectPane.svelte");
@@ -70,7 +81,7 @@ test("click-dreapta în Straturi deschide meniul aplicației pentru nodul Rust c
   assert.match(app, /source:\s*"layers"/);
 });
 
-test("ștergerea din Straturi păstrează identitatea și locația aceleiași proiecții Rust", () => {
+test("ștergerea din Straturi autorizează mutația numai prin identitatea Rust", () => {
   const app = source("../src/lib/state/app.svelte.ts");
   const actions = source("../src/lib/state/html-actions-controller.ts");
   const deleteMethod = app.slice(
@@ -79,18 +90,16 @@ test("ștergerea din Straturi păstrează identitatea și locația aceleiași pr
   );
 
   assert.match(deleteMethod, /renderInstanceId:\s*node\.renderInstanceId/);
-  assert.match(deleteMethod, /sourceLocation:\s*node\.file && node\.range/);
-  assert.match(deleteMethod, /line:\s*node\.range\.line/);
-  assert.match(deleteMethod, /column:\s*node\.range\.column/);
+  assert.match(deleteMethod, /sourceId:\s*node\.sourceNodeId/);
   assert.match(deleteMethod, /sessionId:\s*this\.activeCanvasIdentity\?\.runtimeSessionId/);
-  const resolver = actions.slice(
-    actions.indexOf("function sourceLocationForSourceReference"),
-    actions.indexOf("function sourceLocationForSessionReference"),
+  const deleteAction = actions.slice(
+    actions.indexOf("export async function deleteSelectedHtmlElement"),
+    actions.indexOf("export async function duplicateSelectedHtmlElement"),
   );
-  assert.ok(
-    resolver.indexOf("if (fallbackSourceLocation)")
-      < resolver.indexOf("host.resolveSourceEditTargetForSourceId"),
-  );
+  assert.match(deleteAction, /if \(!target\.sourceId\)/);
+  assert.match(deleteAction, /targetSourceId:\s*target\.sourceId/);
+  assert.doesNotMatch(deleteAction, /targetLocation|sourceLocationForSourceReference/);
+  assert.doesNotMatch(actions, /function sourceLocationForSourceReference/);
 });
 
 test("documentul activ și mutațiile sunt validate de Workbench-ul Rust", () => {

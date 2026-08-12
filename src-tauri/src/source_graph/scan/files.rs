@@ -14,36 +14,6 @@ use crate::{
     },
 };
 
-pub(super) fn collect_files_with_extension(
-    root: &Path,
-    extension: &str,
-) -> Result<Vec<PathBuf>, String> {
-    collect_files_with_extensions(root, &[extension])
-}
-
-pub(super) fn collect_files_with_extensions(
-    root: &Path,
-    extensions: &[&str],
-) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    if !require_safe_scan_root(root)? {
-        return Ok(files);
-    }
-    collect_files_recursive(root, extensions, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-pub(super) fn collect_all_files(root: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    if !require_safe_scan_root(root)? {
-        return Ok(files);
-    }
-    collect_all_files_recursive(root, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
 pub(super) fn apply_virtual_file_projection(
     project_root: &Path,
     directory_root: &Path,
@@ -125,76 +95,6 @@ pub(super) fn require_safe_deleted_source_paths(
     Ok(())
 }
 
-fn collect_files_recursive(
-    root: &Path,
-    extensions: &[&str],
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    for entry in fs::read_dir(root).map_err(|error| {
-        format!(
-            "Nu am putut citi folderul pentru Source Graph {}: {}",
-            root.to_string_lossy(),
-            error
-        )
-    })? {
-        let entry = entry.map_err(|error| format!("Nu am putut citi o intrare: {}", error))?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "Nu am putut citi tipul intrării Source Graph {}: {error}",
-                path.display()
-            )
-        })?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect_files_recursive(&path, extensions, files)?;
-        } else if file_type.is_file()
-            && path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| {
-                    extensions
-                        .iter()
-                        .any(|allowed| extension.eq_ignore_ascii_case(allowed))
-                })
-                .unwrap_or(false)
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn collect_all_files_recursive(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    for entry in fs::read_dir(root).map_err(|error| {
-        format!(
-            "Nu am putut citi folderul pentru Source Graph {}: {}",
-            root.to_string_lossy(),
-            error
-        )
-    })? {
-        let entry = entry.map_err(|error| format!("Nu am putut citi o intrare: {}", error))?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(|error| {
-            format!(
-                "Nu am putut citi tipul intrării Source Graph {}: {error}",
-                path.display()
-            )
-        })?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect_all_files_recursive(&path, files)?;
-        } else if file_type.is_file() {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn require_safe_scan_root(root: &Path) -> Result<bool, String> {
     match fs::symlink_metadata(root) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
@@ -211,7 +111,6 @@ pub(super) fn require_safe_scan_root(root: &Path) -> Result<bool, String> {
 }
 
 pub(super) fn read_source(
-    path: &Path,
     file: &str,
     draft_sources: &HashMap<String, String>,
     builder: &mut SourceGraphBuilder,
@@ -220,19 +119,14 @@ pub(super) fn read_source(
         return source.clone();
     }
 
-    match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(error) => {
-            builder.add_diagnostic(
-                SourceDiagnosticSeverity::Error,
-                LocalizedDiagnostic::new("source-graph-file-read-failed")
-                    .with_argument("details", error.to_string()),
-                Some(file.to_string()),
-                None,
-            );
-            String::new()
-        }
-    }
+    builder.add_diagnostic(
+        SourceDiagnosticSeverity::Error,
+        LocalizedDiagnostic::new("source-graph-projection-source-missing")
+            .with_argument("path", file.to_string()),
+        Some(file.to_string()),
+        None,
+    );
+    String::new()
 }
 
 pub(super) fn relative_project_path(project_root: &Path, path: &Path) -> String {
@@ -248,46 +142,4 @@ pub(super) fn template_name(zola_root: &Path, path: &Path, theme_name: Option<&s
 
 pub(super) fn normalize_template_name(target: &str) -> String {
     normalize_zola_template_reference(target)
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use std::{
-        fs,
-        os::unix::fs::symlink,
-        sync::atomic::{AtomicU64, Ordering},
-    };
-
-    use super::{collect_all_files, collect_files_with_extension};
-
-    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-
-    #[test]
-    fn source_graph_collectors_do_not_follow_symlink_roots_or_entries() {
-        let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir().join(format!(
-            "pana-source-graph-no-follow-{}-{sequence}",
-            std::process::id()
-        ));
-        let local = base.join("local");
-        let outside = base.join("outside");
-        fs::create_dir_all(&local).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        fs::write(local.join("local.html"), "local").unwrap();
-        fs::write(outside.join("secret.html"), "secret").unwrap();
-        symlink(&outside, local.join("linked-dir")).unwrap();
-        symlink(outside.join("secret.html"), local.join("linked.html")).unwrap();
-
-        let files = collect_files_with_extension(&local, "html").unwrap();
-        assert_eq!(files, vec![local.join("local.html")]);
-        assert_eq!(collect_all_files(&local).unwrap(), files);
-
-        let linked_root = base.join("linked-root");
-        symlink(&outside, &linked_root).unwrap();
-        assert!(collect_all_files(&linked_root)
-            .unwrap_err()
-            .contains("root-ul symlink"));
-
-        fs::remove_dir_all(base).unwrap();
-    }
 }

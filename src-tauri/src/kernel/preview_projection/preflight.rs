@@ -104,35 +104,35 @@ fn validate_intent_shape(
 ) {
     match kind {
         PreviewProjectionIntentKind::HtmlInsertDrop => {
-            require_text(diagnostics, "targetSelector", &input.target_selector);
+            require_text(diagnostics, "targetSourceId", &input.target_source_id);
             require_text(diagnostics, "targetTag", &input.target_tag);
             require_text(diagnostics, "elementTag", &input.element_tag);
             require_drop_position(diagnostics, &input.position);
         }
         PreviewProjectionIntentKind::HtmlAttributes => {
-            require_text(diagnostics, "selector", &input.selector);
+            require_text(diagnostics, "sourceId", &input.source_id);
             require_text(diagnostics, "sourceTag", &input.source_tag);
         }
         PreviewProjectionIntentKind::HtmlText => {
-            require_text(diagnostics, "selector", &input.selector);
+            require_text(diagnostics, "sourceId", &input.source_id);
             require_text(diagnostics, "sourceTag", &input.source_tag);
         }
         PreviewProjectionIntentKind::HtmlTag => {
-            require_text(diagnostics, "selector", &input.selector);
+            require_text(diagnostics, "sourceId", &input.source_id);
             require_text(diagnostics, "sourceTag", &input.source_tag);
             require_text(diagnostics, "elementTag", &input.element_tag);
         }
         PreviewProjectionIntentKind::HtmlDuplicate => {
-            require_text(diagnostics, "selector", &input.selector);
+            require_text(diagnostics, "sourceId", &input.source_id);
         }
         PreviewProjectionIntentKind::TeraInsertDrop => {
-            require_text(diagnostics, "targetSelector", &input.target_selector);
+            require_text(diagnostics, "targetSourceId", &input.target_source_id);
             require_text(diagnostics, "targetTag", &input.target_tag);
             require_text(diagnostics, "itemKind", &input.item_kind);
             require_drop_position(diagnostics, &input.position);
         }
         PreviewProjectionIntentKind::HtmlDelete => {
-            require_text(diagnostics, "selector", &input.selector);
+            require_text(diagnostics, "sourceId", &input.source_id);
         }
         PreviewProjectionIntentKind::TemplateDelete => {
             require_text(diagnostics, "sourceId", &input.source_id);
@@ -178,9 +178,6 @@ fn intent_id(input: &PreviewProjectionIntentInput, kind: PreviewProjectionIntent
     kind.operation_label().hash(&mut hasher);
     input.message_type.hash(&mut hasher);
     input.preview_revision.hash(&mut hasher);
-    input.source_selector.hash(&mut hasher);
-    input.target_selector.hash(&mut hasher);
-    input.selector.hash(&mut hasher);
     input.source_id.hash(&mut hasher);
     input.target_source_id.hash(&mut hasher);
     input.source_template_source_id.hash(&mut hasher);
@@ -232,7 +229,7 @@ mod tests {
         let receipt = preflight_preview_projection_intent(
             PreviewProjectionIntentInput {
                 message_type: "preview-delete-selected".to_string(),
-                selector: Some("body > main > section".to_string()),
+                source_id: Some("sgn_test_main_section".to_string()),
                 ..PreviewProjectionIntentInput::default()
             },
             None,
@@ -251,7 +248,6 @@ mod tests {
         let receipt = preflight_preview_projection_intent(
             PreviewProjectionIntentInput {
                 message_type: "preview-insert-drop".to_string(),
-                target_selector: Some("body > main".to_string()),
                 target_tag: Some("main".to_string()),
                 element_tag: Some("section".to_string()),
                 position: Some("around".to_string()),

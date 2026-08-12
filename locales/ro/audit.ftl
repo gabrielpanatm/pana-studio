@@ -6,56 +6,33 @@ audit-category-accessibility = Accesibilitate
 audit-category-seo = SEO
 audit-category-assets = Resurse
 audit-category-workspace = Spațiu de lucru
-audit-zola-valid = Validare Zola reușită
-audit-zola-invalid = Proiect Zola invalid
-audit-zola-unavailable = Validare indisponibilă
-audit-zola-queued = Validare programată
-audit-zola-running = Validare în curs
-audit-zola-none = Zola nevalidat
+audit-category-components = Componente
+audit-category-content = Conținut
+audit-category-data = Date
+audit-category-deploy = Deploy
+audit-category-performance = Performanță
+audit-category-crawl = Crawl
 audit-full-failed = Auditul complet a eșuat: { $error }
 audit-project-location = Proiect
 audit-eyebrow = Spațiu pentru calitate
 audit-title = Audit proiect
-audit-description = Problemele structurale sunt derivate din sesiunea Rust curentă; validarea Zola confirmă separat construirea reală.
+audit-description = Constatările, dovezile și acoperirea providerilor sunt derivate de Rust din revizia exactă a sesiunii.
 audit-refresh = Reanalizează
 audit-run-full = Rulează audit complet
 audit-tabs-label = Vizualizări Audit
 audit-summary-label = Rezumat audit
-audit-errors-count =
-    { $count ->
-        [one] { $count } eroare
-        [few] { $count } erori
-       *[other] { $count } de erori
-    }
-audit-warnings-count =
-    { $count ->
-        [one] { $count } avertisment
-        [few] { $count } avertismente
-       *[other] { $count } de avertismente
-    }
-audit-info-count =
-    { $count ->
-        [one] { $count } diagnostic informativ
-        [few] { $count } diagnostice informative
-       *[other] { $count } de diagnostice informative
-    }
 audit-files-count =
     { $count ->
         [one] { $count } fișier afectat
         [few] { $count } fișiere afectate
        *[other] { $count } de fișiere afectate
     }
-audit-errors = Erori
-audit-warnings = Avertismente
-audit-informational = Informative
 audit-affected-files = Fișiere afectate
 audit-build = Construire
-audit-build-label = Construire: { $status }. { $message }
 audit-diagnostics = Diagnostice
 audit-visible-count = { $visible } din { $total }
 audit-search-label = Caută în diagnostice
 audit-search-placeholder = Caută mesaj, cod sau fișier
-audit-severity = Severitate
 audit-all = Toate
 audit-category = Categorie
 audit-rust-failed = Auditul Rust nu a putut fi construit
@@ -65,8 +42,62 @@ audit-no-filter-results = Niciun rezultat pentru filtrele curente
 audit-reset-filters = Resetează filtrele
 audit-no-known-problems = Nu există probleme structurale cunoscute
 audit-run-full-help = Rulează auditul complet pentru a confirma și build-ul Zola.
-audit-severity-label = Severitate: { $severity }
 audit-open = Deschide
+audit-violations = Încălcări
+audit-needs-review = De verificat
+audit-engine-errors = Erori motor
+audit-passed = Trecute
+audit-not-applicable = Nu se aplică
+audit-coverage = Acoperire
+audit-not-run = Nerulat
+audit-provider-incomplete-count = { $count } provideri incompleți
+audit-provider-status-complete = Complet
+audit-provider-status-partial = Parțial
+audit-provider-status-failed = Eșuat
+audit-provider-status-skipped = Omis
+audit-provider-coverage-required = blocant dacă este incomplet
+audit-provider-coverage-advisory = consultativ
+audit-providers-label = Acoperirea providerilor Audit
+audit-outcome = Rezultat
+audit-impact = Impact
+audit-policy = Politică
+audit-provider = Provider
+audit-scope = Origine
+audit-outcome-pass = Trecut
+audit-outcome-violation = Încălcare
+audit-outcome-needs-review = Necesită verificare
+audit-outcome-not-applicable = Nu se aplică
+audit-outcome-skipped = Omis
+audit-outcome-engine-error = Eroare motor
+audit-outcome-suppressed = Suprimat
+audit-full-no-receipt = Auditul complet nu a returnat un receipt curent.
+io-audit-receipt-invalid = Rust a returnat un AuditRunReceipt invalid sau incomplet.
+audit-provider-passed-title = Verificare reușită
+audit-provider-passed-message = Providerul { $provider } a încheiat analiza fără probleme cunoscute.
+audit-provider-not-applicable-title = Verificarea nu se aplică
+audit-provider-not-applicable-message = Providerul { $provider } nu are surse eligibile în revizia curentă.
+audit-graph-evidence = Numărul de noduri și relații analizate de Project Graph.
+audit-title-component-graph = Contract de componentă
+audit-title-block-graph = Contract de bloc
+audit-title-content-model = Model de conținut
+audit-title-listing-item = Element de listare
+audit-title-dynamic-widget = Widget dinamic
+audit-provider-diagnostic-message = { $details }
+audit-structural-indentation-title = Indentare structurală inconsistentă
+audit-structural-indentation-message = Mixed CST a identificat { $count } prefixe structurale nealiniate în { $file }.
+audit-structural-indentation-fix-title = Repară în siguranță indentarea structurală
+audit-template-coverage-limitation = Template-urile cu sintaxă Tera invalidă nu pot fi analizate semantic în siguranță.
+audit-content-coverage-limitation = Paginile cu frontmatter invalid nu pot fi analizate semantic până la corectarea parsării.
+audit-asset-coverage-evidence = Relații de resurse recunoscute de Source Graph.
+audit-asset-coverage-limitation = { $count } referințe dinamice HTML/Tera sau CSS/SCSS nu pot fi confirmate static; coverage-ul Asset Usage este consultativ.
+audit-build-evidence = Dovada generației Zola pentru revizia exactă a workspace-ului.
+audit-build-provider-failed-title = Validarea Zola nu a fost confirmată
+audit-build-provider-failed-message = Providerul Zola nu a putut confirma revizia curentă: { $details }
+audit-build-provider-skipped-title = Validarea Zola nu a fost rulată
+audit-build-provider-skipped-message = Auditul rapid nu are încă dovadă Zola: { $details }
+audit-build-coverage-failed = Providerul Build nu a putut analiza revizia cerută.
+audit-build-coverage-skipped = Auditul rapid nu forțează construirea unei generații Zola.
+audit-semantic-parser-evidence = Constatare derivată din parserul semantic Rust, nu din căutare textuală.
 audit-title-project-model = Modelul proiectului
 audit-title-project-reference = Referință de proiect
 audit-title-workspace-file = Fișier omis din workspace
@@ -82,3 +113,12 @@ audit-content-missing-description-title = Meta description lipsește
 audit-content-missing-description-message = Adaugă description în frontmatter pentru un rezumat controlat în rezultatele de căutare.
 audit-asset-without-usage-title = Resursă fără utilizare cunoscută
 audit-asset-without-usage-message = Source Graph nu a găsit nicio referință către { $path }.
+audit-fix-preview = Vezi modificările
+audit-fix-preview-title = Modificări exacte propuse de Rust
+audit-fix-apply-safe = Aplică remedierea sigură
+audit-fix-applying = Se aplică…
+audit-fix-operation = Remedierea Audit
+audit-fix-applied = Remedierea sigură a fost aplicată și auditul a fost revalidat.
+audit-fix-stale = Remedierea nu mai aparține reviziei Audit curente.
+audit-fix-failed = Remedierea sigură nu a putut fi aplicată: { $error }
+io-audit-fix-receipt-invalid = Rust a returnat un receipt Audit Fix invalid sau necorelat.

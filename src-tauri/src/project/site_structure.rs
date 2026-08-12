@@ -640,8 +640,7 @@ fn find_include_line(source: &str, template_name: &str) -> Option<IncludeLineMat
 fn find_last_endblock_line(source: &str) -> Option<IncludeLineMatch> {
     find_lines(source)
         .into_iter()
-        .filter(|line| is_endblock_line(line.text))
-        .last()
+        .rfind(|line| is_endblock_line(line.text))
         .map(|line| IncludeLineMatch {
             start: line.start,
             indent: leading_whitespace(line.text),

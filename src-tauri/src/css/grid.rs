@@ -164,6 +164,7 @@ impl CssGrid {
         }
     }
 
+    #[cfg(test)]
     pub fn to_longhands(&self) -> BTreeMap<String, String> {
         let mut values = BTreeMap::new();
         let mut insert = |property: &str, value: Option<String>| {
@@ -530,7 +531,7 @@ fn parse_quoted_rows(value: &str) -> Result<Vec<Vec<String>>, String> {
         let mut row = String::new();
         let mut escaped = false;
         let mut closed = false;
-        while let Some((_, current)) = chars.next() {
+        for (_, current) in chars.by_ref() {
             if escaped {
                 row.push(current);
                 escaped = false;
@@ -593,9 +594,9 @@ fn validate_area_rows(rows: &[Vec<String>]) -> Result<(), String> {
         let max_row = cells.iter().map(|cell| cell.0).max().unwrap_or(0);
         let min_column = cells.iter().map(|cell| cell.1).min().unwrap_or(0);
         let max_column = cells.iter().map(|cell| cell.1).max().unwrap_or(0);
-        for row in min_row..=max_row {
-            for column in min_column..=max_column {
-                if rows[row][column] != name {
+        for row in rows.iter().take(max_row + 1).skip(min_row) {
+            for cell in row.iter().take(max_column + 1).skip(min_column) {
+                if cell != &name {
                     return Err(format!(
                         "Zona „{name}” trebuie să formeze un dreptunghi continuu."
                     ));

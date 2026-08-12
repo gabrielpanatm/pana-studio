@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
+    blocks::NativeBlockSlotMutationContext,
     kernel::{
         dynamic_widgets::DynamicWidgetProperties, preview_projection::CanvasPatch,
         project_workspace::ProjectWorkspaceMutationReceipt,
@@ -17,10 +18,11 @@ use crate::{
         CanvasProjectionIdentity, CanvasRenderNode,
     },
     project_model::{
+        attribute_engine::raw_tag_attributes,
         model::ProjectModel,
         move_engine::{
-            plan_html_move, plan_html_move_in_edit_scope, ProjectHtmlMoveIntent,
-            ProjectMovePosition, ProjectSourceEditLocation,
+            parse_html_tag_at, plan_html_move, plan_html_move_in_edit_scope, ProjectHtmlMoveIntent,
+            ProjectMovePosition,
         },
         tera_move_engine::{plan_tera_move, ProjectTeraMoveIntent},
     },
@@ -199,6 +201,10 @@ pub struct EditorNavigationNode {
     pub binding_path: Option<String>,
     pub boundary: Option<EditorNavigationBoundary>,
     pub capabilities: EditorNavigationCapabilities,
+    /// Source-derived only; never crosses the command boundary. SelectionCoordinator
+    /// uses it to build one bounded aggregate for Inspector multi-select.
+    #[serde(skip)]
+    pub(crate) source_html_attributes: Option<BTreeMap<String, Option<String>>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -446,7 +452,6 @@ pub struct EditorMoveTimings {
     pub project_model_component_graph_ms: u64,
     pub project_model_block_graph_ms: u64,
     pub project_model_tera_graph_ms: u64,
-    pub alias_calculation_ms: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -467,7 +472,6 @@ pub(crate) struct EditorMoveInternalTimings {
     pub project_model_component_graph_ms: u64,
     pub project_model_block_graph_ms: u64,
     pub project_model_tera_graph_ms: u64,
-    pub alias_calculation_ms: u64,
 }
 
 #[derive(Clone)]
@@ -634,6 +638,8 @@ impl EditorNavigationRuntime {
         Ok(grant)
     }
 
+    // Every argument is independent causal evidence checked against the stored grant.
+    #[allow(clippy::too_many_arguments)]
     pub fn require_edit_scope_grant(
         &self,
         presented: &EditScopeGrant,
@@ -812,6 +818,30 @@ pub(crate) fn plan_editor_move(
     target_node_id: &str,
     position: ProjectMovePosition,
     presented_grant: Option<&EditScopeGrant>,
+) -> EditorMoveDecision {
+    plan_editor_move_with_slot(
+        runtime,
+        snapshot,
+        model,
+        source_node_id,
+        target_node_id,
+        position,
+        presented_grant,
+        None,
+    )
+}
+
+// The planner keeps source, target, snapshot and optional authorization evidence explicit.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn plan_editor_move_with_slot(
+    runtime: &EditorNavigationRuntime,
+    snapshot: &EditorNavigationSnapshot,
+    model: &ProjectModel,
+    source_node_id: &str,
+    target_node_id: &str,
+    position: ProjectMovePosition,
+    presented_grant: Option<&EditScopeGrant>,
+    native_block_slot: Option<NativeBlockSlotMutationContext>,
 ) -> EditorMoveDecision {
     let active_document_path = snapshot
         .focused_view
@@ -1044,19 +1074,23 @@ pub(crate) fn plan_editor_move(
                     )),
                 )
             } else {
-                let Some(intent) = html_move_intent(source, target, position) else {
+                let Some(intent) = html_move_intent(
+                    source,
+                    target,
+                    position,
+                    native_block_slot.clone(),
+                ) else {
                     return blocked(
                         "editor_move_anchor_missing",
                         "Elementele HTML nu au ancore SourceGraph complete.".to_string(),
                         impact,
                     );
                 };
-                let aliases = HashMap::new();
                 let scoped = required_scope.is_some();
                 let plan = if scoped {
-                    plan_html_move_in_edit_scope(model, &intent, &aliases)
+                    plan_html_move_in_edit_scope(model, &intent)
                 } else {
-                    plan_html_move(model, &intent, &aliases)
+                    plan_html_move(model, &intent)
                 };
                 if !plan.allowed {
                     return blocked(
@@ -1257,17 +1291,15 @@ fn html_move_intent(
     source: &EditorNavigationNode,
     target: &EditorNavigationNode,
     position: ProjectMovePosition,
+    native_block_slot: Option<NativeBlockSlotMutationContext>,
 ) -> Option<ProjectHtmlMoveIntent> {
     Some(ProjectHtmlMoveIntent {
         source_source_id: source.source_node_id.clone(),
         target_source_id: target.source_node_id.clone(),
-        source_location: editor_source_location(source),
-        target_location: editor_source_location(target),
         source_tag: source.tag.clone(),
         target_tag: target.tag.clone(),
-        source_selector: None,
-        target_selector: None,
         position,
+        native_block_slot,
     })
     .filter(|intent| {
         intent.source_source_id.is_some()
@@ -1285,24 +1317,13 @@ fn tera_move_intent(
     Some(ProjectTeraMoveIntent {
         source_source_id: source.source_node_id.clone(),
         target_source_id: target.source_node_id.clone(),
-        source_location: editor_source_location(source),
-        target_location: editor_source_location(target),
         source_kind: None,
         target_kind: None,
         source_label: Some(source.label.clone()),
         target_tag: target.tag.clone(),
-        target_selector: None,
         position,
     })
     .filter(|intent| intent.source_source_id.is_some() && intent.target_source_id.is_some())
-}
-
-fn editor_source_location(node: &EditorNavigationNode) -> Option<ProjectSourceEditLocation> {
-    Some(ProjectSourceEditLocation {
-        file: node.file.clone()?,
-        line: node.range.as_ref()?.line,
-        column: node.range.as_ref()?.column,
-    })
 }
 
 fn editor_source_provenance(
@@ -1334,13 +1355,7 @@ fn editor_source_provenance(
     let invocation = direct_invocation.or(ambient_invocation);
     let composition = invocation
         .and_then(|invocation| invocation.source_node_id.as_deref())
-        .and_then(|source_node_id| {
-            model
-                .source_graph
-                .nodes
-                .iter()
-                .find(|node| node.id == source_node_id)
-        })
+        .and_then(|source_node_id| model.source_graph.node_by_id(source_node_id))
         .filter(|node| selected_source.is_none_or(|selected| selected.id != node.id))
         .map(editor_source_reference);
 
@@ -1382,9 +1397,7 @@ fn markdown_source_provenance(
     });
     let composition = model
         .source_graph
-        .nodes
-        .iter()
-        .find(|node| node.id == markdown.template_source_node_id)
+        .node_by_id(&markdown.template_source_node_id)
         .map(|node| {
             let mut reference = editor_source_reference(node);
             reference.range = markdown.template_range.clone().or(reference.range);
@@ -1429,13 +1442,7 @@ fn resolved_component_definition_source(
                 .find(|definition| definition.id == *definition_id)
         })
         .and_then(|definition| definition.source_node_id.as_deref())
-        .and_then(|source_node_id| {
-            model
-                .source_graph
-                .nodes
-                .iter()
-                .find(|node| node.id == source_node_id)
-        })
+        .and_then(|source_node_id| model.source_graph.node_by_id(source_node_id))
         .map(editor_source_reference)
 }
 
@@ -1708,6 +1715,7 @@ pub(crate) fn build_editor_navigation_snapshot(
                     source.and_then(|node| node.capabilities.reason_code)
                 },
             },
+            source_html_attributes: None,
         });
     }
 
@@ -1804,6 +1812,7 @@ pub(crate) fn build_editor_navigation_snapshot(
                 requires_edit_scope_id: requires_scope_id,
                 reason_code: source_capabilities.and_then(|capabilities| capabilities.reason_code),
             },
+            source_html_attributes: source_html_attributes(model, source),
         });
     }
 
@@ -2246,6 +2255,7 @@ impl<'a> EditorNavigationViewBuilder<'a> {
                 binding_path: representative.and_then(|node| node.binding_path.clone()),
                 boundary,
                 capabilities,
+                source_html_attributes: source_html_attributes(self.model, Some(&source)),
             });
         }
 
@@ -2967,6 +2977,29 @@ fn primary_source_node<'a>(
         })
 }
 
+fn source_html_attributes(
+    model: &ProjectModel,
+    source: Option<&SourceNode>,
+) -> Option<BTreeMap<String, Option<String>>> {
+    let source = source.filter(|source| source.kind == SourceNodeKind::Html)?;
+    let range = source.range.as_ref()?;
+    let file = model
+        .files
+        .iter()
+        .find(|file| file.relative_path == source.file)?;
+    let opening = parse_html_tag_at(&file.contents, range.start)?;
+    if opening.is_closing || opening.start != range.start {
+        return None;
+    }
+    let opening_source = file.contents.get(opening.start..opening.end)?;
+    Some(
+        raw_tag_attributes(opening_source)
+            .into_iter()
+            .map(|attribute| (attribute.name, attribute.value))
+            .collect(),
+    )
+}
+
 fn editable_boundary_kind(kind: &SourceNodeKind) -> bool {
     matches!(
         kind,
@@ -3123,7 +3156,7 @@ mod tests {
 
     use crate::{
         preview::{CanvasBoundaryMarkerKind, CanvasDocumentGraph, CanvasNodeCapabilities},
-        project_model::build_project_model,
+        project_model::test_support::ProjectModelTestFixture,
         source_graph::model::MarkdownProjectionKind,
     };
 
@@ -3213,6 +3246,7 @@ mod tests {
                 requires_edit_scope_id: Some("editor_boundary:boundary-1".to_string()),
                 reason_code: Some(SourceCapabilityReason::TeraBlock),
             },
+            source_html_attributes: None,
         }
     }
 
@@ -3327,7 +3361,7 @@ mod tests {
     #[test]
     fn central_planner_keeps_closed_tera_atomic_and_requires_scope_for_html_children() {
         let root = editor_navigation_test_project("central-planner");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let loop_node = source_node(&model, SourceNodeKind::For, "for");
         let article = source_node(&model, SourceNodeKind::Html, "<article");
         let section = source_node(&model, SourceNodeKind::Html, "<section");
@@ -3619,7 +3653,7 @@ mod tests {
     #[test]
     fn navigation_snapshot_preserves_repeated_and_empty_boundary_instances() {
         let root = editor_navigation_test_project("snapshot-boundaries");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let loop_node = source_node(&model, SourceNodeKind::For, "for");
         let article = source_node(&model, SourceNodeKind::Html, "<article");
         let footer = source_node(&model, SourceNodeKind::Html, "<footer");
@@ -3763,7 +3797,7 @@ mod tests {
     #[test]
     fn navigation_snapshot_opens_only_the_active_document_wrapper_boundary() {
         let root = editor_navigation_inheritance_test_project("snapshot-active-document");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let index_content = source_node_in_file(
             &model,
             SourceNodeKind::Block,
@@ -3954,7 +3988,7 @@ mod tests {
     #[test]
     fn focused_view_reroots_index_without_claiming_inherited_sources() {
         let root = editor_navigation_inheritance_test_project("focused-index");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let snapshot = focused_snapshot(&root, &model, "templates/index.html");
         let view = snapshot.focused_view.as_ref().expect("focused view");
 
@@ -4037,7 +4071,7 @@ mod tests {
     #[test]
     fn focused_view_keeps_only_visual_layers_and_embedded_tera_gates() {
         let root = editor_navigation_inheritance_test_project("focused-visual-layers");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
 
         let index = focused_snapshot(&root, &model, "templates/index.html");
         let view = index.focused_view.as_ref().unwrap();
@@ -4110,7 +4144,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let snapshot = focused_snapshot(&root, &model, "templates/index.html");
         let view = snapshot.focused_view.as_ref().expect("focused view");
         let by_tag = |tag: &str| {
@@ -4135,7 +4169,7 @@ mod tests {
     #[test]
     fn focused_view_changes_ownership_for_layout_base_and_partial() {
         let root = editor_navigation_inheritance_test_project("focused-documents");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
 
         let layout = focused_snapshot(&root, &model, "templates/layout.html");
         let layout_view = layout.focused_view.as_ref().unwrap();
@@ -4202,7 +4236,7 @@ mod tests {
     #[test]
     fn focused_view_preserves_theme_origin_and_local_override_resolution() {
         let root = editor_navigation_theme_test_project("focused-theme");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
 
         let index = focused_snapshot(&root, &model, "templates/index.html");
         let index_view = index.focused_view.as_ref().unwrap();
@@ -4260,7 +4294,7 @@ mod tests {
     #[test]
     fn source_provenance_separates_include_definition_from_composition_site() {
         let root = editor_navigation_inheritance_test_project("source-provenance-include");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let include = source_node_in_file(
             &model,
             SourceNodeKind::Include,
@@ -4290,7 +4324,7 @@ mod tests {
     #[test]
     fn source_provenance_keeps_partial_html_definition_and_include_composition() {
         let root = editor_navigation_inheritance_test_project("source-provenance-partial-html");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let include = source_node_in_file(
             &model,
             SourceNodeKind::Include,
@@ -4332,7 +4366,7 @@ mod tests {
     #[test]
     fn source_provenance_keeps_direct_html_as_its_definition() {
         let root = editor_navigation_inheritance_test_project("source-provenance-html");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let heading =
             source_node_in_file(&model, SourceNodeKind::Html, "<h1>", "templates/index.html");
 
@@ -4351,7 +4385,7 @@ mod tests {
     #[test]
     fn source_provenance_respects_theme_origin_and_project_shadowing() {
         let root = editor_navigation_theme_test_project("source-provenance-theme");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let include = source_node_in_file(
             &model,
             SourceNodeKind::Include,
@@ -4402,7 +4436,7 @@ mod tests {
             "<aside>Fallback</aside>\n",
         )
         .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let fallback = source_node_in_file(
             &model,
             SourceNodeKind::Include,
@@ -4455,7 +4489,7 @@ mod tests {
     #[test]
     fn focused_view_ids_drive_the_central_move_planner_and_scope_grants() {
         let root = editor_navigation_inheritance_test_project("focused-move");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let snapshot = focused_snapshot(&root, &model, "templates/index.html");
         let view = snapshot.focused_view.as_ref().unwrap();
         let runtime = EditorNavigationRuntime::default();
@@ -4555,7 +4589,7 @@ mod tests {
             "<main><header>Exterior</header>{{ section.content | safe }}<footer>Exterior</footer></main>",
         )
         .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let projection = model
             .source_graph
             .markdown_projections
@@ -4707,7 +4741,7 @@ mod tests {
         let root = editor_navigation_test_project("empty-direct-fragment");
         fs::create_dir_all(root.join("templates/listing-items")).unwrap();
         fs::write(root.join("templates/listing-items/card.html"), "\n").unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = editor_navigation_test_model(&root);
         let fragment = model
             .source_graph
             .nodes
@@ -4873,6 +4907,7 @@ mod tests {
                 requires_edit_scope_id: scope_id,
                 reason_code: source.capabilities.reason_code,
             },
+            source_html_attributes: None,
         }
     }
 
@@ -4903,6 +4938,29 @@ mod tests {
             .unwrap_or_else(|| {
                 panic!("Lipsește nodul {kind:?} din {file:?} care conține {label:?}.")
             })
+    }
+
+    fn editor_navigation_test_model(root: &std::path::Path) -> ProjectModel {
+        ProjectModelTestFixture::from_integration_disk_boundary(root)
+            .unwrap()
+            .build_model()
+            .unwrap()
+    }
+
+    #[test]
+    fn html_attribute_facts_are_read_from_the_canonical_opening_tag() {
+        let root = editor_navigation_test_project("source-html-facts");
+        let model = editor_navigation_test_model(&root);
+        let article = source_node_in_file(
+            &model,
+            SourceNodeKind::Html,
+            "article",
+            "templates/index.html",
+        );
+        let attributes = source_html_attributes(&model, Some(article)).expect("HTML facts");
+        assert_eq!(attributes.get("class"), Some(&Some("card".to_string())));
+        assert_eq!(attributes.len(), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn editor_navigation_test_project(label: &str) -> PathBuf {

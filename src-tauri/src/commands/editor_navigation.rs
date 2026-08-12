@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::{
+    blocks::NativeBlockSlotMutationContext,
     css::rules::{selector_source_target, selector_source_target_at_offset},
     kernel::canvas_interaction::{
         CanvasDragPosition, CanvasInteractionBindingReceipt, CanvasInteractionGesture,
@@ -12,14 +13,14 @@ use crate::{
     },
     kernel::editor_navigation::{
         build_editor_navigation_snapshot, editor_navigation_node,
-        plan_editor_move as build_editor_move_plan, EditScopeGrant, EditScopeOperation,
-        EditorMoveExecutionReceipt, EditorMoveExecutionStatus, EditorMovePlan, EditorMoveTimings,
-        EditorNavigationSnapshot,
+        plan_editor_move as build_editor_move_plan,
+        plan_editor_move_with_slot as build_editor_move_plan_with_slot, EditScopeGrant,
+        EditScopeOperation, EditorMoveExecutionReceipt, EditorMoveExecutionStatus, EditorMovePlan,
+        EditorMoveTimings, EditorNavigationSnapshot,
     },
     kernel::observability::{append_event, KernelEventKind, KernelLogEvent, KernelLogLevel},
     kernel::preview_projection::{execute_editor_move, PreviewStructuralCommandIdentity},
     kernel::project_path::normalize_project_relative_path,
-    kernel::project_workspace::SourceIdentityAliasTransition,
     kernel::selection_coordinator::{
         HoverSnapshot, SelectionCoordinatorSnapshot, SelectionIntent, SelectionObservationInput,
         SelectionObservationReceipt, SELECTION_COORDINATOR_SCHEMA_VERSION,
@@ -28,8 +29,8 @@ use crate::{
     project::ActiveProjectReadiness,
     project_model::{
         cache::{
-            capture_project_model_build_context, publish_project_model_if_current,
-            ProjectModelBuildContext,
+            build_project_model_from_context, capture_project_model_build_context,
+            publish_project_model_if_current, ProjectModelBuildContext,
         },
         model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
         move_engine::ProjectMovePosition,
@@ -74,6 +75,8 @@ pub struct EditorMovePlanRequest {
     pub position: ProjectMovePosition,
     #[serde(default)]
     pub edit_scope_grant: Option<EditScopeGrant>,
+    #[serde(default)]
+    pub native_block_slot: Option<NativeBlockSlotMutationContext>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -185,7 +188,6 @@ struct EditorNavigationContext {
     model: ProjectModel,
     snapshot: EditorNavigationSnapshot,
     active_document_path: Option<String>,
-    source_identity_alias_transition: Option<SourceIdentityAliasTransition>,
 }
 
 #[tauri::command]
@@ -415,15 +417,12 @@ pub fn apply_selection_intent(
     };
     let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
     let intent = selection_intent_from_project_model(&context.model, input.intent)?;
-    let receipt = state
-        .selection_coordinator
-        .apply_with_source_alias_transition(
-            &context.snapshot,
-            context.active_document_path.as_deref(),
-            Some(&context.model.source_graph),
-            context.source_identity_alias_transition.as_ref(),
-            intent,
-        )?;
+    let receipt = state.selection_coordinator.apply(
+        &context.snapshot,
+        context.active_document_path.as_deref(),
+        Some(&context.model.source_graph),
+        intent,
+    )?;
     publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(receipt)
 }
@@ -441,15 +440,12 @@ pub fn read_selection_snapshot(
         preview_context_render_instance_id: input.preview_context_render_instance_id,
     };
     let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
-    let receipt = state
-        .selection_coordinator
-        .apply_with_source_alias_transition(
-            &context.snapshot,
-            context.active_document_path.as_deref(),
-            Some(&context.model.source_graph),
-            context.source_identity_alias_transition.as_ref(),
-            SelectionIntent::Rebase,
-        )?;
+    let receipt = state.selection_coordinator.apply(
+        &context.snapshot,
+        context.active_document_path.as_deref(),
+        Some(&context.model.source_graph),
+        SelectionIntent::Rebase,
+    )?;
     publish_project_model_if_current(state.inner(), &context.build_context, context.model)?;
     Ok(receipt)
 }
@@ -709,7 +705,7 @@ pub fn plan_editor_move(
         preview_context_render_instance_id: input.preview_context_render_instance_id,
     };
     let context = resolve_editor_navigation_context(&snapshot_request, state.inner())?;
-    let decision = build_editor_move_plan(
+    let decision = build_editor_move_plan_with_slot(
         &state.editor_navigation,
         &context.snapshot,
         &context.model,
@@ -717,6 +713,7 @@ pub fn plan_editor_move(
         &input.target_node_id,
         input.position,
         input.edit_scope_grant.as_ref(),
+        input.native_block_slot,
     );
     let plan = state
         .editor_navigation
@@ -881,7 +878,6 @@ pub fn commit_editor_move(
         project_model_component_graph_ms: receipt.internal_timings.project_model_component_graph_ms,
         project_model_block_graph_ms: receipt.internal_timings.project_model_block_graph_ms,
         project_model_tera_graph_ms: receipt.internal_timings.project_model_tera_graph_ms,
-        alias_calculation_ms: receipt.internal_timings.alias_calculation_ms,
     });
     append_editor_move_timing_event(&app, &receipt);
     if receipt.status == EditorMoveExecutionStatus::Committed {
@@ -979,7 +975,6 @@ fn append_editor_move_timing_event(app: &AppHandle, receipt: &EditorMoveExecutio
         "projectModelTeraGraphMs",
         timings.project_model_tera_graph_ms,
     )
-    .with_attribute("aliasCalculationMs", timings.alias_calculation_ms)
     .with_attribute("patchIssuedToReceiptMs", timings.patch_issued_to_receipt_ms)
     .with_attribute("canvasPatchIssued", receipt.canvas_patch.is_some());
     let app = app.clone();
@@ -992,6 +987,7 @@ fn resolve_editor_navigation_context(
     input: &EditorNavigationSnapshotRequest,
     state: &AppState,
 ) -> Result<EditorNavigationContext, String> {
+    #[cfg(debug_assertions)]
     let started = Instant::now();
     let route = require_navigation_route(&input.route)?;
     let (root, session, build_context) = capture_project_model_build_context(state)?;
@@ -1004,7 +1000,7 @@ fn resolve_editor_navigation_context(
             input.identity.workspace_revision
         ));
     }
-    let (cached_model, source_identity_alias_transition) = {
+    let cached_model = {
         let workspace = state.project_workspace.lock().map_err(|_| {
             "Nu am putut citi cache-ul ProjectModel pentru EditorNavigationSnapshot.".to_string()
         })?;
@@ -1019,18 +1015,13 @@ fn resolve_editor_navigation_context(
         } else {
             None
         };
-        (
-            cached_model,
-            workspace.source_identity_alias_transition.clone(),
-        )
+        cached_model
     };
+    #[cfg(debug_assertions)]
     let model_cache_hit = cached_model.is_some();
     let model = match cached_model {
         Some(model) => model,
-        None => crate::project_model::build_project_model_from_workspace_projection(
-            &root,
-            build_context.projection(),
-        )?,
+        None => build_project_model_from_context(&root, &build_context)?,
     };
     let active_workbench_document =
         authoritative_active_document_path(state, &session, input.active_document_path.as_deref())?;
@@ -1077,6 +1068,7 @@ fn resolve_editor_navigation_context(
         active_document_path.as_deref(),
         input.preview_context_render_instance_id.as_deref(),
     )?;
+    #[cfg(debug_assertions)]
     let snapshot_cache_hit = cached_snapshot.is_some();
     let snapshot = match cached_snapshot {
         Some(snapshot) => snapshot,
@@ -1111,7 +1103,6 @@ fn resolve_editor_navigation_context(
         model,
         snapshot,
         active_document_path,
-        source_identity_alias_transition,
     })
 }
 

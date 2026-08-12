@@ -17,6 +17,8 @@ import type {
   EditorMovePlan,
   EditorNavigationNode,
   EditorNavigationSnapshot,
+  NativeBlockSlotMutationContext,
+  SelectionAnchor,
   ProjectMovePosition,
 } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
@@ -60,14 +62,10 @@ export type EditorNavigationDropTarget = {
   targetBoundaryInstanceId?: string | null;
 };
 
-export type EditorMoveNodeAnchor = Readonly<{
-  originalId: string;
-  structuralPath: readonly number[];
-  kind: EditorNavigationNode["kind"];
-  tag: string | null;
-  file: string | null;
-  origin: EditorNavigationNode["origin"];
-}>;
+export type EditorMoveNodeAnchor = Readonly<Pick<
+  SelectionAnchor,
+  "editorNodeId" | "sourceNodeId" | "renderInstanceId" | "boundaryInstanceId"
+>>;
 
 export function captureEditorMoveNodeAnchor(
   snapshot: EditorNavigationSnapshot,
@@ -75,28 +73,11 @@ export function captureEditorMoveNodeAnchor(
 ): EditorMoveNodeAnchor | null {
   const node = snapshot.nodes.find((candidate) => candidate.id === nodeId);
   if (!node) return null;
-  const nodes = new Map(snapshot.nodes.map((candidate) => [candidate.id, candidate]));
-  const path: number[] = [];
-  const visited = new Set<string>();
-  let current: EditorNavigationNode | undefined = node;
-  while (current) {
-    if (!visited.add(current.id)) return null;
-    const siblings = current.parentId
-      ? nodes.get(current.parentId)?.children
-      : snapshot.rootNodeIds;
-    if (!siblings) return null;
-    const index = siblings.indexOf(current.id);
-    if (index < 0) return null;
-    path.unshift(index);
-    current = current.parentId ? nodes.get(current.parentId) : undefined;
-  }
   return Object.freeze({
-    originalId: node.id,
-    structuralPath: Object.freeze(path),
-    kind: node.kind,
-    tag: node.tag,
-    file: node.file,
-    origin: node.origin,
+    editorNodeId: node.id,
+    sourceNodeId: node.sourceNodeId,
+    renderInstanceId: node.renderInstanceId,
+    boundaryInstanceId: node.boundary?.boundaryInstanceId ?? null,
   });
 }
 
@@ -104,32 +85,29 @@ export function resolveEditorMoveNodeAnchor(
   snapshot: EditorNavigationSnapshot,
   anchor: EditorMoveNodeAnchor,
 ): EditorNavigationNode | null {
-  const exact = snapshot.nodes.find((node) => node.id === anchor.originalId);
+  const exact = snapshot.nodes.find((node) => node.id === anchor.editorNodeId);
   if (exact && editorMoveNodeMatchesAnchor(exact, anchor)) return exact;
-
-  const nodes = new Map(snapshot.nodes.map((node) => [node.id, node]));
-  let siblings = snapshot.rootNodeIds;
-  let candidate: EditorNavigationNode | undefined;
-  for (const index of anchor.structuralPath) {
-    const id = siblings[index];
-    if (!id) return null;
-    candidate = nodes.get(id);
-    if (!candidate) return null;
-    siblings = candidate.children;
-  }
-  return candidate && editorMoveNodeMatchesAnchor(candidate, anchor)
-    ? candidate
-    : null;
+  const candidates = anchor.renderInstanceId
+    ? snapshot.nodes.filter((node) => node.renderInstanceId === anchor.renderInstanceId)
+    : anchor.boundaryInstanceId
+      ? snapshot.nodes.filter(
+          (node) => node.boundary?.boundaryInstanceId === anchor.boundaryInstanceId,
+        )
+      : [];
+  const matched = candidates.filter((node) => editorMoveNodeMatchesAnchor(node, anchor));
+  return matched.length === 1 ? matched[0] : null;
 }
 
 function editorMoveNodeMatchesAnchor(
   node: EditorNavigationNode,
   anchor: EditorMoveNodeAnchor,
 ) {
-  return node.kind === anchor.kind
-    && node.tag === anchor.tag
-    && node.file === anchor.file
-    && node.origin === anchor.origin;
+  return (!anchor.sourceNodeId || node.sourceNodeId === anchor.sourceNodeId)
+    && (!anchor.renderInstanceId || node.renderInstanceId === anchor.renderInstanceId)
+    && (
+      !anchor.boundaryInstanceId
+      || node.boundary?.boundaryInstanceId === anchor.boundaryInstanceId
+    );
 }
 
 export function editorNavigationDropTargetStatus(
@@ -191,21 +169,23 @@ export function editorNavigationDropTargetStatus(
   return { allowed: true, editorNodeId: node.id };
 }
 
-function editorNavigationViewNodeSelector(
+function editorNavigationViewNodeRenderInstanceId(
   renderInstanceIds: string[],
   boundaryRootIds: string[] = [],
 ) {
-  const renderInstanceId = renderInstanceIds[0] ?? boundaryRootIds[0] ?? null;
-  return renderInstanceId
-    ? `[data-pana-render-instance-id="${CSS.escape(renderInstanceId)}"]`
-    : null;
+  return renderInstanceIds[0] ?? boundaryRootIds[0] ?? null;
 }
 
 export function selectEditorNavigationNode(
   host: EditorNavigationControllerHost,
   node: EditorNavigationNode,
+  options: {
+    toggle?: boolean;
+    extendRange?: boolean;
+    setPrimary?: boolean;
+  } = {},
 ) {
-  selectCanvasNavigationNode(host as AppState, node);
+  return selectCanvasNavigationNode(host as AppState, node, options);
 }
 
 export function hoverEditorNavigationNode(
@@ -243,12 +223,13 @@ export async function enterEditorNavigationScope(
   }
   host.editorEditScopeGrant = grant;
   host.editorEditScopeId = scopeId;
+  const renderInstanceId = editorNavigationViewNodeRenderInstanceId(
+    scope.renderInstanceIds,
+    scope.boundary.rootRenderInstanceIds,
+  );
   host.setPreviewTeraSelection({
-    selector: editorNavigationViewNodeSelector(
-      scope.renderInstanceIds,
-      scope.boundary.rootRenderInstanceIds,
-    ) ?? "",
     sourceId: scope.boundary.sourceNodeId,
+    renderInstanceId,
     origin: scope.origin === "theme"
       ? "theme"
       : scope.origin === "project"
@@ -273,12 +254,13 @@ export function exitEditorNavigationScope(host: EditorNavigationControllerHost) 
   host.editorEditScopeGrant = null;
   host.editorEditScopeId = null;
   if (scope?.boundary) {
+    const renderInstanceId = editorNavigationViewNodeRenderInstanceId(
+      scope.renderInstanceIds,
+      scope.boundary.rootRenderInstanceIds,
+    );
     host.setPreviewTeraSelection({
-      selector: editorNavigationViewNodeSelector(
-        scope.renderInstanceIds,
-        scope.boundary.rootRenderInstanceIds,
-      ) ?? "",
       sourceId: scope.boundary.sourceNodeId,
+      renderInstanceId,
       origin: scope.origin === "theme"
         ? "theme"
         : scope.origin === "project"
@@ -294,6 +276,7 @@ export async function previewEditorNavigationMove(
   sourceNodeId: string,
   targetNodeId: string,
   position: ProjectMovePosition,
+  nativeBlockSlot: NativeBlockSlotMutationContext | null = null,
 ): Promise<EditorMovePlan> {
   const snapshot = host.editorNavigationSnapshot;
   const identity = host.activeCanvasIdentity;
@@ -310,6 +293,7 @@ export async function previewEditorNavigationMove(
     targetNodeId,
     position,
     editScopeGrant: host.editorEditScopeGrant,
+    nativeBlockSlot,
   });
 }
 
@@ -320,6 +304,7 @@ export async function moveEditorNavigationNode(
   position: ProjectMovePosition,
   preplanned: EditorMovePlan | null = null,
   inputEmittedAtMs = 0,
+  nativeBlockSlot: NativeBlockSlotMutationContext | null = null,
 ): Promise<EditorActionOutcome> {
   try {
     const capturedSnapshot = host.editorNavigationSnapshot;
@@ -358,6 +343,7 @@ export async function moveEditorNavigationNode(
           settledSource.id,
           settledTarget.id,
           position,
+          nativeBlockSlot,
         );
     if (!plan.allowed || !plan.token) {
       const reason = plan.reason ?? t("editor-navigation-move-refused");

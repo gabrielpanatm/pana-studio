@@ -4,8 +4,6 @@ import {
   normalizeClassTokens,
   type InsertPosition,
 } from "$lib/html/mutations";
-import { parseHtmlSourceNodes } from "$lib/html/parser";
-import { generateUniqueHtmlIdentity } from "$lib/html/generated-identity";
 import type { EditorHtmlTarget } from "$lib/editor-runtime/commands";
 import {
   blockedAction,
@@ -17,6 +15,7 @@ import {
   type EditorActionOutcome,
 } from "$lib/editor-runtime/action-outcome";
 import {
+  projectCommittedPreviewSelectionBatchMutation,
   projectCommittedPreviewStructuralMutation,
   previewStructuralBlockingDiagnostic,
   requireCommittedPreviewStructuralPatch,
@@ -24,7 +23,6 @@ import {
   type PreviewStructuralExecutionReceipt,
 } from "$lib/kernel/preview-projection-control";
 import {
-  capturePreviewStructuralSessionLease,
   isPreviewStructuralCancellation,
   previewStructuralSessionLeaseMatches,
   previewStructuralCommandIdentity,
@@ -44,24 +42,28 @@ import {
   executePreviewHtmlDeleteIntent,
   executePreviewHtmlDuplicateIntent,
   executePreviewHtmlInsertDropIntent,
+  executePreviewSelectionBatchIntent,
   executePreviewHtmlTextIntent,
-  readProjectFile,
   readProjectWorkspaceState,
 } from "$lib/project/io";
 import { committedDraftCanSettle } from "$lib/session/committed-draft-settlement";
 import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
 import {
-  formatSourceEditLocation,
   parseSourceEditLocation,
-  sourceLocationForEditTarget,
 } from "$lib/source-graph/location";
 import type { PreviewInsertDropRequest } from "$lib/state/preview-insert-controller";
 import type {
   EditableAttributes,
   HtmlPendingArea,
   NativeBlockOptionIntent,
+  NativeIconMutationIntent,
+  NativeBlockSlotMutationRequest,
   ProjectHtmlAttributePatch,
   ProjectHtmlAttributeMutation,
+  ProjectMovePosition,
+  PreviewSelectionBatchAction,
+  ProjectGeneratedIdentityIntent,
+  ProjectGeneratedIdentityKind,
   ProjectZolaImageIntent,
   ProjectHtmlTextPatch,
   ProjectFile,
@@ -69,7 +71,6 @@ import type {
   ProjectScan,
   CoordinatedElementSelection,
   SourceEditLocation,
-  SourceEditTarget,
   ZolaImagePresentation,
 } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
@@ -78,15 +79,12 @@ import { t } from "$lib/i18n/runtime.svelte";
 
 export type HtmlActionsControllerHost = PreviewStructuralCanonicalProjectionHost & {
   coordinatedElementSelection: CoordinatedElementSelection | null;
-  pageSections: { selector: string; tag: string; sourceId?: string | null; sourceLocation?: SourceEditLocation | null; sessionId?: string | null }[];
   structureStatus: string;
   canEditHtmlStructure: boolean;
   canAddChildToSelectedElement: boolean;
   imageStatus: string;
-  isActivePreviewHtmlSource: boolean;
   activeScannedPath: string | null;
   source: string;
-  htmlSourceMutationBlockedReason: string;
   imageSourceValue: string;
   classStatus: string;
   classEditorValue: string;
@@ -98,13 +96,11 @@ export type HtmlActionsControllerHost = PreviewStructuralCanonicalProjectionHost
   textEditOriginalText: string | null;
   scannedProject: ProjectScan | null;
   sourceCache: Record<string, string>;
-  currentHtmlRelativePath: string;
   stageKernelPlannedTemplateDraft: (
     tpl: SourceEditLocation,
     plannedSource: string,
     options?: { pendingArea?: HtmlPendingArea; status?: string; isCurrent?: () => boolean },
   ) => Promise<string | null>;
-  resolveSourceEditTargetForSourceId: (sourceId: string | null | undefined) => SourceEditTarget | null;
   getPreviewDocument: () => Document | undefined;
   postPreviewMessage: (payload: Record<string, unknown>) => void;
   setHtmlPending: (area: HtmlPendingArea, pending: boolean) => void;
@@ -113,8 +109,6 @@ export type HtmlActionsControllerHost = PreviewStructuralCanonicalProjectionHost
 };
 
 export type HtmlActionTarget = {
-  selector: string;
-  cssSelector?: string | null;
   tag: string;
   selectionRevision?: number | null;
   renderInstanceId?: string | null;
@@ -148,8 +142,6 @@ export function captureHtmlActionTarget(
   if ("snapshot" in target) {
     const observation = target.observation;
     return freezeHtmlActionTarget({
-      selector: observation.domPath,
-      cssSelector: observation.cssSelector,
       tag: observation.tag,
       selectionRevision: target.snapshot.selectionRevision,
       renderInstanceId: target.renderInstanceId,
@@ -166,20 +158,14 @@ export function captureHtmlActionTarget(
   }
   if ("kind" in target) {
     const observation = target.observation ?? null;
-    const section = target.section ?? null;
     return freezeHtmlActionTarget({
-      selector: target.selector,
-      cssSelector: observation?.cssSelector ?? null,
       tag: target.tag,
       selectionRevision: target.selectionRevision ?? null,
       renderInstanceId: target.renderInstanceId ?? null,
-      sourceId: target.sourceId ?? section?.sourceId ?? null,
-      templateSourceId:
-        target.templateSourceId
-        ?? section?.templateSourceId
-        ?? null,
-      sourceLocation: target.sourceLocation ?? section?.sourceLocation ?? null,
-      sessionId: target.sessionId ?? section?.sessionId ?? null,
+      sourceId: target.sourceId ?? null,
+      templateSourceId: target.templateSourceId ?? null,
+      sourceLocation: target.sourceLocation ?? null,
+      sessionId: target.sessionId ?? null,
       hasChildElements: observation?.hasChildElements,
       rawText: observation?.rawText,
       attributes: observation?.attributes,
@@ -202,11 +188,8 @@ function currentSelectionMatchesTarget(
   ) return false;
   if (target.renderInstanceId && target.renderInstanceId !== current.renderInstanceId) return false;
   if (target.sessionId && target.sessionId !== current.snapshot.runtimeSessionId) return false;
-  if (target.sourceId && current.sourceNodeId) {
-    return target.sourceId === current.sourceNodeId
-      && target.selector === current.observation.domPath;
-  }
-  return target.selector === current.observation.domPath;
+  if (!target.sourceId || !current.sourceNodeId) return false;
+  return target.sourceId === current.sourceNodeId;
 }
 
 function normalizedAttributeDraft(attributes: Readonly<EditableAttributes>) {
@@ -255,158 +238,61 @@ function insertPositionLabel(position: PreviewInsertDropRequest["position"]) {
   return t("html-actions-position-inside");
 }
 
-function missingKernelLocationMessage(action: string) {
-  return t("html-actions-location-missing", { action });
+function missingKernelIdentityMessage(action: string) {
+  return t("html-actions-identity-missing", { action });
 }
 
-function projectSourceLocation(tpl: SourceEditLocation) {
-  return {
-    file: tpl.file,
-    line: tpl.line,
-    column: tpl.column ?? 0,
-  };
+function hasMultiElementSelection(host: HtmlActionsControllerHost) {
+  return (host.selectionSnapshot?.members.length ?? 0) > 1;
 }
 
-function isIdentityScanFile(file: ProjectFile) {
-  return ["HTML", "MD", "CSS", "SCSS", "JS"].includes(file.kind);
+async function executeSelectionBatch(
+  host: HtmlActionsControllerHost,
+  action: PreviewSelectionBatchAction,
+): Promise<EditorActionOutcome> {
+  const result = await runInPreviewStructuralLane(host, async (lease) => {
+    if (!lease.selection || lease.selection.members.length < 2) {
+      return blockedAction("Operația batch cere cel puțin două elemente selectate.");
+    }
+    const receipt = await executePreviewSelectionBatchIntent({
+      schemaVersion: 1,
+      action,
+    }, previewStructuralCommandIdentity(lease, true));
+    if (receipt.status !== "committed") {
+      return blockedAction(receipt.diagnostics[0] || "Operația batch a fost blocată de kernel.");
+    }
+    await projectCommittedPreviewSelectionBatchMutation(host, lease, receipt);
+    return committedAction();
+  });
+  return result ?? cancelledAction("Operația batch a fost anulată odată cu sesiunea structurală.");
 }
 
-async function collectIdentitySourceTexts(host: HtmlActionsControllerHost) {
-  const texts: string[] = [];
-  const seen = new Set<string>();
-
-  for (const [cacheKey, value] of Object.entries(host.sourceCache)) {
-    if (typeof value !== "string") continue;
-    texts.push(value);
-    if (cacheKey.startsWith("scanned:")) seen.add(cacheKey.slice("scanned:".length));
+export async function moveSelectedHtmlElements(
+  host: HtmlActionsControllerHost,
+  targetSourceId: string,
+  targetTag: string | null,
+  position: ProjectMovePosition,
+): Promise<EditorActionOutcome> {
+  if (position === "inside") {
+    return blockedAction("Mutarea multiplă v1 acceptă numai pozițiile înainte/după între frați.");
   }
-
-  const files = host.scannedProject?.files.filter(isIdentityScanFile) ?? [];
-  const reads = files
-    .filter((file) => !seen.has(file.relativePath))
-    .map(async (file) => {
-      const cached = host.sourceCache[scannedCacheKey(file)];
-      if (typeof cached === "string") return cached;
-      return await readProjectFile(file.relativePath);
+  try {
+    const result = await executeSelectionBatch(host, {
+      kind: "move",
+      targetSourceId,
+      targetTag,
+      position,
     });
-
-  const settled = await Promise.allSettled(reads);
-  for (const result of settled) {
-    if (result.status === "fulfilled") texts.push(result.value);
+    host.structureStatus = editorActionSucceeded(result)
+      ? "Elementele selectate au fost mutate."
+      : (result.reason ?? "Mutarea batch a fost blocată.");
+    return result;
+  } catch (error) {
+    const result = actionErrorOutcome(error);
+    host.structureStatus = result.reason ?? result.status;
+    host.setGlobalStatus(host.structureStatus, "error");
+    return result;
   }
-
-  return texts;
-}
-
-function sourceLocationAtOffset(file: string, sourceText: string, offset: number): SourceEditLocation {
-  const before = sourceText.slice(0, Math.max(0, offset));
-  const lines = before.split("\n");
-  const linePrefix = lines[lines.length - 1] ?? "";
-  return {
-    file,
-    line: lines.length,
-    column: Array.from(linePrefix).length + 1,
-  };
-}
-
-function selectorVariants(selector: string) {
-  const trimmed = selector.trim();
-  const variants = new Set<string>();
-  if (!trimmed) return variants;
-  variants.add(trimmed);
-
-  const htmlPrefix = "html:nth-of-type(1) > ";
-  if (trimmed.startsWith(htmlPrefix)) {
-    variants.add(trimmed.slice(htmlPrefix.length));
-  } else {
-    variants.add(`${htmlPrefix}${trimmed}`);
-  }
-
-  return variants;
-}
-
-function currentActiveHtmlSource(host: HtmlActionsControllerHost) {
-  const cacheKey = scannedCacheKey({ relativePath: host.currentHtmlRelativePath });
-  if (host.activeScannedPath === host.currentHtmlRelativePath) {
-    return host.source || host.sourceCache[cacheKey] || "";
-  }
-  return host.sourceCache[cacheKey] || "";
-}
-
-function activeHtmlSourceLocationForTarget(
-  host: HtmlActionsControllerHost,
-  target: HtmlActionTarget,
-): SourceEditLocation | null {
-  if (!host.isActivePreviewHtmlSource || !host.currentHtmlRelativePath) return null;
-
-  const sourceText = currentActiveHtmlSource(host);
-  if (!sourceText) return null;
-
-  const variants = selectorVariants(target.selector);
-  const nodes = parseHtmlSourceNodes(sourceText, htmlVoidTags);
-  const selectorMatches = nodes.filter((node) =>
-    node.tag === target.tag && variants.has(node.selector),
-  );
-  const selected =
-    selectorMatches.length === 1
-      ? selectorMatches[0]
-      : target.cssSelector
-        ? uniqueSourceNode(nodes.filter((node) =>
-            node.tag === target.tag && node.cssSelector === target.cssSelector,
-          ))
-        : null;
-
-  return selected
-    ? sourceLocationAtOffset(host.currentHtmlRelativePath, sourceText, selected.openStart)
-    : null;
-}
-
-function uniqueSourceNode<T>(items: T[]) {
-  return items.length === 1 ? items[0] : null;
-}
-
-function sourceLocationForSourceReference(
-  host: HtmlActionsControllerHost,
-  sourceId: string | null | undefined,
-  fallbackSourceLocation?: SourceEditLocation | null,
-): SourceEditLocation | null {
-  // The caller may carry the exact location published by the same Rust
-  // navigation snapshot as the source identity. Prefer that conjunctive
-  // anchor over a global graph lookup which can already describe a newer or
-  // older projection while a structural command waits in the serialized lane.
-  if (fallbackSourceLocation) return fallbackSourceLocation;
-  const target = host.resolveSourceEditTargetForSourceId(sourceId);
-  if (target) return sourceLocationForEditTarget(target);
-  return null;
-}
-
-function sourceLocationForSessionReference(
-  host: HtmlActionsControllerHost,
-  sessionId: string | null | undefined,
-  capturedTarget?: HtmlActionTarget | null,
-): SourceEditLocation | null {
-  if (!sessionId) return null;
-  if (capturedTarget?.sessionId === sessionId && capturedTarget.sourceLocation) {
-    return capturedTarget.sourceLocation;
-  }
-  return host.pageSections.find((section) => section.sessionId === sessionId)?.sourceLocation ?? null;
-}
-
-function sourceLocationForInsertTarget(
-  host: HtmlActionsControllerHost,
-  request: PreviewInsertDropRequest,
-  targetSourceId: string | null,
-  capturedTarget?: HtmlActionTarget | null,
-): SourceEditLocation | null {
-  if (request.targetKind !== "empty-tera-slot" && request.targetKind !== "active-document-root") {
-    const sessionLocation = sourceLocationForSessionReference(
-      host,
-      request.targetSessionId,
-      capturedTarget,
-    );
-    if (sessionLocation) return sessionLocation;
-  }
-  return sourceLocationForSourceReference(host, targetSourceId, request.targetSourceLocation);
 }
 
 export function attributeMutationsFromRecord(attributes: Record<string, string | null>): ProjectHtmlAttributeMutation[] {
@@ -443,6 +329,47 @@ export function htmlAttributeRecordForKernel(
   return next;
 }
 
+const BATCH_COMMON_HTML_ATTRIBUTES = new Set([
+  "title",
+  "lang",
+  "dir",
+  "tabindex",
+  "hidden",
+  "inert",
+  "contenteditable",
+  "draggable",
+  "spellcheck",
+  "translate",
+  "role",
+]);
+
+function isBatchCommonHtmlAttribute(name: string) {
+  const normalized = name.trim().toLowerCase();
+  return BATCH_COMMON_HTML_ATTRIBUTES.has(normalized)
+    || normalized.startsWith("aria-")
+    || (normalized.startsWith("data-") && !normalized.startsWith("data-pana-"));
+}
+
+export function batchCommonAttributeMutations(
+  attributes: Readonly<EditableAttributes>,
+  primaryAttributes: Readonly<Record<string, string>>,
+): ProjectHtmlAttributeMutation[] {
+  const next = htmlAttributeRecordForKernel(attributes, primaryAttributes, false);
+  const names = new Set([...Object.keys(next), ...Object.keys(primaryAttributes)]);
+  const mutations: ProjectHtmlAttributeMutation[] = [];
+  for (const name of names) {
+    const normalized = name.trim().toLowerCase();
+    if (!isBatchCommonHtmlAttribute(normalized)) continue;
+    const nextValue = next[name] ?? next[normalized] ?? null;
+    const previousValue = primaryAttributes[name] ?? primaryAttributes[normalized] ?? null;
+    if (nextValue === previousValue) continue;
+    mutations.push(nextValue === null
+      ? { kind: "removeAttribute", name: normalized }
+      : { kind: "setAttribute", name: normalized, value: nextValue });
+  }
+  return mutations;
+}
+
 function cacheCommittedHtmlPatch(
   host: HtmlActionsControllerHost,
   patch: { file: string; contents: string },
@@ -463,32 +390,28 @@ async function executeSelectedHtmlAttributes(
   project: (patch: ProjectHtmlAttributePatch, target: HtmlActionTarget) => Promise<void> | void,
   zolaImage: ProjectZolaImageIntent | null = null,
   nativeBlockOption: NativeBlockOptionIntent | null = null,
+  nativeIcon: NativeIconMutationIntent | null = null,
+  generatedIdentity: ProjectGeneratedIdentityIntent | null = null,
 ): Promise<EditorActionOutcome> {
   const result = await runInPreviewStructuralLane(host, async (lease) => {
-    const location = sourceLocationForSourceReference(
-      host,
-      target.sourceId,
-      target.sourceLocation,
-    ) ?? activeHtmlSourceLocationForTarget(host, target);
-    if (!location) {
-      throw new Error(missingKernelLocationMessage(t("html-actions-attributes-noun")));
+    if (!target.sourceId) {
+      throw new Error(missingKernelIdentityMessage(t("html-actions-attributes-noun")));
     }
 
     const receipt = await executePreviewHtmlAttributesIntent({
       intent: {
         messageType: "preview-html-attributes",
-        selector: target.selector,
         sourceId: target.sourceId,
         sourceTag: target.tag,
       },
       attributeIntent: {
-        targetSourceId: target.sourceId ?? null,
-        targetLocation: projectSourceLocation(location),
+        targetSourceId: target.sourceId,
         targetTag: target.tag,
-        targetSelector: target.selector,
         attributes: attributeMutationsFromRecord(attributes),
         ...(zolaImage ? { zolaImage } : {}),
         ...(nativeBlockOption ? { nativeBlockOption } : {}),
+        ...(nativeIcon ? { nativeIcon } : {}),
+        ...(generatedIdentity ? { generatedIdentity } : {}),
       },
     }, previewStructuralCommandIdentity(lease, true));
 
@@ -523,7 +446,6 @@ export type ApplyNativeBlockOptionRequest = {
   providerId: string;
   optionId: string;
   value: NativeBlockOptionIntent["value"];
-  rootSelector: string;
   rootTag: string;
   rootSourceId: string | null;
   rootLocation: SourceEditLocation | null;
@@ -535,7 +457,6 @@ export async function applyNativeBlockOptionToHtml(
   request: ApplyNativeBlockOptionRequest,
 ): Promise<EditorActionOutcome> {
   const target = freezeHtmlActionTarget({
-    selector: request.rootSelector,
     tag: request.rootTag,
     sourceId: request.rootSourceId,
     sourceLocation: request.rootLocation,
@@ -562,6 +483,50 @@ export async function applyNativeBlockOptionToHtml(
     const outcome = actionErrorOutcome(error);
     host.setGlobalStatus(
       t("html-actions-block-property-failed", {
+        message: outcome.reason ?? outcome.status,
+      }),
+      "error",
+    );
+    return outcome;
+  }
+}
+
+export type ApplyNativeIconRequest = {
+  intent: NativeIconMutationIntent;
+  rootTag: string;
+  rootSourceId: string | null;
+  rootLocation: SourceEditLocation | null;
+  rootSessionId: string | null;
+};
+
+export async function applyNativeIconToHtml(
+  host: HtmlActionsControllerHost,
+  request: ApplyNativeIconRequest,
+): Promise<EditorActionOutcome> {
+  const target = freezeHtmlActionTarget({
+    tag: request.rootTag,
+    sourceId: request.rootSourceId,
+    sourceLocation: request.rootLocation,
+    sessionId: request.rootSessionId,
+  });
+  try {
+    const result = await executeSelectedHtmlAttributes(
+      host,
+      target,
+      {},
+      async () => {},
+      null,
+      null,
+      request.intent,
+    );
+    if (result.status === "committed") {
+      host.setGlobalStatus(t("html-actions-icon-property-confirmed"), "unsaved");
+    }
+    return result;
+  } catch (error) {
+    const outcome = actionErrorOutcome(error);
+    host.setGlobalStatus(
+      t("html-actions-icon-property-failed", {
         message: outcome.reason ?? outcome.status,
       }),
       "error",
@@ -624,34 +589,19 @@ async function executeSelectedHtmlText(
 ): Promise<EditorActionOutcome> {
   const result = await runInPreviewStructuralLane(host, async (lease) => {
     const groupedEditSession = Boolean(options.editSessionId);
-    const location = groupedEditSession && target.sourceLocation
-      ? target.sourceLocation
-      : sourceLocationForSourceReference(
-        host,
-        target.sourceId,
-        target.sourceLocation,
-      ) ?? activeHtmlSourceLocationForTarget(host, target);
-    if (!location) throw new Error(missingKernelLocationMessage(t("html-actions-text-noun")));
+    if (!target.sourceId) {
+      throw new Error(missingKernelIdentityMessage(t("html-actions-text-noun")));
+    }
 
     const receipt = await executePreviewHtmlTextIntent({
       intent: {
         messageType: "preview-html-text",
-        selector: target.selector,
         sourceId: target.sourceId,
         sourceTag: target.tag,
       },
       textIntent: {
-        targetSourceId: target.sourceId ?? null,
-        // A grouped edit is a long-lived Rust-owned logical identity. Once
-        // the first text mutation changes Source Graph byte ranges, combining
-        // its aliased Source ID with a newly resolved physical location can
-        // describe two different nodes. Keep the ID as the sole semantic
-        // anchor; direct HTML targets without Source IDs still use location.
-        targetLocation: groupedEditSession && target.sourceId
-          ? null
-          : projectSourceLocation(location),
+        targetSourceId: target.sourceId,
         targetTag: target.tag,
-        targetSelector: target.selector,
         text,
       },
       deferCanonicalProjection: options.deferCanonicalProjection === true,
@@ -746,6 +696,20 @@ export async function deleteSelectedHtmlElement(
   host: HtmlActionsControllerHost,
   editorTarget: EditorHtmlTarget | null = null,
 ): Promise<EditorActionOutcome> {
+  if (hasMultiElementSelection(host)) {
+    try {
+      const result = await executeSelectionBatch(host, { kind: "delete" });
+      host.structureStatus = editorActionSucceeded(result)
+        ? "Elementele selectate au fost șterse."
+        : (result.reason ?? "Ștergerea batch a fost blocată.");
+      return result;
+    } catch (error) {
+      const result = actionErrorOutcome(error);
+      host.structureStatus = result.reason ?? result.status;
+      host.setGlobalStatus(host.structureStatus, "error");
+      return result;
+    }
+  }
   const capturedTarget = captureHtmlActionTarget(editorTarget ?? host.coordinatedElementSelection);
   try {
     const result = await runInPreviewStructuralLane(host, async (lease) => {
@@ -756,14 +720,8 @@ export async function deleteSelectedHtmlElement(
         return blockedAction(host.structureStatus);
       }
 
-      const targetSelector = target.selector;
-      const tpl = sourceLocationForSourceReference(host, target.sourceId, target.sourceLocation);
-      const kernelTargetLocation = tpl ?? activeHtmlSourceLocationForTarget(host, target);
-
-      if (!kernelTargetLocation) {
-        const message = host.isActivePreviewHtmlSource
-          ? missingKernelLocationMessage(t("html-actions-delete-noun"))
-          : host.htmlSourceMutationBlockedReason || t("html-actions-source-not-editable");
+      if (!target.sourceId) {
+        const message = missingKernelIdentityMessage(t("html-actions-delete-noun"));
         host.structureStatus = message;
         host.setGlobalStatus(message, "error");
         return blockedAction(message);
@@ -772,15 +730,13 @@ export async function deleteSelectedHtmlElement(
       const receipt = await executePreviewHtmlDeleteIntent({
         intent: {
           messageType: "preview-delete-selected",
-          selector: targetSelector,
           sourceId: target.sourceId ?? null,
           sourceTag: target.tag,
         },
         deleteIntent: {
-          targetSourceId: target.sourceId ?? null,
-          targetLocation: projectSourceLocation(kernelTargetLocation),
+          targetSourceId: target.sourceId,
+          targetRenderInstanceId: target.renderInstanceId ?? null,
           targetTag: target.tag,
-          targetSelector,
         },
       }, previewStructuralCommandIdentity(lease, true));
 
@@ -817,6 +773,20 @@ export async function duplicateSelectedHtmlElement(
   host: HtmlActionsControllerHost,
   editorTarget: EditorHtmlTarget | null = null,
 ): Promise<EditorActionOutcome> {
+  if (hasMultiElementSelection(host)) {
+    try {
+      const result = await executeSelectionBatch(host, { kind: "duplicate" });
+      host.structureStatus = editorActionSucceeded(result)
+        ? "Elementele selectate au fost duplicate."
+        : (result.reason ?? "Duplicarea batch a fost blocată.");
+      return result;
+    } catch (error) {
+      const result = actionErrorOutcome(error);
+      host.structureStatus = result.reason ?? result.status;
+      host.setGlobalStatus(host.structureStatus, "error");
+      return result;
+    }
+  }
   const capturedTarget = captureHtmlActionTarget(editorTarget ?? host.coordinatedElementSelection);
   try {
     const result = await runInPreviewStructuralLane(host, async (lease) => {
@@ -832,13 +802,8 @@ export async function duplicateSelectedHtmlElement(
         return blockedAction(host.structureStatus);
       }
 
-      const targetSelector = target.selector;
-      const tpl = sourceLocationForSourceReference(host, target.sourceId, target.sourceLocation);
-      const kernelSourceLocation = tpl ?? activeHtmlSourceLocationForTarget(host, target);
-      if (!kernelSourceLocation) {
-        const message = host.isActivePreviewHtmlSource
-          ? missingKernelLocationMessage(t("html-actions-duplicate-noun"))
-          : host.htmlSourceMutationBlockedReason || t("html-actions-source-not-editable");
+      if (!target.sourceId) {
+        const message = missingKernelIdentityMessage(t("html-actions-duplicate-noun"));
         host.structureStatus = message;
         host.setGlobalStatus(message, "error");
         return blockedAction(message);
@@ -847,15 +812,12 @@ export async function duplicateSelectedHtmlElement(
       const receipt = await executePreviewHtmlDuplicateIntent({
         intent: {
           messageType: "preview-duplicate-selected",
-          selector: targetSelector,
           sourceId: target.sourceId ?? null,
           sourceTag: target.tag,
         },
         duplicateIntent: {
-          sourceSourceId: target.sourceId ?? null,
-          sourceLocation: projectSourceLocation(kernelSourceLocation),
+          sourceSourceId: target.sourceId,
           sourceTag: target.tag,
-          sourceSelector: targetSelector,
         },
       }, previewStructuralCommandIdentity(lease, true));
 
@@ -888,21 +850,107 @@ export async function duplicateSelectedHtmlElement(
   }
 }
 
+export async function mutateNativeBlockSlotStructure(
+  host: HtmlActionsControllerHost,
+  request: NativeBlockSlotMutationRequest,
+): Promise<EditorActionOutcome> {
+  if (request.operation === "move") {
+    return blockedAction("Mutarea slotului trebuie executată atomic prin Editor Move.");
+  }
+  try {
+    const result = await runInPreviewStructuralLane(host, async (lease) => {
+      const context = Object.freeze({ ...request.context });
+      let receipt: PreviewStructuralExecutionReceipt;
+      if (request.operation === "insert") {
+        const targetSourceId = request.slot.containerSourceNodeId;
+        if (!targetSourceId) {
+          return blockedAction("Containerul slotului nu mai are ancoră Source Graph stabilă.");
+        }
+        receipt = await executePreviewHtmlInsertDropIntent({
+          intent: {
+            messageType: "preview-insert-drop",
+            targetSourceId,
+            targetTag: "div",
+            targetKind: "html",
+            position: "inside",
+            elementTag: "div",
+          },
+          insertIntent: {
+            targetSourceId,
+            targetTag: "div",
+            targetKind: "html",
+            position: "inside",
+            element: {
+              kind: "nativeBlockSlotItem",
+              blockId: context.providerId,
+              tag: "div",
+              label: request.slot.itemKind,
+            },
+            nativeBlockSlot: context,
+          },
+        }, previewStructuralCommandIdentity(lease, true));
+      } else if (request.operation === "duplicate") {
+        const item = request.item;
+        if (!item) return blockedAction("Slide-ul de duplicat nu mai există.");
+        receipt = await executePreviewHtmlDuplicateIntent({
+          intent: {
+            messageType: "preview-duplicate-selected",
+            sourceId: item.sourceNodeId,
+            sourceTag: item.tag,
+          },
+          duplicateIntent: {
+            sourceSourceId: item.sourceNodeId,
+            sourceTag: item.tag,
+            nativeBlockSlot: context,
+          },
+        }, previewStructuralCommandIdentity(lease, true));
+      } else {
+        const item = request.item;
+        if (!item) return blockedAction("Slide-ul de șters nu mai există.");
+        receipt = await executePreviewHtmlDeleteIntent({
+          intent: {
+            messageType: "preview-delete-selected",
+            sourceId: item.sourceNodeId,
+            sourceTag: item.tag,
+          },
+          deleteIntent: {
+            targetSourceId: item.sourceNodeId,
+            targetTag: item.tag,
+            nativeBlockSlot: context,
+          },
+        }, previewStructuralCommandIdentity(lease, true));
+      }
+      const blocked = blockedReceiptOutcome(receipt, "Rust a refuzat mutația slotului.");
+      if (blocked) return blocked;
+      if (receipt.status !== "committed" || !receipt.patch) {
+        throw new Error("Rust nu a emis patch-ul structural al slotului.");
+      }
+      const patch = receipt.patch;
+      await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
+        cacheCommittedHtmlPatch(host, patch);
+        host.structureStatus = "Structura Slider a fost salvată.";
+      });
+      return committedAction();
+    });
+    return result ?? cancelledAction("Sesiunea structurală s-a schimbat.");
+  } catch (error) {
+    const outcome = actionErrorOutcome(error);
+    host.setGlobalStatus(outcome.reason ?? "Mutația Slider a eșuat.", "error");
+    return outcome;
+  }
+}
+
 export async function insertPaletteElementAtTarget(
   host: HtmlActionsControllerHost,
   request: PreviewInsertDropRequest,
 ): Promise<EditorActionOutcome> {
   const capturedRequest = Object.freeze({
     ...request,
-    targetSourceLocation: request.targetSourceLocation
-      ? Object.freeze({ ...request.targetSourceLocation })
-      : null,
     element: Object.freeze({ ...request.element }),
   });
-  const capturedTarget = captureHtmlActionTarget(host.coordinatedElementSelection);
   try {
     const result = await runInPreviewStructuralLane(host, (lease) =>
-      insertPaletteElementAtTargetInLane(host, capturedRequest, capturedTarget, lease));
+      insertPaletteElementAtTargetInLane(host, capturedRequest, lease));
     return result ?? cancelledAction();
   } catch (error) {
     const result = actionErrorOutcome(error);
@@ -919,27 +967,13 @@ export async function insertPaletteElementAtTarget(
 async function insertPaletteElementAtTargetInLane(
   host: HtmlActionsControllerHost,
   request: PreviewInsertDropRequest,
-  capturedTarget: HtmlActionTarget | null,
   lease: PreviewStructuralSessionLease,
 ): Promise<EditorActionOutcome> {
   const targetSourceId = request.targetSourceId ||
     (request.targetKind === "empty-tera-slot" || request.targetKind === "active-document-root"
       ? request.targetTemplateSourceId
       : null);
-  const targetTpl = sourceLocationForInsertTarget(
-    host,
-    request,
-    targetSourceId,
-    capturedTarget,
-  );
-  const targetLocation = targetTpl ?? activeHtmlSourceLocationForTarget(host, {
-    selector: request.targetSelector,
-    tag: request.targetTag,
-    sourceId: targetSourceId,
-    sourceLocation: request.targetSourceLocation,
-    sessionId: request.targetSessionId,
-  });
-  if (!host.canEditHtmlStructure && !targetLocation) {
+  if (!host.canEditHtmlStructure) {
     host.structureStatus = t("html-actions-switch-preview");
     host.setGlobalStatus(host.structureStatus, "error");
     return blockedAction(host.structureStatus);
@@ -950,7 +984,7 @@ async function insertPaletteElementAtTargetInLane(
     return blockedAction(host.structureStatus);
   }
 
-  if (!targetLocation) {
+  if (!targetSourceId) {
     host.structureStatus = t("html-actions-target-metadata-unstable");
     host.setGlobalStatus(host.structureStatus, "error");
     return blockedAction(host.structureStatus);
@@ -971,7 +1005,6 @@ async function insertPaletteElementAtTargetInLane(
     const receipt = await executePreviewHtmlInsertDropIntent({
       intent: {
         messageType: "preview-insert-drop",
-        targetSelector: request.targetSelector,
         targetSourceId,
         targetTemplateSourceId: request.targetTemplateSourceId,
         targetSessionId: request.targetSessionId,
@@ -982,9 +1015,7 @@ async function insertPaletteElementAtTargetInLane(
       },
       insertIntent: {
         targetSourceId,
-        targetLocation: projectSourceLocation(targetLocation),
         targetTag: request.targetTag,
-        targetSelector: request.targetSelector,
         targetKind: request.targetKind ?? "html",
         position: request.position,
         element: {
@@ -1026,18 +1057,6 @@ function generatedPanaClass(className: string) {
   return /^ps-[a-z0-9-]+-[a-z0-9]{6,}$/i.test(className.trim());
 }
 
-function existingGeneratedClass(
-  classEditorValue: string,
-  target: HtmlActionTarget,
-) {
-  return normalizeClassTokens(classEditorValue || target.classes?.join(" ") || "")
-    .find(generatedPanaClass) ?? null;
-}
-
-function validClassToken(value: string) {
-  return /^[A-Za-z_-][A-Za-z0-9_-]*$/.test(value);
-}
-
 export async function generateClassForSelectedHtml(
   host: HtmlActionsControllerHost,
 ): Promise<EditorActionOutcome> {
@@ -1046,37 +1065,45 @@ export async function generateClassForSelectedHtml(
     host.classStatus = t("html-actions-class-select");
     return blockedAction(host.classStatus);
   }
-  let sessionLease: PreviewStructuralSessionLease;
-  try {
-    sessionLease = capturePreviewStructuralSessionLease(host);
-  } catch (error) {
-    if (isPreviewStructuralCancellation(error)) return cancelledAction(errorMessage(error));
-    throw error;
+  if (hasMultiElementSelection(host)) {
+    host.setHtmlPending("classes", true);
+    host.classStatus = t("inspector-applying");
+    try {
+      const result = await runInPreviewStructuralLane(host, async (lease) => {
+        if (!lease.selection || lease.selection.members.length < 2) {
+          return blockedAction("Generarea clasei comune cere cel puțin două elemente selectate.");
+        }
+        const receipt = await executePreviewSelectionBatchIntent({
+          schemaVersion: 1,
+          action: { kind: "generateSharedClass" },
+        }, previewStructuralCommandIdentity(lease, true));
+        if (receipt.status !== "committed" || !receipt.generatedClass) {
+          return blockedAction(
+            receipt.diagnostics[0] || "Kernelul nu a confirmat clasa comună generată.",
+          );
+        }
+        await projectCommittedPreviewSelectionBatchMutation(host, lease, receipt);
+        const classes = normalizeClassTokens(host.classEditorValue);
+        if (!classes.includes(receipt.generatedClass)) {
+          host.classEditorValue = [...classes, receipt.generatedClass].join(" ");
+        }
+        return committedAction();
+      });
+      const outcome = result ?? cancelledAction("Generarea clasei comune a fost anulată.");
+      host.classStatus = editorActionSucceeded(outcome)
+        ? t("html-actions-classes-applied")
+        : (outcome.reason ?? t("html-actions-classes-kernel-refused"));
+      return outcome;
+    } catch (error) {
+      const result = actionErrorOutcome(error);
+      host.classStatus = result.reason ?? result.status;
+      host.setGlobalStatus(host.classStatus, "error");
+      return result;
+    } finally {
+      host.setHtmlPending("classes", false);
+    }
   }
-
-  const classEditorValue = host.classEditorValue;
-  const attributeValues = Object.freeze({ ...host.attributeValues });
-  const currentClasses = normalizeClassTokens(classEditorValue || target.classes?.join(" ") || "");
-  const existing = currentClasses.find(generatedPanaClass);
-  if (existing) {
-    host.classStatus = t("html-actions-class-already-generated", { name: existing });
-    return noopAction(host.classStatus);
-  }
-
-  const currentDataAnim = attributeValues["data-anim"]?.trim() ?? "";
-  const reusableDataAnim = generatedPanaClass(currentDataAnim) && validClassToken(currentDataAnim) ? currentDataAnim : null;
-  const identity = reusableDataAnim
-    ? { className: reusableDataAnim }
-    : generateUniqueHtmlIdentity(target.tag, await collectIdentitySourceTexts(host));
-  if (!previewStructuralSessionLeaseMatches(host, sessionLease)) {
-    return cancelledAction(t("html-actions-class-session-cancelled"));
-  }
-  return await applyClassesToTarget(
-    host,
-    target,
-    [...currentClasses, identity.className],
-    { markPending: false },
-  );
+  return await generateIdentityForTarget(host, target, "class");
 }
 
 export async function generateDataAnimForSelectedHtml(
@@ -1087,40 +1114,85 @@ export async function generateDataAnimForSelectedHtml(
     host.attributeStatus = t("html-actions-data-anim-select");
     return blockedAction(host.attributeStatus);
   }
-  let sessionLease: PreviewStructuralSessionLease;
+  return await generateIdentityForTarget(host, target, "dataAnim");
+}
+
+async function generateIdentityForTarget(
+  host: HtmlActionsControllerHost,
+  target: HtmlActionTarget,
+  kind: ProjectGeneratedIdentityKind,
+): Promise<EditorActionOutcome> {
+  const pendingArea: HtmlPendingArea = kind === "class" ? "classes" : "attributes";
+  const baselineClasses = normalizeClassTokens(host.classEditorValue).join(" ");
+  const baselineAttributeValues = Object.freeze({ ...host.attributeValues });
+  const baselineAttributes = attributeDraftToken(baselineAttributeValues);
+  host.setHtmlPending(pendingArea, true);
+  if (kind === "class") host.classStatus = t("inspector-applying");
+  else host.attributeStatus = t("inspector-applying");
+
   try {
-    sessionLease = capturePreviewStructuralSessionLease(host);
+    const result = await executeSelectedHtmlAttributes(
+      host,
+      target,
+      {},
+      (patch, capturedTarget) => {
+        const projection = patch.generatedIdentity;
+        if (!projection || projection.kind !== kind) {
+          throw new Error(t("html-actions-generated-identity-receipt-invalid"));
+        }
+        if (!currentSelectionMatchesTarget(host, capturedTarget)) return;
+
+        if (kind === "class") {
+          const submittedClasses = normalizeClassTokens(projection.classes.join(" ")).join(" ");
+          const currentClasses = normalizeClassTokens(host.classEditorValue).join(" ");
+          if (committedDraftCanSettle(currentClasses, submittedClasses, baselineClasses)) {
+            host.classEditorValue = submittedClasses;
+          }
+          host.classStatus = projection.alreadyPresent
+            ? t("html-actions-class-already-generated", { name: projection.value })
+            : t("html-actions-classes-applied");
+          return;
+        }
+
+        const nextAttributes = { ...baselineAttributeValues };
+        if (projection.dataAnim) nextAttributes["data-anim"] = projection.dataAnim;
+        else delete nextAttributes["data-anim"];
+        const submittedAttributes = attributeDraftToken(nextAttributes);
+        if (committedDraftCanSettle(
+          attributeDraftToken(host.attributeValues),
+          submittedAttributes,
+          baselineAttributes,
+        )) {
+          host.attributeValues = nextAttributes;
+        }
+        host.attributeStatus = projection.alreadyPresent
+          ? t("html-actions-data-anim-exists", { value: projection.value })
+          : t("html-actions-attributes-applied");
+      },
+      null,
+      null,
+      null,
+      { kind },
+    );
+    host.setHtmlPending(pendingArea, false);
+    if (!editorActionSucceeded(result)) {
+      const reason = result.reason ?? t("html-actions-attributes-kernel-refused");
+      if (kind === "class") host.classStatus = reason;
+      else host.attributeStatus = reason;
+      host.setGlobalStatus(reason, "error");
+    }
+    return result;
   } catch (error) {
-    if (isPreviewStructuralCancellation(error)) return cancelledAction(errorMessage(error));
-    throw error;
-  }
-
-  const attributeValues = Object.freeze({ ...host.attributeValues });
-  const classEditorValue = host.classEditorValue;
-  const currentDataAnim = attributeValues["data-anim"]?.trim() ?? "";
-  if (currentDataAnim) {
-    host.attributeStatus = t("html-actions-data-anim-exists", {
-      value: currentDataAnim,
+    host.setHtmlPending(pendingArea, false);
+    const result = actionErrorOutcome(error);
+    const message = t("html-actions-generic-error", {
+      message: result.reason ?? result.status,
     });
-    return noopAction(host.attributeStatus);
+    if (kind === "class") host.classStatus = message;
+    else host.attributeStatus = message;
+    host.setGlobalStatus(message, "error");
+    return result;
   }
-
-  const reusableClass = existingGeneratedClass(classEditorValue, target);
-  const identity = reusableClass
-    ? { dataAnim: reusableClass }
-    : generateUniqueHtmlIdentity(target.tag, await collectIdentitySourceTexts(host));
-  if (!previewStructuralSessionLeaseMatches(host, sessionLease)) {
-    return cancelledAction(t("html-actions-data-anim-session-cancelled"));
-  }
-  return await applyAttributesToTarget(
-    host,
-    target,
-    {
-      ...attributeValues,
-      "data-anim": identity.dataAnim,
-    },
-    { markPending: false },
-  );
 }
 
 export async function insertNodeRelative(
@@ -1173,72 +1245,66 @@ async function insertNodeRelativeInLane(
     return;
   }
 
-  const tpl = sourceLocationForSourceReference(host, target.sourceId, target.sourceLocation);
-  const targetSelector = target.selector;
-  const kernelTargetLocation = tpl ?? activeHtmlSourceLocationForTarget(host, target);
-  if (kernelTargetLocation) {
-    try {
-      const insertPosition = position === "child" ? "inside" : position;
-      const receipt = await executePreviewHtmlInsertDropIntent({
-        intent: {
-          messageType: "preview-insert-drop",
-          targetSelector,
-          targetSourceId: target.sourceId ?? null,
-          targetTemplateSourceId: target.templateSourceId,
-          targetSessionId: target.sessionId,
-          targetTag: target.tag,
-          targetKind: "html",
-          position: insertPosition,
-          elementTag: opts.tag,
-        },
-        insertIntent: {
-          targetSourceId: target.sourceId ?? null,
-          targetLocation: projectSourceLocation(kernelTargetLocation),
-          targetTag: target.tag,
-          targetSelector,
-          targetKind: "html",
-          position: insertPosition,
-          element: {
-            kind: "html",
-            blockId: null,
-            tag: opts.tag,
-            className: opts.className,
-            text: opts.text,
-            label: t("html-actions-element-label", { tag: opts.tag }),
-          },
-        },
-      }, previewStructuralCommandIdentity(lease, true));
-
-      const patch = requireCommittedPreviewStructuralPatch(
-        receipt,
-        t("html-actions-insert-engine-blocked"),
-      );
-      await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
-        cacheCommittedHtmlPatch(host, patch);
-        const label = position === "before"
-          ? t("html-actions-position-before")
-          : position === "after"
-            ? t("html-actions-position-after")
-            : t("html-actions-position-child");
-        host.structureStatus = t("html-actions-inserted", {
-          tag: patch.tag,
-          position: label,
-        });
-      });
-    } catch (error) {
-      host.structureStatus = t("html-actions-generic-error", {
-        message: errorMessage(error),
-      });
-      host.setGlobalStatus(t("html-actions-insert-error", {
-        message: errorMessage(error),
-      }), "error");
-    }
+  if (!target.sourceId) {
+    const message = missingKernelIdentityMessage(t("html-actions-insert-noun"));
+    host.structureStatus = message;
+    host.setGlobalStatus(message, "error");
     return;
   }
 
-  const message = missingKernelLocationMessage(t("html-actions-insert-noun"));
-  host.structureStatus = message;
-  host.setGlobalStatus(message, "error");
+  try {
+    const insertPosition = position === "child" ? "inside" : position;
+    const receipt = await executePreviewHtmlInsertDropIntent({
+      intent: {
+        messageType: "preview-insert-drop",
+        targetSourceId: target.sourceId,
+        targetTemplateSourceId: target.templateSourceId,
+        targetSessionId: target.sessionId,
+        targetTag: target.tag,
+        targetKind: "html",
+        position: insertPosition,
+        elementTag: opts.tag,
+      },
+      insertIntent: {
+        targetSourceId: target.sourceId,
+        targetTag: target.tag,
+        targetKind: "html",
+        position: insertPosition,
+        element: {
+          kind: "html",
+          blockId: null,
+          tag: opts.tag,
+          className: opts.className,
+          text: opts.text,
+          label: t("html-actions-element-label", { tag: opts.tag }),
+        },
+      },
+    }, previewStructuralCommandIdentity(lease, true));
+
+    const patch = requireCommittedPreviewStructuralPatch(
+      receipt,
+      t("html-actions-insert-engine-blocked"),
+    );
+    await projectCommittedPreviewStructuralMutation(host, lease, receipt, patch, () => {
+      cacheCommittedHtmlPatch(host, patch);
+      const label = position === "before"
+        ? t("html-actions-position-before")
+        : position === "after"
+          ? t("html-actions-position-after")
+          : t("html-actions-position-child");
+      host.structureStatus = t("html-actions-inserted", {
+        tag: patch.tag,
+        position: label,
+      });
+    });
+  } catch (error) {
+    host.structureStatus = t("html-actions-generic-error", {
+      message: errorMessage(error),
+    });
+    host.setGlobalStatus(t("html-actions-insert-error", {
+      message: errorMessage(error),
+    }), "error");
+  }
 }
 
 export async function applyImageSourceToHtml(
@@ -1311,6 +1377,37 @@ export async function applyClassesToHtml(host: HtmlActionsControllerHost): Promi
   }
 
   const normalizedClasses = normalizeClassTokens(host.classEditorValue);
+  if (hasMultiElementSelection(host)) {
+    const primaryClasses = normalizeClassTokens(target.classes?.join(" ") ?? "");
+    const nextClasses = new Set(normalizedClasses);
+    const previousClasses = new Set(primaryClasses);
+    const add = normalizedClasses.filter((className) => !previousClasses.has(className));
+    const remove = primaryClasses.filter((className) => !nextClasses.has(className));
+    if (add.length === 0 && remove.length === 0) {
+      host.setHtmlPending("classes", false);
+      host.classStatus = t("html-actions-classes-no-changes");
+      return noopAction(host.classStatus);
+    }
+    host.setHtmlPending("classes", true);
+    try {
+      const result = await executeSelectionBatch(host, {
+        kind: "mutateClasses",
+        add,
+        remove,
+      });
+      host.classStatus = editorActionSucceeded(result)
+        ? t("html-actions-classes-applied")
+        : (result.reason ?? t("html-actions-classes-kernel-refused"));
+      return result;
+    } catch (error) {
+      const result = actionErrorOutcome(error);
+      host.classStatus = result.reason ?? result.status;
+      host.setGlobalStatus(host.classStatus, "error");
+      return result;
+    } finally {
+      host.setHtmlPending("classes", false);
+    }
+  }
   return await applyClassesToTarget(host, target, normalizedClasses);
 }
 
@@ -1407,6 +1504,32 @@ export async function applyAttributesToHtml(
   const attributeValues = Object.freeze({
     ...(attributeOverride ?? host.attributeValues),
   });
+  if (hasMultiElementSelection(host)) {
+    const mutations = batchCommonAttributeMutations(attributeValues, target.attributes ?? {});
+    if (mutations.length === 0) {
+      host.setHtmlPending("attributes", false);
+      host.attributeStatus = t("inspector-no-canonical-difference");
+      return noopAction(host.attributeStatus);
+    }
+    host.setHtmlPending("attributes", true);
+    try {
+      const result = await executeSelectionBatch(host, {
+        kind: "setAttributes",
+        attributes: mutations,
+      });
+      host.attributeStatus = editorActionSucceeded(result)
+        ? t("html-actions-attributes-applied")
+        : (result.reason ?? t("html-actions-attributes-kernel-refused"));
+      return result;
+    } catch (error) {
+      const result = actionErrorOutcome(error);
+      host.attributeStatus = result.reason ?? result.status;
+      host.setGlobalStatus(host.attributeStatus, "error");
+      return result;
+    } finally {
+      host.setHtmlPending("attributes", false);
+    }
+  }
   return await applyAttributesToTarget(host, target, attributeValues);
 }
 
@@ -1513,10 +1636,16 @@ export async function applyTextContentToCapturedHtmlTarget(
     host.textStatus = t("html-actions-text-simple-only");
     return blockedAction(host.textStatus);
   }
-  const selectionSourceKey =
-    target.sourceId ??
-    (target.sourceLocation ? formatSourceEditLocation(target.sourceLocation) : "");
-  const selectionKey = `${selectionSourceKey}::${target.selector}`;
+  if (!target.sourceId) {
+    host.textStatus = missingKernelIdentityMessage(t("html-actions-text-noun"));
+    return blockedAction(host.textStatus);
+  }
+  const selectionKey = [
+    target.sessionId ?? "",
+    target.selectionRevision ?? "",
+    target.sourceId,
+    target.renderInstanceId ?? "",
+  ].join("::");
   const previousText =
     host.textEditOriginalKey === selectionKey
       ? host.textEditOriginalText ?? ""

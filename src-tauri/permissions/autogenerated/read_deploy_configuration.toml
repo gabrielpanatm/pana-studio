@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-deploy-configuration"
+description = "Enables the read_deploy_configuration command without any pre-configured scope."
+commands.allow = ["read_deploy_configuration"]
+
+[[permission]]
+identifier = "deny-read-deploy-configuration"
+description = "Denies the read_deploy_configuration command without any pre-configured scope."
+commands.deny = ["read_deploy_configuration"]

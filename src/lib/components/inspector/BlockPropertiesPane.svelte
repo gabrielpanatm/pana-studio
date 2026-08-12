@@ -7,6 +7,8 @@
   } from "@tabler/icons-svelte";
   import type { EditorActionOutcome } from "$lib/editor-runtime/action-outcome";
   import DynamicWidgetPropertiesEditor from "$lib/components/inspector/DynamicWidgetPropertiesEditor.svelte";
+  import IconBlockPropertiesEditor from "$lib/components/inspector/IconBlockPropertiesEditor.svelte";
+  import SliderBlockPropertiesEditor from "$lib/components/inspector/SliderBlockPropertiesEditor.svelte";
   import { resolveUiBlockSourceInstanceForSelection } from "$lib/blocks/registry";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readDynamicWidgetSnapshot, readUiBlockGraph } from "$lib/project/io";
@@ -19,6 +21,8 @@
     DynamicWidgetSelectionContext,
     DynamicWidgetSnapshot,
     NativeBlockOptionState,
+    NativeIconMutationIntent,
+    NativeBlockSlotMutationRequest,
     SourceGraph,
     UiBlockGraphSnapshot,
     UiBlockSourceInstance,
@@ -29,7 +33,6 @@
     providerId: string;
     optionId: string;
     value: BlockOptionValue;
-    rootSelector: string;
     rootTag: string;
     rootSourceId: string | null;
     rootLocation: UiBlockSourceInstance["rootLocation"];
@@ -49,6 +52,8 @@
     collapsed = false,
     onLayoutCommit,
     onApply,
+    onIconUpdate,
+    onSlotMutation,
     onDynamicUpdate,
     onDynamicDelete,
   }: {
@@ -64,6 +69,12 @@
     collapsed?: boolean;
     onLayoutCommit?: (height: number, collapsed: boolean) => void;
     onApply: (request: ApplyRequest) => Promise<EditorActionOutcome>;
+    onIconUpdate: (
+      intent: NativeIconMutationIntent,
+      context: BlockSelectionContext,
+      source: UiBlockSourceInstance,
+    ) => Promise<EditorActionOutcome>;
+    onSlotMutation: (request: NativeBlockSlotMutationRequest) => Promise<EditorActionOutcome>;
     onDynamicUpdate: (
       snapshot: DynamicWidgetSnapshot,
       properties: DynamicWidgetProperties,
@@ -235,7 +246,6 @@
       providerId: instance.providerId,
       optionId: option.id,
       value,
-      rootSelector: context.rootSelector,
       rootTag: context.rootTag,
       rootSourceId: instance.rootSourceNodeId,
       rootLocation: instance.rootLocation,
@@ -260,6 +270,7 @@
       case "dialog": return t("inspector-block-dialog");
       case "offcanvas": return t("inspector-block-offcanvas");
       case "nav-menu": return t("inspector-block-nav-menu");
+      case "slider": return t("inspector-block-slider");
       default: return fallback;
     }
   }
@@ -280,6 +291,14 @@
       case "offcanvas:side": return t("inspector-block-option-offcanvas-side");
       case "nav-menu:accessibleLabel": return t("inspector-block-option-nav-label");
       case "nav-menu:closeOnSelect": return t("inspector-block-option-nav-close");
+      case "slider:accessibleLabel": return t("inspector-block-option-slider-label");
+      case "slider:loop": return t("inspector-block-option-slider-loop");
+      case "slider:initialSlide": return t("inspector-block-option-slider-initial");
+      case "slider:autoplay": return t("inspector-block-option-slider-autoplay");
+      case "slider:interval": return t("inspector-block-option-slider-interval");
+      case "slider:pauseOnHover": return t("inspector-block-option-slider-hover");
+      case "slider:pauseOnFocus": return t("inspector-block-option-slider-focus");
+      case "slider:pauseOnInteraction": return t("inspector-block-option-slider-interaction");
       default: return option.label;
     }
   }
@@ -305,6 +324,14 @@
         return t("inspector-block-option-nav-label-description");
       case "nav-menu:closeOnSelect":
         return t("inspector-block-option-nav-close-description");
+      case "slider:accessibleLabel": return t("inspector-block-option-slider-label-description");
+      case "slider:loop": return t("inspector-block-option-slider-loop-description");
+      case "slider:initialSlide": return t("inspector-block-option-slider-initial-description");
+      case "slider:autoplay": return t("inspector-block-option-slider-autoplay-description");
+      case "slider:interval": return t("inspector-block-option-slider-interval-description");
+      case "slider:pauseOnHover": return t("inspector-block-option-slider-hover-description");
+      case "slider:pauseOnFocus": return t("inspector-block-option-slider-focus-description");
+      case "slider:pauseOnInteraction": return t("inspector-block-option-slider-interaction-description");
       default: return option.description;
     }
   }
@@ -457,7 +484,41 @@
           </p>
         {/if}
 
-        {#if definition && sourceInstance}
+        {#if blockContext.providerId === "icon" && sourceInstance?.icon}
+          <IconBlockPropertiesEditor
+            {sourceInstance}
+            disabled={!sourceInstance.editable}
+            onApply={(intent) => onIconUpdate(intent, blockContext, sourceInstance)}
+          />
+        {:else if blockContext.providerId === "icon" && sourceInstance}
+          <p class="diagnostic">{t("inspector-icon-contract-invalid")}</p>
+        {:else if blockContext.providerId === "slider" && sourceInstance && graph}
+          <SliderBlockPropertiesEditor
+            {sourceInstance}
+            modelRevision={graph.modelRevision}
+            disabled={!sourceInstance.editable}
+            onMutate={onSlotMutation}
+          />
+          {#if definition && definition.options.length > 0}
+            <div class="option-list">
+              {#each definition.options as option (option.id)}
+                <label class="option-row">
+                  <span>
+                    <strong>{localizedOptionLabel(sourceInstance.providerId, option)}</strong>
+                    <small>{localizedOptionDescription(sourceInstance.providerId, option)}</small>
+                  </span>
+                  {#if option.control === "toggle"}
+                    <input type="checkbox" checked={booleanValue(option)} disabled={!sourceInstance.editable || Boolean(pendingOption)} onchange={(event) => { setDraft(option.id, { kind: "boolean", value: event.currentTarget.checked }); void commit(option); }} />
+                  {:else if option.control === "number"}
+                    <input class="value-input" type="number" value={numberValue(option)} min={option.constraints.minimum ?? undefined} max={option.constraints.maximum ?? undefined} step={option.constraints.step ?? 1} disabled={!sourceInstance.editable || Boolean(pendingOption)} oninput={(event) => { const next = event.currentTarget.valueAsNumber; if (Number.isFinite(next)) setDraft(option.id, { kind: "integer", value: next }); }} onblur={() => { void commit(option); }} onkeydown={(event) => handleTextKeydown(event, option)} />
+                  {:else}
+                    <input class="value-input" type="text" value={textValue(option)} maxlength={option.constraints.maximumLength ?? undefined} disabled={!sourceInstance.editable || Boolean(pendingOption)} oninput={(event) => setDraft(option.id, { kind: "text", value: event.currentTarget.value })} onblur={() => { void commit(option); }} onkeydown={(event) => handleTextKeydown(event, option)} />
+                  {/if}
+                </label>
+              {/each}
+            </div>
+          {/if}
+        {:else if definition && sourceInstance}
           {#if definition.options.length === 0}
             <p class="empty">{t("inspector-block-no-options")}</p>
           {:else}

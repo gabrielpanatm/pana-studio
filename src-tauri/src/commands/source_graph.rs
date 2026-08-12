@@ -23,7 +23,10 @@ use crate::{
         SitePageStructureInput, SitePartialIncludeInput, SitePartialStructureInput,
         SiteSingleStructureInput, SiteTemplateWriteOrigin,
     },
-    project_model::model::ProjectModel,
+    project_model::{
+        model::ProjectModel, rebuild_project_model_after_workspace_change,
+        ProjectModelIncrementalIntent,
+    },
     source_graph::{
         build_taxonomy_catalog, build_template_catalog_with_taxonomies, SourceGraph,
         TaxonomyCatalogSnapshot, TemplateCatalogSnapshot,
@@ -173,15 +176,13 @@ pub fn read_template_catalog(
     state: State<AppState>,
 ) -> Result<TemplateCatalogProjectionReceipt, String> {
     use crate::project_model::cache::{
-        capture_project_model_build_context, publish_project_model_if_current,
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
     };
 
     let (root, session, context) = capture_project_model_build_context(&state)?;
     require_preview_command_identity(&session, &identity)?;
-    let model = crate::project_model::build_project_model_from_workspace_projection(
-        &root,
-        context.projection(),
-    )?;
+    let model = build_project_model_from_context(&root, &context)?;
     let graph = model.source_graph.clone();
     let taxonomy_catalog = ["zola.toml", "config.toml"].iter().find_map(|path| {
         context
@@ -206,15 +207,13 @@ pub fn read_taxonomy_catalog(
     state: State<AppState>,
 ) -> Result<TaxonomyCatalogProjectionReceipt, String> {
     use crate::project_model::cache::{
-        capture_project_model_build_context, publish_project_model_if_current,
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
     };
 
     let (root, session, context) = capture_project_model_build_context(&state)?;
     require_preview_command_identity(&session, &identity)?;
-    let model = crate::project_model::build_project_model_from_workspace_projection(
-        &root,
-        context.projection(),
-    )?;
+    let model = build_project_model_from_context(&root, &context)?;
     let graph = model.source_graph.clone();
     let (config_path, config_source) = ["zola.toml", "config.toml"]
         .iter()
@@ -244,7 +243,8 @@ pub(crate) fn read_source_graph_from_accepted_project(
     state: &State<AppState>,
 ) -> Result<SourceGraphProjectionReceipt, String> {
     use crate::project_model::cache::{
-        capture_project_model_build_context, publish_project_model_if_current,
+        build_project_model_from_context, capture_project_model_build_context,
+        publish_project_model_if_current,
     };
 
     let (root, session, context) = capture_project_model_build_context(state)?;
@@ -268,10 +268,7 @@ pub(crate) fn read_source_graph_from_accepted_project(
             // Workspace mutations invalidate ProjectModel before every derived
             // frontend view. Preview normally republishes it first; activities
             // without a mounted Canvas still need an exact Rust projection.
-            let model = crate::project_model::build_project_model_from_workspace_projection(
-                &root,
-                context.projection(),
-            )?;
+            let model = build_project_model_from_context(&root, &context)?;
             let graph = model.source_graph.clone();
             publish_project_model_if_current(state, &context, model)?;
             graph
@@ -571,19 +568,13 @@ where
         &changes,
         create_only_paths,
     )?;
+    let previous_model = workspace.project_model.clone();
+    let previous_model_source_revision = workspace.project_model_source_revision;
+    let changed_paths = changes
+        .iter()
+        .map(|change| change.relative_path.clone())
+        .collect::<Vec<_>>();
     let create_only = create_only_paths.iter().cloned().collect::<HashSet<_>>();
-    let mut candidate = workspace.capture_projection_snapshot()?;
-    for change in &changes {
-        candidate.deleted_sources.remove(&change.relative_path);
-        candidate.changed_paths.insert(change.relative_path.clone());
-        candidate
-            .source_texts
-            .insert(change.relative_path.clone(), change.new_text.clone());
-    }
-    let after_model = crate::project_model::build_project_model_from_workspace_projection(
-        &context.root,
-        &candidate,
-    )?;
     let identity = ProjectWorkspaceIdentity {
         expected_project_root: workspace.session.project_root.clone(),
         expected_session_id: workspace.runtime_session_id(),
@@ -607,6 +598,16 @@ where
             .collect(),
         crate::kernel::file_buffer_store::now_ms(),
     )?;
+    let projection = workspace.capture_projection_snapshot()?;
+    let after_model = rebuild_project_model_after_workspace_change(
+        &context.root,
+        previous_model.as_ref(),
+        previous_model_source_revision,
+        &projection,
+        &changed_paths,
+        ProjectModelIncrementalIntent::Unsupported,
+    )?
+    .model;
     let touched_files = mutation.touched_files.clone();
     let authority = site_structure_authority_receipt(context, Some(&mutation), &touched_files);
     Ok(SiteStructureCommandOutcome {

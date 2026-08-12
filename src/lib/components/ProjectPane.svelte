@@ -42,7 +42,8 @@
   export let editorNavigationSnapshot: EditorNavigationSnapshot | null = null;
   export let editorNavigationLoading = false;
   export let editorNavigationError = "";
-  export let coordinatedSelectionNodeId: string | null = null;
+  export let coordinatedSelectionNodeIds: string[] = [];
+  export let coordinatedPrimaryNodeId: string | null = null;
   export let hoveredEditorNavigationNodeId: string | null = null;
   export let editorEditScopeId: string | null = null;
   export let selectFileExplorerEntry: (entryId: string) => void | Promise<void>;
@@ -142,7 +143,10 @@
     snapshot: InsertCatalogSnapshot,
     event: PointerEvent,
   ) => void;
-  export let selectEditorNavigationNode: (node: EditorNavigationNode) => void;
+  export let selectEditorNavigationNode: (
+    node: EditorNavigationNode,
+    options?: { toggle?: boolean; extendRange?: boolean; setPrimary?: boolean },
+  ) => void | Promise<unknown>;
   export let hoverEditorNavigationNode: (node: EditorNavigationNode | null) => void;
   export let enterEditorNavigationScope: (scopeId: string) => void | Promise<unknown>;
   export let exitEditorNavigationScope: () => void;
@@ -163,7 +167,7 @@
     node: EditorNavigationNode,
     x: number,
     y: number,
-  ) => void;
+  ) => void | Promise<unknown>;
 
   async function openEditorNavigationDocument(
     documentPath: string,
@@ -249,7 +253,8 @@
       snapshot={editorNavigationSnapshot}
       loading={editorNavigationLoading}
       error={editorNavigationError}
-      selectedNodeId={coordinatedSelectionNodeId}
+      selectedNodeIds={coordinatedSelectionNodeIds}
+      primaryNodeId={coordinatedPrimaryNodeId}
       hoveredNodeId={hoveredEditorNavigationNodeId}
       openScopeId={editorEditScopeId}
       selectNode={selectEditorNavigationNode}

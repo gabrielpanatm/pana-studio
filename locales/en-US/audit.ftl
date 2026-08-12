@@ -6,52 +6,32 @@ audit-category-accessibility = Accessibility
 audit-category-seo = SEO
 audit-category-assets = Assets
 audit-category-workspace = Workspace
-audit-zola-valid = Zola validation passed
-audit-zola-invalid = Invalid Zola project
-audit-zola-unavailable = Validation unavailable
-audit-zola-queued = Validation scheduled
-audit-zola-running = Validation in progress
-audit-zola-none = Zola not validated
+audit-category-components = Components
+audit-category-content = Content
+audit-category-data = Data
+audit-category-deploy = Deploy
+audit-category-performance = Performance
+audit-category-crawl = Crawl
 audit-full-failed = Full audit failed: { $error }
 audit-project-location = Project
 audit-eyebrow = Quality workspace
 audit-title = Project audit
-audit-description = Structural problems are derived from the current Rust session; Zola validation separately confirms the real build.
+audit-description = Findings, evidence, and provider coverage are derived by Rust from the exact session revision.
 audit-refresh = Reanalyze
 audit-run-full = Run full audit
 audit-tabs-label = Audit views
 audit-summary-label = Audit summary
-audit-errors-count =
-    { $count ->
-        [one] { $count } error
-       *[other] { $count } errors
-    }
-audit-warnings-count =
-    { $count ->
-        [one] { $count } warning
-       *[other] { $count } warnings
-    }
-audit-info-count =
-    { $count ->
-        [one] { $count } informational diagnostic
-       *[other] { $count } informational diagnostics
-    }
 audit-files-count =
     { $count ->
         [one] { $count } affected file
        *[other] { $count } affected files
     }
-audit-errors = Errors
-audit-warnings = Warnings
-audit-informational = Informational
 audit-affected-files = Affected files
 audit-build = Build
-audit-build-label = Build: { $status }. { $message }
 audit-diagnostics = Diagnostics
 audit-visible-count = { $visible } of { $total }
 audit-search-label = Search diagnostics
 audit-search-placeholder = Search message, code, or file
-audit-severity = Severity
 audit-all = All
 audit-category = Category
 audit-rust-failed = The Rust audit could not be built
@@ -61,8 +41,62 @@ audit-no-filter-results = No results for the current filters
 audit-reset-filters = Reset filters
 audit-no-known-problems = No known structural problems
 audit-run-full-help = Run the full audit to also confirm the Zola build.
-audit-severity-label = Severity: { $severity }
 audit-open = Open
+audit-violations = Violations
+audit-needs-review = Needs review
+audit-engine-errors = Engine errors
+audit-passed = Passed
+audit-not-applicable = Not applicable
+audit-coverage = Coverage
+audit-not-run = Not run
+audit-provider-incomplete-count = { $count } incomplete providers
+audit-provider-status-complete = Complete
+audit-provider-status-partial = Partial
+audit-provider-status-failed = Failed
+audit-provider-status-skipped = Skipped
+audit-provider-coverage-required = blocking when incomplete
+audit-provider-coverage-advisory = advisory
+audit-providers-label = Audit provider coverage
+audit-outcome = Outcome
+audit-impact = Impact
+audit-policy = Policy
+audit-provider = Provider
+audit-scope = Origin
+audit-outcome-pass = Passed
+audit-outcome-violation = Violation
+audit-outcome-needs-review = Needs review
+audit-outcome-not-applicable = Not applicable
+audit-outcome-skipped = Skipped
+audit-outcome-engine-error = Engine error
+audit-outcome-suppressed = Suppressed
+audit-full-no-receipt = The full audit did not return a current receipt.
+io-audit-receipt-invalid = Rust returned an invalid or incomplete AuditRunReceipt.
+audit-provider-passed-title = Check passed
+audit-provider-passed-message = Provider { $provider } completed its analysis without known problems.
+audit-provider-not-applicable-title = Check not applicable
+audit-provider-not-applicable-message = Provider { $provider } has no eligible sources in the current revision.
+audit-graph-evidence = Number of nodes and relations analyzed by Project Graph.
+audit-title-component-graph = Component contract
+audit-title-block-graph = Block contract
+audit-title-content-model = Content model
+audit-title-listing-item = Listing item
+audit-title-dynamic-widget = Dynamic widget
+audit-provider-diagnostic-message = { $details }
+audit-structural-indentation-title = Inconsistent structural indentation
+audit-structural-indentation-message = Mixed CST found { $count } misaligned structural prefixes in { $file }.
+audit-structural-indentation-fix-title = Safely repair structural indentation
+audit-template-coverage-limitation = Templates with invalid Tera syntax cannot be analyzed semantically and safely.
+audit-content-coverage-limitation = Pages with invalid front matter cannot be analyzed semantically until parsing is fixed.
+audit-asset-coverage-evidence = Asset relations recognized by Source Graph.
+audit-asset-coverage-limitation = { $count } dynamic HTML/Tera or CSS/SCSS references cannot be confirmed statically; Asset Usage coverage is advisory.
+audit-build-evidence = Zola generation evidence for the exact workspace revision.
+audit-build-provider-failed-title = Zola validation was not confirmed
+audit-build-provider-failed-message = The Zola provider could not confirm the current revision: { $details }
+audit-build-provider-skipped-title = Zola validation was not run
+audit-build-provider-skipped-message = The quick audit does not yet have Zola evidence: { $details }
+audit-build-coverage-failed = The Build provider could not analyze the requested revision.
+audit-build-coverage-skipped = Quick audit does not force a Zola generation build.
+audit-semantic-parser-evidence = Finding derived from the Rust semantic parser, not from text search.
 audit-title-project-model = Project model
 audit-title-project-reference = Project reference
 audit-title-workspace-file = File omitted from workspace
@@ -78,3 +112,12 @@ audit-content-missing-description-title = Meta description is missing
 audit-content-missing-description-message = Add description to front matter for a controlled summary in search results.
 audit-asset-without-usage-title = Asset without known usage
 audit-asset-without-usage-message = Source Graph found no reference to { $path }.
+audit-fix-preview = View changes
+audit-fix-preview-title = Exact changes proposed by Rust
+audit-fix-apply-safe = Apply safe fix
+audit-fix-applying = Applying…
+audit-fix-operation = Audit remediation
+audit-fix-applied = The safe fix was applied and the audit was revalidated.
+audit-fix-stale = The fix no longer belongs to the current Audit revision.
+audit-fix-failed = The safe fix could not be applied: { $error }
+io-audit-fix-receipt-invalid = Rust returned an invalid or unrelated Audit Fix receipt.

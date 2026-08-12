@@ -21,7 +21,7 @@ pub(super) fn require_preview_executor_intent(
     input: PreviewProjectionIntentInput,
     session: &ProjectSessionSnapshot,
     spec: PreviewExecutorIntentSpec,
-) -> Result<PreviewProjectionIntentReceipt, PreviewExecutorIntentBlocked> {
+) -> Result<PreviewProjectionIntentReceipt, Box<PreviewExecutorIntentBlocked>> {
     let intent_receipt = preflight_preview_projection_intent(input, Some(session));
     let wrong_kind = intent_receipt.kind != spec.expected_kind;
     if intent_receipt.status == PreviewProjectionIntentStatus::Accepted && !wrong_kind {
@@ -38,10 +38,10 @@ pub(super) fn require_preview_executor_intent(
         None
     };
 
-    Err(PreviewExecutorIntentBlocked {
+    Err(Box::new(PreviewExecutorIntentBlocked {
         intent_receipt,
         diagnostic,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -80,7 +80,7 @@ mod tests {
     fn require_preview_executor_intent_accepts_matching_preflight() {
         let input = PreviewProjectionIntentInput {
             message_type: "preview-delete-selected".to_string(),
-            selector: Some(".hero".to_string()),
+            source_id: Some("sgn_test_hero".to_string()),
             ..Default::default()
         };
 
@@ -114,7 +114,7 @@ mod tests {
     fn require_preview_executor_intent_adds_wrong_kind_diagnostic() {
         let input = PreviewProjectionIntentInput {
             message_type: "preview-delete-selected".to_string(),
-            selector: Some(".hero".to_string()),
+            source_id: Some("sgn_test_hero".to_string()),
             ..Default::default()
         };
 

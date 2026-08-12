@@ -556,7 +556,7 @@ fn validate_complete_append(
         WalAppendStageRole::ExistingTarget
     };
     let expected_identity = expected_identity
-        .or_else(|| evidence.before_identity_digest.as_deref())
+        .or(evidence.before_identity_digest.as_deref())
         .ok_or_else(|| capability_error(public_label, "Append v2 nu are identitate postflight"))?;
     let identity_before_hash = append_identity_digest(&*file, role)?;
     if identity_before_hash != expected_identity {

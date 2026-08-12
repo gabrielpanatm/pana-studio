@@ -48,9 +48,7 @@ fn attr_enum<T: DeserializeOwned>(
     key: &str,
     diagnostics: &mut Vec<String>,
 ) -> Option<T> {
-    let Some(value) = event.attributes.get(key) else {
-        return None;
-    };
+    let value = event.attributes.get(key)?;
     if value.is_null() {
         return None;
     }

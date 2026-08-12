@@ -17,13 +17,6 @@ pub const PROJECT_WORKSPACE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SourceIdentityAliasTransition {
-    pub revision_before: u64,
-    pub revision_after: u64,
-    pub aliases: HashMap<String, String>,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectWorkspaceIdentity {
@@ -205,6 +198,8 @@ pub struct WorkspaceUndoRedoReceipt {
     pub application_transaction_id: String,
     #[serde(skip)]
     pub(crate) canvas_delta: Option<super::history::WorkspaceCanvasHistoryDelta>,
+    #[serde(skip)]
+    pub(crate) source_tree: Option<super::history::WorkspaceSourceTreeHistory>,
 }
 
 #[derive(Clone, Debug, Serialize)]

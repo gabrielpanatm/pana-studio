@@ -22,6 +22,9 @@ pub(super) struct TemplateSummary {
     pub(super) internal_links: Vec<String>,
     pub(super) asset_urls: Vec<String>,
     pub(super) asset_hashes: Vec<String>,
+    pub(super) literal_asset_references: Vec<String>,
+    pub(super) asset_reference_eligible: usize,
+    pub(super) asset_reference_unanalysable: usize,
     pub(super) data_loads: Vec<String>,
     pub(super) image_metadata: Vec<String>,
     pub(super) image_resizes: Vec<String>,
@@ -37,6 +40,9 @@ pub(super) struct StyleSummary {
     pub(super) node_id: String,
     pub(super) origin: SourceOrigin,
     pub(super) theme_name: Option<String>,
+    pub(super) literal_asset_references: Vec<String>,
+    pub(super) asset_reference_eligible: usize,
+    pub(super) asset_reference_unanalysable: usize,
 }
 
 #[derive(Clone)]

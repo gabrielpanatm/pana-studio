@@ -11,6 +11,7 @@ import type {
   SourceLanguage,
   UiContextProjection,
 } from "$lib/types";
+import { primarySelectionEntry } from "$lib/kernel/selection-read-model";
 
 const AI_CONTEXT_WRITE_DELAY = 450;
 
@@ -48,9 +49,10 @@ export function buildAiContextProjection(
   const selected = host.coordinatedElementSelection;
   const observation = selected?.observation ?? null;
   const coordinated = host.selectionSnapshot;
+  const primary = primarySelectionEntry(coordinated);
   const sourceReference =
-    coordinated?.provenance?.definition
-    ?? coordinated?.provenance?.composition
+    primary?.provenance.definition
+    ?? primary?.provenance.composition
     ?? null;
   const coordinatedLocation = sourceReference
     ? {
@@ -66,7 +68,7 @@ export function buildAiContextProjection(
       : null;
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     uiRevision,
     expectedProjectSessionId: workspace?.runtimeSessionId ?? null,
     expectedProjectRevision: workspace?.revision ?? null,
@@ -83,19 +85,22 @@ export function buildAiContextProjection(
       sourceLanguage: host.sourceLanguage,
     },
     selection: {
-      hasSelection: Boolean(coordinated?.subject),
+      hasSelection: Boolean(primary),
+      primaryMemberId: coordinated?.primaryMemberId ?? null,
+      memberIds: coordinated?.members.map((member) => member.memberId) ?? [],
+      memberCount: coordinated?.members.length ?? 0,
       selector: observation?.selector ?? null,
       cssSelector: observation?.cssSelector ?? null,
-      tag: coordinated?.subject?.tag ?? observation?.tag ?? null,
+      tag: primary?.subject.tag ?? observation?.tag ?? null,
       id: observation?.id ?? null,
       classes: observation?.classes ?? [],
       text: observation?.text ?? null,
       imageSrc: observation?.imageSrc ?? null,
       sourceLocation: coordinatedLocation,
-      sourceId: coordinated?.anchor?.sourceNodeId ?? null,
+      sourceId: primary?.anchor.sourceNodeId ?? null,
       templateSourceId:
-        coordinated?.subject?.kind === "teraBoundary"
-          ? coordinated.anchor?.sourceNodeId ?? null
+        primary?.subject.kind === "teraBoundary"
+          ? primary.anchor.sourceNodeId ?? null
           : null,
       sessionId: coordinated?.runtimeSessionId ?? null,
       rect: observation?.rect ?? null,

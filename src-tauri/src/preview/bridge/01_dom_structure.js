@@ -155,6 +155,14 @@
       return element.getAttribute("data-pana-empty-label") || semanticTagLabel(tag);
     }
 
+    if (tag === "svg" && element.getAttribute("data-pana-block") === "icon") {
+      var iconIdentity = String(element.getAttribute("data-pana-icon") || "");
+      var iconId = iconIdentity.indexOf(":") >= 0
+        ? iconIdentity.slice(iconIdentity.indexOf(":") + 1)
+        : iconIdentity;
+      return iconId ? "Icon · " + iconId : "Icon";
+    }
+
     var ariaLabel = shortenLabel(element.getAttribute("aria-label"));
     if (ariaLabel) return ariaLabel;
 
@@ -366,7 +374,8 @@
     function traverse(element, depth) {
       if (result.length >= maxNodes || depth > maxDepth) return;
       var tag = element.tagName.toLowerCase();
-      if (skipTags[tag] || svgTags[tag]) return;
+      var managedIcon = tag === "svg" && element.getAttribute("data-pana-block") === "icon";
+      if (skipTags[tag] || (svgTags[tag] && !managedIcon)) return;
       if (isStudioOverlayElement(element)) return;
       if (isEmptyTeraSlot(element) || isActiveDocumentRoot(element)) return;
       result.push({
@@ -379,6 +388,7 @@
         templateSourceId: inheritedTemplateSourceId(element),
         sessionId: element.getAttribute(SESSION_ID_ATTR) || null
       });
+      if (managedIcon) return;
       Array.prototype.forEach.call(element.children, function (child) {
         traverse(child, depth + 1);
       });

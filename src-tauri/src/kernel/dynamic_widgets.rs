@@ -1,6 +1,7 @@
+#[cfg(test)]
+use std::fs;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    fs,
     path::Path,
 };
 
@@ -586,6 +587,8 @@ pub fn dynamic_value_catalog(source_graph: &SourceGraph) -> Vec<DynamicValueDefi
     definitions
 }
 
+// Declarative dynamic values mirror the complete immutable definition schema.
+#[allow(clippy::too_many_arguments)]
 fn value_definition(
     id: String,
     group: &str,
@@ -829,8 +832,8 @@ fn default_tag(presentation: DynamicFieldPresentation) -> &'static str {
     }
 }
 
-pub fn build_dynamic_widget_graph(
-    project_root: &Path,
+pub(crate) fn build_dynamic_widget_graph_from_workspace_projection(
+    _project_root: &Path,
     projected_sources: &HashMap<String, String>,
     deleted_sources: &HashSet<String>,
     source_graph: &SourceGraph,
@@ -845,10 +848,7 @@ pub fn build_dynamic_widget_graph(
         if deleted_sources.contains(&template.file) {
             continue;
         }
-        let source = projected_sources
-            .get(&template.file)
-            .cloned()
-            .or_else(|| fs::read_to_string(project_root.join(&template.file)).ok());
+        let source = projected_sources.get(&template.file).cloned();
         let Some(source) = source else {
             continue;
         };
@@ -1324,7 +1324,7 @@ fn decode_properties(
     encoded: &str,
     schema_version: u32,
 ) -> Result<DynamicWidgetProperties, String> {
-    if encoded.is_empty() || encoded.len() % 2 != 0 || encoded.len() > 64 * 1024 {
+    if encoded.is_empty() || !encoded.len().is_multiple_of(2) || encoded.len() > 64 * 1024 {
         return Err("Payloadul proprietăților dinamice este invalid.".to_string());
     }
     let mut bytes = Vec::with_capacity(encoded.len() / 2);
@@ -1402,7 +1402,7 @@ fn resolve_dynamic_value(
             let root = context_root(context)?;
             ResolvedDynamicValue {
                 canonical_path: format!("{root}.{field}"),
-                expression: tera_access(root, &[field.clone()]),
+                expression: tera_access(root, std::slice::from_ref(field)),
                 value_type,
                 trusted_html,
             }
@@ -1893,9 +1893,11 @@ fn render_listing(
     let collection = listing_collection_expression(&pages_variable, properties);
     let tag = properties.tag.trim();
     let class = escape_html_attribute(&properties.class_name);
-    let class_attribute = (!class.is_empty())
-        .then(|| format!(" class=\"{class}\""))
-        .unwrap_or_default();
+    let class_attribute = if class.is_empty() {
+        String::new()
+    } else {
+        format!(" class=\"{class}\"")
+    };
     let empty = escape_html_text(if properties.empty_text.trim().is_empty() {
         "Nu există articole."
     } else {
@@ -1953,16 +1955,18 @@ fn listing_collection_expression(variable: &str, properties: &ListingWidgetPrope
     expression
 }
 
+type ContentFieldMatch<'a> = (&'a ContentFieldDefinition, Vec<String>, Option<Vec<String>>);
+
 fn find_field<'a>(
     model: &'a ContentModelDefinition,
     field_id: &str,
-) -> Option<(&'a ContentFieldDefinition, Vec<String>, Option<Vec<String>>)> {
+) -> Option<ContentFieldMatch<'a>> {
     fn visit<'a>(
         fields: &'a [ContentFieldDefinition],
         field_id: &str,
         parent: &[String],
         repeater_parent: Option<&[String]>,
-    ) -> Option<(&'a ContentFieldDefinition, Vec<String>, Option<Vec<String>>)> {
+    ) -> Option<ContentFieldMatch<'a>> {
         for field in fields {
             let mut path = parent.to_vec();
             path.push(field.key.clone());
@@ -2170,6 +2174,7 @@ mod tests {
 
     fn empty_source_graph() -> SourceGraph {
         SourceGraph {
+            node_index: Default::default(),
             project_root: String::new(),
             zola_root: String::new(),
             active_theme: None,
@@ -2188,6 +2193,7 @@ mod tests {
             markdown_projections: Vec::new(),
             nodes: Vec::new(),
             relations: Vec::new(),
+            asset_reference_coverage: Default::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -2741,7 +2747,8 @@ mod tests {
         )
         .unwrap();
 
-        let graph = crate::source_graph::build_source_graph(&root).unwrap();
+        let graph =
+            crate::source_graph::build_source_graph_from_integration_disk_boundary(&root).unwrap();
         let values = dynamic_value_catalog(&graph);
         assert!(values.iter().any(|value| value.id == "site.title"));
         assert!(values.iter().any(|value| {
@@ -2957,11 +2964,22 @@ mod tests {
         assert!(rendered.contains("{% for item in"));
         assert!(rendered.contains("{% include \"listing-items/service-card.html\" %}"));
 
-        let projected = HashMap::from([(
+        let fixture =
+            crate::project_model::test_support::ProjectModelTestFixture::from_integration_disk_boundary(
+                &root,
+            )
+            .unwrap();
+        let mut projected = fixture.projection().source_texts;
+        projected.insert(
             "templates/index.html".to_string(),
             format!("<main>\n{rendered}\n</main>"),
-        )]);
-        let dynamic = build_dynamic_widget_graph(&root, &projected, &HashSet::new(), &graph);
+        );
+        let dynamic = build_dynamic_widget_graph_from_workspace_projection(
+            &root,
+            &projected,
+            &HashSet::new(),
+            &graph,
+        );
         assert_eq!(dynamic.source_instances.len(), 8);
         let instance = dynamic
             .source_instances
@@ -2988,7 +3006,8 @@ mod tests {
 
         let initial = projected.get("templates/index.html").unwrap();
         fs::write(root.join("templates/index.html"), initial).unwrap();
-        let used_graph = crate::source_graph::build_source_graph(&root).unwrap();
+        let used_graph =
+            crate::source_graph::build_source_graph_from_integration_disk_boundary(&root).unwrap();
         let used_item = used_graph
             .listing_items
             .items
@@ -3044,7 +3063,8 @@ mod tests {
         );
 
         fs::write(root.join("templates/index.html"), &next).unwrap();
-        let reopened = crate::source_graph::build_source_graph(&root).unwrap();
+        let reopened =
+            crate::source_graph::build_source_graph_from_integration_disk_boundary(&root).unwrap();
         assert_eq!(reopened.dynamic_widget_graph.source_instances.len(), 8);
         assert!(reopened
             .dynamic_widget_graph

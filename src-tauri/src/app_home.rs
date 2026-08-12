@@ -162,6 +162,16 @@ pub fn project_app_config_path<R: Runtime>(
     Ok(projects_config_dir(app)?.join(format!("{:016x}.json", stable_path_hash(project_path))))
 }
 
+pub fn project_deploy_secrets_path<R: Runtime>(
+    app: &AppHandle<R>,
+    project_path: &str,
+) -> Result<PathBuf, String> {
+    Ok(projects_config_dir(app)?.join(format!(
+        "{:016x}.deploy-secrets.json",
+        stable_path_hash(project_path)
+    )))
+}
+
 pub fn mcp_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(app_config_dir(app)?.join("mcp"))
 }

@@ -24,7 +24,9 @@ test("SelectionCoordinator is the sole semantic selection authority", () => {
     assert.match(rust, new RegExp(`(?:struct|enum) ${contract}\\b`));
   }
   assert.match(app, /selectionSnapshot = \$state<SelectionSnapshot \| null>/);
-  assert.match(canvas, /app\.applySelectionIntent\(\{\s*kind: "selectEditorNode"/);
+  assert.match(canvas, /message\.pointer\.modifiers\.shift[\s\S]*kind: "extendRangeToEditorNode"/);
+  assert.match(canvas, /message\.pointer\.modifiers\.control \|\| message\.pointer\.modifiers\.meta[\s\S]*kind: "toggleEditorNode"/);
+  assert.match(canvas, /app\.applySelectionIntent\(intent\)/);
   assert.match(canvas, /app\.applyHoverIntent\(/);
   assert.match(inspector, /const selectedClass = \$derived\(coordinatedCssState/);
 
@@ -61,17 +63,15 @@ test("rebase has no body or first-instance fallback", () => {
   const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
   const rebase = rust.slice(
     rust.indexOf("fn rebase_candidate"),
-    rust.indexOf("fn optional_anchor_matches"),
+    rust.indexOf("fn selection_from_node"),
   );
 
   assert.match(rebase, /editor_node_id/);
   assert.match(rebase, /render_instance_id/);
-  assert.match(rebase, /component_invocation_ids/);
-  assert.match(rebase, /binding_path/);
-  assert.match(rebase, /binding_key/);
   assert.match(rebase, /source_node_id/);
+  assert.match(rebase, /anchor\.editor_node_id\.is_some\(\) \|\| !anchor\.render_instance_ids\.is_empty\(\)/);
   assert.match(rebase, /RebaseCandidate::Ambiguous/);
-  assert.doesNotMatch(rebase, /body|first\(\)/);
+  assert.doesNotMatch(rebase, /component_invocation_ids|binding_path|binding_key|body|first\(\)/);
 });
 
 test("selection-driven mutations carry a Rust-validated revision", () => {

@@ -5,6 +5,7 @@ import type {
   SelectionSnapshot,
 } from "$lib/types";
 import { t } from "$lib/i18n/runtime.svelte";
+import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
 
 const MAX_PENDING_STRUCTURAL_OPERATIONS_PER_SESSION = 32;
 
@@ -93,25 +94,38 @@ function captureStructuralSelectionIdentity(
   projectRoot: string,
   sessionId: string,
 ): PreviewStructuralSelectionIdentity | null {
-  const anchor = snapshot?.anchor;
+  const anchor = primarySelectionEntry(snapshot)?.anchor;
   if (
     !snapshot
     || !anchor
-    || snapshot.resolution !== "resolved"
+    || selectionResolution(snapshot) !== "resolved"
     || snapshot.projectRoot !== projectRoot
     || snapshot.runtimeSessionId !== sessionId
     || !Number.isSafeInteger(snapshot.selectionRevision)
     || snapshot.selectionRevision <= 0
+    || !Number.isSafeInteger(snapshot.canvasIdentity.workspaceRevision)
+    || snapshot.canvasIdentity.workspaceRevision < 0
   ) return null;
-  const editorNodeId = anchor.editorNodeId?.trim() || null;
-  const sourceNodeId = anchor.sourceNodeId?.trim() || null;
-  const renderInstanceId = anchor.renderInstanceId?.trim() || null;
-  if (!editorNodeId && !sourceNodeId && !renderInstanceId) return null;
+  const members = snapshot.members.map((member) => Object.freeze({
+    memberId: member.memberId,
+    editorNodeId: member.anchor.editorNodeId?.trim() || null,
+    sourceNodeId: member.anchor.sourceNodeId?.trim() || null,
+    renderInstanceId: member.anchor.renderInstanceId?.trim() || null,
+  }));
+  if (
+    members.length === 0
+    || members.some((member) => (
+      !member.memberId
+      || (!member.editorNodeId && !member.sourceNodeId && !member.renderInstanceId)
+    ))
+    || !snapshot.primaryMemberId
+    || !members.some((member) => member.memberId === snapshot.primaryMemberId)
+  ) return null;
   return Object.freeze({
     selectionRevision: snapshot.selectionRevision,
-    editorNodeId,
-    sourceNodeId,
-    renderInstanceId,
+    workspaceRevision: snapshot.canvasIdentity.workspaceRevision,
+    primaryMemberId: snapshot.primaryMemberId,
+    members: Object.freeze(members),
   });
 }
 
@@ -140,9 +154,7 @@ export function previewStructuralCommandIdentity(
   requireCapturedSelection = false,
 ): PreviewStructuralCommandIdentity {
   if (requireCapturedSelection && !lease.selection) {
-    throw new PreviewStructuralCancellationError(
-      "Comanda cere o selecție semantică Rust rezolvată.",
-    );
+    throw new Error(t("structural-lane-selection-missing"));
   }
   return {
     expectedProjectRoot: lease.projectRoot,

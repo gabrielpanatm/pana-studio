@@ -195,7 +195,7 @@ fn localized_boot_message(locale: &str, id: &str) -> String {
 fn application_preference_selections(config: &GlobalAppConfig) -> ApplicationPreferenceSelections {
     ApplicationPreferenceSelections {
         language: config.language_preference.clone().unwrap_or_default(),
-        theme: config.theme_preference.clone().unwrap_or_else(|| {
+        theme: config.theme_preference.unwrap_or_else(|| {
             config
                 .legacy_theme
                 .map(|value| ApplicationThemePreference::Fixed { value })
@@ -329,7 +329,9 @@ pub(crate) fn read_project_app_config_for_root(
     let project_path = canonical_project_path(root);
     let path = project_app_config_path(app, &project_path)?;
     if !path.exists() {
-        return Ok(default_project_app_config(project_path));
+        let mut config = default_project_app_config(project_path);
+        config.deploy = crate::deploy::settings_with_legacy_bunny_fallback(root, config.deploy);
+        return Ok(config);
     }
 
     let source = fs::read_to_string(&path)
@@ -337,16 +339,20 @@ pub(crate) fn read_project_app_config_for_root(
     let mut config: ProjectAppConfig = serde_json::from_str(&source)
         .map_err(|e| format!("Configurația locală Pană Studio este invalidă: {}", e))?;
     config.project_path = project_path;
+    config.deploy = crate::deploy::settings_with_legacy_bunny_fallback(root, config.deploy);
+    config.deploy.validate()?;
     Ok(config)
 }
 
 pub(super) fn project_app_config_from_input(
     root: &Path,
     config: ProjectAppConfigInput,
+    deploy: crate::deploy::DeploySettings,
 ) -> ProjectAppConfig {
     ProjectAppConfig {
         project_path: canonical_project_path(root),
         cachebust_assets: config.cachebust_assets,
+        deploy,
     }
 }
 
@@ -400,6 +406,7 @@ fn default_project_app_config(project_path: String) -> ProjectAppConfig {
     ProjectAppConfig {
         project_path,
         cachebust_assets: false,
+        deploy: Default::default(),
     }
 }
 

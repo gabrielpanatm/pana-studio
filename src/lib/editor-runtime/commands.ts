@@ -1,7 +1,6 @@
 import type {
   CanvasElementObservation,
   CoordinatedElementSelection,
-  PageSection,
   SourceEditLocation,
   SourceGraphNode,
 } from "$lib/types";
@@ -12,7 +11,6 @@ export type EditorSurface = "preview" | "layers" | "inspector" | "code" | "short
 
 export type EditorHtmlTarget = {
   kind: "html";
-  selector: string;
   tag: string;
   label?: string;
   text?: string;
@@ -23,21 +21,19 @@ export type EditorHtmlTarget = {
   templateSourceId?: string | null;
   sessionId?: string | null;
   observation?: CanvasElementObservation | null;
-  section?: PageSection | null;
 };
 
 export type EditorTeraTarget = {
   kind: "tera";
   editorNodeId?: string | null;
   sourceId: string;
-  selector: string | null;
+  renderInstanceId?: string | null;
   label?: string;
   kindLabel?: string;
   file?: string | null;
   origin?: "current" | "local" | "theme" | "unknown" | null;
   themeName?: string | null;
   canEnterBoundary?: boolean;
-  section?: PageSection | null;
   sourceNode?: SourceGraphNode | null;
 };
 
@@ -66,7 +62,6 @@ export type EditorTransaction = {
   command: EditorCommand["type"];
   surface: EditorSurface;
   targetKind: EditorTarget["kind"];
-  selector: string | null;
   sourceId: string | null;
   startedAt: number;
   completedAt?: number;
@@ -74,38 +69,6 @@ export type EditorTransaction = {
   status?: EditorActionStatus;
   reason?: string;
 };
-
-export type EditorLayerContextMenuRequest =
-  | {
-      kind: "html";
-      section: PageSection;
-      x: number;
-      y: number;
-      label?: string;
-    }
-  | {
-      kind: "tera";
-      section: PageSection;
-      sourceId: string;
-      selector: string | null;
-      x: number;
-      y: number;
-      label?: string;
-      kindLabel?: string;
-      file?: string | null;
-      origin?: "local" | "theme" | "unknown" | null;
-      themeName?: string | null;
-    };
-
-function capturePageSection(section: PageSection | null | undefined): PageSection | null {
-  if (!section) return null;
-  return Object.freeze({
-    ...section,
-    sourceLocation: section.sourceLocation
-      ? Object.freeze({ ...section.sourceLocation })
-      : null,
-  });
-}
 
 export function captureCanvasElementObservation(
   observation: CanvasElementObservation | null | undefined,
@@ -150,14 +113,12 @@ export function captureEditorHtmlTarget(target: EditorHtmlTarget): EditorHtmlTar
       ? Object.freeze({ ...target.sourceLocation })
       : null,
     observation: captureCanvasElementObservation(target.observation),
-    section: capturePageSection(target.section),
   });
 }
 
 export function captureEditorTeraTarget(target: EditorTeraTarget): EditorTeraTarget {
   return Object.freeze({
     ...target,
-    section: capturePageSection(target.section),
     sourceNode: captureSourceGraphNode(target.sourceNode),
   });
 }
@@ -177,7 +138,6 @@ export function htmlTargetFromCoordinatedSelection(
   const observation = selection.observation;
   return captureEditorHtmlTarget({
     kind: "html",
-    selector: observation.domPath || observation.cssSelector || "",
     tag: observation.tag,
     label: observation.selector || `<${observation.tag}>`,
     text: observation.text,
@@ -191,22 +151,9 @@ export function htmlTargetFromCoordinatedSelection(
   });
 }
 
-export function htmlTargetFromPageSection(section: PageSection, label?: string): EditorHtmlTarget {
-  return captureEditorHtmlTarget({
-    kind: "html",
-    selector: section.selector,
-    tag: section.tag,
-    label: label ?? section.label,
-    sourceId: section.sourceId ?? null,
-    templateSourceId: section.templateSourceId ?? null,
-    sessionId: section.sessionId ?? null,
-    section,
-  });
-}
-
 export function teraTargetFromBoundary(target: {
-  selector: string | null;
   sourceId: string;
+  renderInstanceId?: string | null;
   origin?: "current" | "local" | "theme" | "unknown" | null;
   themeName?: string | null;
   editorNodeId?: string | null;
@@ -214,8 +161,8 @@ export function teraTargetFromBoundary(target: {
 }, options: Partial<EditorTeraTarget> = {}): EditorTeraTarget {
   return captureEditorTeraTarget({
     kind: "tera",
-    selector: target.selector,
     sourceId: target.sourceId,
+    renderInstanceId: target.renderInstanceId ?? null,
     origin: target.origin ?? null,
     themeName: target.themeName ?? null,
     editorNodeId: target.editorNodeId ?? null,
@@ -225,8 +172,8 @@ export function teraTargetFromBoundary(target: {
 }
 
 export function canMutateHtmlTarget(target: EditorHtmlTarget) {
-  if (!target.selector) {
-    return { allowed: false, reason: t("editor-runtime-html-selector-missing") };
+  if (!target.sourceId) {
+    return { allowed: false, reason: t("editor-runtime-html-source-id-missing") };
   }
   if (target.tag === "body" || target.tag === "html") {
     return { allowed: false, reason: t("editor-runtime-root-structural-blocked") };

@@ -577,6 +577,7 @@ source-view-origin-local = Local
 source-view-relation-page-template = template
 source-view-relation-section-template = section-page template
 source-view-relation-internal-link = internal link
+source-view-relation-asset-reference = asset reference
 source-view-relation-data-file-load = load_data data
 source-view-relation-content-data-load = load_data content
 source-view-relation-extends = extends

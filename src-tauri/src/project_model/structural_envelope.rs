@@ -1,10 +1,9 @@
 use crate::{
-    kernel::dynamic_widgets::DynamicWidgetSourceInstance,
-    project_model::model::ProjectModel,
-    source_graph::model::{SourceNode, SourceNodeKind},
+    kernel::dynamic_widgets::DynamicWidgetSourceInstance, project_model::model::ProjectModel,
+    source_graph::model::SourceNode,
 };
 
-use super::move_engine::{line_indent_at_offset, resolve_html_element_span, same_model_path, Span};
+use super::move_engine::{resolve_html_element_span, same_model_path, Span};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StructuralEnvelopeKind {
@@ -90,47 +89,6 @@ pub(super) fn dynamic_widget_for_node<'a>(
                         .iter()
                         .any(|id| id == &node.id))
         })
-}
-
-/// Computes indentation from the semantic HTML parent chain, not from an old
-/// textual offset. This makes the next mutation repair a previously displaced
-/// node instead of copying its bad indentation to the new location.
-pub(super) fn semantic_html_indent(
-    model: &ProjectModel,
-    source: &str,
-    node: &SourceNode,
-) -> String {
-    semantic_html_indent_inner(model, source, node, 0)
-}
-
-fn semantic_html_indent_inner(
-    model: &ProjectModel,
-    source: &str,
-    node: &SourceNode,
-    depth: usize,
-) -> String {
-    let actual = node
-        .range
-        .as_ref()
-        .map(|range| line_indent_at_offset(source, range.start))
-        .unwrap_or_default();
-    if depth >= 128 {
-        return actual;
-    }
-    let Some(parent_id) = node.parent.as_deref() else {
-        return actual;
-    };
-    let Some(parent) = model.source_graph.nodes.iter().find(|candidate| {
-        candidate.id == parent_id
-            && candidate.kind == SourceNodeKind::Html
-            && same_model_path(&candidate.file, &node.file)
-    }) else {
-        return actual;
-    };
-    format!(
-        "{}  ",
-        semantic_html_indent_inner(model, source, parent, depth + 1)
-    )
 }
 
 fn dynamic_widget_instance_attribute(source: &str, span: Span) -> Option<String> {

@@ -7,8 +7,8 @@ import type { HtmlPendingArea, InspectorPendingArea, SourceGraphNode } from "$li
 export type PreviewTeraSelectionOrigin = "current" | "local" | "theme" | "unknown";
 
 export type PreviewTeraSelectionTarget = {
-  selector: string;
   sourceId: string;
+  renderInstanceId: string | null;
   origin: PreviewTeraSelectionOrigin;
   themeName: string | null;
 };

@@ -417,7 +417,6 @@ fn classify_external_no_unlink_oracle(
             "Protocolul ExternalConfig fără unlink nu acceptă decizii operator legacy.",
         ));
     }
-    let checkpoint = checkpoint;
     let baseline_identity = evidence.target_before_identity_digest.as_deref();
     let target_before = observed_matches_checkpointed_before(
         &oracle.target,

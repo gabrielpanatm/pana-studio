@@ -1,8 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::BTreeSet,
     path::{Path, PathBuf},
-    time::Instant,
 };
+
+#[cfg(debug_assertions)]
+use std::time::Instant;
 
 use crate::{
     kernel::{
@@ -10,28 +12,39 @@ use crate::{
         project_workspace::{ProjectWorkspace, WorkspaceProjectionSnapshot},
     },
     project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
-    project_model::model::ProjectModel,
+    project_model::{
+        model::ProjectModel, rebuild_project_model_after_workspace_change,
+        ProjectModelIncrementalIntent,
+    },
     state::AppState,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub(crate) struct ProjectModelBuildContext {
     projection: WorkspaceProjectionSnapshot,
     accepted_disk_generation: u64,
     accepted_disk_fingerprint: String,
+    previous_model: Option<ProjectModel>,
+    previous_model_source_revision: Option<u64>,
 }
 
 impl ProjectModelBuildContext {
     pub(crate) fn projection(&self) -> &WorkspaceProjectionSnapshot {
         &self.projection
     }
+
+    pub(crate) fn model_cache_hit(&self) -> bool {
+        self.previous_model.is_some()
+            && self.previous_model_source_revision == Some(self.projection.revision)
+    }
 }
 
 pub(crate) fn capture_project_model_build_context(
     state: &AppState,
 ) -> Result<(PathBuf, ProjectSessionSnapshot, ProjectModelBuildContext), String> {
+    #[cfg(debug_assertions)]
     let started = Instant::now();
-    let (root, session, accepted_disk, projection) = {
+    let (root, session, accepted_disk, projection, previous_model, previous_model_source_revision) = {
         let current_root = state
             .current_root
             .lock()
@@ -58,6 +71,8 @@ pub(crate) fn capture_project_model_build_context(
             workspace.session.clone(),
             workspace.accepted_disk.clone(),
             workspace.capture_projection_snapshot()?,
+            workspace.project_model.clone(),
+            workspace.project_model_source_revision,
         )
     };
 
@@ -76,6 +91,8 @@ pub(crate) fn capture_project_model_build_context(
             projection,
             accepted_disk_generation,
             accepted_disk_fingerprint,
+            previous_model,
+            previous_model_source_revision,
         },
     );
     #[cfg(debug_assertions)]
@@ -86,13 +103,101 @@ pub(crate) fn capture_project_model_build_context(
     Ok(result)
 }
 
+/// Builds from the immutable context while retaining the previous canonical
+/// SourceNode identities. Even a forced full parse is reconciled against the
+/// captured model instead of bootstrapping a parallel identity namespace.
+pub(crate) fn build_project_model_from_context(
+    root: &Path,
+    context: &ProjectModelBuildContext,
+) -> Result<ProjectModel, String> {
+    if context.previous_model_source_revision == Some(context.projection.revision) {
+        if let Some(model) = context.previous_model.as_ref() {
+            return Ok(model.clone());
+        }
+    }
+    rebuild_project_model_from_previous_projection(
+        root,
+        context.previous_model.as_ref(),
+        context.previous_model_source_revision,
+        &context.projection,
+    )
+}
+
+pub(crate) fn rebuild_project_model_from_previous_projection(
+    root: &Path,
+    previous: Option<&ProjectModel>,
+    previous_model_source_revision: Option<u64>,
+    projection: &WorkspaceProjectionSnapshot,
+) -> Result<ProjectModel, String> {
+    let Some(previous) = previous else {
+        return super::build_project_model_from_workspace_projection(root, projection);
+    };
+    if previous_model_source_revision == Some(projection.revision) {
+        return Ok(previous.clone());
+    }
+    let changed_paths = changed_paths_since_model(previous, projection);
+    let intent = incremental_intent_for_paths(&changed_paths);
+    rebuild_project_model_after_workspace_change(
+        root,
+        Some(previous),
+        previous_model_source_revision,
+        projection,
+        &changed_paths,
+        intent,
+    )
+    .map(|outcome| outcome.model)
+}
+
+fn changed_paths_since_model(
+    previous: &ProjectModel,
+    projection: &WorkspaceProjectionSnapshot,
+) -> Vec<String> {
+    let mut changed = BTreeSet::new();
+    for file in &previous.files {
+        if projection
+            .source_texts
+            .get(&file.relative_path)
+            .is_none_or(|source| source != &file.contents)
+        {
+            changed.insert(file.relative_path.clone());
+        }
+    }
+    for (path, source) in &projection.source_texts {
+        if previous
+            .files
+            .iter()
+            .find(|file| file.relative_path == *path)
+            .is_none_or(|file| &file.contents != source)
+        {
+            changed.insert(path.clone());
+        }
+    }
+    changed.extend(projection.changed_paths.iter().cloned());
+    changed.into_iter().collect()
+}
+
+fn incremental_intent_for_paths(paths: &[String]) -> ProjectModelIncrementalIntent {
+    if matches!(paths, [path] if path.starts_with("templates/") && path.ends_with(".html")) {
+        ProjectModelIncrementalIntent::HtmlStructural
+    } else if !paths.is_empty()
+        && paths
+            .iter()
+            .all(|path| path.ends_with(".css") || path.ends_with(".scss"))
+    {
+        ProjectModelIncrementalIntent::StyleDeclaration
+    } else {
+        ProjectModelIncrementalIntent::Unsupported
+    }
+}
+
 pub(crate) fn publish_project_model_if_current(
     state: &AppState,
     context: &ProjectModelBuildContext,
     model: ProjectModel,
 ) -> Result<(), String> {
+    #[cfg(debug_assertions)]
     let started = Instant::now();
-    let result = publish_project_model_with_aliases_if_current(state, context, model, None);
+    let result = publish_project_model_current(state, context, model);
     #[cfg(debug_assertions)]
     eprintln!(
         "[Pană Studio][perf] project_model_publish total_ms={} success={}",
@@ -102,11 +207,48 @@ pub(crate) fn publish_project_model_if_current(
     result
 }
 
-pub(crate) fn publish_project_model_with_aliases_if_current(
+pub(crate) fn current_project_model_if_fresh(
+    state: &AppState,
+) -> Result<Option<ProjectModel>, String> {
+    let workspace = state
+        .project_workspace
+        .lock()
+        .map_err(|_| "Nu am putut consulta ProjectModel-ul canonic.".to_string())?;
+    let workspace = workspace
+        .as_ref()
+        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+    if workspace.project_model_source_revision != Some(workspace.revision) {
+        return Ok(None);
+    }
+    Ok(workspace.project_model.clone())
+}
+
+/// Revalidates an immutable analysis context without publishing a model into
+/// ProjectWorkspace. Audit uses this after its provider run because a
+/// best-effort model containing project defects must never replace the model
+/// used by editing commands.
+pub(crate) fn validate_project_model_build_context_current(
+    state: &AppState,
+    context: &ProjectModelBuildContext,
+) -> Result<(), String> {
+    let current_root = state
+        .current_root
+        .lock()
+        .map_err(|_| "Nu am putut valida root-ul după Audit.".to_string())?;
+    let workspace = state
+        .project_workspace
+        .lock()
+        .map_err(|_| "Nu am putut valida ProjectWorkspace după Audit.".to_string())?;
+    let workspace = workspace
+        .as_ref()
+        .ok_or_else(|| "Audit a devenit stale: proiectul a fost închis.".to_string())?;
+    validate_live_context(&current_root, workspace, context)
+}
+
+fn publish_project_model_current(
     state: &AppState,
     context: &ProjectModelBuildContext,
     model: ProjectModel,
-    alias_updates: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
     let current_root = state
         .current_root
@@ -122,50 +264,9 @@ pub(crate) fn publish_project_model_with_aliases_if_current(
     validate_live_context(&current_root, workspace, context)?;
     validate_model_root(&model, &context.projection.project_root)?;
 
-    let live_source_ids = alias_updates
-        .as_ref()
-        .map(|_| project_model_source_ids(&model));
     workspace.publish_project_model(&context.projection, model)?;
-    if let (Some(updates), Some(live_source_ids)) = (alias_updates, live_source_ids) {
-        reconcile_source_identity_aliases(
-            &mut workspace.source_identity_aliases,
-            &live_source_ids,
-            updates,
-        );
-    }
 
     Ok(())
-}
-
-fn project_model_source_ids(model: &ProjectModel) -> HashSet<String> {
-    model
-        .source_graph
-        .nodes
-        .iter()
-        .map(|node| node.id.clone())
-        .collect()
-}
-
-fn reconcile_source_identity_aliases(
-    aliases: &mut HashMap<String, String>,
-    live_source_ids: &HashSet<String>,
-    alias_updates: Vec<(String, String)>,
-) {
-    // An identity can become live again when an edit is reversed (for example
-    // add attribute A->B, remove attribute B->A). Any older outgoing edge from
-    // that now-authoritative identity is stale and would otherwise form a
-    // cycle. Prune stale edges first, then publish the aliases produced by the
-    // current mutation; a current move may intentionally remap a reused
-    // positional identity to the element that actually moved.
-    aliases.retain(|from, _| !live_source_ids.contains(from));
-    for (from, to) in alias_updates {
-        if from != to {
-            aliases.insert(from, to);
-        }
-    }
-    if aliases.len() > 5000 {
-        aliases.clear();
-    }
 }
 
 fn validate_live_context(
@@ -251,4 +352,107 @@ fn require_matching_root(root: &Path, session: &ProjectSessionSnapshot) -> Resul
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use crate::{
+        js::PageJsDraftStore,
+        kernel::{
+            file_buffer_store::{FileBufferStore, FileBufferStoreLimits},
+            project_session::{ProjectRootFingerprint, ProjectSessionScanSummary},
+            project_workspace::ProjectWorkspace,
+        },
+        project::{read_project_disk_manifest, AcceptedProjectDiskManifest},
+    };
+
+    use super::*;
+
+    #[test]
+    fn audit_context_revalidation_rejects_a_changed_workspace_revision() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let root = root.canonicalize().unwrap();
+        let session = session(&root);
+        let accepted = AcceptedProjectDiskManifest::new(
+            session.runtime_instance_id(),
+            session.project_root.clone(),
+            read_project_disk_manifest(&root).unwrap(),
+        )
+        .unwrap();
+        let documents = FileBufferStore::for_project_session(
+            &session,
+            1,
+            FileBufferStoreLimits {
+                max_files: 100,
+                max_file_bytes: 1_048_576,
+                max_total_bytes: 4_194_304,
+            },
+        );
+        let page_js = PageJsDraftStore::new(&session);
+        let workspace =
+            ProjectWorkspace::new(session, accepted.clone(), documents, page_js).unwrap();
+        let context = ProjectModelBuildContext {
+            projection: workspace.capture_projection_snapshot().unwrap(),
+            accepted_disk_generation: accepted.generation,
+            accepted_disk_fingerprint: accepted_disk_fingerprint(&accepted).unwrap(),
+            previous_model: None,
+            previous_model_source_revision: None,
+        };
+        let state = AppState::default();
+        *state.current_root.lock().unwrap() = Some(root.clone());
+        *state.project_workspace.lock().unwrap() = Some(workspace);
+        assert!(validate_project_model_build_context_current(&state, &context).is_ok());
+        state
+            .project_workspace
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .revision += 1;
+        assert!(validate_project_model_build_context_current(&state, &context).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn session(root: &Path) -> ProjectSessionSnapshot {
+        let root = root.to_string_lossy().to_string();
+        ProjectSessionSnapshot {
+            schema_version: 1,
+            id: "audit-cache-test".to_string(),
+            project_root: root.clone(),
+            zola_root: root.clone(),
+            session_dir: format!("{root}/session"),
+            manifest_path: format!("{root}/session.json"),
+            opened_at_ms: 11,
+            last_seen_at_ms: 11,
+            root_fingerprint: ProjectRootFingerprint {
+                canonical_path: root,
+                modified_ms: 1,
+                size: 0,
+                readonly: false,
+                unix_device: None,
+                unix_inode: None,
+            },
+            scan_summary: ProjectSessionScanSummary {
+                active_theme: None,
+                file_count: 1,
+                directory_count: 0,
+            },
+        }
+    }
+
+    fn unique_test_dir() -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("pana-audit-cache-{stamp}"))
+    }
 }

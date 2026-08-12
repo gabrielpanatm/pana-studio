@@ -503,7 +503,7 @@ fn observability_target(
     }
     #[cfg(test)]
     {
-        return Ok(WriteTarget::new(path, boundary_root, public_label));
+        Ok(WriteTarget::new(path, boundary_root, public_label))
     }
     #[cfg(not(test))]
     Err("Observability capability cere WriteAuthorityRuntime instalat.".into())
@@ -557,10 +557,7 @@ mod maintenance_tests {
             diagnostic: None,
         };
 
-        assert_eq!(
-            require_durable_maintenance_effect(effect).unwrap().changed,
-            false
-        );
+        assert!(!require_durable_maintenance_effect(effect).unwrap().changed);
     }
 
     #[test]

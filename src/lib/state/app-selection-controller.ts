@@ -1,12 +1,11 @@
 import { applySelectionState as applySelectionStateFromController } from "$lib/state/selection-controller";
 import {
   projectSelectionSnapshotOnCanvas,
-  selectCanvasNavigationNode,
 } from "$lib/state/canvas-interaction-controller";
 import type { PreviewTeraSelectionTarget } from "$lib/state/app-helpers";
 import type { AppState } from "$lib/state/app.svelte";
 import { editorSourceReferenceLocation } from "$lib/source-provenance";
-import type { EditableStyles, PageSection, CanvasElementObservation } from "$lib/types";
+import type { EditableStyles, CanvasElementObservation } from "$lib/types";
 import { t } from "$lib/i18n/runtime.svelte";
 
 export function clearPreviewSelection(
@@ -28,10 +27,7 @@ export function setPreviewTeraSelection(
   target: PreviewTeraSelectionTarget,
   options: { status?: string } = {},
 ) {
-  const renderInstanceId = target.selector.match(
-    /data-pana-render-instance-id=["']([^"']+)["']/,
-  )?.[1] ?? null;
-  const node = app.editorNavigationSnapshot?.nodes.find((candidate) =>
+  const candidates = app.editorNavigationSnapshot?.nodes.filter((candidate) =>
     candidate.kind === "teraBoundary"
     && (
       candidate.id === target.sourceId
@@ -39,17 +35,20 @@ export function setPreviewTeraSelection(
       || candidate.boundary?.sourceNodeId === target.sourceId
     )
     && (
-      !renderInstanceId
-      || candidate.boundary?.rootRenderInstanceIds.includes(renderInstanceId)
+      !target.renderInstanceId
+      || candidate.boundary?.rootRenderInstanceIds.includes(target.renderInstanceId)
     )
-  ) ?? null;
-  if (!node) {
+  ) ?? [];
+  if (candidates.length !== 1) {
     app.setGlobalStatus(
-      "Boundary-ul Tera nu există în EditorNavigationSnapshot-ul Rust curent.",
+      candidates.length > 1
+        ? "Boundary-ul Tera este ambiguu în EditorNavigationSnapshot-ul Rust curent."
+        : "Boundary-ul Tera nu există în EditorNavigationSnapshot-ul Rust curent.",
       "error",
     );
     return;
   }
+  const node = candidates[0];
   void app.applySelectionIntent({
     kind: "selectEditorNode",
     editorNodeId: node.id,
@@ -95,23 +94,4 @@ export async function openSelectedMarkdownContent(app: AppState) {
     return;
   }
   await app.openContentPageEditor(relativePath);
-}
-
-export function selectTeraLayerSource(
-  app: AppState,
-  _section: PageSection,
-  sourceId: string,
-) {
-  const node = app.editorNavigationSnapshot?.nodes.find(
-    (candidate) => candidate.kind === "teraBoundary"
-      && candidate.boundary?.sourceNodeId === sourceId,
-  ) ?? null;
-  if (!node) {
-    app.setGlobalStatus(
-      "Boundary-ul nu există în EditorNavigationSnapshot-ul Rust curent.",
-      "error",
-    );
-    return;
-  }
-  selectCanvasNavigationNode(app, node);
 }

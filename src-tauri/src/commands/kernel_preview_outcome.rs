@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::{
     kernel::{
         editor_navigation::{EditorMoveExecutionReceipt, EditorMoveExecutionStatus},
@@ -13,10 +11,11 @@ use crate::{
             PreviewHtmlInsertDropExecutionStatus, PreviewHtmlTagExecutionOutcome,
             PreviewHtmlTagExecutionReceipt, PreviewHtmlTagExecutionStatus,
             PreviewHtmlTextExecutionOutcome, PreviewHtmlTextExecutionReceipt,
-            PreviewHtmlTextExecutionStatus, PreviewTeraDeleteExecutionOutcome,
-            PreviewTeraDeleteExecutionReceipt, PreviewTeraDeleteExecutionStatus,
-            PreviewTeraInsertDropExecutionOutcome, PreviewTeraInsertDropExecutionReceipt,
-            PreviewTeraInsertDropExecutionStatus,
+            PreviewHtmlTextExecutionStatus, PreviewSelectionBatchExecutionOutcome,
+            PreviewSelectionBatchExecutionReceipt, PreviewSelectionBatchExecutionStatus,
+            PreviewTeraDeleteExecutionOutcome, PreviewTeraDeleteExecutionReceipt,
+            PreviewTeraDeleteExecutionStatus, PreviewTeraInsertDropExecutionOutcome,
+            PreviewTeraInsertDropExecutionReceipt, PreviewTeraInsertDropExecutionStatus,
         },
     },
     project_model::model::ProjectModel,
@@ -32,10 +31,13 @@ pub(super) trait PreviewStructuralCommandOutcome {
     ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
         None
     }
-    fn take_alias_updates(&mut self) -> HashMap<String, String> {
-        HashMap::new()
-    }
     fn canvas_patch_mut(&mut self) -> Option<&mut CanvasPatch> {
+        None
+    }
+    fn selection_replacement_source_ids(&self) -> Option<&[String]> {
+        None
+    }
+    fn selection_replacement_primary_source_id(&self) -> Option<&str> {
         None
     }
     fn into_receipt(self) -> Self::Receipt;
@@ -70,10 +72,6 @@ impl PreviewStructuralCommandOutcome for EditorMoveExecutionOutcome {
         &self,
     ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
         self.receipt.workspace_mutation.as_ref()
-    }
-
-    fn take_alias_updates(&mut self) -> HashMap<String, String> {
-        std::mem::take(&mut self.alias_updates)
     }
 
     fn canvas_patch_mut(&mut self) -> Option<&mut CanvasPatch> {
@@ -115,70 +113,69 @@ macro_rules! preview_structural_outcome {
     };
 }
 
-macro_rules! preview_structural_outcome_with_aliases {
-    ($outcome:ty, $receipt:ty, $status:ty) => {
-        impl PreviewStructuralCommandOutcome for $outcome {
-            type Receipt = $receipt;
-
-            fn command_succeeded(&self) -> bool {
-                self.receipt.status == <$status>::Committed
-            }
-
-            fn after_model_mut(&mut self) -> &mut Option<ProjectModel> {
-                &mut self.after_model
-            }
-
-            fn workspace_mutation(
-                &self,
-            ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
-                self.receipt.workspace_mutation.as_ref()
-            }
-
-            fn take_alias_updates(&mut self) -> HashMap<String, String> {
-                std::mem::take(&mut self.alias_updates)
-            }
-
-            fn canvas_patch_mut(&mut self) -> Option<&mut CanvasPatch> {
-                self.receipt.canvas_patch.as_mut()
-            }
-
-            fn into_receipt(self) -> Self::Receipt {
-                self.receipt
-            }
-        }
-    };
-}
-
-preview_structural_outcome_with_aliases!(
+preview_structural_outcome!(
     PreviewHtmlInsertDropExecutionOutcome,
     PreviewHtmlInsertDropExecutionReceipt,
     PreviewHtmlInsertDropExecutionStatus
 );
-preview_structural_outcome_with_aliases!(
+preview_structural_outcome!(
     PreviewHtmlAttributesExecutionOutcome,
     PreviewHtmlAttributesExecutionReceipt,
     PreviewHtmlAttributesExecutionStatus
 );
-preview_structural_outcome_with_aliases!(
+preview_structural_outcome!(
     PreviewHtmlTextExecutionOutcome,
     PreviewHtmlTextExecutionReceipt,
     PreviewHtmlTextExecutionStatus
 );
-preview_structural_outcome_with_aliases!(
+preview_structural_outcome!(
     PreviewHtmlTagExecutionOutcome,
     PreviewHtmlTagExecutionReceipt,
     PreviewHtmlTagExecutionStatus
 );
-preview_structural_outcome_with_aliases!(
+preview_structural_outcome!(
     PreviewHtmlDuplicateExecutionOutcome,
     PreviewHtmlDuplicateExecutionReceipt,
     PreviewHtmlDuplicateExecutionStatus
 );
-preview_structural_outcome_with_aliases!(
+preview_structural_outcome!(
     PreviewHtmlDeleteExecutionOutcome,
     PreviewHtmlDeleteExecutionReceipt,
     PreviewHtmlDeleteExecutionStatus
 );
+impl PreviewStructuralCommandOutcome for PreviewSelectionBatchExecutionOutcome {
+    type Receipt = PreviewSelectionBatchExecutionReceipt;
+
+    fn command_succeeded(&self) -> bool {
+        self.receipt.status == PreviewSelectionBatchExecutionStatus::Committed
+    }
+
+    fn after_model_mut(&mut self) -> &mut Option<ProjectModel> {
+        &mut self.after_model
+    }
+
+    fn workspace_mutation(
+        &self,
+    ) -> Option<&crate::kernel::project_workspace::ProjectWorkspaceMutationReceipt> {
+        self.receipt.workspace_mutation.as_ref()
+    }
+
+    fn canvas_patch_mut(&mut self) -> Option<&mut CanvasPatch> {
+        self.receipt.canvas_patch.as_mut()
+    }
+
+    fn selection_replacement_source_ids(&self) -> Option<&[String]> {
+        Some(&self.receipt.affected_source_ids)
+    }
+
+    fn selection_replacement_primary_source_id(&self) -> Option<&str> {
+        self.receipt.primary_affected_source_id.as_deref()
+    }
+
+    fn into_receipt(self) -> Self::Receipt {
+        self.receipt
+    }
+}
 preview_structural_outcome!(
     PreviewTeraInsertDropExecutionOutcome,
     PreviewTeraInsertDropExecutionReceipt,
@@ -238,7 +235,7 @@ mod tests {
                 before_model_revision: "before".to_string(),
                 after_model_revision: "after".to_string(),
                 operation: CanvasPatchOperation::Delete {
-                    target: CanvasPatchAnchor::source("sg_0123456789abcdef", None, Some("div")),
+                    target: CanvasPatchAnchor::source("sg_0123456789abcdef", Some("div")),
                 },
             }),
             after_model: None,

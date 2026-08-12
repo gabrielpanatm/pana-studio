@@ -8,7 +8,10 @@
     IconSearch,
     IconX,
   } from "@tabler/icons-svelte";
-  import { nativeBlockPaletteGroupsFromRegistry } from "$lib/blocks/registry";
+  import {
+    availableNativeBlockScales,
+    nativeBlockPaletteGroupsFromRegistry,
+  } from "$lib/blocks/registry";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { readNativeBlockRegistry, readUiBlockGraph } from "$lib/project/io";
   import type { HtmlPaletteElement } from "$lib/project/html-palette";
@@ -30,14 +33,6 @@
 
   type BlockView = "all" | "element" | "section" | "composition" | "dynamic_fields";
   type DetailMode = "info" | "insert";
-
-  const blockViews = $derived([
-    { id: "all" as const, label: t("blocks-view-all") },
-    { id: "element" as const, label: t("blocks-view-elements") },
-    { id: "section" as const, label: t("blocks-view-sections") },
-    { id: "composition" as const, label: t("blocks-view-compositions") },
-    { id: "dynamic_fields" as const, label: "Câmpuri dinamice" },
-  ]);
 
   let activeView = $state<BlockView>("all");
   let detailMode = $state<DetailMode>("info");
@@ -139,6 +134,21 @@
       flattenDynamicFields(model, model.fields)
     )),
   );
+  const blockViews = $derived.by(() => {
+    const availableScales = new Set(availableNativeBlockScales(definitions));
+    const views: Array<{ id: BlockView; label: string }> = [
+      { id: "all", label: t("blocks-view-all") },
+      { id: "element", label: t("blocks-view-elements") },
+      { id: "section", label: t("blocks-view-sections") },
+      { id: "composition", label: t("blocks-view-compositions") },
+      { id: "dynamic_fields", label: "Câmpuri dinamice" },
+    ];
+    return views.filter((view) => {
+      if (view.id === "all") return true;
+      if (view.id === "dynamic_fields") return dynamicFields.length > 0;
+      return availableScales.has(view.id);
+    });
+  });
   const filteredDynamicFields = $derived(dynamicFields.filter((entry) => {
     if (activeView !== "dynamic_fields") return false;
     if (!normalizedQuery) return true;
@@ -178,6 +188,11 @@
       .filter((page) => page.pageKind === "page" && page.resolvedTemplate === activeTemplateName)
       .sort((left, right) => left.title.localeCompare(right.title, l10n.locale)),
   );
+
+  $effect(() => {
+    if (blockViews.some((view) => view.id === activeView)) return;
+    selectView("all");
+  });
 
   $effect(() => {
     const entry = selectedDynamicField;
@@ -308,7 +323,7 @@
   async function insertDynamicField() {
     const target = insertTarget;
     const dynamic = selectedDynamicField;
-    if (!target?.sourceLocation || !dynamic || inserting) return;
+    if (!target?.sourceNodeId || !dynamic || inserting) return;
     if (dynamicScope === "item" && !dynamicItemTargetAllowed) {
       loadError = "Selectează bucla Tera a repetorului sau un element aflat în interiorul ei.";
       return;
@@ -335,9 +350,6 @@
     };
     try {
       const outcome = await app.insertTeraPaletteItemAtTarget({
-        targetSelector: target.observation.domPath
-          || target.observation.cssSelector
-          || target.observation.selector,
         targetSessionId: target.snapshot.runtimeSessionId,
         targetSourceId: target.sourceNodeId,
         targetTemplateSourceId: null,
@@ -368,19 +380,17 @@
   async function insertSelectedBlock() {
     const target = insertTarget;
     const element = selectedPaletteElement as HtmlPaletteElement | null;
-    if (!element || !target?.sourceLocation || inserting) return;
+    if (!element || !target?.sourceNodeId || inserting) return;
     const observation = target.observation;
     inserting = true;
     loadError = "";
     try {
       const outcome = await app.insertPaletteElementAtTarget({
         targetRenderInstanceId: target.renderInstanceId,
-        targetSelector: observation.domPath || observation.cssSelector || observation.selector,
         targetSessionId: target.snapshot.runtimeSessionId,
         targetSourceId: target.sourceNodeId,
         targetTemplateSourceId: null,
         targetBoundaryInstanceId: null,
-        targetSourceLocation: target.sourceLocation,
         targetTag: observation.tag,
         position: "after",
         element,
@@ -453,7 +463,7 @@
       class="ui-button primary toolbar toolbar-action"
       type="button"
       disabled={activeView === "dynamic_fields"
-        ? !selectedDynamicField || !insertTarget?.sourceLocation || !dynamicItemTargetAllowed
+        ? !selectedDynamicField || !insertTarget?.sourceNodeId || !dynamicItemTargetAllowed
         : !selectedDefinition?.capabilities.canInsert || !selectedPaletteElement}
       onclick={() => activeView === "dynamic_fields" ? void insertDynamicField() : beginInsert()}
     >
@@ -539,7 +549,7 @@
         <section class="detail-section"><h3>Legături detectate de Rust</h3><div class="semantic-row"><code>template-uri</code><span>{app.sourceGraph?.contentModels.templateUsages.filter((usage) => usage.fieldId === selectedDynamicField.field.id).length ?? 0}</span></div></section>
         {#if loadError}<p class="form-error" role="alert"><IconAlertTriangle size={14} /> {loadError}</p>{/if}
         <div class="target-card"><strong>{insertTarget ? `Inserare după <${insertTarget.observation.tag}>` : "Selectează un element din preview"}</strong><span>{insertTarget?.sourceLocation?.file ?? "Câmpul dinamic se inserează într-un template Tera editabil."}</span></div>
-        <div class="detail-actions"><button class="ui-button primary primary-action" type="button" disabled={!insertTarget?.sourceLocation || !dynamicItemTargetAllowed || inserting} onclick={() => { void insertDynamicField(); }}><IconPlus size={14} /> {inserting ? "Se inserează…" : "Inserează câmpul"}</button></div>
+        <div class="detail-actions"><button class="ui-button primary primary-action" type="button" disabled={!insertTarget?.sourceNodeId || !dynamicItemTargetAllowed || inserting} onclick={() => { void insertDynamicField(); }}><IconPlus size={14} /> {inserting ? "Se inserează…" : "Inserează câmpul"}</button></div>
       {:else if detailMode === "insert" && selectedDefinition && selectedPaletteElement}
         <header class="detail-heading">
           <div>
@@ -564,7 +574,7 @@
           <button
             class="ui-button primary primary-action"
             type="button"
-            disabled={!insertTarget?.sourceLocation || inserting}
+            disabled={!insertTarget?.sourceNodeId || inserting}
             onclick={() => { void insertSelectedBlock(); }}
           >
             <IconPlus size={14} />

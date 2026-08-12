@@ -35,23 +35,7 @@
     var sourceMatches = Array.prototype.slice.call(document.querySelectorAll(
       "[" + SOURCE_ID_ATTR + '=\"' + canvasCssEscape(anchor.sourceId) + '\"]'
     ));
-    if (sourceMatches.length > 0) return sourceMatches;
-    var alternateSourceIds = Array.isArray(anchor.alternateSourceIds)
-      ? anchor.alternateSourceIds.slice(0, 4)
-      : [];
-    for (var alternateIndex = 0; alternateIndex < alternateSourceIds.length; alternateIndex += 1) {
-      sourceMatches = Array.prototype.slice.call(document.querySelectorAll(
-        "[" + SOURCE_ID_ATTR + '=\"' + canvasCssEscape(alternateSourceIds[alternateIndex]) + '\"]'
-      ));
-      if (sourceMatches.length > 0) return sourceMatches;
-    }
-    if (!anchor.selectorFallback) return [];
-    try {
-      var fallback = document.querySelector(anchor.selectorFallback);
-      return fallback ? [fallback] : [];
-    } catch (_) {
-      return [];
-    }
+    return sourceMatches;
   }
 
   function requireCanvasPatchElement(anchor, label) {
@@ -70,11 +54,26 @@
   function canvasPatchElementFromHtml(html) {
     var template = document.createElement("template");
     template.innerHTML = String(html || "").trim();
+    var rawIconRoots = template.content.querySelectorAll('[data-pana-block="icon"]');
+    if (rawIconRoots.length > 0 && (
+      rawIconRoots.length !== 1
+      || template.content.children.length !== 1
+      || template.content.firstElementChild !== rawIconRoots[0]
+    )) {
+      throw new Error("CanvasPatch Icon insert cere un singur block rădăcină.");
+    }
+    if (rawIconRoots.length === 1) {
+      canvasPatchValidateIconElement(template.content.firstElementChild);
+    }
     sanitizeDesignSafeTree(template.content);
     if (template.content.children.length !== 1) {
       throw new Error("CanvasPatch insert cere exact un element HTML sigur.");
     }
-    return template.content.firstElementChild;
+    var element = template.content.firstElementChild;
+    if (element.getAttribute("data-pana-block") === "icon") {
+      canvasPatchValidateIconElement(element);
+    }
+    return element;
   }
 
   function applyCanvasPatchInsertedIdentity(element, anchor) {
@@ -101,21 +100,19 @@
     if (!target || typeof target !== "object") {
       throw new Error("Draftul live de text nu are țintă.");
     }
-    var candidates = liveTextDraftCandidates(SESSION_ID_ATTR, String(target.sessionId || ""));
-    if (candidates.length !== 1) {
-      candidates = liveTextDraftCandidates(SOURCE_ID_ATTR, String(target.sourceId || ""));
+    var renderInstanceId = String(target.renderInstanceId || "");
+    var sourceId = String(target.sourceId || "");
+    if (!renderInstanceId || !sourceId) {
+      throw new Error("Draftul live de text cere SelectionAnchor complet.");
     }
-    if (candidates.length !== 1 && target.selector) {
-      try {
-        candidates = Array.prototype.slice.call(document.querySelectorAll(String(target.selector)));
-      } catch (_) {
-        candidates = [];
-      }
-    }
+    var candidates = liveTextDraftCandidates(CANVAS_RENDER_INSTANCE_ATTR, renderInstanceId);
     if (candidates.length !== 1) {
       throw new Error("Draftul live de text cere o singură țintă randată.");
     }
     var element = candidates[0];
+    if (element.getAttribute(SOURCE_ID_ATTR) !== sourceId) {
+      throw new Error("Draftul live de text nu corespunde SourceNodeId-ului așteptat.");
+    }
     var expectedTag = String(target.expectedTag || "").trim().toLowerCase();
     if (expectedTag && element.tagName.toLowerCase() !== expectedTag) {
       throw new Error("Draftul live de text nu corespunde tag-ului așteptat.");
@@ -145,9 +142,8 @@
     activeLiveTextDraft = {
       editSessionId: editSessionId,
       target: {
-        selector: String(data.target && data.target.selector || ""),
         sourceId: String(data.target && data.target.sourceId || ""),
-        sessionId: String(data.target && data.target.sessionId || ""),
+        renderInstanceId: String(data.target && data.target.renderInstanceId || ""),
         expectedTag: String(data.target && data.target.expectedTag || "")
       },
       text: text
@@ -178,21 +174,19 @@
     if (!target || typeof target !== "object") {
       throw new Error("Draftul live de atribute nu are țintă.");
     }
-    var candidates = liveTextDraftCandidates(SESSION_ID_ATTR, String(target.sessionId || ""));
-    if (candidates.length !== 1) {
-      candidates = liveTextDraftCandidates(SOURCE_ID_ATTR, String(target.sourceId || ""));
+    var renderInstanceId = String(target.renderInstanceId || "");
+    var sourceId = String(target.sourceId || "");
+    if (!renderInstanceId || !sourceId) {
+      throw new Error("Draftul live de atribute cere SelectionAnchor complet.");
     }
-    if (candidates.length !== 1 && target.selector) {
-      try {
-        candidates = Array.prototype.slice.call(document.querySelectorAll(String(target.selector)));
-      } catch (_) {
-        candidates = [];
-      }
-    }
+    var candidates = liveTextDraftCandidates(CANVAS_RENDER_INSTANCE_ATTR, renderInstanceId);
     if (candidates.length !== 1) {
       throw new Error("Draftul live de atribute cere o singură țintă randată.");
     }
     var element = candidates[0];
+    if (element.getAttribute(SOURCE_ID_ATTR) !== sourceId) {
+      throw new Error("Draftul live de atribute nu corespunde SourceNodeId-ului așteptat.");
+    }
     var expectedTag = String(target.expectedTag || "").trim().toLowerCase();
     if (expectedTag && element.tagName.toLowerCase() !== expectedTag) {
       throw new Error("Draftul live de atribute nu corespunde tag-ului așteptat.");
@@ -267,9 +261,8 @@
       editSessionId: editSessionId,
       draftEpoch: draftEpoch,
       target: {
-        selector: String(data.target && data.target.selector || ""),
         sourceId: String(data.target && data.target.sourceId || ""),
-        sessionId: String(data.target && data.target.sessionId || ""),
+        renderInstanceId: String(data.target && data.target.renderInstanceId || ""),
         expectedTag: String(data.target && data.target.expectedTag || "")
       },
       attributes: attributes,
@@ -325,6 +318,140 @@
   function restoreCanvasAttribute(element, name, value) {
     if (value === null) element.removeAttribute(name);
     else element.setAttribute(name, value);
+  }
+
+  var MANAGED_ICON_ATTRIBUTES = {
+    "data-pana-icon": true,
+    xmlns: true,
+    viewBox: true,
+    width: true,
+    height: true,
+    fill: true,
+    stroke: true,
+    "stroke-width": true,
+    "stroke-linecap": true,
+    "stroke-linejoin": true,
+    "aria-hidden": true,
+    focusable: true,
+    role: true,
+    "aria-label": true
+  };
+
+  function canvasPatchIconAttributes(attributes, iconIdentity) {
+    var changes = Object.keys(attributes || {}).map(function (name) {
+      if (!MANAGED_ICON_ATTRIBUTES[name]) {
+        throw new Error("CanvasPatch Icon a refuzat un atribut neadministrat.");
+      }
+      var value = attributes[name];
+      if (value !== null) value = String(value);
+      var valid = value === null;
+      if (name === "data-pana-icon") valid = value === iconIdentity;
+      else if (name === "xmlns") valid = value === "http://www.w3.org/2000/svg";
+      else if (name === "viewBox") valid = value === "0 0 24 24";
+      else if (name === "width" || name === "height") {
+        valid = value === null || (/^[0-9]{1,3}$/.test(value) && Number(value) >= 8 && Number(value) <= 512);
+      } else if (name === "fill") valid = value === null || value === "none";
+      else if (name === "stroke") valid = value === null || value === "currentColor";
+      else if (name === "stroke-width") {
+        valid = value === null || (/^[0-9](?:\.[0-9]{1,2})?$/.test(value) && Number(value) >= 0.5 && Number(value) <= 4);
+      } else if (name === "stroke-linecap" || name === "stroke-linejoin") valid = value === null || value === "round";
+      else if (name === "focusable") valid = value === null || value === "false";
+      else if (name === "aria-hidden") valid = value === null || value === "true";
+      else if (name === "role") valid = value === null || value === "img";
+      else if (name === "aria-label") valid = value === null || (
+        value.trim().length > 0
+        && value.length <= 160
+        && !/[\u0000-\u001f\u007f]/.test(value)
+      );
+      if (!valid) throw new Error("CanvasPatch Icon a refuzat valoarea atributului " + name + ".");
+      return { name: name, value: value };
+    });
+    var byName = {};
+    changes.forEach(function (change) { byName[change.name] = change.value; });
+    if (
+      changes.length !== Object.keys(MANAGED_ICON_ATTRIBUTES).length
+      || byName["data-pana-icon"] !== iconIdentity
+    ) {
+      throw new Error("CanvasPatch Icon nu confirmă identitatea în atribute.");
+    }
+    var decorative = byName["aria-hidden"] === "true";
+    var semantic = byName.role === "img" && typeof byName["aria-label"] === "string" && byName["aria-label"].trim();
+    if (
+      (decorative && (byName.role !== null || byName["aria-label"] !== null))
+      || (!decorative && (byName["aria-hidden"] !== null || !semantic))
+    ) {
+      throw new Error("CanvasPatch Icon a refuzat contractul de accesibilitate.");
+    }
+    return changes;
+  }
+
+  function canvasPatchIconChildren(childrenHtml) {
+    var source = String(childrenHtml || "");
+    if (!source || source.length > 65536) {
+      throw new Error("CanvasPatch Icon a refuzat geometria goală sau supradimensionată.");
+    }
+    var parsed = new DOMParser().parseFromString(
+      '<svg xmlns="http://www.w3.org/2000/svg">' + source + "</svg>",
+      "image/svg+xml"
+    );
+    if (parsed.querySelector("parsererror")) {
+      throw new Error("CanvasPatch Icon a refuzat geometria SVG invalidă.");
+    }
+    var root = parsed.documentElement;
+    var nodes = Array.prototype.slice.call(root.children);
+    var unsafeChild = Array.prototype.some.call(root.childNodes, function (node) {
+      return node.nodeType !== 1 && !(node.nodeType === 3 && !String(node.nodeValue || "").trim());
+    });
+    if (nodes.length === 0 || nodes.length > 32 || unsafeChild) {
+      throw new Error("CanvasPatch Icon cere exclusiv noduri SVG path.");
+    }
+    nodes.forEach(function (node) {
+      if (node.localName !== "path" || node.children.length > 0) {
+        throw new Error("CanvasPatch Icon a refuzat un nod SVG nepermis.");
+      }
+      Array.prototype.forEach.call(node.attributes, function (attribute) {
+        var name = attribute.localName || attribute.name;
+        var value = attribute.value;
+        var allowed = name === "d"
+          ? Boolean(value) && /^[ MmAaCcHhLlQqSsTtVvZz0-9+.,-]+$/.test(value)
+          : name === "fill" ? value === "currentColor"
+          : name === "stroke" ? value === "none"
+          : name === "opacity" ? value === ".5"
+          : false;
+        if (!allowed) throw new Error("CanvasPatch Icon a refuzat un atribut SVG nepermis.");
+      });
+    });
+    return nodes;
+  }
+
+  function canvasPatchValidateIconElement(element) {
+    if (!element || element.tagName.toLowerCase() !== "svg") {
+      throw new Error("CanvasPatch Icon insert cere o rădăcină SVG.");
+    }
+    Array.prototype.forEach.call(element.attributes, function (attribute) {
+      var name = String(attribute.localName || attribute.name || "").toLowerCase();
+      if (
+        name.indexOf("on") === 0
+        || ["href", "xlink:href", "src", "filter", "mask", "clip-path"].indexOf(name) >= 0
+      ) {
+        throw new Error("CanvasPatch Icon insert a refuzat un atribut activ sau URL.");
+      }
+    });
+    var identity = String(element.getAttribute("data-pana-icon") || "");
+    if (
+      element.getAttribute("data-pana-block") !== "icon"
+      || !element.getAttribute("data-pana-instance")
+      || !element.getAttribute("data-anim")
+      || !/^tabler-outline:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(identity)
+    ) {
+      throw new Error("CanvasPatch Icon insert a refuzat identitatea rădăcinii.");
+    }
+    var attributes = {};
+    Object.keys(MANAGED_ICON_ATTRIBUTES).forEach(function (name) {
+      attributes[name] = element.hasAttribute(name) ? element.getAttribute(name) : null;
+    });
+    canvasPatchIconAttributes(attributes, identity);
+    canvasPatchIconChildren(element.innerHTML);
   }
 
   function runCanvasPatchRollbacks(rollbacks) {
@@ -383,7 +510,42 @@
     var baseCanvasTransactionId = root.getAttribute("data-pana-canvas-transaction-id") || "";
 
     try {
-      if (operation.kind === "setBlockOption") {
+      function applyCanvasPatchOperation(operation) {
+        var selected = null;
+      if (operation.kind === "setIcon") {
+        selected = requireCanvasPatchElement(operation.target, "target");
+        var iconProviderId = String(operation.providerId || "");
+        var iconIdentity = String(operation.iconIdentity || "");
+        if (
+          iconProviderId !== "icon"
+          || selected.tagName.toLowerCase() !== "svg"
+          || selected.getAttribute("data-pana-block") !== "icon"
+          || !/^tabler-outline:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(iconIdentity)
+        ) {
+          throw new Error("CanvasPatch Icon a refuzat identitatea țintei.");
+        }
+        var iconAttributeChanges = canvasPatchIconAttributes(operation.attributes, iconIdentity);
+        var replacementIconNodes = canvasPatchIconChildren(operation.childrenHtml);
+        var previousIconChildren = Array.prototype.slice.call(selected.childNodes);
+        iconAttributeChanges.forEach(function (change) {
+          change.previous = selected.hasAttribute(change.name) ? selected.getAttribute(change.name) : null;
+        });
+        rollbacks.push(function () {
+          iconAttributeChanges.forEach(function (change) {
+            restoreCanvasAttribute(selected, change.name, change.previous);
+          });
+          while (selected.firstChild) selected.removeChild(selected.firstChild);
+          previousIconChildren.forEach(function (child) { selected.appendChild(child); });
+        });
+        iconAttributeChanges.forEach(function (change) {
+          if (change.value === null) selected.removeAttribute(change.name);
+          else selected.setAttribute(change.name, change.value);
+        });
+        while (selected.firstChild) selected.removeChild(selected.firstChild);
+        replacementIconNodes.forEach(function (node) {
+          selected.appendChild(document.importNode(node, true));
+        });
+      } else if (operation.kind === "setBlockOption") {
         selected = requireCanvasPatchElement(operation.target, "target");
         var providerId = String(operation.providerId || "").trim();
         var optionId = String(operation.optionId || "").trim();
@@ -516,6 +678,27 @@
         selected = parent && parent !== document.documentElement && parent !== document.body ? parent : null;
       } else {
         throw new Error("CanvasPatch a refuzat un tip de operație necunoscut.");
+      }
+
+        return selected;
+      }
+
+      if (operation.kind === "batch") {
+        if (
+          !Array.isArray(operation.operations)
+          || operation.operations.length < 1
+          || operation.operations.length > 256
+          || operation.operations.some(function (item) {
+            return !item || typeof item !== "object" || item.kind === "batch";
+          })
+        ) {
+          throw new Error("CanvasPatch batch a refuzat lista de operații.");
+        }
+        operation.operations.forEach(function (item) {
+          selected = applyCanvasPatchOperation(item);
+        });
+      } else {
+        selected = applyCanvasPatchOperation(operation);
       }
 
       var previousWorkspaceRevision = root.getAttribute(CANVAS_WORKSPACE_REVISION_ATTR);

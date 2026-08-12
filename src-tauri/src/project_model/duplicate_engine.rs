@@ -6,7 +6,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    blocks::{native_block_by_id, native_block_instance_id},
+    blocks::{
+        inspect_native_icon_source, native_block_by_id, native_block_instance_id,
+        node_is_slider_managed_scaffold, validate_native_block_slot_duplicate,
+        NativeBlockSlotMutationContext,
+    },
     kernel::dynamic_widgets::{
         generate_dynamic_widget_instance_id, render_dynamic_widget, DynamicWidgetSourceInstance,
     },
@@ -15,12 +19,12 @@ use crate::{
 };
 
 use super::move_engine::{
-    content_revision, direct_location_without_source_id, insert_line_block,
-    inserted_block_start_line, line_block_after_index, line_indent_at_offset,
-    line_number_at_offset, offset_for_source_location, parse_html_tag_at, reindent_html_fragment,
-    reindent_structural_fragment, resolve_html_element_span, resolve_html_node_for_anchor,
-    same_model_path, source_location_at_offset, source_missing_message, ProjectSourceEditLocation,
-    Span,
+    content_revision, insert_line_block, inserted_block_start_line, line_block_after_index,
+    line_number_at_offset, parse_html_tag_at, resolve_html_node_for_anchor, same_model_path,
+    source_location_at_offset, source_missing_message, ProjectSourceEditLocation, Span,
+};
+use super::structural_edit::{
+    format_html_fragment, relocate_lossless_fragment, StructuralPlacement,
 };
 use super::structural_envelope::{structural_envelope_for_html_node, StructuralEnvelopeKind};
 use super::zola_image_engine::{contains_zola_image_contract, zola_image_contract_start};
@@ -29,9 +33,9 @@ use super::zola_image_engine::{contains_zola_image_contract, zola_image_contract
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHtmlDuplicateIntent {
     pub source_source_id: Option<String>,
-    pub source_location: Option<ProjectSourceEditLocation>,
     pub source_tag: Option<String>,
-    pub source_selector: Option<String>,
+    #[serde(default)]
+    pub native_block_slot: Option<NativeBlockSlotMutationContext>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -54,6 +58,10 @@ pub struct ProjectHtmlDuplicatePatch {
     pub contents: String,
     pub source_location: ProjectSourceEditLocation,
     pub inserted_location: ProjectSourceEditLocation,
+    /// Exact UTF-8 byte offset of the duplicated root in `contents`.
+    /// Rust computes it while applying the structural edit; identity
+    /// reconciliation never reconstructs it from line/column metadata.
+    pub inserted_offset: usize,
     pub source_start_line: usize,
     pub source_end_line: usize,
     pub inserted_start_line: usize,
@@ -78,6 +86,7 @@ struct DuplicateHtml {
 struct DuplicateApplication {
     contents: String,
     inserted_location: ProjectSourceEditLocation,
+    inserted_offset: usize,
     source_start_line: usize,
     source_end_line: usize,
     inserted_start_line: usize,
@@ -103,9 +112,8 @@ const STUDIO_ATTRIBUTES: &[&str] = &[
 pub fn plan_html_duplicate(
     model: &ProjectModel,
     intent: &ProjectHtmlDuplicateIntent,
-    aliases: &HashMap<String, String>,
 ) -> ProjectHtmlDuplicatePlan {
-    match plan_html_duplicate_inner(model, intent, aliases) {
+    match plan_html_duplicate_inner(model, intent) {
         Ok(patch) => ProjectHtmlDuplicatePlan {
             allowed: true,
             diagnostic: None,
@@ -124,30 +132,28 @@ pub fn plan_html_duplicate(
 fn plan_html_duplicate_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlDuplicateIntent,
-    aliases: &HashMap<String, String>,
 ) -> Result<ProjectHtmlDuplicatePatch, String> {
+    if let Some(context) = intent.native_block_slot.as_ref() {
+        validate_native_block_slot_duplicate(model, context, intent.source_source_id.as_deref())?;
+    }
     if let Some(source_node) = resolve_html_node_for_anchor(
         model,
         intent.source_source_id.as_deref(),
-        intent.source_location.as_ref(),
         intent.source_tag.as_deref(),
-        aliases,
     ) {
+        if intent.native_block_slot.is_none() && node_is_slider_managed_scaffold(model, source_node)
+        {
+            return Err(
+                "Structura administrată Slider se duplică numai prin BlockPropertiesPane."
+                    .to_string(),
+            );
+        }
         return plan_html_duplicate_from_source_node(model, source_node);
-    }
-
-    if let Some(location) = direct_location_without_source_id(
-        intent.source_source_id.as_deref(),
-        intent.source_location.as_ref(),
-    ) {
-        return plan_html_duplicate_from_direct_location(model, intent, location);
     }
 
     Err(source_missing_message(
         "sursă",
         intent.source_source_id.as_deref(),
-        intent.source_location.as_ref(),
-        intent.source_selector.as_deref(),
     ))
 }
 
@@ -207,62 +213,8 @@ fn plan_html_duplicate_from_source_node(
     )
 }
 
-fn plan_html_duplicate_from_direct_location(
-    model: &ProjectModel,
-    intent: &ProjectHtmlDuplicateIntent,
-    location: &ProjectSourceEditLocation,
-) -> Result<ProjectHtmlDuplicatePatch, String> {
-    let file = model
-        .files
-        .iter()
-        .find(|file| same_model_path(&file.relative_path, &location.file))
-        .ok_or_else(|| format!("Nu am găsit fișierul {} în Project Model.", location.file))?;
-
-    if !is_direct_html_duplicate_file(file) {
-        return Err(
-            "Duplicarea prin locație directă este activă doar pentru fișiere HTML 1:1 din proiect, nu pentru template-uri Tera.".to_string(),
-        );
-    }
-
-    let offset = offset_for_source_location(&file.contents, location)?;
-    let tag = parse_html_tag_at(&file.contents, offset)
-        .ok_or_else(|| "Locația nu indică începutul unui tag HTML duplicabil.".to_string())?;
-    if tag.is_closing {
-        return Err("Locația indică un tag de închidere, nu un element duplicabil.".to_string());
-    }
-    if tag.tag == "html" || tag.tag == "body" {
-        return Err("Elementul rădăcină nu poate fi duplicat.".to_string());
-    }
-    if let Some(expected_tag) = intent.source_tag.as_deref() {
-        let expected_tag = expected_tag.trim().to_ascii_lowercase();
-        if !expected_tag.is_empty() && expected_tag != tag.tag {
-            return Err(format!(
-                "Locația indică <{}>, dar intenția preview a cerut <{}>.",
-                tag.tag, expected_tag
-            ));
-        }
-    }
-
-    let source_span = resolve_html_element_span(&file.contents, tag.start)?;
-    let resolved_source_id = intent.source_source_id.clone().unwrap_or_else(|| {
-        format!(
-            "location:{}:{}:{}",
-            location.file, location.line, location.column
-        )
-    });
-
-    plan_html_duplicate_for_span(
-        model,
-        file,
-        &file.relative_path,
-        source_span,
-        tag.start,
-        None,
-        resolved_source_id,
-        format!("<{}>", tag.tag),
-    )
-}
-
+// Span, semantic identity and optional widget evidence are distinct duplication preconditions.
+#[allow(clippy::too_many_arguments)]
 fn plan_html_duplicate_for_span(
     model: &ProjectModel,
     file: &ProjectModelFile,
@@ -280,6 +232,9 @@ fn plan_html_duplicate_for_span(
     let tag = parse_html_tag_at(&file.contents, opening_start)
         .map(|tag| tag.tag)
         .ok_or_else(|| "Nu am putut citi tag-ul HTML pentru duplicare.".to_string())?;
+    if tag == "svg" {
+        validate_duplicated_icon_source(source_html)?;
+    }
     let dynamic_widget_contract = dynamic_widget.is_some();
     let duplicate_source = if let Some(instance) = dynamic_widget {
         let properties = instance.properties.as_ref().ok_or_else(|| {
@@ -321,6 +276,7 @@ fn plan_html_duplicate_for_span(
         contents: applied.contents,
         source_location: source_location_at_offset(&file.contents, file_path, source_span.start),
         inserted_location: applied.inserted_location,
+        inserted_offset: applied.inserted_offset,
         source_start_line: applied.source_start_line,
         source_end_line: applied.source_end_line,
         inserted_start_line: applied.inserted_start_line,
@@ -336,16 +292,30 @@ fn plan_html_duplicate_for_span(
     })
 }
 
-fn is_direct_html_duplicate_file(file: &ProjectModelFile) -> bool {
-    matches!(
-        file.kind,
-        ProjectModelFileKind::StaticText | ProjectModelFileKind::OtherText
-    ) && is_html_path(&file.relative_path)
-}
-
-fn is_html_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.ends_with(".html") || lower.ends_with(".htm")
+fn validate_duplicated_icon_source(source: &str) -> Result<(), String> {
+    let opening = parse_html_tag_at(source, 0)
+        .ok_or_else(|| "Block-ul Icon nu mai are o rădăcină SVG stabilă.".to_string())?;
+    let opening_source = source
+        .get(opening.start..opening.end)
+        .ok_or_else(|| "Rădăcina block-ului Icon nu poate fi citită.".to_string())?;
+    let Some(state) = inspect_native_icon_source(opening_source)? else {
+        return Ok(());
+    };
+    let closing = source
+        .to_ascii_lowercase()
+        .rfind("</svg>")
+        .ok_or_else(|| "Block-ul Icon nu mai are închiderea </svg>.".to_string())?;
+    let children = source
+        .get(opening.end..closing)
+        .ok_or_else(|| "Geometria block-ului Icon are un range invalid.".to_string())?;
+    let expected = crate::blocks::icons::render_icon_children_by_identity(&state.icon_identity)?;
+    if children.trim() != expected {
+        return Err(
+            "Block-ul Icon conține geometrie care nu aparține registrului Rust și nu poate fi duplicat."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn apply_html_duplicate_after(
@@ -355,16 +325,21 @@ fn apply_html_duplicate_after(
     snippet: &str,
     preserve_internal_indentation: bool,
 ) -> Result<DuplicateApplication, String> {
-    let target_indent = line_indent_at_offset(source, source_span.start);
+    let placement = StructuralPlacement::for_direct_target(source, source_span.start);
+    let target_indent = placement.indent.as_str();
     let inserted = if preserve_internal_indentation {
-        reindent_structural_fragment(snippet, "", &target_indent, true)
+        relocate_lossless_fragment(snippet, "", target_indent, &placement.style)?
     } else {
-        reindent_html_fragment(snippet, &target_indent)
+        format_html_fragment(snippet, target_indent, &placement.style)?
     };
     let source_start_line = line_number_at_offset(source, source_span.start);
     let source_end_line = line_number_at_offset(source, source_span.end);
     let insert_at = line_block_after_index(source, source_span.end);
     let inserted_start_line = inserted_block_start_line(source, insert_at);
+    let leading_break_bytes =
+        usize::from(insert_at > 0 && source.as_bytes().get(insert_at - 1) != Some(&b'\n'))
+            * placement.style.line_ending().len();
+    let inserted_offset = insert_at + leading_break_bytes + target_indent.len();
     Ok(DuplicateApplication {
         contents: insert_line_block(source, insert_at, &inserted),
         inserted_location: ProjectSourceEditLocation {
@@ -372,6 +347,7 @@ fn apply_html_duplicate_after(
             line: inserted_start_line,
             column: target_indent.chars().count() + 1,
         },
+        inserted_offset,
         source_start_line,
         source_end_line,
         inserted_start_line,
@@ -869,7 +845,6 @@ fn snippet_line_count(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -881,7 +856,7 @@ mod tests {
             DynamicFieldWidgetProperties, DynamicValueBinding, DynamicValueFormat,
             DynamicValueSource, DynamicValueType, DynamicWidgetProperties,
         },
-        project_model::build_project_model,
+        project_model::test_support::ProjectModelTestFixture,
     };
 
     use super::*;
@@ -889,8 +864,8 @@ mod tests {
     #[test]
     fn plan_html_duplicate_rewrites_html_identity_and_references() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",
@@ -900,8 +875,9 @@ mod tests {
                 "</section>\n",
                 "{% endblock %}\n",
             ),
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let card = model
             .source_graph
             .nodes
@@ -913,11 +889,9 @@ mod tests {
             &model,
             &ProjectHtmlDuplicateIntent {
                 source_source_id: Some(card.id.clone()),
-                source_location: None,
                 source_tag: Some("div".to_string()),
-                source_selector: Some(".card".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -941,8 +915,8 @@ mod tests {
     #[test]
     fn plan_html_duplicate_normalizes_registered_block_instance() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<section>\n",
@@ -950,8 +924,9 @@ mod tests {
                 "</section>\n",
                 "{% endblock %}\n",
             ),
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let counter = model
             .source_graph
             .nodes
@@ -963,11 +938,9 @@ mod tests {
             &model,
             &ProjectHtmlDuplicateIntent {
                 source_source_id: Some(counter.id.clone()),
-                source_location: None,
                 source_tag: Some("span".to_string()),
-                source_selector: Some(".counter".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -981,10 +954,120 @@ mod tests {
     }
 
     #[test]
+    fn plan_html_duplicate_keeps_icon_geometry_and_refreshes_root_identity() {
+        let root = unique_test_dir();
+        let icon = crate::blocks::icons::render_icon_block_html(
+            "star",
+            "ps-icon-old custom-icon",
+            "ps-icon-old",
+            "icon-stale",
+        )
+        .unwrap();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            format!("<main>\n  {icon}\n</main>\n"),
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
+        let marker = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == crate::source_graph::model::SourceNodeKind::BlockMarker
+                    && node.label == "icon"
+            })
+            .expect("icon marker");
+        let icon_root = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| marker.parent.as_deref() == Some(node.id.as_str()))
+            .expect("icon root");
+
+        let plan = plan_html_duplicate(
+            &model,
+            &ProjectHtmlDuplicateIntent {
+                source_source_id: Some(icon_root.id.clone()),
+                source_tag: Some("svg".to_string()),
+                native_block_slot: None,
+            },
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.expect("icon duplicate patch");
+        assert_eq!(patch.block_ids, vec!["icon".to_string()]);
+        assert!(patch
+            .html
+            .contains("data-pana-icon=\"tabler-outline:star\""));
+        assert!(patch.html.contains("class=\"icon ps-svg-"));
+        assert!(patch.html.contains("custom-icon"));
+        assert!(patch.html.contains("data-anim=\"ps-svg-"));
+        assert!(patch.html.contains("data-pana-instance=\"icon-svg-"));
+        assert!(!patch.html.contains("icon-stale"));
+        assert_eq!(
+            patch.html.matches("<path ").count(),
+            icon.matches("<path ").count()
+        );
+    }
+
+    #[test]
+    fn plan_html_duplicate_rejects_arbitrary_icon_geometry() {
+        let root = unique_test_dir();
+        let icon = crate::blocks::icons::render_icon_block_html(
+            "home",
+            "ps-icon-old",
+            "ps-icon-old",
+            "icon-old",
+        )
+        .unwrap()
+        .replace("<path ", "<path onload=\"alert(1)\" ");
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            format!("<main>\n  {icon}\n</main>\n"),
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
+        let marker = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == crate::source_graph::model::SourceNodeKind::BlockMarker
+                    && node.label == "icon"
+            })
+            .expect("icon marker");
+        let icon_root = model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| marker.parent.as_deref() == Some(node.id.as_str()))
+            .expect("icon root");
+        let plan = plan_html_duplicate(
+            &model,
+            &ProjectHtmlDuplicateIntent {
+                source_source_id: Some(icon_root.id.clone()),
+                source_tag: Some("svg".to_string()),
+                native_block_slot: None,
+            },
+        );
+        fs::remove_dir_all(&root).unwrap();
+
+        assert!(!plan.allowed);
+        assert!(plan.patch.is_none());
+        assert!(plan
+            .diagnostic
+            .as_deref()
+            .is_some_and(|message| message.contains("registrului Rust")));
+    }
+
+    #[test]
     fn plan_html_duplicate_rebuilds_a_dynamic_widget_with_a_fresh_contract_identity() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        let base_model = build_project_model(&root, &HashMap::new()).unwrap();
+        let mut fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
+        let base_model = fixture.build_model().unwrap();
         let properties = DynamicWidgetProperties::DynamicField(DynamicFieldWidgetProperties {
             binding: DynamicValueBinding {
                 context: DynamicFieldScope::Section,
@@ -1008,11 +1091,11 @@ mod tests {
             &base_model.source_graph,
         )
         .unwrap();
-        write_project(
-            &root,
-            &format!("<main>\n  {}\n</main>\n", widget.replace('\n', "\n  ")),
+        fixture.source(
+            "templates/index.html",
+            format!("<main>\n  {}\n</main>\n", widget.replace('\n', "\n  ")),
         );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let heading = model
             .source_graph
             .nodes
@@ -1024,11 +1107,9 @@ mod tests {
             &model,
             &ProjectHtmlDuplicateIntent {
                 source_source_id: Some(heading.id.clone()),
-                source_location: None,
                 source_tag: Some("h2".to_string()),
-                source_selector: None,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -1048,12 +1129,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_duplicate_resolves_active_html_by_direct_location() {
+    fn plan_html_duplicate_rejects_location_without_source_id() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("static")).unwrap();
-        fs::write(
-            root.join("static/plain.html"),
+        let mut fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
+        fixture.source(
+            "static/plain.html",
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -1064,53 +1145,37 @@ mod tests {
                 "</body>\n",
                 "</html>\n",
             ),
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_duplicate(
             &model,
             &ProjectHtmlDuplicateIntent {
                 source_source_id: None,
-                source_location: Some(ProjectSourceEditLocation {
-                    file: "static/plain.html".to_string(),
-                    line: 4,
-                    column: 3,
-                }),
                 source_tag: Some("section".to_string()),
-                source_selector: Some("body:nth-of-type(1) > section:nth-of-type(1)".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "static/plain.html");
-        assert_eq!(patch.resolved_source_id, "location:static/plain.html:4:3");
-        assert_eq!(patch.tag, "section");
-        assert!(patch.html.contains("id=\"hero-copy\""));
-        assert!(patch.html.contains("id=\"cta-copy\""));
-        assert!(patch.html.contains("aria-controls=\"hero-copy\""));
-        assert!(patch.html.contains("class=\"panel ps-section-"));
-        assert!(patch.contents.contains("\n  <section id=\"hero-copy\""));
+        assert!(!plan.allowed);
+        assert!(plan.patch.is_none());
     }
 
     #[test]
     fn plan_html_duplicate_blocks_missing_anchor() {
         let root = unique_test_dir();
-        write_project(&root, "<section></section>\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<section></section>\n").unwrap();
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_duplicate(
             &model,
             &ProjectHtmlDuplicateIntent {
                 source_source_id: Some("missing".to_string()),
-                source_location: None,
                 source_tag: Some("section".to_string()),
-                source_selector: Some("section".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -1119,22 +1184,6 @@ mod tests {
             .diagnostic
             .unwrap()
             .contains("Nu am putut ancora sursă"));
-    }
-
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

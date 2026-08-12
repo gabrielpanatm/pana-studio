@@ -28,6 +28,7 @@
     IconPhoto,
     IconQuote,
     IconSearch,
+    IconSlideshow,
     IconTable,
     IconTemplate,
     IconVideo,
@@ -56,7 +57,7 @@
   ) => void;
 
   type CatalogSectionIcon = "structure" | "text" | "list" | "form" | "table" | "block" | "component" | "tera" | "dynamic";
-  type CatalogItemIcon = "box" | "layout" | "article" | "heading" | "text" | "quote" | "code" | "list" | "link" | "action" | "form" | "table" | "photo" | "video" | "audio" | "web" | "canvas" | "map" | "template" | "block" | "accordion" | "counter" | "dialog" | "nav-menu" | "offcanvas" | "tabs" | "component" | "tera" | "dynamic";
+  type CatalogItemIcon = "box" | "layout" | "article" | "heading" | "text" | "quote" | "code" | "list" | "link" | "action" | "form" | "table" | "photo" | "video" | "audio" | "web" | "canvas" | "map" | "template" | "block" | "accordion" | "counter" | "dialog" | "nav-menu" | "offcanvas" | "slider" | "tabs" | "component" | "tera" | "dynamic";
   type CatalogSection = {
     id: string;
     label: string;
@@ -287,7 +288,7 @@
   function itemIcon(item: InsertCatalogItem, sectionIcon: CatalogSectionIcon): CatalogItemIcon {
     if (item.payload.kind !== "html") {
       if (item.payload.kind === "block") {
-        if (["accordion", "counter", "dialog", "nav-menu", "offcanvas", "tabs"].includes(item.payload.blockId)) {
+        if (["accordion", "counter", "dialog", "nav-menu", "offcanvas", "slider", "tabs"].includes(item.payload.blockId)) {
           return item.payload.blockId as CatalogItemIcon;
         }
         return "block";
@@ -446,6 +447,7 @@
                       {:else if itemIcon(item, section.icon) === "dialog"}<IconMessageCircle size={16} />
                       {:else if itemIcon(item, section.icon) === "nav-menu"}<IconMenu2 size={16} />
                       {:else if itemIcon(item, section.icon) === "offcanvas"}<IconLayoutSidebarRightExpand size={16} />
+                      {:else if itemIcon(item, section.icon) === "slider"}<IconSlideshow size={16} />
                       {:else if itemIcon(item, section.icon) === "tabs"}<IconLayoutNavbar size={16} />
                       {:else if itemIcon(item, section.icon) === "block"}<IconBox size={16} />
                       {:else if itemIcon(item, section.icon) === "component"}<IconComponents size={16} />

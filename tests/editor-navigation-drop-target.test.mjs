@@ -140,7 +140,7 @@ test("empty Tera slots resolve only through the Rust boundary identity", () => {
   assert.equal(stale.allowed, false);
 });
 
-test("a move target is rebased by structural path after a draft changes Source Graph identities", () => {
+test("a move target fails closed when a draft changes every exact identity", () => {
   const before = {
     rootNodeIds: ["root:before"],
     nodes: [
@@ -198,8 +198,8 @@ test("a move target is rebased by structural path after a draft changes Source G
   const paragraph = captureEditorMoveNodeAnchor(before, "paragraph:before");
   assert.ok(heading);
   assert.ok(paragraph);
-  assert.equal(resolveEditorMoveNodeAnchor(after, heading)?.id, "heading:after");
-  assert.equal(resolveEditorMoveNodeAnchor(after, paragraph)?.id, "paragraph:after");
+  assert.equal(resolveEditorMoveNodeAnchor(after, heading), null);
+  assert.equal(resolveEditorMoveNodeAnchor(after, paragraph), null);
 });
 
 test("structural move rebasing fails closed when the node shape changed", () => {

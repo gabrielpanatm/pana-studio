@@ -15,6 +15,16 @@ use crate::source_graph::model::{
 #[serde(rename_all = "camelCase")]
 pub enum NativeBlockKind {
     Js,
+    Static,
+}
+
+impl NativeBlockKind {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::Js => "js",
+            Self::Static => "static",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -52,6 +62,9 @@ pub struct NativeBlockSlotDefinition {
     pub label: &'static str,
     pub required: bool,
     pub multiple: bool,
+    pub item_kind: &'static str,
+    pub minimum_items: usize,
+    pub maximum_items: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -138,17 +151,34 @@ const NATIVE_RUNTIME_REQUIREMENTS: &[NativeBlockRequirement] = &[
 const NO_CHOICES: &[(&str, &str)] = &[];
 const SIDE_CHOICES: &[(&str, &str)] = &[("start", "Început"), ("end", "Sfârșit")];
 const NO_SLOTS: &[NativeBlockSlotDefinition] = &[];
+const NO_REQUIREMENTS: &[NativeBlockRequirement] = &[];
+const NO_OPTIONS: &[NativeBlockOptionDefinition] = &[];
 const ACCORDION_SLOTS: &[NativeBlockSlotDefinition] = &[NativeBlockSlotDefinition {
     id: "items",
     label: "Elemente accordion",
     required: true,
     multiple: true,
+    item_kind: "accordionItem",
+    minimum_items: 1,
+    maximum_items: Some(32),
 }];
 const TABS_SLOTS: &[NativeBlockSlotDefinition] = &[NativeBlockSlotDefinition {
     id: "items",
     label: "Taburi și panouri",
     required: true,
     multiple: true,
+    item_kind: "tabItem",
+    minimum_items: 1,
+    maximum_items: Some(32),
+}];
+const SLIDER_SLOTS: &[NativeBlockSlotDefinition] = &[NativeBlockSlotDefinition {
+    id: "slides",
+    label: "Slide-uri",
+    required: true,
+    multiple: true,
+    item_kind: "slide",
+    minimum_items: 1,
+    maximum_items: Some(32),
 }];
 const DIALOG_SLOTS: &[NativeBlockSlotDefinition] = &[
     NativeBlockSlotDefinition {
@@ -156,12 +186,18 @@ const DIALOG_SLOTS: &[NativeBlockSlotDefinition] = &[
         label: "Declanșator",
         required: true,
         multiple: false,
+        item_kind: "trigger",
+        minimum_items: 1,
+        maximum_items: Some(1),
     },
     NativeBlockSlotDefinition {
         id: "content",
         label: "Conținut dialog",
         required: true,
         multiple: false,
+        item_kind: "content",
+        minimum_items: 1,
+        maximum_items: Some(1),
     },
 ];
 const OFFCANVAS_SLOTS: &[NativeBlockSlotDefinition] = &[
@@ -170,12 +206,18 @@ const OFFCANVAS_SLOTS: &[NativeBlockSlotDefinition] = &[
         label: "Declanșator",
         required: true,
         multiple: false,
+        item_kind: "trigger",
+        minimum_items: 1,
+        maximum_items: Some(1),
     },
     NativeBlockSlotDefinition {
         id: "content",
         label: "Conținut panou",
         required: true,
         multiple: false,
+        item_kind: "content",
+        minimum_items: 1,
+        maximum_items: Some(1),
     },
 ];
 const NAV_MENU_SLOTS: &[NativeBlockSlotDefinition] = &[NativeBlockSlotDefinition {
@@ -183,6 +225,9 @@ const NAV_MENU_SLOTS: &[NativeBlockSlotDefinition] = &[NativeBlockSlotDefinition
     label: "Legături",
     required: true,
     multiple: true,
+    item_kind: "link",
+    minimum_items: 1,
+    maximum_items: None,
 }];
 
 const COUNTER_OPTIONS: &[NativeBlockOptionDefinition] = &[
@@ -259,6 +304,121 @@ const TABS_OPTIONS: &[NativeBlockOptionDefinition] = &[NativeBlockOptionDefiniti
     maximum_length: None,
     choices: NO_CHOICES,
 }];
+
+const SLIDER_OPTIONS: &[NativeBlockOptionDefinition] = &[
+    NativeBlockOptionDefinition {
+        id: "accessibleLabel",
+        label: "Etichetă accesibilă",
+        description: "Numele sliderului pentru tehnologiile asistive.",
+        control: BlockOptionControl::Text,
+        attribute: "aria-label",
+        default_value: NativeBlockOptionDefault::Text("Slider de continut"),
+        omit_when_default: false,
+        minimum: None,
+        maximum: None,
+        step: None,
+        maximum_length: Some(120),
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "loop",
+        label: "Navigare circulară",
+        description: "Continuă de la ultimul slide la primul și invers.",
+        control: BlockOptionControl::Toggle,
+        attribute: "data-loop",
+        default_value: NativeBlockOptionDefault::Boolean(true),
+        omit_when_default: true,
+        minimum: None,
+        maximum: None,
+        step: None,
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "initialSlide",
+        label: "Slide inițial",
+        description: "Indexul slide-ului inițial, începând de la zero.",
+        control: BlockOptionControl::Number,
+        attribute: "data-initial-slide",
+        default_value: NativeBlockOptionDefault::Integer(0),
+        omit_when_default: true,
+        minimum: Some(0),
+        maximum: Some(31),
+        step: Some(1),
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "autoplay",
+        label: "Redare automată",
+        description: "Pornește rotația automată; implicit este oprită.",
+        control: BlockOptionControl::Toggle,
+        attribute: "data-autoplay",
+        default_value: NativeBlockOptionDefault::Boolean(false),
+        omit_when_default: true,
+        minimum: None,
+        maximum: None,
+        step: None,
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "interval",
+        label: "Interval autoplay",
+        description: "Timpul dintre slide-uri, în milisecunde.",
+        control: BlockOptionControl::Number,
+        attribute: "data-interval",
+        default_value: NativeBlockOptionDefault::Integer(5000),
+        omit_when_default: true,
+        minimum: Some(1000),
+        maximum: Some(60_000),
+        step: Some(100),
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "pauseOnHover",
+        label: "Pauză la hover",
+        description: "Oprește temporar autoplay când cursorul este peste slider.",
+        control: BlockOptionControl::Toggle,
+        attribute: "data-pause-hover",
+        default_value: NativeBlockOptionDefault::Boolean(true),
+        omit_when_default: true,
+        minimum: None,
+        maximum: None,
+        step: None,
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "pauseOnFocus",
+        label: "Pauză la focus",
+        description: "Oprește temporar autoplay cât timp focusul este în slider.",
+        control: BlockOptionControl::Toggle,
+        attribute: "data-pause-focus",
+        default_value: NativeBlockOptionDefault::Boolean(true),
+        omit_when_default: true,
+        minimum: None,
+        maximum: None,
+        step: None,
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+    NativeBlockOptionDefinition {
+        id: "pauseOnInteraction",
+        label: "Oprire la interacțiune",
+        description: "Oprește autoplay după navigarea manuală.",
+        control: BlockOptionControl::Toggle,
+        attribute: "data-pause-interaction",
+        default_value: NativeBlockOptionDefault::Boolean(true),
+        omit_when_default: true,
+        minimum: None,
+        maximum: None,
+        step: None,
+        maximum_length: None,
+        choices: NO_CHOICES,
+    },
+];
 
 const DIALOG_OPTIONS: &[NativeBlockOptionDefinition] = &[
     NativeBlockOptionDefinition {
@@ -369,6 +529,32 @@ const NAV_MENU_OPTIONS: &[NativeBlockOptionDefinition] = &[
 
 const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     NativeBlockDefinition {
+        id: "icon",
+        schema_version: 1,
+        family_id: "graphics",
+        variant_id: "tabler-outline",
+        scale: BlockScale::Element,
+        kind: NativeBlockKind::Static,
+        label: "Icon",
+        description: "icon SVG inline din catalogul Tabler Outline administrat de Rust",
+        tag: "svg",
+        text: "",
+        class_name: "icon",
+        // Geometria nu este publicată drept payload HTML în frontend. Rendererul
+        // Rust o construiește din registrul compilat pentru fiecare inserare.
+        html: "",
+        scss: "",
+        capabilities: BlockCapabilities {
+            can_insert: true,
+            can_edit_properties: true,
+            supports_variants: false,
+            supports_slots: false,
+        },
+        requirements: NO_REQUIREMENTS,
+        options: NO_OPTIONS,
+        slots: NO_SLOTS,
+    },
+    NativeBlockDefinition {
         id: "counter",
         schema_version: 1,
         family_id: "data-display",
@@ -399,7 +585,7 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         schema_version: 1,
         family_id: "disclosure",
         variant_id: "default",
-        scale: BlockScale::Section,
+        scale: BlockScale::Composition,
         kind: NativeBlockKind::Js,
         label: "Accordion",
         description: "sectiuni expandabile",
@@ -497,7 +683,7 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         schema_version: 1,
         family_id: "navigation",
         variant_id: "default",
-        scale: BlockScale::Section,
+        scale: BlockScale::Composition,
         kind: NativeBlockKind::Js,
         label: "Tabs",
         description: "panouri comutabile",
@@ -584,6 +770,114 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         requirements: NATIVE_RUNTIME_REQUIREMENTS,
         options: TABS_OPTIONS,
         slots: TABS_SLOTS,
+    },
+    NativeBlockDefinition {
+        id: "slider",
+        schema_version: 1,
+        family_id: "content-carousel",
+        variant_id: "single",
+        scale: BlockScale::Composition,
+        kind: NativeBlockKind::Js,
+        label: "Slider",
+        description: "carousel de continut integrabil in orice container compatibil",
+        tag: "div",
+        text: "",
+        class_name: "slider",
+        html: r#"<div class="slider __PANA_CLASS__" data-anim="__PANA_DATA_ANIM__" data-pana-block="slider" data-pana-instance="__PANA_INSTANCE__" role="group" aria-roledescription="carousel" aria-label="Slider de continut" tabindex="0">
+  <div class="slider__viewport" data-pana-slider-viewport>
+    <div class="slider__track" data-pana-slider-track data-pana-slot="slides" aria-live="polite">
+      <div class="slider__slide" data-pana-slider-slide role="group" aria-roledescription="slide">
+        <h3>Primul slide</h3>
+        <p>Editeaza continutul direct in Canvas.</p>
+      </div>
+      <div class="slider__slide" data-pana-slider-slide role="group" aria-roledescription="slide">
+        <h3>Al doilea slide</h3>
+        <p>Adauga aici orice continut potrivit sectiunii tale.</p>
+      </div>
+    </div>
+  </div>
+  <div class="slider__controls" data-pana-slider-controls>
+    <button class="slider__button slider__previous" data-pana-slider-previous type="button" aria-label="Slide-ul anterior">Anterior</button>
+    <div class="slider__indicators" data-pana-slider-indicators aria-label="Alege slide-ul"></div>
+    <button class="slider__button slider__next" data-pana-slider-next type="button" aria-label="Slide-ul urmator">Urmator</button>
+    <button class="slider__button slider__autoplay" data-pana-slider-autoplay type="button" aria-label="Opreste rotatia" hidden>Opreste</button>
+  </div>
+</div>"#,
+        scss: r#".slider {
+  display: grid;
+  gap: 0.75rem;
+  color: var(--pana-block-text, CanvasText);
+}
+
+.slider__viewport {
+  overflow: hidden;
+  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
+  border-radius: 0.75rem;
+  background: var(--pana-block-surface, Canvas);
+}
+
+.slider__track {
+  display: flex;
+  transform: translateX(calc(var(--pana-slider-index, 0) * -100%));
+  transition: transform 260ms ease;
+}
+
+.slider__slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 1.25rem;
+}
+
+.slider__slide[hidden] {
+  display: block;
+  visibility: hidden;
+}
+
+.slider__slide > :first-child { margin-top: 0; }
+.slider__slide > :last-child { margin-bottom: 0; }
+
+.slider__controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.slider__button,
+.slider__indicator {
+  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
+  border-radius: 0.5rem;
+  background: var(--pana-block-surface, Canvas);
+  color: inherit;
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+
+.slider__button:focus-visible,
+.slider__indicator:focus-visible {
+  outline: 2px solid var(--pana-block-accent, Highlight);
+  outline-offset: 2px;
+}
+
+.slider__button:disabled { cursor: not-allowed; opacity: 0.45; }
+.slider__indicators { display: flex; align-items: center; gap: 0.35rem; }
+.slider__indicator { width: 0.75rem; height: 0.75rem; padding: 0; border-radius: 999px; }
+.slider__indicator[aria-current="true"] { background: var(--pana-block-accent, Highlight); }
+
+@media (prefers-reduced-motion: reduce) {
+  .slider__track { transition: none; }
+}"#,
+        capabilities: BlockCapabilities {
+            can_insert: true,
+            can_edit_properties: true,
+            supports_variants: false,
+            supports_slots: true,
+        },
+        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        options: SLIDER_OPTIONS,
+        slots: SLIDER_SLOTS,
     },
     NativeBlockDefinition {
         id: "dialog",
@@ -827,7 +1121,7 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         schema_version: 1,
         family_id: "navigation",
         variant_id: "responsive",
-        scale: BlockScale::Section,
+        scale: BlockScale::Composition,
         kind: NativeBlockKind::Js,
         label: "Meniu navigatie",
         description: "meniu responsive cu toggle",
@@ -1002,14 +1296,25 @@ pub fn native_block_registry_snapshot() -> NativeBlockRegistrySnapshot {
         .filter(|block| block.kind == NativeBlockKind::Js)
         .cloned()
         .collect::<Vec<_>>();
+    let static_blocks = blocks
+        .iter()
+        .filter(|block| block.kind == NativeBlockKind::Static)
+        .cloned()
+        .collect::<Vec<_>>();
 
     NativeBlockRegistrySnapshot {
         schema_version: 1,
         blocks,
-        groups: vec![NativeBlockRegistryGroup {
-            label: "Interactive",
-            elements: js_blocks,
-        }],
+        groups: vec![
+            NativeBlockRegistryGroup {
+                label: "Elements",
+                elements: static_blocks,
+            },
+            NativeBlockRegistryGroup {
+                label: "Interactive",
+                elements: js_blocks,
+            },
+        ],
     }
 }
 
@@ -1052,6 +1357,15 @@ pub fn render_native_block_html(
     block: &NativeBlockDefinition,
     identity: &NativeBlockIdentity,
 ) -> String {
+    if block.kind == NativeBlockKind::Static && block.id == "icon" {
+        return super::icons::render_icon_block_html(
+            super::icons::DEFAULT_ICON_ID,
+            &identity.class_name,
+            &identity.data_anim,
+            &identity.instance_id,
+        )
+        .expect("registrul Tabler Outline compilat trebuie validat la testare și build");
+    }
     block
         .html
         .replace("__PANA_CLASS__", &identity.class_name)
@@ -1185,6 +1499,9 @@ impl From<&NativeBlockSlotDefinition> for BlockSlotDefinition {
             label: slot.label.to_string(),
             required: slot.required,
             multiple: slot.multiple,
+            item_kind: slot.item_kind.to_string(),
+            minimum_items: slot.minimum_items,
+            maximum_items: slot.maximum_items,
         }
     }
 }
@@ -1267,16 +1584,22 @@ mod tests {
         assert_eq!(serialized_kind, "\"js\"");
         assert_eq!(snapshot.schema_version, 1);
         assert_eq!(snapshot.blocks.len(), NATIVE_BLOCKS.len());
-        assert_eq!(snapshot.groups.len(), 1);
-        assert_eq!(snapshot.groups[0].label, "Interactive");
-        assert_eq!(snapshot.groups[0].elements.len(), NATIVE_BLOCKS.len());
+        assert_eq!(snapshot.groups.len(), 2);
+        assert_eq!(snapshot.groups[0].label, "Elements");
+        assert_eq!(snapshot.groups[0].elements.len(), 1);
+        assert_eq!(snapshot.groups[1].label, "Interactive");
+        assert_eq!(snapshot.groups[1].elements.len(), NATIVE_BLOCKS.len() - 1);
 
         for block in snapshot.blocks {
             assert!(!block.id.trim().is_empty());
             assert!(!block.label.trim().is_empty());
             assert!(!block.description.trim().is_empty());
-            assert!(block.html.contains("data-pana-block="));
-            assert!(block.html.contains("__PANA_CLASS__"));
+            if block.kind == NativeBlockKind::Static {
+                assert!(block.html.is_empty());
+            } else {
+                assert!(block.html.contains("data-pana-block="));
+                assert!(block.html.contains("__PANA_CLASS__"));
+            }
             assert_eq!(native_block_by_id(block.id).unwrap().tag, block.tag);
         }
     }
@@ -1306,5 +1629,50 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn current_registry_reserves_section_scale_for_page_level_blocks() {
+        for provider_id in ["icon", "counter"] {
+            assert_eq!(
+                native_block_by_id(provider_id).unwrap().scale,
+                BlockScale::Element,
+                "{provider_id} trebuie să rămână element atomic"
+            );
+        }
+        for provider_id in [
+            "accordion",
+            "tabs",
+            "slider",
+            "dialog",
+            "offcanvas",
+            "nav-menu",
+        ] {
+            assert_eq!(
+                native_block_by_id(provider_id).unwrap().scale,
+                BlockScale::Composition,
+                "{provider_id} trebuie să fie compoziție integrabilă"
+            );
+        }
+        assert!(NATIVE_BLOCKS
+            .iter()
+            .all(|block| block.scale != BlockScale::Section));
+    }
+
+    #[test]
+    fn slider_is_an_embeddable_rust_owned_composition() {
+        let slider = native_block_by_id("slider").expect("slider provider");
+        assert_eq!(slider.kind, NativeBlockKind::Js);
+        assert_eq!(slider.scale, BlockScale::Composition);
+        assert_eq!(slider.tag, "div");
+        assert!(slider.capabilities.supports_slots);
+        assert_eq!(slider.slots[0].id, "slides");
+        assert_eq!(slider.slots[0].minimum_items, 1);
+        assert_eq!(slider.slots[0].maximum_items, Some(32));
+        assert!(slider.html.contains("data-pana-slot=\"slides\""));
+        assert!(slider.html.contains("aria-roledescription=\"carousel\""));
+        assert!(slider.html.contains("tabindex=\"0\""));
+        assert!(!slider.html.contains("data-autoplay=\"true\""));
+        assert!(!slider.scss.contains("100vw"));
     }
 }

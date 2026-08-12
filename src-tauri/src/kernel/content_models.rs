@@ -1,7 +1,8 @@
+#[cfg(test)]
+use std::fs;
 use std::{
-    collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap, HashSet},
-    fs,
-    path::{Component, Path, PathBuf},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    path::Path,
 };
 
 use serde::{Deserialize, Serialize};
@@ -20,8 +21,6 @@ pub const CONTENT_MODEL_SCHEMA_VERSION: u32 = 1;
 pub const CONTENT_MODEL_PROJECT_PATH: &str = ".panastudio/project.toml";
 pub const CONTENT_MODEL_ASSIGNMENTS_PATH: &str = ".panastudio/assignments.toml";
 const CONTENT_MODEL_DIRECTORY: &str = ".panastudio/content-models";
-const CONTENT_MODEL_MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
-const CONTENT_MODEL_MAX_FILES: usize = 512;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -156,16 +155,8 @@ impl Default for ProjectContract {
     }
 }
 
-pub fn build_content_model_catalog(
-    project_root: &Path,
-    source_texts: &HashMap<String, String>,
-    graph: &SourceGraph,
-) -> ContentModelCatalog {
-    build_content_model_catalog_with_deletions(project_root, source_texts, &HashSet::new(), graph)
-}
-
-pub fn build_content_model_catalog_with_deletions(
-    project_root: &Path,
+pub(crate) fn build_content_model_catalog_from_workspace_projection(
+    _project_root: &Path,
     source_texts: &HashMap<String, String>,
     deleted_sources: &HashSet<String>,
     graph: &SourceGraph,
@@ -174,12 +165,8 @@ pub fn build_content_model_catalog_with_deletions(
         schema_version: CONTENT_MODEL_SCHEMA_VERSION,
         ..Default::default()
     };
-    let project_source = read_project_source(
-        project_root,
-        source_texts,
-        deleted_sources,
-        CONTENT_MODEL_PROJECT_PATH,
-    );
+    let project_source =
+        read_project_source(source_texts, deleted_sources, CONTENT_MODEL_PROJECT_PATH);
     catalog.metadata_present = project_source.is_some();
     if let Some(source) = project_source {
         match toml_edit::de::from_str::<ProjectContract>(&source) {
@@ -200,84 +187,13 @@ pub fn build_content_model_catalog_with_deletions(
                 Some(CONTENT_MODEL_PROJECT_PATH),
             )),
         }
-    } else if !deleted_sources.contains(CONTENT_MODEL_PROJECT_PATH)
-        && fs::symlink_metadata(project_root.join(CONTENT_MODEL_PROJECT_PATH)).is_ok()
-    {
-        catalog.diagnostics.push(diagnostic(
-            "error",
-            "content_model_project_unsafe",
-            "Metadatele proiectului nu pot fi citite în siguranță; symlink-urile, fișierele supradimensionate și sursele non-text sunt refuzate."
-                .to_string(),
-            Some(CONTENT_MODEL_PROJECT_PATH),
-        ));
     }
 
-    let mut model_sources = source_texts
+    let model_sources = source_texts
         .iter()
         .filter(|(path, _)| is_model_path(path))
         .map(|(path, source)| (path.clone(), source.clone()))
         .collect::<BTreeMap<_, _>>();
-    if let Some(disk_models) = safe_project_directory(project_root, CONTENT_MODEL_DIRECTORY) {
-        if let Ok(entries) = fs::read_dir(disk_models) {
-            for (index, entry) in entries.flatten().enumerate() {
-                if index >= CONTENT_MODEL_MAX_FILES {
-                    catalog.diagnostics.push(diagnostic(
-                        "error",
-                        "content_model_file_limit",
-                        format!(
-                            "Catalogul depășește limita de {CONTENT_MODEL_MAX_FILES} modele; sursele suplimentare sunt refuzate."
-                        ),
-                        Some(CONTENT_MODEL_DIRECTORY),
-                    ));
-                    break;
-                }
-                let path = entry.path();
-                if path.extension().and_then(|value| value.to_str()) != Some("toml") {
-                    continue;
-                }
-                let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
-                    continue;
-                };
-                let relative = format!("{CONTENT_MODEL_DIRECTORY}/{name}");
-                if !entry
-                    .file_type()
-                    .is_ok_and(|file_type| file_type.is_file() && !file_type.is_symlink())
-                {
-                    catalog.diagnostics.push(diagnostic(
-                        "error",
-                        "content_model_file_unsafe",
-                        format!("Sursa modelului {relative} nu este un fișier regulat sigur."),
-                        Some(&relative),
-                    ));
-                    continue;
-                }
-                if deleted_sources.contains(&relative) {
-                    continue;
-                }
-                if let Entry::Vacant(entry) = model_sources.entry(relative) {
-                    if let Some(source) = read_safe_project_text(project_root, entry.key()) {
-                        entry.insert(source);
-                    } else {
-                        let relative = entry.key().clone();
-                        catalog.diagnostics.push(diagnostic(
-                            "error",
-                            "content_model_file_unreadable",
-                            format!("Sursa modelului {relative} nu poate fi citită în siguranță."),
-                            Some(&relative),
-                        ));
-                    }
-                }
-            }
-        }
-    } else if fs::symlink_metadata(project_root.join(CONTENT_MODEL_DIRECTORY)).is_ok() {
-        catalog.diagnostics.push(diagnostic(
-            "error",
-            "content_model_directory_unsafe",
-            "Directorul modelelor nu este un director regulat sigur și nu va fi urmărit."
-                .to_string(),
-            Some(CONTENT_MODEL_DIRECTORY),
-        ));
-    }
     let mut seen_ids = BTreeSet::new();
     for (file, source) in model_sources {
         match toml_edit::de::from_str::<ContentModelDefinition>(&source) {
@@ -329,7 +245,6 @@ pub fn build_content_model_catalog_with_deletions(
         .sort_by(|left, right| left.label.cmp(&right.label));
 
     let assignments_source = read_project_source(
-        project_root,
         source_texts,
         deleted_sources,
         CONTENT_MODEL_ASSIGNMENTS_PATH,
@@ -359,20 +274,9 @@ pub fn build_content_model_catalog_with_deletions(
                 Some(CONTENT_MODEL_ASSIGNMENTS_PATH),
             )),
         }
-    } else if !deleted_sources.contains(CONTENT_MODEL_ASSIGNMENTS_PATH)
-        && fs::symlink_metadata(project_root.join(CONTENT_MODEL_ASSIGNMENTS_PATH)).is_ok()
-    {
-        catalog.diagnostics.push(diagnostic(
-            "error",
-            "content_model_assignments_unsafe",
-            "Atribuirile modelelor nu pot fi citite în siguranță; sursa a fost refuzată."
-                .to_string(),
-            Some(CONTENT_MODEL_ASSIGNMENTS_PATH),
-        ));
     }
 
     catalog.page_bindings = build_page_bindings(
-        project_root,
         source_texts,
         graph,
         &catalog.models,
@@ -380,7 +284,6 @@ pub fn build_content_model_catalog_with_deletions(
         &mut catalog.diagnostics,
     );
     catalog.template_usages = build_template_usages(
-        project_root,
         source_texts,
         graph,
         &catalog.models,
@@ -391,7 +294,6 @@ pub fn build_content_model_catalog_with_deletions(
 }
 
 fn read_project_source(
-    project_root: &Path,
     source_texts: &HashMap<String, String>,
     deleted_sources: &HashSet<String>,
     relative_path: &str,
@@ -399,55 +301,7 @@ fn read_project_source(
     if deleted_sources.contains(relative_path) {
         return None;
     }
-    source_texts
-        .get(relative_path)
-        .cloned()
-        .or_else(|| read_safe_project_text(project_root, relative_path))
-}
-
-fn safe_project_directory(project_root: &Path, relative_path: &str) -> Option<PathBuf> {
-    let path = safe_project_path(project_root, relative_path)?;
-    fs::symlink_metadata(&path)
-        .ok()
-        .filter(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())?;
-    Some(path)
-}
-
-fn read_safe_project_text(project_root: &Path, relative_path: &str) -> Option<String> {
-    let path = safe_project_path(project_root, relative_path)?;
-    let metadata = fs::symlink_metadata(&path).ok()?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() > CONTENT_MODEL_MAX_SOURCE_BYTES
-    {
-        return None;
-    }
-    fs::read_to_string(path).ok()
-}
-
-fn safe_project_path(project_root: &Path, relative_path: &str) -> Option<PathBuf> {
-    let relative = Path::new(relative_path);
-    if relative.is_absolute()
-        || relative
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return None;
-    }
-    let mut path = project_root.to_path_buf();
-    for component in relative.components() {
-        let Component::Normal(segment) = component else {
-            return None;
-        };
-        path.push(segment);
-        if fs::symlink_metadata(&path)
-            .ok()
-            .is_some_and(|metadata| metadata.file_type().is_symlink())
-        {
-            return None;
-        }
-    }
-    Some(path)
+    source_texts.get(relative_path).cloned()
 }
 
 fn is_model_path(path: &str) -> bool {
@@ -642,7 +496,6 @@ fn stable_field_id(model_id: &str, key: &str) -> String {
 }
 
 fn build_page_bindings(
-    project_root: &Path,
     source_texts: &HashMap<String, String>,
     graph: &SourceGraph,
     models: &[ContentModelDefinition],
@@ -661,10 +514,7 @@ fn build_page_bindings(
         let Some(model) = models.get(assignment.model_id.as_str()) else {
             continue;
         };
-        let source = source_texts
-            .get(&page.file)
-            .cloned()
-            .or_else(|| read_safe_project_text(project_root, &page.file));
+        let source = source_texts.get(&page.file).cloned();
         let values = source
             .as_deref()
             .and_then(|source| {
@@ -770,7 +620,6 @@ fn read_extra_values(source: &str) -> Result<BTreeMap<String, serde_json::Value>
 }
 
 fn build_template_usages(
-    project_root: &Path,
     source_texts: &HashMap<String, String>,
     graph: &SourceGraph,
     models: &[ContentModelDefinition],
@@ -792,11 +641,7 @@ fn build_template_usages(
         })
         .collect::<HashMap<_, _>>();
     for template in &graph.templates {
-        let Some(source) = source_texts
-            .get(&template.file)
-            .cloned()
-            .or_else(|| read_safe_project_text(project_root, &template.file))
-        else {
+        let Some(source) = source_texts.get(&template.file).cloned() else {
             continue;
         };
         for model in models {
@@ -841,13 +686,12 @@ fn build_template_usages(
 }
 
 pub fn refresh_content_model_template_usages(
-    project_root: &Path,
+    _project_root: &Path,
     source_texts: &HashMap<String, String>,
     graph: &SourceGraph,
     catalog: &mut ContentModelCatalog,
 ) {
     catalog.template_usages = build_template_usages(
-        project_root,
         source_texts,
         graph,
         &catalog.models,
@@ -1549,11 +1393,7 @@ pub fn plan_content_model_mutation(
                 .iter()
                 .filter(|page| page_belongs_to_section(&page.file, &section_path))
             {
-                let Some(source) = source_texts
-                    .get(&page.file)
-                    .cloned()
-                    .or_else(|| read_safe_project_text(project_root, &page.file))
-                else {
+                let Some(source) = source_texts.get(&page.file).cloned() else {
                     continue;
                 };
                 let values = read_extra_values(&source)?;
@@ -2309,7 +2149,7 @@ fn stage_rename_field_values(
 
 #[allow(clippy::too_many_arguments)]
 fn stage_rename_template_references(
-    project_root: &Path,
+    _project_root: &Path,
     source_texts: &HashMap<String, String>,
     graph: &SourceGraph,
     old_path: &[String],
@@ -2327,7 +2167,6 @@ fn stage_rename_template_references(
             .get(&template.file)
             .cloned()
             .or_else(|| source_texts.get(&template.file).cloned())
-            .or_else(|| read_safe_project_text(project_root, &template.file))
             .ok_or_else(|| format!("ProjectWorkspace nu urmărește sursa {}.", template.file))?;
         let mut next = source.clone();
         for scope in ["page.extra", "section.extra"] {
@@ -2510,7 +2349,7 @@ fn stage_replace_dynamic_marker_binding(
 }
 
 fn tracked_template_source(
-    project_root: &Path,
+    _project_root: &Path,
     source_texts: &HashMap<String, String>,
     changes: &BTreeMap<String, String>,
     template_file: &str,
@@ -2519,7 +2358,6 @@ fn tracked_template_source(
         .get(template_file)
         .cloned()
         .or_else(|| source_texts.get(template_file).cloned())
-        .or_else(|| read_safe_project_text(project_root, template_file))
         .ok_or_else(|| format!("ProjectWorkspace nu urmărește sursa {template_file}."))
 }
 
@@ -2732,14 +2570,13 @@ fn structurally_empty(value: &serde_json::Value) -> bool {
 }
 
 fn required_source(
-    project_root: &Path,
+    _project_root: &Path,
     source_texts: &HashMap<String, String>,
     path: &str,
 ) -> Result<String, String> {
     source_texts
         .get(path)
         .cloned()
-        .or_else(|| read_safe_project_text(project_root, path))
         .ok_or_else(|| format!("ProjectWorkspace nu urmărește sursa {path}."))
 }
 
@@ -3521,7 +3358,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn metadata_reader_rejects_traversal_and_external_symlinks() {
+    fn workspace_projection_excludes_external_metadata_symlinks() {
         use std::os::unix::fs::symlink;
 
         let root = fixture_root("path-safety");
@@ -3549,21 +3386,22 @@ mod tests {
         .unwrap();
         fs::write(root.join("templates/index.html"), "<main>Acasă</main>").unwrap();
 
-        assert!(safe_project_path(&root, "../project.toml").is_none());
-        assert!(safe_project_path(&root, "/tmp/project.toml").is_none());
-        assert!(read_safe_project_text(&root, CONTENT_MODEL_PROJECT_PATH).is_none());
-        assert!(safe_project_directory(&root, CONTENT_MODEL_DIRECTORY).is_none());
-        let graph = crate::source_graph::build_source_graph(&root).unwrap();
-        assert!(graph
-            .content_models
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "content_model_project_unsafe"));
-        assert!(graph
-            .content_models
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code == "content_model_directory_unsafe"));
+        let fixture =
+            crate::project_model::test_support::ProjectModelTestFixture::from_integration_disk_boundary(
+                &root,
+            )
+            .unwrap();
+        let projection = fixture.projection();
+        assert!(!projection
+            .source_texts
+            .contains_key(CONTENT_MODEL_PROJECT_PATH));
+        assert!(!projection
+            .source_texts
+            .keys()
+            .any(|path| path.starts_with(CONTENT_MODEL_DIRECTORY)));
+        let graph = fixture.build_source_graph().unwrap();
+        assert!(!graph.content_models.metadata_present);
+        assert!(graph.content_models.models.is_empty());
 
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&outside).unwrap();
@@ -3850,7 +3688,12 @@ mod tests {
         )
         .unwrap();
 
-        let graph = crate::source_graph::build_source_graph(&root).unwrap();
+        let fixture =
+            crate::project_model::test_support::ProjectModelTestFixture::from_integration_disk_boundary(
+                &root,
+            )
+            .unwrap();
+        let graph = fixture.build_source_graph().unwrap();
         assert!(graph.content_models.page_bindings.is_empty());
         assert_eq!(
             graph
@@ -3977,7 +3820,13 @@ mod tests {
         )
         .unwrap();
 
-        let graph = crate::source_graph::build_source_graph(&root).unwrap();
+        let fixture =
+            crate::project_model::test_support::ProjectModelTestFixture::from_integration_disk_boundary(
+                &root,
+            )
+            .unwrap();
+        let projection = fixture.projection();
+        let graph = fixture.build_source_graph().unwrap();
         assert_eq!(graph.content_models.models.len(), 2);
         assert_eq!(graph.content_models.assignments.len(), 2);
         assert_eq!(graph.content_models.page_bindings.len(), 4);
@@ -4024,7 +3873,7 @@ mod tests {
         let attach_existing = plan_content_model_mutation(
             &root,
             &graph,
-            &HashMap::new(),
+            &projection.source_texts,
             &ContentModelMutationInput {
                 operation: ContentModelMutationOperation::AttachModel {
                     model_id: "service".to_string(),
@@ -4047,7 +3896,7 @@ mod tests {
         let model_rename = plan_content_model_mutation(
             &root,
             &graph,
-            &HashMap::new(),
+            &projection.source_texts,
             &ContentModelMutationInput {
                 operation: ContentModelMutationOperation::RenameModel {
                     model_id: "service".to_string(),
@@ -4085,7 +3934,7 @@ mod tests {
         let rename = plan_content_model_mutation(
             &root,
             &graph,
-            &HashMap::new(),
+            &projection.source_texts,
             &ContentModelMutationInput {
                 operation: ContentModelMutationOperation::UpsertField {
                     model_id: "service".to_string(),
@@ -4138,7 +3987,7 @@ mod tests {
         let replacement = plan_content_model_mutation(
             &root,
             &graph,
-            &HashMap::new(),
+            &projection.source_texts,
             &ContentModelMutationInput {
                 operation: ContentModelMutationOperation::ReplaceModel {
                     section_path: "content/services/_index.md".to_string(),
@@ -4186,7 +4035,7 @@ mod tests {
         let detach = plan_content_model_mutation(
             &root,
             &graph,
-            &HashMap::new(),
+            &projection.source_texts,
             &ContentModelMutationInput {
                 operation: ContentModelMutationOperation::DetachModel {
                     model_id: "service".to_string(),
@@ -4216,11 +4065,17 @@ mod tests {
             "{# pana:dynamic model=service field=field_price path=price scope=page presentation=text #}{{ page.extra.price }}",
         )
         .unwrap();
-        let shared_graph = crate::source_graph::build_source_graph(&root).unwrap();
+        let shared_fixture =
+            crate::project_model::test_support::ProjectModelTestFixture::from_integration_disk_boundary(
+                &root,
+            )
+            .unwrap();
+        let shared_projection = shared_fixture.projection();
+        let shared_graph = shared_fixture.build_source_graph().unwrap();
         let shared_replacement = plan_content_model_mutation(
             &root,
             &shared_graph,
-            &HashMap::new(),
+            &shared_projection.source_texts,
             &ContentModelMutationInput {
                 operation: ContentModelMutationOperation::ReplaceModel {
                     section_path: "content/services/_index.md".to_string(),
@@ -4241,12 +4096,13 @@ mod tests {
             .iter()
             .any(|blocker| blocker.contains("șabloane comune")));
 
-        let projected_after_delete = crate::source_graph::build_source_graph_with_projection(
-            &root,
-            &HashMap::new(),
-            &HashSet::from([model_path("service")]),
-        )
-        .unwrap();
+        let mut deleted_fixture =
+            crate::project_model::test_support::ProjectModelTestFixture::from_integration_disk_boundary(
+                &root,
+            )
+            .unwrap();
+        deleted_fixture.delete(model_path("service"));
+        let projected_after_delete = deleted_fixture.build_source_graph().unwrap();
         assert!(!projected_after_delete
             .content_models
             .models
@@ -4257,7 +4113,8 @@ mod tests {
             "schemaVersion = 1\nid = \"service\"\nlabel = \"Alias invalid\"\n",
         )
         .unwrap();
-        let mismatched = crate::source_graph::build_source_graph(&root).unwrap();
+        let mismatched =
+            crate::source_graph::build_source_graph_from_integration_disk_boundary(&root).unwrap();
         assert!(mismatched
             .content_models
             .diagnostics

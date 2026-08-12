@@ -46,15 +46,35 @@ test("proveniența selecției alimentează Inspectorul și indicatorul din dreap
   assert.match(chrome, /sourceStatus=\{app\.workbenchSourceStatus\}/);
   assert.match(chrome, /openSource=\{openWorkbenchSource\}/);
   assert.match(derived, /workbenchSourceStatusFromSelection\(app\.selectionSnapshot\)/);
-  assert.match(provenance, /selection\.projections\.status/);
+  assert.match(provenance, /primarySelectionEntry\(selection\)\?\.provenance/);
+  assert.match(provenance, /selectionResolution\(selection\) === "cleared"/);
   assert.match(provenance, /const source = definition \?\? composition/);
   assert.match(provenance, /location:\s*editorSourceReferenceLocation\(source\)/);
+  assert.match(provenance, /selectionMemberIds:\s*selection\.members\.map/);
+  assert.match(provenance, /primaryMemberId:\s*selection\.primaryMemberId/);
   assert.match(card, /sourceProvenance\.definition/);
   assert.match(card, /sourceProvenance\.composition/);
   assert.equal(
     existsSync(new URL("../src/lib/source-graph/context.ts", import.meta.url)),
     false,
   );
+});
+
+test("Code, Status și AI publică primary plus setul opac bounded, fără fapte DOM per membru", () => {
+  const readModel = source("../src/lib/kernel/selection-read-model.ts");
+  const ai = source("../src/lib/state/ai-context-controller.ts");
+  const rustContext = source("../src-tauri/src/commands/mcp.rs");
+
+  assert.match(readModel, /memberIds:\s*selection\?\.members\.map/);
+  assert.match(readModel, /primaryMemberId:\s*selection\?\.primaryMemberId/);
+  assert.match(ai, /memberIds:\s*coordinated\?\.members\.map/);
+  assert.match(rustContext, /current_opaque_selection\(project_session_id\.as_deref\(\)\)/);
+  assert.match(rustContext, /projection\.selection\.member_ids\s*!=\s*rust_member_ids/);
+  assert.match(ai, /primaryMemberId:\s*coordinated\?\.primaryMemberId/);
+  assert.doesNotMatch(ai, /members\.map\(\(member\)\s*=>\s*\(\{/);
+  assert.doesNotMatch(ai, /member\.(?:rect|selector|renderInstanceId)/);
+  assert.match(rustContext, /MAX_UI_SELECTION_MEMBERS:\s*usize\s*=\s*256/);
+  assert.match(rustContext, /validate_ui_selection_context/);
 });
 
 test("Cod deschide definiția, iar ștergerea păstrează call-site-ul selecției Tera", () => {

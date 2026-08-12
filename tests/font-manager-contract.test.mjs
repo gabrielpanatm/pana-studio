@@ -23,12 +23,28 @@ test("instalarea Google Fonts este o singură mutație text plus binar în Proje
   assert.doesNotMatch(command, /fs::(?:write|copy|rename)/);
 });
 
-test("catalogul de fonturi diferențiază fișierul instalat de înregistrarea CSS", () => {
+test("FontFaceGraph leagă familia CSS de sursa exactă și este unica autoritate", () => {
   const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
   const fontKernel = source("../src-tauri/src/fonts/mod.rs");
+  const graph = source("../src-tauri/src/fonts/graph.rs");
+  const command = source("../src-tauri/src/commands/fonts.rs");
+  const types = source("../src/lib/types.ts");
+  const io = source("../src/lib/project/io.ts");
 
+  assert.match(fontKernel, /pub struct FontFaceGraph/);
+  assert.match(fontKernel, /pub struct FontFaceSource/);
   assert.match(fontKernel, /pub struct FontCssRegistration/);
-  assert.match(fontKernel, /annotate_font_registrations/);
+  assert.match(graph, /classify_font_url/);
+  assert.match(graph, /resolved_file/);
+  assert.match(graph, /content_hash/);
+  assert.match(command, /font_face_graph_for_workspace/);
+  assert.match(command, /pub graph: FontFaceGraph/);
+  assert.match(types, /export type FontFaceGraph/);
+  assert.match(workspace, /manager\.graph/);
+  assert.doesNotMatch(fontKernel, /FontInventory|FontFamilyKey|annotate_font_registrations/);
+  assert.doesNotMatch(types, /FontInventory|LocalFontFamily/);
+  assert.doesNotMatch(io, /get_font_inventory/);
+  assert.doesNotMatch(workspace, /manager\.inventory|fontInventory/);
   assert.match(workspace, /t\("design-font-unregistered"\)/);
   assert.match(workspace, /registration\.managed/);
   assert.match(workspace, /t\("design-font-face-declarations"\)/);
@@ -129,6 +145,9 @@ test("eliminarea fonturilor locale este planificată, confirmată și aplicată 
   assert.match(command, /plan_font_family_removal/);
   assert.match(command, /remove_font_family/);
   assert.match(command, /expected_plan_token/);
+  assert.match(command, /family_id/);
+  assert.match(workspace, /fontRemovalPlan\.familyId/);
+  assert.doesNotMatch(io, /planFontFamilyRemoval\([\s\S]*directory: string/);
   assert.match(command, /blocked_reasons/);
   assert.match(command, /project_workspace\.font_remove\.family/);
   assert.match(command, /WorkspaceResourceDelete/);

@@ -401,6 +401,8 @@ pub(super) fn append_tera_insert_drop_event(
     let _ = append_event(app, event);
 }
 
+// Projection events mirror the stable diagnostic/event schema before enrichment.
+#[allow(clippy::too_many_arguments)]
 fn base_event<S>(
     level: KernelLogLevel,
     kind: KernelEventKind,

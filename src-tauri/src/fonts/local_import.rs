@@ -6,8 +6,10 @@ use std::{
 
 use allsorts::{
     binary::read::ReadScope,
+    font::read_cmap_subtable,
     font_data::FontData,
     tables::{
+        cmap::Cmap,
         os2::{FsSelectionFlag, Os2},
         variable_fonts::fvar::FvarTable,
         FontTableProvider, NameTable,
@@ -26,11 +28,11 @@ use crate::kernel::{
 
 use super::{
     css_string_escape, font_format_label, font_weight_css_value, font_weight_file_segment,
-    slugify_family, FontCssRegistration, FontOrigin, FontWeightRange, LocalFontFamily,
-    LocalFontFile,
+    normalize_font_family_name, slugify_family, FontCssRegistration, FontDeliveryKind,
+    FontFaceFamily, FontOrigin, FontOwnership, FontWeightRange, LocalFontFile, ROMANIAN_GLYPHS,
 };
 
-pub const LOCAL_FONT_IMPORT_SCHEMA_VERSION: u32 = 1;
+pub const LOCAL_FONT_IMPORT_SCHEMA_VERSION: u32 = 2;
 const LOCAL_FONT_IMPORT_MAX_FILES: usize = 24;
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -64,6 +66,7 @@ pub(super) struct ParsedFontMetadata {
     pub style: String,
     pub axes: Vec<FontVariationAxis>,
     pub license: FontLicenseMetadata,
+    pub romanian_glyphs: Vec<char>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -85,6 +88,7 @@ pub struct LocalFontImportFilePlan {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LocalFontImportFamilyPlan {
+    pub id: String,
     pub family: String,
     pub directory: String,
     pub file_count: usize,
@@ -114,7 +118,7 @@ pub struct LocalFontImportPreparedFile {
 
 #[derive(Clone, Debug)]
 pub struct LocalFontImportPreparedFamily {
-    pub family: LocalFontFamily,
+    pub family: FontFaceFamily,
     pub font_face_css: String,
 }
 
@@ -297,6 +301,7 @@ pub fn prepare_local_font_import(
                 extension: prepared.plan.extension.clone(),
                 format: prepared.plan.format.clone(),
                 text_optimized: false,
+                content_hash: prepared.content_hash.clone(),
                 internal_family: Some(prepared.plan.family.clone()),
                 subfamily: prepared.plan.subfamily.clone(),
                 weight: prepared.plan.weight,
@@ -305,6 +310,10 @@ pub fn prepare_local_font_import(
                 axes: prepared.plan.axes.clone(),
                 license: metadata.license,
                 unicode_range: None,
+                romanian_glyphs: metadata.romanian_glyphs,
+                declared_weight: prepared.plan.weight,
+                declared_weight_range: prepared.plan.weight_range,
+                declared_style: Some(prepared.plan.style.clone()),
                 preload: super::FontPreloadRegistration::default(),
             });
             css_rules.push(local_font_face_css(&prepared.plan, &file_name));
@@ -325,12 +334,22 @@ pub fn prepare_local_font_import(
                 .then_with(|| left.style.cmp(&right.style))
         });
         families.push(LocalFontImportPreparedFamily {
-            family: LocalFontFamily {
+            family: FontFaceFamily {
+                id: format!("css:{}", normalize_family_key(&family_name)),
                 family: family_name,
-                directory,
+                directories: vec![directory],
                 origin: FontOrigin::Local,
                 theme_name: None,
+                delivery: FontDeliveryKind::Local,
+                ownership: FontOwnership::Managed,
+                romanian_supported: Some(ROMANIAN_GLYPHS.iter().all(|required| {
+                    files
+                        .iter()
+                        .any(|file| file.romanian_glyphs.contains(required))
+                })),
                 files,
+                faces: Vec::new(),
+                issues: Vec::new(),
                 license,
                 registration: FontCssRegistration::default(),
             },
@@ -425,6 +444,12 @@ pub(super) fn parse_font_metadata(bytes: &[u8]) -> Result<ParsedFontMetadata, St
         "normal"
     }
     .to_string();
+    let romanian_glyphs = provider
+        .table_data(tag::CMAP)
+        .ok()
+        .flatten()
+        .map(|data| romanian_glyph_coverage(&data))
+        .unwrap_or_default();
 
     Ok(ParsedFontMetadata {
         family,
@@ -437,7 +462,29 @@ pub(super) fn parse_font_metadata(bytes: &[u8]) -> Result<ParsedFontMetadata, St
             description: clean_name(name_table.string_for_id(NameTable::LICENSE_DESCRIPTION)),
             url: clean_name(name_table.string_for_id(NameTable::LICENSE_INFO_URL)),
         },
+        romanian_glyphs,
     })
+}
+
+fn romanian_glyph_coverage(bytes: &[u8]) -> Vec<char> {
+    let Some(subtable) = ReadScope::new(bytes)
+        .read::<Cmap<'_>>()
+        .ok()
+        .and_then(|cmap| read_cmap_subtable(&cmap).ok().flatten())
+        .map(|(_, subtable)| subtable)
+    else {
+        return Vec::new();
+    };
+    ROMANIAN_GLYPHS
+        .into_iter()
+        .filter(|character| {
+            subtable
+                .map_glyph(*character as u32)
+                .ok()
+                .flatten()
+                .is_some_and(|glyph| glyph != 0)
+        })
+        .collect()
 }
 
 fn parse_variation_axes(bytes: &[u8]) -> Result<Vec<FontVariationAxis>, String> {
@@ -524,11 +571,7 @@ fn local_font_face_css(plan: &LocalFontImportFilePlan, file_name: &str) -> Strin
 }
 
 fn normalize_family_key(family: &str) -> String {
-    family
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
+    normalize_font_family_name(family)
 }
 
 #[cfg(test)]
@@ -556,6 +599,8 @@ mod tests {
             .axes
             .iter()
             .any(|axis| axis.tag == "wght" && axis.min == 100.0 && axis.max == 900.0));
+        assert!(metadata.romanian_glyphs.contains(&'ș'));
+        assert!(!metadata.romanian_glyphs.contains(&'â'));
     }
 
     #[test]

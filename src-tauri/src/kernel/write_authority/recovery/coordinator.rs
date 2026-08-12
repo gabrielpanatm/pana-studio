@@ -66,9 +66,7 @@ impl RecoveryCoordinator {
         capability::verify_directory_authority_path(self.wal.authority())?;
         let _exclusive = self.wal.lock(WalLockMode::Exclusive)?;
         if self.wal.has_record_entries()? {
-            return Err(format!(
-                "WRITE_AUTHORITY_RECOVERY_BLOCKED: există cel puțin un record WAL pe disk; recovery este obligatoriu înaintea deschiderii proiectului."
-            ));
+            return Err("WRITE_AUTHORITY_RECOVERY_BLOCKED: există cel puțin un record WAL pe disk; recovery este obligatoriu înaintea deschiderii proiectului.".to_string());
         }
         self.publish_scan(clean_recovery_scan())
     }
@@ -135,9 +133,10 @@ impl RecoveryCoordinator {
             self.publish_scan(structural_hot_scan(
                 "O mutație a găsit un record WAL existent; clasificarea completă este disponibilă prin controlul explicit Recitește.",
             ))?;
-            return Err(format!(
+            return Err(
                 "WRITE_AUTHORITY_RECOVERY_BLOCKED: există deja cel puțin un record WAL hot."
-            ));
+                    .to_string(),
+            );
         }
         let cursor = match WalJournalCursor::prepare(&self.wal, &record) {
             Ok(cursor) => cursor,

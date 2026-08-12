@@ -1,17 +1,18 @@
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    blocks::{
+        node_is_slider_managed_scaffold, validate_native_block_slot_delete,
+        NativeBlockSlotMutationContext,
+    },
     project_model::model::{ProjectModel, ProjectModelFile, ProjectModelFileKind},
     source_graph::model::SourceNode,
 };
 
 use super::move_engine::{
-    content_revision, direct_location_without_source_id, line_number_at_offset,
-    offset_for_source_location, parse_html_tag_at, removal_range_for_span,
-    resolve_html_element_span, resolve_html_node_for_anchor, same_model_path,
-    source_location_at_offset, source_missing_message, ProjectSourceEditLocation, Span,
+    content_revision, line_number_at_offset, removal_range_for_span, resolve_html_node_for_anchor,
+    same_model_path, source_location_at_offset, source_missing_message, ProjectSourceEditLocation,
+    Span,
 };
 use super::structural_envelope::{structural_envelope_for_html_node, StructuralEnvelopeKind};
 use super::zola_image_engine::zola_image_contract_start;
@@ -20,9 +21,11 @@ use super::zola_image_engine::zola_image_contract_start;
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHtmlDeleteIntent {
     pub target_source_id: Option<String>,
-    pub target_location: Option<ProjectSourceEditLocation>,
+    #[serde(default)]
+    pub target_render_instance_id: Option<String>,
     pub target_tag: Option<String>,
-    pub target_selector: Option<String>,
+    #[serde(default)]
+    pub native_block_slot: Option<NativeBlockSlotMutationContext>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -53,9 +56,8 @@ pub struct ProjectHtmlDeletePatch {
 pub fn plan_html_delete(
     model: &ProjectModel,
     intent: &ProjectHtmlDeleteIntent,
-    aliases: &HashMap<String, String>,
 ) -> ProjectHtmlDeletePlan {
-    match plan_html_delete_inner(model, intent, aliases) {
+    match plan_html_delete_inner(model, intent) {
         Ok(patch) => ProjectHtmlDeletePlan {
             allowed: true,
             diagnostic: None,
@@ -74,30 +76,28 @@ pub fn plan_html_delete(
 fn plan_html_delete_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlDeleteIntent,
-    aliases: &HashMap<String, String>,
 ) -> Result<ProjectHtmlDeletePatch, String> {
+    if let Some(context) = intent.native_block_slot.as_ref() {
+        validate_native_block_slot_delete(model, context, intent.target_source_id.as_deref())?;
+    }
     if let Some(target_node) = resolve_html_node_for_anchor(
         model,
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
         intent.target_tag.as_deref(),
-        aliases,
     ) {
+        if intent.native_block_slot.is_none() && node_is_slider_managed_scaffold(model, target_node)
+        {
+            return Err(
+                "Structura administrată Slider se șterge numai prin BlockPropertiesPane."
+                    .to_string(),
+            );
+        }
         return plan_html_delete_from_source_node(model, target_node);
-    }
-
-    if let Some(location) = direct_location_without_source_id(
-        intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-    ) {
-        return plan_html_delete_from_direct_location(model, intent, location);
     }
 
     Err(source_missing_message(
         "țintă",
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
-        intent.target_selector.as_deref(),
     ))
 }
 
@@ -151,59 +151,6 @@ fn plan_html_delete_from_source_node(
     )
 }
 
-fn plan_html_delete_from_direct_location(
-    model: &ProjectModel,
-    intent: &ProjectHtmlDeleteIntent,
-    location: &ProjectSourceEditLocation,
-) -> Result<ProjectHtmlDeletePatch, String> {
-    let file = model
-        .files
-        .iter()
-        .find(|file| same_model_path(&file.relative_path, &location.file))
-        .ok_or_else(|| format!("Nu am găsit fișierul {} în Project Model.", location.file))?;
-
-    if !is_direct_html_delete_file(file) {
-        return Err(
-            "Ștergerea prin locație directă este activă doar pentru fișiere HTML 1:1 din proiect, nu pentru template-uri Tera.".to_string(),
-        );
-    }
-
-    let offset = offset_for_source_location(&file.contents, location)?;
-    let tag = parse_html_tag_at(&file.contents, offset)
-        .ok_or_else(|| "Locația nu indică începutul unui tag HTML ștergibil.".to_string())?;
-    if tag.is_closing {
-        return Err("Locația indică un tag de închidere, nu un element ștergibil.".to_string());
-    }
-    if tag.tag == "html" || tag.tag == "body" {
-        return Err("Elementul rădăcină nu poate fi șters.".to_string());
-    }
-    if let Some(expected_tag) = intent.target_tag.as_deref() {
-        let expected_tag = expected_tag.trim().to_ascii_lowercase();
-        if !expected_tag.is_empty() && expected_tag != tag.tag {
-            return Err(format!(
-                "Locația indică <{}>, dar intenția preview a cerut <{}>.",
-                tag.tag, expected_tag
-            ));
-        }
-    }
-
-    let span = resolve_html_element_span(&file.contents, tag.start)?;
-    let resolved_target_id = intent.target_source_id.clone().unwrap_or_else(|| {
-        format!(
-            "location:{}:{}:{}",
-            location.file, location.line, location.column
-        )
-    });
-
-    plan_html_delete_for_span(
-        file,
-        &file.relative_path,
-        span,
-        resolved_target_id,
-        format!("<{}>", tag.tag),
-    )
-}
-
 fn plan_html_delete_for_span(
     file: &ProjectModelFile,
     file_path: &str,
@@ -241,36 +188,23 @@ fn plan_html_delete_for_span(
     })
 }
 
-fn is_direct_html_delete_file(file: &ProjectModelFile) -> bool {
-    matches!(
-        file.kind,
-        ProjectModelFileKind::StaticText | ProjectModelFileKind::OtherText
-    ) && is_html_path(&file.relative_path)
-}
-
-fn is_html_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.ends_with(".html") || lower.ends_with(".htm")
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::project_model::build_project_model;
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     use super::*;
 
     #[test]
     fn plan_html_delete_removes_target_element_with_metadata() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "{% block content %}\n",
                 "<section class=\"hero\">\n",
@@ -279,8 +213,9 @@ mod tests {
                 "</section>\n",
                 "{% endblock %}\n",
             ),
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let paragraph = model
             .source_graph
             .nodes
@@ -292,11 +227,10 @@ mod tests {
             &model,
             &ProjectHtmlDeleteIntent {
                 target_source_id: Some(paragraph.id.clone()),
-                target_location: None,
+                target_render_instance_id: None,
                 target_tag: Some("p".to_string()),
-                target_selector: Some(".lede".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -309,12 +243,66 @@ mod tests {
     }
 
     #[test]
-    fn plan_html_delete_resolves_active_html_by_direct_location() {
+    fn consecutive_child_then_parent_delete_uses_the_rebuilt_model() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("static")).unwrap();
-        fs::write(
-            root.join("static/plain.html"),
+        let mut fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            "<section class=\"section\">\n  <div class=\"child\"></div>\n</section>\n",
+        )
+        .unwrap();
+        let before = fixture.build_model().unwrap();
+        let child = before
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<div .child>")
+            .unwrap();
+        let child_delete = plan_html_delete(
+            &before,
+            &ProjectHtmlDeleteIntent {
+                target_source_id: Some(child.id.clone()),
+                target_render_instance_id: None,
+                target_tag: Some("div".to_string()),
+                native_block_slot: None,
+            },
+        );
+        assert!(child_delete.allowed, "{:?}", child_delete.diagnostic);
+        let child_patch = child_delete.patch.unwrap();
+        assert_eq!(
+            child_patch.contents,
+            "<section class=\"section\">\n</section>\n"
+        );
+
+        fixture.draft("templates/index.html", child_patch.contents);
+        let after_child = fixture.build_model().unwrap();
+        let parent = after_child
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| node.label == "<section .section>")
+            .unwrap();
+        let parent_delete = plan_html_delete(
+            &after_child,
+            &ProjectHtmlDeleteIntent {
+                target_source_id: Some(parent.id.clone()),
+                target_render_instance_id: None,
+                target_tag: Some("section".to_string()),
+                native_block_slot: None,
+            },
+        );
+
+        fs::remove_dir_all(&root).unwrap();
+        assert!(parent_delete.allowed, "{:?}", parent_delete.diagnostic);
+        assert_eq!(parent_delete.patch.unwrap().contents, "");
+    }
+
+    #[test]
+    fn plan_html_delete_rejects_location_without_source_id() {
+        let root = unique_test_dir();
+        let mut fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
+        fixture.source(
+            "static/plain.html",
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -325,43 +313,31 @@ mod tests {
                 "</body>\n",
                 "</html>\n",
             ),
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_delete(
             &model,
             &ProjectHtmlDeleteIntent {
                 target_source_id: None,
-                target_location: Some(ProjectSourceEditLocation {
-                    file: "static/plain.html".to_string(),
-                    line: 4,
-                    column: 3,
-                }),
+                target_render_instance_id: None,
                 target_tag: Some("section".to_string()),
-                target_selector: Some("body:nth-of-type(1) > section:nth-of-type(1)".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
-        assert!(plan.allowed, "{:?}", plan.diagnostic);
-        let patch = plan.patch.unwrap();
-        assert_eq!(patch.file, "static/plain.html");
-        assert_eq!(patch.resolved_target_id, "location:static/plain.html:4:3");
-        assert!(!patch.contents.contains("id=\"hero\""));
-        assert_eq!(patch.source_start_line, 4);
-        assert_eq!(patch.source_end_line, 6);
-        assert_eq!(patch.line_shift, -3);
+        assert!(!plan.allowed);
+        assert!(plan.patch.is_none());
     }
 
     #[test]
-    fn plan_html_delete_rejects_stale_source_id_instead_of_using_direct_location_fallback() {
+    fn plan_html_delete_rejects_stale_source_id_instead_of_using_location() {
         let root = unique_test_dir();
-        write_project(&root, "<main></main>\n");
-        fs::create_dir_all(root.join("static")).unwrap();
-        fs::write(
-            root.join("static/plain.html"),
+        let mut fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<main></main>\n").unwrap();
+        fixture.source(
+            "static/plain.html",
             concat!(
                 "<!DOCTYPE html>\n",
                 "<html>\n",
@@ -371,23 +347,17 @@ mod tests {
                 "</body>\n",
                 "</html>\n",
             ),
-        )
-        .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        );
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_delete(
             &model,
             &ProjectHtmlDeleteIntent {
                 target_source_id: Some("stale-source-id".to_string()),
-                target_location: Some(ProjectSourceEditLocation {
-                    file: "static/plain.html".to_string(),
-                    line: 5,
-                    column: 3,
-                }),
+                target_render_instance_id: None,
                 target_tag: Some("section".to_string()),
-                target_selector: Some("#second".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -402,18 +372,18 @@ mod tests {
     #[test]
     fn plan_html_delete_blocks_missing_anchor() {
         let root = unique_test_dir();
-        write_project(&root, "<section></section>\n");
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture =
+            ProjectModelTestFixture::standard_zola(root.clone(), "<section></section>\n").unwrap();
+        let model = fixture.build_model().unwrap();
 
         let plan = plan_html_delete(
             &model,
             &ProjectHtmlDeleteIntent {
                 target_source_id: Some("missing".to_string()),
-                target_location: None,
+                target_render_instance_id: None,
                 target_tag: Some("p".to_string()),
-                target_selector: Some("p".to_string()),
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -427,8 +397,8 @@ mod tests {
     #[test]
     fn plan_html_delete_removes_the_complete_dynamic_widget_envelope() {
         let root = unique_test_dir();
-        write_project(
-            &root,
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "<main>\n",
                 "  {# pana:widget schema=2 provider=dynamic-field instance=dynamic-field-delete01 props=00 #}\n",
@@ -437,8 +407,9 @@ mod tests {
                 "  <p>Rămâne</p>\n",
                 "</main>\n",
             ),
-        );
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
         let heading = model
             .source_graph
             .nodes
@@ -453,11 +424,10 @@ mod tests {
             &model,
             &ProjectHtmlDeleteIntent {
                 target_source_id: Some(heading.id.clone()),
-                target_location: None,
+                target_render_instance_id: None,
                 target_tag: Some("h2".to_string()),
-                target_selector: None,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(&root).unwrap();
@@ -466,22 +436,6 @@ mod tests {
         assert!(!contents.contains("dynamic-field-delete01"));
         assert!(!contents.contains("{{ page.title }}"));
         assert!(contents.contains("<p>Rămâne</p>"));
-    }
-
-    fn write_project(root: &PathBuf, template: &str) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), template).unwrap();
     }
 
     fn unique_test_dir() -> PathBuf {

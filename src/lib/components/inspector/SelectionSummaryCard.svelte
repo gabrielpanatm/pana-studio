@@ -3,14 +3,17 @@
   import type {
     InspectorSelectionSummarySnapshot,
     InspectorSelectionSummaryState,
+    SelectionSnapshot,
   } from "$lib/types";
 
   let {
     summary = null,
+    selection = null,
     authoringDocumentPath = null,
     selectClass,
   }: {
     summary?: InspectorSelectionSummarySnapshot | null;
+    selection?: SelectionSnapshot | null;
     authoringDocumentPath?: string | null;
     selectClass: (className: string) => Promise<"allowed" | "blocked">;
   } = $props();
@@ -24,6 +27,13 @@
   );
   const displayLabel = $derived(summaryLabel(summary));
   const stateDescription = $derived(summaryStateDescription(summary));
+  const memberCount = $derived(selection?.aggregateCapabilities.memberCount ?? 0);
+  const aggregateHtmlFacts = $derived(selection?.aggregateHtmlFacts ?? null);
+  const commonAttributes = $derived(Object.entries(aggregateHtmlFacts?.commonAttributes ?? {}));
+
+  function attributeLabel(name: string, value: string | null) {
+    return value === null ? name : `${name}="${value}"`;
+  }
 
   function summaryLabel(value: InspectorSelectionSummarySnapshot | null) {
     if (!value) return t("inspector-summary-loading");
@@ -116,6 +126,11 @@
 
   <div class="selection-heading">
     <p class="selector">{displayLabel}</p>
+    {#if memberCount > 1}
+      <span class="selection-count">
+        {t("inspector-multi-selected", { count: memberCount })}
+      </span>
+    {/if}
     {#if summary?.state === "resolved" && summary.blockContext}
       <span class="block-chip">
         {summary.blockContext.providerId} › &lt;{summary.tag ?? summary.blockContext.rootTag}&gt;
@@ -129,7 +144,51 @@
       data-selection-class-group={resolvedElement ? "true" : undefined}
     >
       {#if resolvedElement}
-        {#if summary.classes.length}
+        {#if memberCount > 1}
+          <span class="subtle-chip">
+            {selection?.aggregateCapabilities.canBatchAttributes
+              ? t("inspector-multi-attributes-compatible")
+              : t("inspector-multi-batch-limited")}
+          </span>
+          {#if aggregateHtmlFacts?.complete}
+            <span class="subtle-chip" data-selection-aggregate="common">
+              {t("inspector-multi-common")}
+            </span>
+            {#each aggregateHtmlFacts.commonClasses as className}
+              <button
+                class="class-chip ui-entity-selectable"
+                type="button"
+                title={t("inspector-edit-class", { name: className })}
+                aria-pressed="false"
+                onclick={() => { void selectClass(className); }}
+                onkeydown={handleClassKeydown}
+              >
+                .{className}
+              </button>
+            {/each}
+            {#each commonAttributes as [name, value]}
+              <span class="subtle-chip">{attributeLabel(name, value)}</span>
+            {/each}
+            {#if aggregateHtmlFacts.commonClasses.length === 0 && commonAttributes.length === 0}
+              <span class="subtle-chip">{t("inspector-multi-none")}</span>
+            {/if}
+
+            <span class="subtle-chip" data-selection-aggregate="mixed">
+              {t("inspector-multi-mixed")}
+            </span>
+            {#each aggregateHtmlFacts.mixedClasses as className}
+              <span class="subtle-chip">.{className}</span>
+            {/each}
+            {#each aggregateHtmlFacts.mixedAttributeNames as name}
+              <span class="subtle-chip">{name}</span>
+            {/each}
+            {#if aggregateHtmlFacts.mixedClasses.length === 0 && aggregateHtmlFacts.mixedAttributeNames.length === 0}
+              <span class="subtle-chip">{t("inspector-multi-none")}</span>
+            {/if}
+          {:else}
+            <span class="subtle-chip">{t("inspector-multi-source-facts-unavailable")}</span>
+          {/if}
+        {:else if summary.classes.length}
           {#each summary.classes as className}
             <button
               class="class-chip ui-entity-selectable"
@@ -143,7 +202,7 @@
               {className}
             </button>
           {/each}
-        {:else}
+        {:else if memberCount <= 1}
           <span class="subtle-chip">{t("inspector-without-classes")}</span>
         {/if}
       {:else if summary.subjectKind}
@@ -199,6 +258,17 @@
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .selection-count {
+    flex: 0 0 auto;
+    padding: 3px 6px;
+    border: 1px solid var(--chip-border);
+    border-radius: var(--radius-control);
+    color: var(--brand-strong);
+    background: var(--brand-soft);
+    font-size: 11px;
+    font-weight: 700;
   }
 
   .selection-meta {

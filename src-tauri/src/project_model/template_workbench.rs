@@ -676,39 +676,35 @@ fn normalize_url(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
-        path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
-    use crate::project_model::build_project_model;
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     #[test]
     fn resolves_transitive_consumers_and_only_the_direct_parent() {
-        let root = fixture_root("transitive");
+        let mut fixture = fixture("transitive");
+        let root = fixture.root().to_path_buf();
         write_fixture(
-            &root,
+            &mut fixture,
             "{% extends \"layout.html\" %}{% block content %}{% include \"partials/header.html\" %}<main></main>{% endblock %}",
         );
-        fs::write(
-            root.join("templates/layout.html"),
+        fixture.source(
+            "templates/layout.html",
             "{% extends \"base.html\" %}{% block body %}{% block content %}{% endblock %}{% endblock %}",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/base.html"),
+        );
+        fixture.source(
+            "templates/base.html",
             "<!doctype html><body>{% block body %}{% endblock %}</body>",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/partials/header.html"),
+        );
+        fixture.source(
+            "templates/partials/header.html",
             "<header><h1>Brand</h1></header>",
-        )
-        .unwrap();
+        );
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let index = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
@@ -779,20 +775,22 @@ mod tests {
 
     #[test]
     fn detects_nested_includes_and_survives_dependency_cycles() {
-        let root = fixture_root("nested-cycle");
-        write_fixture(&root, "{% include \"partials/shell.html\" %}<main></main>");
-        fs::write(
-            root.join("templates/partials/shell.html"),
+        let mut fixture = fixture("nested-cycle");
+        let root = fixture.root().to_path_buf();
+        write_fixture(
+            &mut fixture,
+            "{% include \"partials/shell.html\" %}<main></main>",
+        );
+        fixture.source(
+            "templates/partials/shell.html",
             "<section>{% include \"partials/cta.html\" %}</section>",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/partials/cta.html"),
+        );
+        fixture.source(
+            "templates/partials/cta.html",
             "<aside>{% include \"partials/shell.html\" %}</aside>",
-        )
-        .unwrap();
+        );
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let plan = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
@@ -810,20 +808,16 @@ mod tests {
 
     #[test]
     fn reports_orphan_and_macro_render_modes_explicitly() {
-        let root = fixture_root("orphan-macro");
-        write_fixture(&root, "<main></main>");
-        fs::write(
-            root.join("templates/partials/card.html"),
-            "<article>Orphan</article>",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/partials/macros.html"),
+        let mut fixture = fixture("orphan-macro");
+        let root = fixture.root().to_path_buf();
+        write_fixture(&mut fixture, "<main></main>");
+        fixture.source("templates/partials/card.html", "<article>Orphan</article>");
+        fixture.source(
+            "templates/partials/macros.html",
             "{% macro card(title) %}<article>{{ title }}</article>{% endmacro %}",
-        )
-        .unwrap();
+        );
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let orphan = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
@@ -857,48 +851,36 @@ mod tests {
 
     #[test]
     fn listing_item_without_consumer_uses_an_ephemeral_real_page_scenario() {
-        let root = fixture_root("listing-item-scenario");
-        write_fixture(&root, "<main>Acasă</main>");
-        fs::create_dir_all(root.join("content/services")).unwrap();
-        fs::create_dir_all(root.join("templates/listing-items")).unwrap();
-        fs::create_dir_all(root.join(".panastudio/content-models")).unwrap();
-        fs::write(
-            root.join("content/services/_index.md"),
+        let mut fixture = fixture("listing-item-scenario");
+        let root = fixture.root().to_path_buf();
+        write_fixture(&mut fixture, "<main>Acasă</main>");
+        fixture.source(
+            "content/services/_index.md",
             "+++\ntitle = \"Servicii\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/services/audit.md"),
+        );
+        fixture.source(
+            "content/services/audit.md",
             "+++\ntitle = \"Audit\"\n[extra]\nprice = 80\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/listing-items/service-card.html"),
+        );
+        fixture.source(
+            "templates/listing-items/service-card.html",
             "<article><h2>{{ item.title }}</h2><span>{{ item.extra.price }}</span></article>",
-        )
-        .unwrap();
-        fs::write(
-            root.join(".panastudio/project.toml"),
-            "schema_version = 1\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join(".panastudio/assignments.toml"),
+        );
+        fixture.source(".panastudio/project.toml", "schema_version = 1\n");
+        fixture.source(
+            ".panastudio/assignments.toml",
             "schema_version = 1\n\n[[assignments]]\nsectionPath = \"content/services/_index.md\"\nmodelId = \"service\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join(".panastudio/content-models/service.toml"),
+        );
+        fixture.source(
+            ".panastudio/content-models/service.toml",
             "schemaVersion = 1\nid = \"service\"\nlabel = \"Serviciu\"\n\n[[fields]]\nid = \"field_price\"\nkey = \"price\"\nlabel = \"Preț\"\nkind = \"number\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join(".panastudio/listing-items.toml"),
+        );
+        fixture.source(
+            ".panastudio/listing-items.toml",
             "schema_version = 1\n\n[[items]]\nid = \"service-card\"\nlabel = \"Card serviciu\"\ntemplateName = \"listing-items/service-card.html\"\nmodelId = \"service\"\npreviewPageFile = \"content/services/audit.md\"\n",
-        )
-        .unwrap();
+        );
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let plan = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
@@ -931,24 +913,20 @@ mod tests {
             .join("templates/__pana_template_workbench_listing_item.html")
             .exists());
 
-        fs::create_dir_all(root.join("templates/services")).unwrap();
-        fs::write(
-            root.join("content/services/_index.md"),
+        fixture.source(
+            "content/services/_index.md",
             "+++\ntitle = \"Servicii\"\ntemplate = \"services/archive.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/services/hosting.md"),
+        );
+        fixture.source(
+            "content/services/hosting.md",
             "+++\ntitle = \"Găzduire\"\n[extra]\nprice = 40\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/services/archive.html"),
+        );
+        fixture.source(
+            "templates/services/archive.html",
             "{% for item in section.pages %}{% include \"listing-items/service-card.html\" %}{% endfor %}",
-        )
-        .unwrap();
+        );
 
-        let model_with_real_consumer = build_project_model(&root, &HashMap::new()).unwrap();
+        let model_with_real_consumer = fixture.build_model().unwrap();
         let plan_with_real_consumer = resolve_template_workbench_plan(
             &model_with_real_consumer,
             &TemplateWorkbenchPlanInput {
@@ -985,26 +963,20 @@ mod tests {
 
     #[test]
     fn resolves_only_exact_taxonomy_routes_for_the_active_semantic_resource() {
-        let root = fixture_root("taxonomy-routes");
-        fs::create_dir_all(root.join("templates/tags")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
+        let mut fixture = fixture("taxonomy-routes");
+        let root = fixture.root().to_path_buf();
+        fixture.source(
+            "zola.toml",
             "base_url = \"http://example.test\"\ntaxonomies = [{ name = \"tags\" }]\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/article.md"),
+        );
+        fixture.source(
+            "content/article.md",
             "+++\ntitle = \"Articol\"\n[taxonomies]\ntags = [\"Rust\"]\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/tags/list.html"), "<main>Tags</main>").unwrap();
-        fs::write(
-            root.join("templates/tags/single.html"),
-            "<main>Termen</main>",
-        )
-        .unwrap();
+        );
+        fixture.source("templates/tags/list.html", "<main>Tags</main>");
+        fixture.source("templates/tags/single.html", "<main>Termen</main>");
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let list = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
@@ -1056,11 +1028,12 @@ mod tests {
 
     #[test]
     fn resolves_the_not_found_route_only_for_the_active_404_resource() {
-        let root = fixture_root("not-found-route");
-        write_fixture(&root, "<main>Acasă</main>");
-        fs::write(root.join("templates/404.html"), "<main>Nu există</main>").unwrap();
+        let mut fixture = fixture("not-found-route");
+        let root = fixture.root().to_path_buf();
+        write_fixture(&mut fixture, "<main>Acasă</main>");
+        fixture.source("templates/404.html", "<main>Nu există</main>");
 
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let not_found = resolve_template_workbench_plan(
             &model,
             &TemplateWorkbenchPlanInput {
@@ -1093,7 +1066,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn fixture_root(name: &str) -> PathBuf {
+    fn fixture(name: &str) -> ProjectModelTestFixture {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1102,22 +1075,16 @@ mod tests {
             "pana-template-workbench-{name}-{}-{nonce}",
             std::process::id()
         ));
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates/partials")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        root
+        let mut fixture = ProjectModelTestFixture::new(root).unwrap();
+        fixture.source("zola.toml", "base_url = \"http://example.test\"\n");
+        fixture
     }
 
-    fn write_fixture(root: &PathBuf, index_template: &str) {
-        fs::write(
-            root.join("content/_index.md"),
+    fn write_fixture(fixture: &mut ProjectModelTestFixture, index_template: &str) {
+        fixture.source(
+            "content/_index.md",
             "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(root.join("templates/index.html"), index_template).unwrap();
+        );
+        fixture.source("templates/index.html", index_template);
     }
 }

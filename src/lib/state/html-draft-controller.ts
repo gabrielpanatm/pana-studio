@@ -1,4 +1,3 @@
-import { formatSourceEditLocation } from "$lib/source-graph/location";
 import type { CoordinatedElementSelection, EditableAttributes, HtmlPendingArea } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { t } from "$lib/i18n/runtime.svelte";
@@ -16,10 +15,13 @@ export type HtmlDraftControllerHost = {
 };
 
 export function htmlTextSelectionKey(selection: CoordinatedElementSelection) {
-  const sourceLocation = selection.sourceLocation
-    ? formatSourceEditLocation(selection.sourceLocation)
-    : "";
-  return `${selection.sourceNodeId ?? sourceLocation}::${selection.observation.domPath}`;
+  if (!selection.sourceNodeId) return null;
+  return [
+    selection.snapshot.runtimeSessionId,
+    selection.snapshot.selectionRevision,
+    selection.sourceNodeId,
+    selection.renderInstanceId,
+  ].join("::");
 }
 
 /** Keeps the inspector draft; AppState owns the acknowledged speculative Canvas projection. */
@@ -45,6 +47,13 @@ export function updateTextContentValue(host: HtmlDraftControllerHost, value: str
     return;
   }
   const key = htmlTextSelectionKey(selection);
+  if (!key) {
+    host.textStatus = t("html-actions-identity-missing", {
+      action: t("html-actions-text-noun"),
+    });
+    host.setGlobalStatus(host.textStatus, "error");
+    return;
+  }
   if (host.textEditOriginalKey !== key) {
     host.textEditOriginalKey = key;
     host.textEditOriginalText = selection.observation.rawText ?? "";

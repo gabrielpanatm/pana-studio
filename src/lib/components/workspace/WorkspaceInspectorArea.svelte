@@ -35,11 +35,11 @@
         requestId !== fontLoadSequence
         || app.projectWorkspaceSnapshot?.revision !== expectedRevision
       ) return;
-      installedFontFamilies = manager.inventory.families
-        .filter((family) => family.registration.registered)
+      installedFontFamilies = manager.graph.families
+        .filter((family) => family.registration.registered && family.delivery !== "missing")
         .map((family) => family.family);
-      const axes = manager.inventory.families
-        .filter((family) => family.registration.registered)
+      const axes = manager.graph.families
+        .filter((family) => family.registration.registered && family.delivery !== "missing")
         .flatMap((family) => family.files.flatMap((file) => (
           file.axes.map((axis) => ({ family: family.family, ...axis }))
         )));
@@ -117,9 +117,11 @@
       {installedFontAxes}
       attributeValues={app.attributeValues}
       attributeStatus={app.attributeStatus}
+      attributePending={app.htmlPending.attributes}
       textContentValue={app.textContentValue}
       textStatus={app.textStatus}
       classEditorValue={app.classEditorValue}
+      classPending={app.htmlPending.classes}
       classStatus={app.classStatus}
       imageSourceValue={app.imageSourceValue}
       imageStatus={app.imageStatus}
@@ -168,6 +170,8 @@
       getOpenCssRuleContext={(file, selector, viewport) =>
         app.cssRuleContextFromOpenSource(file, selector, viewport)}
       applyNativeBlockOption={(request) => app.applyNativeBlockOption(request)}
+      applyNativeIcon={(request) => app.applyNativeIcon(request)}
+      applyNativeBlockSlotMutation={(request) => app.applyNativeBlockSlotMutation(request)}
       updateDynamicWidget={(snapshot, properties) =>
         app.updateDynamicWidgetFromInspector(snapshot, properties)}
       deleteDynamicWidget={(snapshot) => app.deleteDynamicWidgetFromInspector(snapshot)}

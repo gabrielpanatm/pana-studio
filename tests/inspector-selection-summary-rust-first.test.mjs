@@ -57,8 +57,14 @@ test("the selection card is a pure accessible renderer of the Rust snapshot", ()
   assert.match(card, /InspectorSelectionSummarySnapshot/);
   assert.doesNotMatch(
     card,
-    /selectionPresentation|CanvasElementObservation|SelectionSnapshot|resolvePageCssTarget|invoke\(/,
+    /selectionPresentation|CanvasElementObservation|resolvePageCssTarget|invoke\(/,
   );
+  assert.match(card, /selection\?\.aggregateCapabilities\.memberCount/);
+  assert.match(card, /selection\?\.aggregateHtmlFacts/);
+  assert.match(card, /data-selection-aggregate="common"/);
+  assert.match(card, /data-selection-aggregate="mixed"/);
+  assert.match(card, /aggregateHtmlFacts\.commonClasses/);
+  assert.match(card, /aggregateHtmlFacts\.mixedAttributeNames/);
   for (const state of [
     "empty",
     "resolving",

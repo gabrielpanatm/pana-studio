@@ -1301,8 +1301,7 @@ impl VersionRepository {
             return Err("Verificarea filtrelor Git a fost trunchiată.".to_string());
         }
         let mut fields = output.stdout.split(|byte| *byte == 0);
-        loop {
-            let Some(path) = fields.next() else { break };
+        while let Some(path) = fields.next() {
             if path.is_empty() {
                 break;
             }

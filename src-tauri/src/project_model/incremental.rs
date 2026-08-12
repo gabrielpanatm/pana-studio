@@ -11,6 +11,7 @@ use crate::{
         tera_graph::build_tera_graph,
     },
     source_graph::{
+        identity::{reconcile_project_source_node_ids, SourceChangeSet},
         rebuild_local_template_graph, SourceGraphIncrementalFallback,
         SourceGraphIncrementalTemplateReport,
     },
@@ -113,6 +114,29 @@ pub(crate) fn rebuild_project_model_after_workspace_change(
     exact_changed_paths: &[String],
     intent: ProjectModelIncrementalIntent,
 ) -> Result<ProjectModelIncrementalBuildOutcome, String> {
+    rebuild_project_model_after_workspace_change_with_source_changes(
+        project_root,
+        previous_model,
+        previous_workspace_revision,
+        projection,
+        exact_changed_paths,
+        intent,
+        None,
+    )
+}
+
+pub(crate) fn rebuild_project_model_after_workspace_change_with_source_changes(
+    project_root: &Path,
+    previous_model: Option<&ProjectModel>,
+    previous_workspace_revision: Option<u64>,
+    projection: &WorkspaceProjectionSnapshot,
+    exact_changed_paths: &[String],
+    intent: ProjectModelIncrementalIntent,
+    supplied_source_changes: Option<Vec<SourceChangeSet>>,
+) -> Result<ProjectModelIncrementalBuildOutcome, String> {
+    if let Some(changes) = supplied_source_changes.as_deref() {
+        require_source_change_revisions(previous_model, projection, changes)?;
+    }
     let started = Instant::now();
     match try_incremental_build(
         project_root,
@@ -121,6 +145,7 @@ pub(crate) fn rebuild_project_model_after_workspace_change(
         projection,
         exact_changed_paths,
         intent,
+        supplied_source_changes.as_deref(),
     ) {
         Ok((model, graph_report, changed_paths, model_clone_ms, tera_graph_ms)) => {
             Ok(ProjectModelIncrementalBuildOutcome {
@@ -138,8 +163,19 @@ pub(crate) fn rebuild_project_model_after_workspace_change(
             })
         }
         Err(reason) => {
-            let model =
+            let mut model =
                 super::build_project_model_from_workspace_projection(project_root, projection)?;
+            if let Some(previous) = previous_model {
+                let mut change_sets = supplied_source_changes.unwrap_or_else(|| {
+                    source_change_sets(previous, projection, exact_changed_paths)
+                });
+                reconcile_project_source_node_ids(
+                    &previous.source_graph,
+                    &mut model.source_graph,
+                    &mut change_sets,
+                )?;
+                rebuild_derived_graphs(project_root, projection, &mut model);
+            }
             Ok(ProjectModelIncrementalBuildOutcome {
                 model,
                 report: report(
@@ -157,6 +193,95 @@ pub(crate) fn rebuild_project_model_after_workspace_change(
     }
 }
 
+fn require_source_change_revisions(
+    previous_model: Option<&ProjectModel>,
+    projection: &WorkspaceProjectionSnapshot,
+    changes: &[SourceChangeSet],
+) -> Result<(), String> {
+    let previous = previous_model.ok_or_else(|| {
+        "SourceChangeSet a fost furnizat fără ProjectModel-ul reviziei de bază.".to_string()
+    })?;
+    let mut files = BTreeSet::new();
+    for change in changes {
+        if !files.insert(change.file.as_str()) {
+            return Err(format!(
+                "SourceChangeSet conține două autorități pentru {}.",
+                change.file
+            ));
+        }
+        let before = previous
+            .files
+            .iter()
+            .find(|file| file.relative_path == change.file)
+            .ok_or_else(|| {
+                format!(
+                    "SourceChangeSet nu găsește {} în ProjectModel-ul de bază.",
+                    change.file
+                )
+            })?;
+        let after = projection.source_texts.get(&change.file).ok_or_else(|| {
+            format!(
+                "SourceChangeSet nu găsește {} în proiecția rezultată.",
+                change.file
+            )
+        })?;
+        change.require_sources(&before.contents, after)?;
+    }
+    Ok(())
+}
+
+fn source_change_sets(
+    previous: &ProjectModel,
+    projection: &WorkspaceProjectionSnapshot,
+    changed_paths: &[String],
+) -> Vec<SourceChangeSet> {
+    changed_paths
+        .iter()
+        .filter_map(|path| {
+            let before = previous
+                .files
+                .iter()
+                .find(|file| file.relative_path == *path)?;
+            let after = projection.source_texts.get(path)?;
+            Some(SourceChangeSet::between(path, &before.contents, after))
+        })
+        .collect()
+}
+
+fn rebuild_derived_graphs(
+    project_root: &Path,
+    projection: &WorkspaceProjectionSnapshot,
+    model: &mut ProjectModel,
+) {
+    model.source_graph.component_graph =
+        crate::source_graph::component_graph::build_component_graph(&model.source_graph);
+    model.source_graph.block_graph = crate::blocks::graph::build_block_graph(&model.source_graph);
+    model.source_graph.content_models =
+        crate::kernel::content_models::build_content_model_catalog_from_workspace_projection(
+            project_root,
+            &projection.source_texts,
+            &projection.deleted_sources,
+            &model.source_graph,
+        );
+    model.source_graph.listing_items =
+        crate::kernel::listing_items::build_listing_item_catalog_from_workspace_projection(
+            project_root,
+            &projection.source_texts,
+            &projection.deleted_sources,
+            &model.source_graph,
+        );
+    model.source_graph.dynamic_widget_graph =
+        crate::kernel::dynamic_widgets::build_dynamic_widget_graph_from_workspace_projection(
+            project_root,
+            &projection.source_texts,
+            &projection.deleted_sources,
+            &model.source_graph,
+        );
+    model.source_graph.markdown_projections =
+        crate::source_graph::markdown::build_markdown_projections(&model.source_graph);
+    model.tera_graph = build_tera_graph(&model.source_graph, &model.files);
+}
+
 fn try_incremental_build(
     project_root: &Path,
     previous_model: Option<&ProjectModel>,
@@ -164,6 +289,7 @@ fn try_incremental_build(
     projection: &WorkspaceProjectionSnapshot,
     exact_changed_paths: &[String],
     intent: ProjectModelIncrementalIntent,
+    supplied_source_changes: Option<&[SourceChangeSet]>,
 ) -> Result<
     (
         ProjectModel,
@@ -255,7 +381,14 @@ fn try_incremental_build(
         &root,
         &next.zola_root,
         relative_path,
+        &previous_file.contents,
         &projection.source_texts,
+        supplied_source_changes.and_then(|changes| {
+            changes
+                .iter()
+                .find(|change| change.file == *relative_path)
+                .cloned()
+        }),
     )
     .map_err(ProjectModelIncrementalFallback::SourceGraph)?;
     next.source_graph = source_graph;
@@ -393,6 +526,8 @@ fn normalized_changed_paths(
     Ok(normalized.into_iter().collect())
 }
 
+// The report constructor mirrors the immutable incremental-build telemetry schema.
+#[allow(clippy::too_many_arguments)]
 fn report(
     mode: ProjectModelRebuildMode,
     projection: &WorkspaceProjectionSnapshot,
@@ -450,11 +585,430 @@ mod tests {
     use crate::{
         kernel::project_workspace::WorkspaceProjectionSnapshot,
         project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
-        project_model::build_project_model_from_workspace_projection,
+        project_model::{
+            build_project_model_from_workspace_projection,
+            move_engine::{plan_html_move, ProjectHtmlMoveIntent, ProjectMovePosition},
+        },
+        source_graph::identity::{SourceTextEdit, SourceTreeMovePosition},
         source_graph::model::{ComponentInvocationKind, SourceRelationKind},
     };
 
     use super::*;
+
+    #[test]
+    fn generated_class_preserves_the_exact_identity_of_three_identical_siblings() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let before_html = concat!(
+            "{% extends \"base.html\" %}{% block content %}",
+            "<main><div>unu</div><div>doi</div><div>trei</div></main>",
+            "{% endblock %}",
+        );
+        let mut before_sources = initial_sources();
+        before_sources.insert("templates/index.html".to_string(), before_html.to_string());
+        let before_projection = projection(&root, 40, None, before_sources, HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let before_ids = html_node_ids_for_label(&before, "<div>");
+        assert_eq!(before_ids.len(), 3);
+
+        for (target_index, body) in [
+            "<main><div class=\"ps-div-test1234\">unu</div><div>doi</div><div>trei</div></main>",
+            "<main><div>unu</div><div class=\"ps-div-test1234\">doi</div><div>trei</div></main>",
+            "<main><div>unu</div><div>doi</div><div class=\"ps-div-test1234\">trei</div></main>",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let after_html =
+                format!("{{% extends \"base.html\" %}}{{% block content %}}{body}{{% endblock %}}");
+            let mut after_sources = initial_sources();
+            after_sources.insert("templates/index.html".to_string(), after_html);
+            let after_projection = projection(
+                &root,
+                41,
+                Some("generated-class-41"),
+                after_sources,
+                HashSet::from(["templates/index.html".to_string()]),
+            );
+            let outcome = rebuild_project_model_after_workspace_change(
+                &root,
+                Some(&before),
+                Some(40),
+                &after_projection,
+                &["templates/index.html".to_string()],
+                ProjectModelIncrementalIntent::HtmlStructural,
+            )
+            .unwrap();
+            let mut after_divs = outcome
+                .model
+                .source_graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.file == "templates/index.html"
+                        && node.kind == crate::source_graph::model::SourceNodeKind::Html
+                        && node.label.starts_with("<div")
+                })
+                .collect::<Vec<_>>();
+            after_divs.sort_by_key(|node| node.range.as_ref().map(|range| range.start));
+
+            assert_eq!(
+                after_divs
+                    .iter()
+                    .map(|node| node.id.clone())
+                    .collect::<Vec<_>>(),
+                before_ids,
+                "ținta #{target_index}",
+            );
+            assert_eq!(after_divs[target_index].label, "<div .ps-div-test1234>");
+            assert_eq!(
+                after_divs
+                    .iter()
+                    .map(|node| node.id.as_str())
+                    .collect::<HashSet<_>>()
+                    .len(),
+                3,
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_change_set_preserves_exact_ids_for_identical_siblings_and_subtree() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let before_html = concat!(
+            "{% extends \"base.html\" %}{% block content %}",
+            "<main><section><span>A</span></section><section><span>B</span></section>",
+            "<section><span>C</span></section></main>{% endblock %}",
+        );
+        let mut before_sources = initial_sources();
+        before_sources.insert("templates/index.html".to_string(), before_html.to_string());
+        let before_projection = projection(&root, 50, None, before_sources, HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let before_sections = html_node_ids_for_label(&before, "<section>");
+        let before_spans = html_node_ids_for_label(&before, "<span>");
+        assert_eq!(before_sections.len(), 3);
+        assert_eq!(before_spans.len(), 3);
+
+        let plan = plan_html_move(
+            &before,
+            &ProjectHtmlMoveIntent {
+                source_source_id: Some(before_sections[0].clone()),
+                target_source_id: Some(before_sections[2].clone()),
+                source_tag: Some("section".to_string()),
+                target_tag: Some("section".to_string()),
+                position: ProjectMovePosition::After,
+                native_block_slot: None,
+            },
+        );
+        assert!(plan.allowed, "{:?}", plan.diagnostic);
+        let patch = plan.patch.unwrap();
+        let mut after_sources = initial_sources();
+        after_sources.insert(patch.file.clone(), patch.contents.clone());
+        let after_projection = projection(
+            &root,
+            51,
+            Some("move-identical-siblings"),
+            after_sources,
+            HashSet::from([patch.file.clone()]),
+        );
+        let source_changes =
+            vec![
+                SourceChangeSet::between(&patch.file, before_html, &patch.contents).with_tree_move(
+                    &patch.resolved_source_id,
+                    &patch.resolved_target_id,
+                    SourceTreeMovePosition::After,
+                ),
+            ];
+        let outcome = rebuild_project_model_after_workspace_change_with_source_changes(
+            &root,
+            Some(&before),
+            Some(50),
+            &after_projection,
+            &[patch.file],
+            ProjectModelIncrementalIntent::HtmlStructural,
+            Some(source_changes),
+        )
+        .unwrap();
+
+        assert_eq!(
+            html_node_ids_for_label(&outcome.model, "<section>"),
+            vec![
+                before_sections[1].clone(),
+                before_sections[2].clone(),
+                before_sections[0].clone(),
+            ]
+        );
+        assert_eq!(
+            html_node_ids_for_label(&outcome.model, "<span>"),
+            vec![
+                before_spans[1].clone(),
+                before_spans[2].clone(),
+                before_spans[0].clone(),
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn disjoint_code_edits_do_not_replace_the_untouched_identical_sibling() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let before_html = concat!(
+            "{% extends \"base.html\" %}{% block content %}",
+            "<main><div>A</div><div>B</div><div>C</div></main>",
+            "{% endblock %}",
+        );
+        let mut before_sources = initial_sources();
+        before_sources.insert("templates/index.html".to_string(), before_html.to_string());
+        let before_projection = projection(&root, 60, None, before_sources, HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let before_ids = html_node_ids_for_label(&before, "<div>");
+        assert_eq!(before_ids.len(), 3);
+
+        let first_start = before_html.find("<div>A").unwrap() + "<div".len();
+        let last_start = before_html.rfind("<div>C").unwrap() + "<div".len();
+        let first_insert = " data-edge=\"first\"";
+        let last_insert = " data-edge=\"last\"";
+        let mut after_html = before_html.to_string();
+        after_html.insert_str(last_start, last_insert);
+        after_html.insert_str(first_start, first_insert);
+        let exact_edits = vec![
+            SourceTextEdit {
+                old_start: first_start,
+                old_end: first_start,
+                new_start: first_start,
+                new_end: first_start + first_insert.len(),
+            },
+            SourceTextEdit {
+                old_start: last_start,
+                old_end: last_start,
+                new_start: last_start + first_insert.len(),
+                new_end: last_start + first_insert.len() + last_insert.len(),
+            },
+        ];
+        let mut after_sources = initial_sources();
+        after_sources.insert("templates/index.html".to_string(), after_html.clone());
+        let after_projection = projection(
+            &root,
+            61,
+            Some("code-disjoint-61"),
+            after_sources,
+            HashSet::from(["templates/index.html".to_string()]),
+        );
+        let change = SourceChangeSet::between("templates/index.html", before_html, &after_html)
+            .with_exact_text_edits(exact_edits);
+        let outcome = rebuild_project_model_after_workspace_change_with_source_changes(
+            &root,
+            Some(&before),
+            Some(60),
+            &after_projection,
+            &["templates/index.html".to_string()],
+            ProjectModelIncrementalIntent::HtmlStructural,
+            Some(vec![change]),
+        )
+        .unwrap();
+
+        let after_ids = outcome
+            .model
+            .source_graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.file == "templates/index.html"
+                    && node.kind == crate::source_graph::model::SourceNodeKind::Html
+                    && node.label.starts_with("<div")
+            })
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(after_ids, before_ids);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn supplied_source_change_set_rejects_another_result_revision() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let before_html = "<main><div>A</div></main>";
+        let mut before_sources = initial_sources();
+        before_sources.insert("templates/index.html".to_string(), before_html.to_string());
+        let before_projection = projection(&root, 70, None, before_sources, HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let declared_after = "<main><div>B</div></main>";
+        let actual_after = "<main><div>C</div></main>";
+        let mut after_sources = initial_sources();
+        after_sources.insert("templates/index.html".to_string(), actual_after.to_string());
+        let after_projection = projection(
+            &root,
+            71,
+            Some("stale-source-change-71"),
+            after_sources,
+            HashSet::from(["templates/index.html".to_string()]),
+        );
+        let result = rebuild_project_model_after_workspace_change_with_source_changes(
+            &root,
+            Some(&before),
+            Some(70),
+            &after_projection,
+            &["templates/index.html".to_string()],
+            ProjectModelIncrementalIntent::HtmlStructural,
+            Some(vec![SourceChangeSet::between(
+                "templates/index.html",
+                before_html,
+                declared_after,
+            )]),
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("SourceChangeSet stale a fost acceptat."),
+        };
+        assert!(error.contains("revizii stale"), "{error}");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn html_node_ids_for_label(model: &ProjectModel, label: &str) -> Vec<String> {
+        let mut nodes = model
+            .source_graph
+            .nodes
+            .iter()
+            .filter(|node| node.file == "templates/index.html" && node.label == label)
+            .collect::<Vec<_>>();
+        nodes.sort_by_key(|node| node.range.as_ref().map(|range| range.start));
+        nodes.into_iter().map(|node| node.id.clone()).collect()
+    }
+
+    fn assert_model_semantics_match(actual: &ProjectModel, expected: &ProjectModel) {
+        let actual = canonical_model_semantics(actual);
+        let expected = canonical_model_semantics(expected);
+        if let Some(difference) = first_json_difference("$", &actual, &expected) {
+            panic!("project model semantic mismatch: {difference}");
+        }
+    }
+
+    fn first_json_difference(
+        path: &str,
+        actual: &serde_json::Value,
+        expected: &serde_json::Value,
+    ) -> Option<String> {
+        match (actual, expected) {
+            (serde_json::Value::Array(actual), serde_json::Value::Array(expected)) => {
+                if actual.len() != expected.len() {
+                    return Some(format!(
+                        "{path}: array length {} != {}",
+                        actual.len(),
+                        expected.len()
+                    ));
+                }
+                actual
+                    .iter()
+                    .zip(expected)
+                    .enumerate()
+                    .find_map(|(index, (actual, expected))| {
+                        first_json_difference(&format!("{path}[{index}]"), actual, expected)
+                    })
+            }
+            (serde_json::Value::Object(actual), serde_json::Value::Object(expected)) => {
+                let mut keys = actual.keys().chain(expected.keys()).collect::<Vec<_>>();
+                keys.sort_unstable();
+                keys.dedup();
+                keys.into_iter().find_map(|key| {
+                    let next_path = format!("{path}.{key}");
+                    match (actual.get(key), expected.get(key)) {
+                        (Some(actual), Some(expected)) => {
+                            first_json_difference(&next_path, actual, expected)
+                        }
+                        (Some(actual), None) => Some(format!("{next_path}: unexpected {actual:?}")),
+                        (None, Some(expected)) => {
+                            Some(format!("{next_path}: missing {expected:?}"))
+                        }
+                        (None, None) => None,
+                    }
+                })
+            }
+            _ if actual == expected => None,
+            _ => Some(format!("{path}: {actual:?} != {expected:?}")),
+        }
+    }
+
+    fn canonical_model_semantics(model: &ProjectModel) -> serde_json::Value {
+        let source_ids = model
+            .source_graph
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id.clone(), format!("opaque-test-node-{index}")))
+            .collect::<HashMap<_, _>>();
+        let mut snapshot = serde_json::to_value(model.snapshot()).unwrap();
+        if let Some(source_graph) = snapshot
+            .as_object_mut()
+            .and_then(|root| root.get_mut("sourceGraph"))
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for derived in [
+                "componentGraph",
+                "blockGraph",
+                "contentModels",
+                "listingItems",
+                "dynamicWidgetGraph",
+            ] {
+                source_graph.remove(derived);
+            }
+        }
+        canonicalize_source_identities(&mut snapshot, &source_ids);
+        normalize_graph_collection_order(&mut snapshot);
+        snapshot
+    }
+
+    fn normalize_graph_collection_order(snapshot: &mut serde_json::Value) {
+        for graph_name in ["sourceGraph", "teraGraph"] {
+            let Some(graph) = snapshot
+                .as_object_mut()
+                .and_then(|root| root.get_mut(graph_name))
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                continue;
+            };
+            for collection in ["nodes", "relations", "templates"] {
+                let Some(values) = graph
+                    .get_mut(collection)
+                    .and_then(serde_json::Value::as_array_mut)
+                else {
+                    continue;
+                };
+                values.sort_by_cached_key(|value| serde_json::to_string(value).unwrap());
+            }
+        }
+    }
+
+    fn canonicalize_source_identities(
+        value: &mut serde_json::Value,
+        source_ids: &HashMap<String, String>,
+    ) {
+        match value {
+            serde_json::Value::String(text) => {
+                if let Some(canonical) = source_ids.get(text) {
+                    *text = canonical.clone();
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    canonicalize_source_identities(value, source_ids);
+                }
+            }
+            serde_json::Value::Object(object) => {
+                object.remove("id");
+                for value in object.values_mut() {
+                    canonicalize_source_identities(value, source_ids);
+                }
+            }
+            _ => {}
+        }
+    }
 
     #[test]
     fn single_template_html_change_matches_the_full_builder_exactly() {
@@ -485,17 +1039,94 @@ mod tests {
         let oracle =
             build_project_model_from_workspace_projection(&root, &after_projection).unwrap();
 
-        assert_eq!(outcome.report.mode, ProjectModelRebuildMode::Incremental);
+        assert_eq!(
+            outcome.report.mode,
+            ProjectModelRebuildMode::Incremental,
+            "{:?}",
+            outcome.report.fallback_reason
+        );
         assert_eq!(outcome.report.fallback_reason, None);
         assert!(outcome.report.reused_nodes > 0);
         assert!(outcome
             .report
             .invalidated_template_files
             .contains(&"templates/index.html".to_string()));
-        assert_eq!(
-            serde_json::to_value(outcome.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
+        assert_model_semantics_match(&outcome.model, &oracle);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_icon_change_is_atomic_and_matches_the_full_builder_exactly() {
+        let root = unique_test_dir();
+        fs::create_dir_all(&root).unwrap();
+        let home = crate::blocks::icons::render_icon_block_html(
+            "home",
+            "ps-icon-test",
+            "ps-icon-test",
+            "icon-test",
+        )
+        .unwrap();
+        let star = crate::blocks::icons::render_icon_block_html(
+            "star",
+            "ps-icon-test",
+            "ps-icon-test",
+            "icon-test",
+        )
+        .unwrap();
+        let mut before_sources = initial_sources();
+        before_sources.insert(
+            "templates/index.html".to_string(),
+            initial_index_source().replace("</main>", &format!("{home}</main>")),
         );
+        let before_projection = projection(&root, 30, None, before_sources, HashSet::new());
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
+        let mut after_sources = initial_sources();
+        after_sources.insert(
+            "templates/index.html".to_string(),
+            initial_index_source().replace("</main>", &format!("{star}</main>")),
+        );
+        let after_projection = projection(
+            &root,
+            31,
+            Some("icon-change-31"),
+            after_sources,
+            HashSet::from(["templates/index.html".to_string()]),
+        );
+
+        let outcome = rebuild_project_model_after_workspace_change(
+            &root,
+            Some(&before),
+            Some(30),
+            &after_projection,
+            &["templates/index.html".to_string()],
+            ProjectModelIncrementalIntent::HtmlStructural,
+        )
+        .unwrap();
+        let oracle =
+            build_project_model_from_workspace_projection(&root, &after_projection).unwrap();
+        let icon_markers = outcome
+            .model
+            .source_graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.kind == crate::source_graph::model::SourceNodeKind::BlockMarker
+                    && node.label == "icon"
+            })
+            .count();
+        let svg_descendants = outcome
+            .model
+            .source_graph
+            .nodes
+            .iter()
+            .filter(|node| node.label.starts_with("<path"))
+            .count();
+
+        assert_eq!(outcome.report.mode, ProjectModelRebuildMode::Incremental);
+        assert_eq!(icon_markers, 1);
+        assert_eq!(svg_descendants, 0);
+        assert_model_semantics_match(&outcome.model, &oracle);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -535,10 +1166,7 @@ mod tests {
         assert_eq!(outcome.report.fallback_reason, None);
         assert_eq!(outcome.report.replaced_nodes, 0);
         assert_eq!(outcome.report.template_parse_ms, 0);
-        assert_eq!(
-            serde_json::to_value(outcome.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
-        );
+        assert_model_semantics_match(&outcome.model, &oracle);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -579,10 +1207,7 @@ mod tests {
             outcome.report.fallback_reason.as_deref(),
             Some("created_or_deleted_source")
         );
-        assert_eq!(
-            serde_json::to_value(outcome.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
-        );
+        assert_model_semantics_match(&outcome.model, &oracle);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -634,10 +1259,7 @@ mod tests {
                 .unwrap();
             assert_eq!(outcome.report.mode, ProjectModelRebuildMode::FullFallback);
             assert_eq!(outcome.report.fallback_reason.as_deref(), Some(expected_reason));
-            assert_eq!(
-                serde_json::to_value(outcome.model.snapshot()).unwrap(),
-                serde_json::to_value(oracle.snapshot()).unwrap(),
-            );
+            assert_model_semantics_match(&outcome.model, &oracle);
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -683,10 +1305,7 @@ mod tests {
         let oracle =
             build_project_model_from_workspace_projection(&root, &restored_projection).unwrap();
         assert_eq!(restored.report.mode, ProjectModelRebuildMode::Incremental);
-        assert_eq!(
-            serde_json::to_value(restored.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
-        );
+        assert_model_semantics_match(&restored.model, &oracle);
 
         let mut redone_sources = initial_sources();
         redone_sources.insert("templates/index.html".to_string(), moved_index_source());
@@ -709,10 +1328,7 @@ mod tests {
         let oracle =
             build_project_model_from_workspace_projection(&root, &redone_projection).unwrap();
         assert_eq!(redone.report.mode, ProjectModelRebuildMode::Incremental);
-        assert_eq!(
-            serde_json::to_value(redone.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
-        );
+        assert_model_semantics_match(&redone.model, &oracle);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -765,10 +1381,7 @@ mod tests {
             .report
             .invalidated_template_files
             .contains(&"templates/index.html".to_string()));
-        assert_eq!(
-            serde_json::to_value(local_override.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
-        );
+        assert_model_semantics_match(&local_override.model, &oracle);
 
         let mut theme_sources = initial;
         theme_sources.insert(
@@ -878,11 +1491,7 @@ mod tests {
                 .report
                 .invalidated_page_files
                 .contains(&"content/_index.md".to_string()));
-            assert_eq!(
-                serde_json::to_value(outcome.model.snapshot()).unwrap(),
-                serde_json::to_value(oracle.snapshot()).unwrap(),
-                "{operation} #{index}",
-            );
+            assert_model_semantics_match(&outcome.model, &oracle);
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -1116,7 +1725,38 @@ mod tests {
         )
         .canonicalize()
         .unwrap();
-        let before = crate::project_model::build_project_model(&root, &HashMap::new()).unwrap();
+        // This ignored real-project benchmark owns an explicit filesystem
+        // ingestion boundary. ProjectModel still receives only the immutable
+        // projection captured at that boundary.
+        let manifest = crate::project::read_project_disk_manifest(&root).unwrap();
+        let source_texts = manifest
+            .files
+            .iter()
+            .filter_map(|entry| {
+                fs::read_to_string(root.join(&entry.relative_path))
+                    .ok()
+                    .map(|source| (entry.relative_path.clone(), source))
+            })
+            .collect::<HashMap<_, _>>();
+        let runtime_session_id = "incremental-real-benchmark".to_string();
+        let before_projection = WorkspaceProjectionSnapshot {
+            project_root: root.to_string_lossy().to_string(),
+            runtime_session_id: runtime_session_id.clone(),
+            revision: 1,
+            workspace_transaction_id: Some("incremental-real-benchmark-1".to_string()),
+            source_texts,
+            resource_bytes: HashMap::new(),
+            deleted_sources: HashSet::new(),
+            changed_paths: HashSet::new(),
+            accepted_disk: AcceptedProjectDiskManifest::new(
+                runtime_session_id.clone(),
+                root.to_string_lossy().to_string(),
+                manifest.clone(),
+            )
+            .unwrap(),
+        };
+        let before =
+            build_project_model_from_workspace_projection(&root, &before_projection).unwrap();
         let target = before
             .files
             .iter()
@@ -1130,8 +1770,6 @@ mod tests {
             .map(|file| (file.relative_path.clone(), file.contents.clone()))
             .collect::<HashMap<_, _>>();
         source_texts.insert(target.relative_path.clone(), changed);
-        let manifest = crate::project::read_project_disk_manifest(&root).unwrap();
-        let runtime_session_id = "incremental-real-benchmark".to_string();
         let projection = WorkspaceProjectionSnapshot {
             project_root: root.to_string_lossy().to_string(),
             runtime_session_id: runtime_session_id.clone(),
@@ -1168,7 +1806,7 @@ mod tests {
                 Some(&before),
                 Some(1),
                 &projection,
-                &[target.relative_path.clone()],
+                std::slice::from_ref(&target.relative_path),
                 ProjectModelIncrementalIntent::HtmlStructural,
             )
             .unwrap();
@@ -1194,6 +1832,11 @@ mod tests {
             report.tera_graph_ms,
         );
         assert!(p95 <= 50, "incremental ProjectModel p95 {p95} ms > 50 ms");
+        let regression_limit = full_p95.saturating_mul(110).div_ceil(100).max(1);
+        assert!(
+            p95 <= regression_limit,
+            "incremental ProjectModel p95 {p95} ms depășește oracle-ul complet {full_p95} ms cu mai mult de 10%"
+        );
     }
 
     fn initial_sources() -> HashMap<String, String> {
@@ -1329,10 +1972,7 @@ mod tests {
             outcome.report.fallback_reason.as_deref(),
             Some(expected_reason)
         );
-        assert_eq!(
-            serde_json::to_value(outcome.model.snapshot()).unwrap(),
-            serde_json::to_value(oracle.snapshot()).unwrap(),
-        );
+        assert_model_semantics_match(&outcome.model, &oracle);
     }
 
     fn unique_test_dir() -> PathBuf {

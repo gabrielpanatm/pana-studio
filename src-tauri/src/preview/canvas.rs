@@ -781,21 +781,24 @@ fn build_canvas_document(
     let mut boundary_drafts = Vec::new();
     let mut semantic_order = 0usize;
     let mut document_nodes = 0usize;
+    let mut context = CanvasRenderCollectionContext {
+        route,
+        semantic_index,
+        boundary_drafts: &mut boundary_drafts,
+        occurrences: &mut occurrences,
+        binding_occurrences: &mut binding_occurrences,
+        markdown_occurrences: &mut markdown_occurrences,
+        nodes: &mut nodes,
+        diagnostics: &mut diagnostics,
+        total_nodes: &mut document_nodes,
+        semantic_order: &mut semantic_order,
+    };
     collect_render_nodes(
         &document,
-        route,
         None,
-        semantic_index,
         &mut provenance_stack,
         &mut boundary_stack,
-        &mut boundary_drafts,
-        &mut occurrences,
-        &mut binding_occurrences,
-        &mut markdown_occurrences,
-        &mut nodes,
-        &mut diagnostics,
-        &mut document_nodes,
-        &mut semantic_order,
+        &mut context,
     )?;
     let boundaries = finalize_boundary_instances(route, &nodes, boundary_drafts, &mut diagnostics);
     Ok((
@@ -828,21 +831,24 @@ impl CanvasDocumentAnnotator<'_> {
         let mut provenance_stack = Vec::new();
         let mut boundary_stack = Vec::new();
         let mut boundary_drafts = Vec::new();
+        let mut context = CanvasRenderCollectionContext {
+            route,
+            semantic_index: &self.semantic_index,
+            boundary_drafts: &mut boundary_drafts,
+            occurrences: &mut occurrences,
+            binding_occurrences: &mut binding_occurrences,
+            markdown_occurrences: &mut markdown_occurrences,
+            nodes: &mut nodes,
+            diagnostics: &mut diagnostics,
+            total_nodes: &mut total_nodes,
+            semantic_order: &mut semantic_order,
+        };
         collect_render_nodes(
             &document,
-            route,
             None,
-            &self.semantic_index,
             &mut provenance_stack,
             &mut boundary_stack,
-            &mut boundary_drafts,
-            &mut occurrences,
-            &mut binding_occurrences,
-            &mut markdown_occurrences,
-            &mut nodes,
-            &mut diagnostics,
-            &mut total_nodes,
-            &mut semantic_order,
+            &mut context,
         )?;
         String::from_utf8(serialize_node(&document))
             .map_err(|error| format!("CanvasGraph nu a putut serializa documentul anotat: {error}"))
@@ -1488,10 +1494,11 @@ fn markdown_source_range(source: &str, kind: MarkdownProjectionKind) -> Option<S
 }
 
 fn markdown_content_start(source: &str) -> usize {
-    let bom_len = source
-        .starts_with('\u{feff}')
-        .then_some('\u{feff}'.len_utf8())
-        .unwrap_or_default();
+    let bom_len = if source.starts_with('\u{feff}') {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    };
     let without_bom = &source[bom_len..];
     let Some(marker) = ["+++", "---"]
         .iter()
@@ -1562,43 +1569,43 @@ fn canvas_source_range(source: &str, start: usize, end: usize) -> SourceRange {
     }
 }
 
+struct CanvasRenderCollectionContext<'a, 'model> {
+    route: &'a str,
+    semantic_index: &'a CanvasSemanticIndex<'model>,
+    boundary_drafts: &'a mut Vec<CanvasBoundaryDraft>,
+    occurrences: &'a mut HashMap<(String, String, String), usize>,
+    binding_occurrences: &'a mut HashMap<(String, String, String, String), usize>,
+    markdown_occurrences: &'a mut HashMap<String, usize>,
+    nodes: &'a mut Vec<CanvasRenderNode>,
+    diagnostics: &'a mut Vec<CanvasGraphDiagnostic>,
+    total_nodes: &'a mut usize,
+    semantic_order: &'a mut usize,
+}
+
 fn collect_render_nodes(
     node: &NodeRef,
-    route: &str,
     parent_render_instance_id: Option<String>,
-    semantic_index: &CanvasSemanticIndex<'_>,
     provenance_stack: &mut Vec<String>,
     boundary_stack: &mut Vec<CanvasBoundaryFrame>,
-    boundary_drafts: &mut Vec<CanvasBoundaryDraft>,
-    occurrences: &mut HashMap<(String, String, String), usize>,
-    binding_occurrences: &mut HashMap<(String, String, String, String), usize>,
-    markdown_occurrences: &mut HashMap<String, usize>,
-    nodes: &mut Vec<CanvasRenderNode>,
-    diagnostics: &mut Vec<CanvasGraphDiagnostic>,
-    total_nodes: &mut usize,
-    semantic_order: &mut usize,
+    context: &mut CanvasRenderCollectionContext<'_, '_>,
 ) -> Result<(), String> {
     if let Some(comment) = node.as_comment() {
-        let document_order = *semantic_order;
-        *semantic_order = semantic_order.saturating_add(1);
+        let document_order = *context.semantic_order;
+        *context.semantic_order = context.semantic_order.saturating_add(1);
         apply_canvas_marker(
             comment.borrow().as_str(),
             provenance_stack,
             boundary_stack,
-            boundary_drafts,
-            semantic_index,
-            markdown_occurrences,
             document_order,
-            route,
-            diagnostics,
+            context,
         );
         return Ok(());
     }
 
     let mut descendant_parent = parent_render_instance_id;
     if let Some(element) = node.as_element() {
-        let document_order = *semantic_order;
-        *semantic_order = semantic_order.saturating_add(1);
+        let document_order = *context.semantic_order;
+        *context.semantic_order = context.semantic_order.saturating_add(1);
         let (source_node_id, template_source_node_id, binding_key) = {
             let attributes = element.attributes.borrow();
             let binding_key = [
@@ -1639,8 +1646,8 @@ fn collect_render_nodes(
         }
 
         if !provenance_stack_snapshot.is_empty() {
-            *total_nodes = total_nodes.saturating_add(1);
-            if *total_nodes > MAX_CANVAS_NODES {
+            *context.total_nodes = context.total_nodes.saturating_add(1);
+            if *context.total_nodes > MAX_CANVAS_NODES {
                 return Err(format!(
                     "CanvasGraph depășește limita de {MAX_CANVAS_NODES} instanțe randate."
                 ));
@@ -1652,35 +1659,39 @@ fn collect_render_nodes(
                 .or_else(|| provenance_stack_snapshot.last().map(String::as_str))
                 .expect("marked render node has provenance")
                 .to_string();
-            let key = (route.to_string(), primary_provenance.clone(), tag.clone());
-            let occurrence = occurrences.entry(key).or_insert(0);
+            let key = (
+                context.route.to_string(),
+                primary_provenance.clone(),
+                tag.clone(),
+            );
+            let occurrence = context.occurrences.entry(key).or_insert(0);
             let current_occurrence = *occurrence;
             *occurrence = occurrence.saturating_add(1);
             let binding_duplicate = binding_key.as_ref().map(|binding_key| {
                 let key = (
-                    route.to_string(),
+                    context.route.to_string(),
                     primary_provenance.clone(),
                     tag.clone(),
                     binding_key.clone(),
                 );
-                let duplicate = binding_occurrences.entry(key).or_default();
+                let duplicate = context.binding_occurrences.entry(key).or_default();
                 let current = *duplicate;
                 *duplicate = duplicate.saturating_add(1);
                 current
             });
             if binding_duplicate.is_some_and(|duplicate| duplicate > 0) {
-                diagnostics.push(CanvasGraphDiagnostic {
+                context.diagnostics.push(CanvasGraphDiagnostic {
                     code: "duplicate_render_binding".to_string(),
                     message: format!(
                         "Cheia randată {:?} apare de mai multe ori pentru aceeași proveniență; identitatea include un discriminator de coliziune.",
                         binding_key.as_deref().unwrap_or_default()
                     ),
-                    route: Some(route.to_string()),
+                    route: Some(context.route.to_string()),
                     source_node_id: Some(primary_provenance.clone()),
                 });
             }
             let render_instance_id = render_instance_id(
-                route,
+                context.route,
                 &primary_provenance,
                 &tag,
                 binding_key.as_deref(),
@@ -1692,42 +1703,54 @@ fn collect_render_nodes(
                 .borrow_mut()
                 .insert("data-pana-render-instance-id", render_instance_id.clone());
             for frame in boundary_stack.iter() {
-                if let Some(draft) = boundary_drafts.get_mut(frame.draft_index) {
+                if let Some(draft) = context.boundary_drafts.get_mut(frame.draft_index) {
                     push_unique(&mut draft.render_instance_ids, &render_instance_id);
                 }
             }
 
             for candidate in &provenance_stack_snapshot {
-                if !semantic_index.live_source_ids.contains(candidate.as_str()) {
-                    diagnostics.push(CanvasGraphDiagnostic {
+                if !context
+                    .semantic_index
+                    .live_source_ids
+                    .contains(candidate.as_str())
+                {
+                    context.diagnostics.push(CanvasGraphDiagnostic {
                         code: "unknown_source_provenance".to_string(),
                         message: format!(
                             "Documentul randat conține proveniența {candidate}, absentă din ProjectModel."
                         ),
-                        route: Some(route.to_string()),
+                        route: Some(context.route.to_string()),
                         source_node_id: Some(candidate.clone()),
                     });
                 }
             }
 
             let source_backed = source_node_id.is_some();
-            let (component_definition_ids, component_invocation_ids) =
-                semantic_index.component_ids(&provenance_stack_snapshot);
+            let (component_definition_ids, component_invocation_ids) = context
+                .semantic_index
+                .component_ids(&provenance_stack_snapshot);
             let (block_definition_ids, block_source_instance_ids) =
-                semantic_index.block_ids(&provenance_stack_snapshot);
-            let (dynamic_widget_provider_ids, dynamic_widget_source_instance_ids) =
-                semantic_index.dynamic_widget_ids(&provenance_stack_snapshot);
-            let binding_path = semantic_index.repeated_binding_path(&provenance_stack_snapshot);
-            if semantic_index.is_repeated(&provenance_stack_snapshot) && binding_key.is_none() {
-                diagnostics.push(CanvasGraphDiagnostic {
+                context.semantic_index.block_ids(&provenance_stack_snapshot);
+            let (dynamic_widget_provider_ids, dynamic_widget_source_instance_ids) = context
+                .semantic_index
+                .dynamic_widget_ids(&provenance_stack_snapshot);
+            let binding_path = context
+                .semantic_index
+                .repeated_binding_path(&provenance_stack_snapshot);
+            if context
+                .semantic_index
+                .is_repeated(&provenance_stack_snapshot)
+                && binding_key.is_none()
+            {
+                context.diagnostics.push(CanvasGraphDiagnostic {
                     code: "unstable_repeated_render_identity".to_string(),
                     message: "Instanța repetată nu expune data-pana-key, data-key, data-id, id, href sau src; identitatea randată folosește temporar ordinea."
                         .to_string(),
-                    route: Some(route.to_string()),
+                    route: Some(context.route.to_string()),
                     source_node_id: Some(primary_provenance.clone()),
                 });
             }
-            nodes.push(CanvasRenderNode {
+            context.nodes.push(CanvasRenderNode {
                 render_instance_id: render_instance_id.clone(),
                 document_order,
                 source_node_id,
@@ -1764,19 +1787,10 @@ fn collect_render_nodes(
     for child in node.children() {
         collect_render_nodes(
             &child,
-            route,
             descendant_parent.clone(),
-            semantic_index,
             &mut descendant_provenance,
             &mut descendant_boundaries,
-            boundary_drafts,
-            occurrences,
-            binding_occurrences,
-            markdown_occurrences,
-            nodes,
-            diagnostics,
-            total_nodes,
-            semantic_order,
+            context,
         )?;
     }
     Ok(())
@@ -1815,13 +1829,14 @@ fn apply_canvas_marker(
     comment: &str,
     stack: &mut Vec<String>,
     boundary_stack: &mut Vec<CanvasBoundaryFrame>,
-    boundary_drafts: &mut Vec<CanvasBoundaryDraft>,
-    semantic_index: &CanvasSemanticIndex<'_>,
-    markdown_occurrences: &mut HashMap<String, usize>,
     document_order: usize,
-    route: &str,
-    diagnostics: &mut Vec<CanvasGraphDiagnostic>,
+    context: &mut CanvasRenderCollectionContext<'_, '_>,
 ) {
+    let route = context.route;
+    let semantic_index = context.semantic_index;
+    let markdown_occurrences = &mut *context.markdown_occurrences;
+    let boundary_drafts = &mut *context.boundary_drafts;
+    let diagnostics = &mut *context.diagnostics;
     let marker = comment.trim();
     let tera_start = marker
         .strip_prefix("pana-template-source-start:")
@@ -2265,6 +2280,8 @@ pub struct PreviewPhaseReceipt {
 }
 
 impl CanvasProjectionTransaction {
+    // Construction mirrors the immutable projection transaction identity and payload schema.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepared(
         project_root: &str,
         runtime_session_id: &str,

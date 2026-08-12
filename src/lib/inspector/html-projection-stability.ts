@@ -4,6 +4,8 @@ import type {
   InspectorSelectionSummarySnapshot,
   SelectionSnapshot,
 } from "$lib/types";
+import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
+import { normalizeClassTokens } from "$lib/html/mutations";
 
 export type StableHtmlInspectorProjection = {
   summary: InspectorSelectionSummarySnapshot;
@@ -45,6 +47,49 @@ export type HtmlInspectorProjectionTransition = {
   projection: StableHtmlInspectorProjection | null;
   pending: boolean;
 };
+
+/**
+ * Presents the class value accepted by ProjectModel as one coherent Inspector
+ * snapshot while the Canvas observation catches up. The semantic summary
+ * remains Rust-owned; this function only derives its visual representation
+ * from the mutation receipt already projected into `classEditorValue`.
+ */
+export function projectHtmlInspectorClassSummary(
+  summary: InspectorSelectionSummarySnapshot | null,
+  classEditorValue: string,
+): InspectorSelectionSummarySnapshot | null {
+  if (
+    summary?.state !== "resolved"
+    || (
+      summary.subjectKind !== "htmlElement"
+      && summary.subjectKind !== "runtimeElement"
+    )
+  ) return summary;
+
+  const classes = normalizeClassTokens(classEditorValue);
+  const activeCssClass = summary.activeCssClass && classes.includes(summary.activeCssClass)
+    ? summary.activeCssClass
+    : null;
+  const selector = displaySelector(summary.tag, summary.elementId, classes);
+
+  return {
+    ...summary,
+    classes,
+    activeCssClass,
+    selector,
+  };
+}
+
+function displaySelector(tag: string | null, elementId: string | null, classes: string[]) {
+  if (!tag) return null;
+  if (elementId) return `${tag}#${escapeCssIdentifier(elementId)}`;
+  if (classes.length === 0) return tag;
+  return `${tag}.${classes.map(escapeCssIdentifier).join(".")}`;
+}
+
+function escapeCssIdentifier(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+}
 
 export function advanceStableHtmlInspectorProjection(
   previous: StableHtmlInspectorProjection | null,
@@ -109,7 +154,7 @@ function completeHtmlProjection(
       && summary.subjectKind !== "runtimeElement"
     )
     || !selection
-    || selection.resolution !== "resolved"
+    || selectionResolution(selection) !== "resolved"
     || !physicalFacts
   ) return false;
 
@@ -120,6 +165,6 @@ function completeHtmlProjection(
     && physicalFacts.selectionRevision === summary.selectionRevision
     && Boolean(summary.renderInstanceId)
     && physicalFacts.renderInstanceId === summary.renderInstanceId
-    && selection.anchor?.renderInstanceId === summary.renderInstanceId
+    && primarySelectionEntry(selection)?.anchor.renderInstanceId === summary.renderInstanceId
   );
 }

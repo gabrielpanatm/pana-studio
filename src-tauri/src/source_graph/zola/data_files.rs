@@ -364,6 +364,9 @@ fn source_file_exists(
 ) -> Result<bool, String> {
     if let Some(output_root) = context.output_root {
         if path.starts_with(output_root) {
+            if context.exact_workspace_projection {
+                return Ok(false);
+            }
             return regular_file_without_symlinks(output_root, path);
         }
     }

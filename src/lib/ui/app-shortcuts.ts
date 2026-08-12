@@ -1,4 +1,5 @@
 import type { SelectionSnapshot } from "$lib/types";
+import { primarySelectionEntry, selectionResolution } from "$lib/kernel/selection-read-model";
 
 export type AppShortcutIntent =
   | "none"
@@ -70,8 +71,9 @@ export function deleteShortcutIntent(event: KeyboardEvent, state: DeleteShortcut
   if (state.activeWorkbenchActivity !== "editor") return "none";
   if (state.centerView === "kernel") return "none";
   if (isAppTextEditingTarget(event.target)) return "none";
-  if (state.selectionSnapshot?.resolution !== "resolved") return "none";
-  if (state.selectionSnapshot.subject?.kind === "htmlElement") return "deleteSelectedHtml";
-  if (state.selectionSnapshot.subject?.kind === "teraBoundary") return "deleteSelectedTera";
+  if (selectionResolution(state.selectionSnapshot) !== "resolved") return "none";
+  const subjectKind = primarySelectionEntry(state.selectionSnapshot)?.subject.kind;
+  if (subjectKind === "htmlElement") return "deleteSelectedHtml";
+  if (subjectKind === "teraBoundary") return "deleteSelectedTera";
   return "none";
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-current-publish-build-receipt"
+description = "Enables the current_publish_build_receipt command without any pre-configured scope."
+commands.allow = ["current_publish_build_receipt"]
+
+[[permission]]
+identifier = "deny-current-publish-build-receipt"
+description = "Denies the current_publish_build_receipt command without any pre-configured scope."
+commands.deny = ["current_publish_build_receipt"]

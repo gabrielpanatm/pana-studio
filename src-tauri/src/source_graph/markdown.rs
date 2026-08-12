@@ -4,32 +4,46 @@ use std::{
 };
 
 use crate::source_graph::{
-    identity::{stable_source_node_id, SourceIdentityAssigner},
     mixed_cst::parse_mixed_cst,
     model::{
         MarkdownProjection, MarkdownProjectionKind, MarkdownSourceBindingKind, SourceGraph,
         SourceNodeKind, SourceRange,
     },
     scan::ranges::source_range,
-    tera::{parse_tera_items, TeraItemKind},
     tera_semantics::{
         TeraSemanticCall, TeraSemanticDocument, TeraSemanticExpression, TeraSemanticNode,
         TeraSemanticValue,
     },
 };
 
+#[cfg(test)]
+use crate::source_graph::{
+    identity::ProvisionalSourceNodeIdAllocator,
+    tera::{parse_tera_items, TeraItemKind},
+};
+
 #[derive(Clone, Debug)]
 pub(crate) struct MarkdownTemplateAnalysis {
     pub(crate) projections: Vec<MarkdownProjection>,
+    #[cfg(test)]
     pub(crate) projection_by_location: HashMap<String, MarkdownProjection>,
+    #[cfg(test)]
     pub(crate) shortcode_projection: Option<MarkdownProjection>,
 }
 
 #[derive(Clone, Debug)]
-struct SourceAnchor {
+struct MarkdownProjectionAnchor {
     id: String,
     range: SourceRange,
     location: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MarkdownSourceNode {
+    pub(crate) id: String,
+    pub(crate) kind: SourceNodeKind,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,11 +66,11 @@ enum ValueProducer {
 
 #[derive(Default)]
 struct SemanticSourceCursor {
-    anchors: HashMap<SourceNodeKind, VecDeque<SourceAnchor>>,
+    anchors: HashMap<SourceNodeKind, VecDeque<MarkdownProjectionAnchor>>,
 }
 
 impl SemanticSourceCursor {
-    fn next(&mut self, kind: SourceNodeKind) -> Option<SourceAnchor> {
+    fn next(&mut self, kind: SourceNodeKind) -> Option<MarkdownProjectionAnchor> {
         self.anchors.get_mut(&kind).and_then(VecDeque::pop_front)
     }
 }
@@ -82,27 +96,45 @@ pub(crate) fn build_markdown_projections(graph: &SourceGraph) -> Vec<MarkdownPro
     projections
 }
 
-pub(crate) fn analyze_template_markdown(
+pub(crate) fn analyze_template_markdown_with_source_nodes(
     relative_path: &str,
     source: &str,
+    template_root_id: &str,
+    source_nodes: &[MarkdownSourceNode],
 ) -> MarkdownTemplateAnalysis {
     let graph_file = relative_path.trim_start_matches('/').replace('\\', "/");
     let template_name = logical_template_name(&graph_file);
-    let is_partial = is_partial_template_name(&template_name);
-    let root_kind = if is_partial {
-        SourceNodeKind::Partial
-    } else {
-        SourceNodeKind::Template
-    };
-    let root_id = stable_source_node_id(&graph_file, &root_kind, &template_name, 0);
     let mixed = parse_mixed_cst(source, &template_name);
     analyze_template(
         &graph_file,
         &template_name,
-        &root_id,
+        template_root_id,
         source,
         mixed.tera.semantics(),
+        source_nodes,
     )
+}
+
+#[cfg(test)]
+pub(crate) fn analyze_template_markdown(
+    relative_path: &str,
+    source: &str,
+) -> MarkdownTemplateAnalysis {
+    let mut ids = ProvisionalSourceNodeIdAllocator::default();
+    let root_id = ids.next();
+    let source_nodes = parse_tera_items(source)
+        .into_iter()
+        .filter(|item| item.kind == TeraItemKind::Node)
+        .filter_map(|item| {
+            Some(MarkdownSourceNode {
+                id: ids.next(),
+                kind: item.node_kind?,
+                start: item.start,
+                end: item.end,
+            })
+        })
+        .collect::<Vec<_>>();
+    analyze_template_markdown_with_source_nodes(relative_path, source, &root_id, &source_nodes)
 }
 
 fn analyze_template(
@@ -111,8 +143,9 @@ fn analyze_template(
     template_root_id: &str,
     source: &str,
     semantics: Option<&TeraSemanticDocument>,
+    source_nodes: &[MarkdownSourceNode],
 ) -> MarkdownTemplateAnalysis {
-    let mut cursor = source_anchors(template_file, source);
+    let mut cursor = source_anchors(template_file, source, source_nodes);
     let mut projections = Vec::new();
     if let Some(semantics) = semantics {
         collect_markdown_projections(
@@ -140,6 +173,7 @@ fn analyze_template(
     if let Some(shortcode) = shortcode_projection.as_ref() {
         projections.push(shortcode.clone());
     }
+    #[cfg(test)]
     let projection_by_location = projections
         .iter()
         .filter(|projection| projection.kind != MarkdownProjectionKind::Shortcode)
@@ -157,28 +191,29 @@ fn analyze_template(
         .collect();
     MarkdownTemplateAnalysis {
         projections,
+        #[cfg(test)]
         projection_by_location,
+        #[cfg(test)]
         shortcode_projection,
     }
 }
 
-fn source_anchors(template_file: &str, source: &str) -> SemanticSourceCursor {
-    let mut identities = SourceIdentityAssigner::default();
-    let mut anchors = HashMap::<SourceNodeKind, VecDeque<SourceAnchor>>::new();
-    for item in parse_tera_items(source) {
-        if item.kind != TeraItemKind::Node {
-            continue;
-        }
-        let Some(kind) = item.node_kind else {
-            continue;
-        };
-        let id = identities.next(template_file, &kind, &item.label);
-        let range = source_range(source, item.start, item.end);
-        anchors.entry(kind).or_default().push_back(SourceAnchor {
-            id,
-            location: format!("{template_file}:{}:{}", range.line, range.column),
-            range,
-        });
+fn source_anchors(
+    template_file: &str,
+    source: &str,
+    source_nodes: &[MarkdownSourceNode],
+) -> SemanticSourceCursor {
+    let mut anchors = HashMap::<SourceNodeKind, VecDeque<MarkdownProjectionAnchor>>::new();
+    for node in source_nodes {
+        let range = source_range(source, node.start, node.end);
+        anchors
+            .entry(node.kind.clone())
+            .or_default()
+            .push_back(MarkdownProjectionAnchor {
+                id: node.id.clone(),
+                location: format!("{template_file}:{}:{}", range.line, range.column),
+                range,
+            });
     }
     SemanticSourceCursor { anchors }
 }
@@ -425,7 +460,7 @@ fn classify_expression(
         .iter()
         .any(|filter| filter.name == "markdown");
     let TeraSemanticValue::Identifier(identifier) = &expression.value else {
-        return markdown_filter.then(|| MarkdownClassification {
+        return markdown_filter.then_some(MarkdownClassification {
             kind: MarkdownProjectionKind::Filter,
             binding_kind: MarkdownSourceBindingKind::Unresolved,
             static_content_path: None,
@@ -455,7 +490,7 @@ fn classify_expression(
 
 fn projection_from_classification(
     template_file: &str,
-    anchor: SourceAnchor,
+    anchor: MarkdownProjectionAnchor,
     classification: MarkdownClassification,
 ) -> MarkdownProjection {
     let _location_is_authoritative = anchor.location;
@@ -576,10 +611,7 @@ fn static_string_expression(expression: &TeraSemanticExpression) -> Option<Strin
 }
 
 fn root_identifier(identifier: &str) -> &str {
-    identifier
-        .split(|character| matches!(character, '.' | '['))
-        .next()
-        .unwrap_or(identifier)
+    identifier.split(['.', '[']).next().unwrap_or(identifier)
 }
 
 fn projection_id(source_node_id: &str, kind: MarkdownProjectionKind) -> String {
@@ -601,10 +633,6 @@ fn logical_template_name(path: &str) -> String {
         .strip_prefix("templates/")
         .unwrap_or(normalized.as_str())
         .to_string()
-}
-
-fn is_partial_template_name(name: &str) -> bool {
-    name.starts_with("partials/") || name.starts_with("macros/") || name.starts_with("shortcodes/")
 }
 
 #[cfg(test)]

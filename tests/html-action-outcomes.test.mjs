@@ -15,6 +15,8 @@ import {
   applyTextContentToCapturedHtmlTarget,
   applyAttributesToHtml,
   attributeMutationsFromRecord,
+  batchCommonAttributeMutations,
+  generateClassForSelectedHtml,
   generateDataAnimForSelectedHtml,
 } from "$lib/state/html-actions-controller";
 import { deleteSelectedTeraNode } from "$lib/state/tera-actions-controller";
@@ -47,16 +49,74 @@ function resolvedSelectionSnapshot({
   sourceNodeId = null,
   renderInstanceId = null,
 } = {}) {
+  const memberId = editorNodeId ?? sourceNodeId ?? renderInstanceId ?? "editor:test";
   return {
+    schemaVersion: 2,
     projectRoot: "/project",
     runtimeSessionId: "session:runtime",
     selectionRevision,
-    resolution: "resolved",
-    anchor: {
-      editorNodeId,
-      sourceNodeId,
-      renderInstanceId,
+    canvasIdentity: {
+      projectRoot: "/project",
+      runtimeSessionId: "session:runtime",
+      workspaceRevision: 7,
+      transactionId: "transaction-test",
+      previewRevision: "preview-test",
     },
+    route: "/",
+    activeDocumentPath: "templates/index.html",
+    primaryMemberId: memberId,
+    rangeOriginMemberId: memberId,
+    members: [{
+      memberId,
+      resolution: "resolved",
+      subject: { kind: "htmlElement", tag: "h1", label: "<h1>" },
+      anchor: {
+        editorNodeId,
+        sourceNodeId,
+        renderInstanceId,
+        renderInstanceIds: renderInstanceId ? [renderInstanceId] : [],
+        boundaryInstanceId: null,
+        file: "templates/index.html",
+        range: null,
+        provenanceStack: sourceNodeId ? [sourceNodeId] : [],
+        componentInvocationIds: [],
+        blockSourceInstanceIds: [],
+        dynamicWidgetSourceInstanceIds: [],
+        bindingKey: null,
+        bindingPath: null,
+      },
+      provenance: { definition: null, composition: null, resolution: "direct" },
+      capabilities: {
+        canSelect: true,
+        canInspect: true,
+        canOpenInCode: true,
+        canEnterBoundary: false,
+        canMoveAtomic: false,
+        canMove: true,
+        canEditText: true,
+        canEditAttributes: true,
+        readOnly: false,
+        requiresEditScopeId: null,
+        reasonCode: null,
+      },
+      diagnostics: [],
+    }],
+    aggregateCapabilities: {
+      memberCount: 1,
+      allResolved: true,
+      allSourceBacked: Boolean(sourceNodeId),
+      sameFile: true,
+      sameParent: true,
+      hasAncestorDescendant: false,
+      hasDuplicateSourceTargets: false,
+      canBatchAttributes: false,
+      canBatchDuplicate: false,
+      canBatchDelete: false,
+      canBatchMove: false,
+      reasons: [],
+    },
+    focus: { kind: "element" },
+    diagnostics: [],
   };
 }
 
@@ -111,6 +171,23 @@ test("contractul frontend distinge SetAttribute gol de RemoveAttribute", () => {
     { kind: "setAttribute", name: "alt", value: "" },
     { kind: "setAttribute", name: "disabled", value: "" },
     { kind: "removeAttribute", name: "title" },
+  ]);
+});
+
+test("atributele batch trimit doar delta globală și nu copiază atribute specifice", () => {
+  assert.deepEqual(batchCommonAttributeMutations({
+    title: "nou",
+    href: "/nu-copia",
+    "aria-label": "Etichetă",
+    "data-test": "da",
+  }, {
+    title: "vechi",
+    href: "/original",
+    src: "/imagine.webp",
+    "aria-label": "Etichetă",
+  }), [
+    { kind: "setAttribute", name: "title", value: "nou" },
+    { kind: "setAttribute", name: "data-test", value: "da" },
   ]);
 });
 
@@ -256,13 +333,15 @@ test("o sesiune text persistentă folosește Source ID-ul Rust fără locația s
 
   assert.equal(result.status, "blocked");
   assert.equal(submitted?.input.textIntent.targetSourceId, "source-heading-before-edit");
-  assert.equal(submitted?.input.textIntent.targetLocation, null);
+  assert.equal("targetLocation" in submitted.input.textIntent, false);
   assert.equal(submitted?.identity.expectedSelection, undefined);
 });
 
 test("generarea data-anim blocată nu inventează un draft pending și expune cauza", async () => {
-  mockIPC(async (command) => {
+  mockIPC(async (command, payload) => {
     assert.equal(command, "execute_preview_html_attributes_intent");
+    assert.deepEqual(payload.input.attributeIntent.attributes, []);
+    assert.deepEqual(payload.input.attributeIntent.generatedIdentity, { kind: "dataAnim" });
     return {
       status: "blocked",
       messageDiagnostic: {
@@ -338,6 +417,99 @@ test("generarea data-anim blocată nu inventează un draft pending și expune ca
     text: host.attributeStatus,
     kind: "error",
   });
+});
+
+test("receipt-ul Rust pentru clasa generată actualizează draftul vizual fără generator TypeScript", async () => {
+  let submitted = null;
+  mockIPC(async (command, payload) => {
+    if (command === "read_project_workspace_state") {
+      throw new Error("canonical projection unavailable in isolated test");
+    }
+    assert.equal(command, "execute_preview_html_attributes_intent");
+    submitted = payload.input.attributeIntent;
+    return {
+      schemaVersion: 1,
+      intent: {
+        projectRoot: "/project",
+        runtimeSessionId: "session:runtime",
+        kind: "html_attributes",
+      },
+      status: "committed",
+      messageDiagnostic: { schemaVersion: 1, code: "committed" },
+      modelRevision: "model:2",
+      patch: {
+        file: "templates/index.html",
+        contents: "<main><h1 class=\"hero-title ps-h1-a1b2c3d4\">Titlu</h1></main>",
+        generatedIdentity: {
+          kind: "class",
+          value: "ps-h1-a1b2c3d4",
+          classes: ["hero-title", "ps-h1-a1b2c3d4"],
+          dataAnim: null,
+          alreadyPresent: false,
+        },
+      },
+      canvasPatch: null,
+      workspaceMutation: {
+        schemaVersion: 3,
+        changed: true,
+        revisionBefore: 7,
+        revisionAfter: 8,
+        transactionId: "tx-generated-class",
+        entry: { transactionId: "tx-generated-class" },
+        touchedFiles: ["templates/index.html"],
+      },
+      touchedFiles: ["templates/index.html"],
+      diagnostics: [],
+    };
+  });
+
+  const htmlPending = emptyHtmlPending();
+  const host = {
+    sessionProjectRoot: "/project",
+    kernelProjectSessionId: "session:runtime",
+    projectSessionEpoch: 5,
+    projectTransitionFrontendLeaseActive: false,
+    async beginPreviewStructuralWriteBoundary() {},
+    endPreviewStructuralWriteBoundary() {},
+    selectionSnapshot: resolvedSelectionSnapshot({
+      selectionRevision: 3,
+      editorNodeId: "editor_render:h1",
+      sourceNodeId: "source-h1",
+      renderInstanceId: "render-h1",
+    }),
+    coordinatedElementSelection: coordinatedElementSelection({
+      selectionRevision: 3,
+      sourceNodeId: "source-h1",
+      observation: { classes: ["hero-title"] },
+    }),
+    classEditorValue: "hero-title",
+    classStatus: "",
+    attributeValues: {},
+    attributeStatus: "",
+    htmlPending,
+    pageSections: [],
+    sourceCache: {},
+    source: "",
+    activeScannedPath: null,
+    isActivePreviewHtmlSource: false,
+    currentHtmlRelativePath: "",
+    resolveSourceEditTargetForSourceId() { return null; },
+    setHtmlPending(area, pending) { this.htmlPending[area] = pending; },
+    setGlobalStatus() {},
+  };
+
+  const result = await generateClassForSelectedHtml(host);
+
+  assert.equal(result.status, "committed");
+  assert.deepEqual(submitted.attributes, []);
+  assert.deepEqual(submitted.generatedIdentity, { kind: "class" });
+  assert.equal(host.classEditorValue, "hero-title ps-h1-a1b2c3d4");
+  assert.equal(htmlPending.classes, false);
+  assert.match(host.classStatus, /aplicate|applied/i);
+  assert.equal(
+    host.sourceCache["scanned:templates/index.html"],
+    "<main><h1 class=\"hero-title ps-h1-a1b2c3d4\">Titlu</h1></main>",
+  );
 });
 
 test("Save rămâne eșuat și păstrează HTML pending după flush-uri CSS/JS reușite", async () => {
@@ -476,7 +648,6 @@ test("EditorRuntime nu raportează ok când controllerul contextual blochează m
       return {};
     },
     selectDomNode() {},
-    selectTeraLayerSource() {},
     setPreviewTeraSelection() {},
     async enterEditorNavigationScope() {},
     async openSelectedTeraSource() {},
@@ -498,10 +669,10 @@ test("EditorRuntime nu raportează ok când controllerul contextual blochează m
 
   assert.equal(result.ok, false);
   assert.equal(result.status, "blocked");
-  assert.match(result.reason, /fără sursă canonică/);
+  assert.match(result.reason, /SourceNodeId/);
   assert.equal(runtime.lastTransaction?.ok, false);
   assert.equal(runtime.lastTransaction?.status, "blocked");
-  assert.match(statuses.at(-1)?.text ?? "", /fără sursă canonică/);
+  assert.match(statuses.at(-1)?.text ?? "", /SourceNodeId/);
 });
 
 function teraRuntimeHost(teraHost) {
@@ -517,7 +688,6 @@ function teraRuntimeHost(teraHost) {
       return {};
     },
     selectDomNode() {},
-    selectTeraLayerSource() {},
     setPreviewTeraSelection() {},
     async enterEditorNavigationScope() {},
     async openSelectedTeraSource() {},

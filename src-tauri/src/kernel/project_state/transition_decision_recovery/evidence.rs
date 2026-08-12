@@ -50,6 +50,8 @@ struct DecisionRecoveryPlanRetentionEvidence {
     superseded_by_record_id: String,
 }
 
+// Hash input order is a persisted evidence protocol; fields remain explicit for auditability.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn recovery_plan_evidence_hash(
     records: &[KernelProjectTransitionDecisionRecord],
     status: KernelProjectTransitionDecisionRecoveryPlanStatus,

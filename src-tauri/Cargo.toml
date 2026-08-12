@@ -1,6 +1,6 @@
 [package]
 name = "pana-studio"
-version = "0.1.5"
+version = "0.1.6"
 description = "Editor vizual desktop open-source pentru site-uri Zola"
 authors = ["Gabriel Pană"]
 license = "EUPL-1.2-or-later"
@@ -8,6 +8,7 @@ homepage = "https://github.com/gabrielpanatm/pana-studio"
 repository = "https://github.com/gabrielpanatm/pana-studio"
 publish = false
 edition = "2021"
+rust-version = "1.96"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -55,7 +56,16 @@ roxmltree_to_serde = "0.6.2"
 pest = "2"
 pest_derive = "2"
 tauri-plugin-pty = "0.2.1"
-reqwest = { version = "0.12", features = ["blocking"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
+# Deploy S3/R2 folosește SDK-ul oficial AWS pentru SigV4, retry și paginare.
+aws-credential-types = "1"
+aws-sdk-s3 = "1"
+# SFTP rămâne un transport SSH separat, cu verificare obligatorie a host key-ului.
+ssh2 = { version = "0.9", features = ["openssl-on-win32"] }
+# FTP și explicit FTPS folosesc același client; TLS este activat înainte de autentificare.
+suppaftp = { version = "10", features = ["native-tls"] }
+# Cloudflare Pages folosește hash-ul de asset compatibil cu Wrangler (BLAKE3 trunchiat).
+blake3 = "1"
 walkdir = "2"
 mime_guess = "2"
 percent-encoding = "2"

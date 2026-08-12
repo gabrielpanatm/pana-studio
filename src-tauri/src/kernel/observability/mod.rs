@@ -323,6 +323,8 @@ fn rotation_event(receipt: &KernelLogRotationReceipt) -> KernelLogEvent {
 }
 
 impl KernelLogEvent {
+    // Kernel events deliberately expose every indexed observability dimension at creation.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         level: KernelLogLevel,
         kind: KernelEventKind,

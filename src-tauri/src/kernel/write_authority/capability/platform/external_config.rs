@@ -745,6 +745,8 @@ fn validate_external_auxiliary_absent(
     Ok(())
 }
 
+// Recovery keeps every descriptor, leaf and causal baseline component explicit.
+#[allow(clippy::too_many_arguments)]
 fn restore_external_source_mapping(
     parent: &OwnedFd,
     moved_leaf: &OsStr,

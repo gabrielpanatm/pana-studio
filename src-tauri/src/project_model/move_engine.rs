@@ -1,20 +1,24 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     hash::{Hash, Hasher},
 };
 
 use serde::{Deserialize, Serialize};
 
-use super::structural_envelope::{
-    semantic_html_indent, structural_envelope_for_html_node, StructuralEnvelopeKind,
+use super::structural_edit::{
+    format_html_fragment, indent_at, normalize_html_subtree, relocate_lossless_fragment,
+    StructuralIndentationStyle, StructuralPlacement,
 };
+use super::structural_envelope::{structural_envelope_for_html_node, StructuralEnvelopeKind};
 use super::zola_image_engine::zola_image_contract_start;
 use crate::{
-    project_model::model::{ProjectModel, ProjectModelFileKind},
-    source_graph::{
-        identity::source_node_id,
-        model::{SourceNode, SourceNodeKind},
+    blocks::{
+        node_has_native_block_ancestor, node_is_native_block, node_is_slider_managed_scaffold,
+        node_is_slider_slot_item, node_subtree_contains_native_block,
+        validate_native_block_slot_move, NativeBlockSlotMutationContext,
     },
+    project_model::model::{ProjectModel, ProjectModelFileKind},
+    source_graph::model::{SourceNode, SourceNodeKind},
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -22,13 +26,11 @@ use crate::{
 pub struct ProjectHtmlMoveIntent {
     pub source_source_id: Option<String>,
     pub target_source_id: Option<String>,
-    pub source_location: Option<ProjectSourceEditLocation>,
-    pub target_location: Option<ProjectSourceEditLocation>,
     pub source_tag: Option<String>,
     pub target_tag: Option<String>,
-    pub source_selector: Option<String>,
-    pub target_selector: Option<String>,
     pub position: ProjectMovePosition,
+    #[serde(default)]
+    pub native_block_slot: Option<NativeBlockSlotMutationContext>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -55,6 +57,8 @@ pub struct ProjectHtmlMovePatch {
     pub resolved_source_id: String,
     pub resolved_target_id: String,
     pub source_label: String,
+    pub target_label: String,
+    pub position: ProjectMovePosition,
     pub before_revision: String,
     pub after_revision: String,
     pub contents: String,
@@ -63,6 +67,15 @@ pub struct ProjectHtmlMovePatch {
     pub source_start_line: usize,
     pub source_end_line: usize,
     pub new_start_line: usize,
+    pub target_start_line: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectHtmlBatchMovePatch {
+    pub file: String,
+    pub resolved_source_ids: Vec<String>,
+    pub resolved_target_id: String,
+    pub contents: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -84,6 +97,7 @@ struct MoveApplication {
     source_start_line: usize,
     source_end_line: usize,
     new_start_line: usize,
+    target_start_line: usize,
 }
 
 pub(crate) struct HtmlTag {
@@ -92,12 +106,6 @@ pub(crate) struct HtmlTag {
     pub(crate) tag: String,
     pub(crate) is_closing: bool,
     pub(crate) is_self_closing: bool,
-}
-
-struct HtmlNodeSpan {
-    id: String,
-    file: String,
-    fingerprint: String,
 }
 
 const VOID_TAGS: &[&str] = &[
@@ -110,12 +118,188 @@ const CONTAINER_TAGS: &[&str] = &[
     "form", "fieldset",
 ];
 
-pub fn plan_html_move(
+pub fn plan_html_move(model: &ProjectModel, intent: &ProjectHtmlMoveIntent) -> ProjectHtmlMovePlan {
+    plan_html_move_with_authority(model, intent, false)
+}
+
+/// Plans one lossless permutation of HTML sibling subtrees. Every member is
+/// preflighted through the normal move engine, but source text is rewritten
+/// once and ProjectModel is rebuilt only by the caller's single transaction.
+pub fn plan_html_batch_move(
     model: &ProjectModel,
-    intent: &ProjectHtmlMoveIntent,
-    aliases: &HashMap<String, String>,
-) -> ProjectHtmlMovePlan {
-    plan_html_move_with_authority(model, intent, aliases, false)
+    source_ids: &[String],
+    target_source_id: &str,
+    target_tag: Option<&str>,
+    position: ProjectMovePosition,
+) -> Result<ProjectHtmlBatchMovePatch, String> {
+    if source_ids.len() < 2 || source_ids.len() > 256 {
+        return Err("Mutarea batch cere între 2 și 256 de elemente.".to_string());
+    }
+    if position == ProjectMovePosition::Inside {
+        return Err(
+            "Mutarea batch v1 acceptă numai pozițiile before/after între frați.".to_string(),
+        );
+    }
+    let selected = source_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    if selected.len() != source_ids.len() || selected.contains(target_source_id) {
+        return Err(
+            "Mutarea batch a refuzat identități duplicate sau o țintă selectată.".to_string(),
+        );
+    }
+    let target = resolve_html_node_for_anchor(model, Some(target_source_id), target_tag)
+        .ok_or_else(|| source_missing_message("destinație", Some(target_source_id)))?;
+    let parent_id = target
+        .parent
+        .as_deref()
+        .ok_or_else(|| "Mutarea batch a refuzat o destinație fără părinte.".to_string())?;
+    let parent = model
+        .source_graph
+        .node_by_id(parent_id)
+        .ok_or_else(|| "Mutarea batch nu găsește părintele comun.".to_string())?;
+    let file = model
+        .files
+        .iter()
+        .find(|file| same_model_path(&file.relative_path, &target.file))
+        .ok_or_else(|| format!("Nu am găsit fișierul {} în Project Model.", target.file))?;
+    if file.kind != ProjectModelFileKind::Template {
+        return Err("Mutarea batch este activă numai pentru template-uri Zola/Tera.".to_string());
+    }
+
+    let ordered_ids = parent
+        .children
+        .iter()
+        .filter(|id| selected.contains(id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if ordered_ids.len() != source_ids.len() {
+        return Err("Elementele mutate nu sunt toate copiii aceluiași părinte.".to_string());
+    }
+    for source_id in &ordered_ids {
+        let source = model
+            .source_graph
+            .node_by_id(source_id)
+            .ok_or_else(|| source_missing_message("sursă", Some(source_id)))?;
+        if source.file != target.file || source.parent.as_deref() != Some(parent_id) {
+            return Err("Mutarea batch v1 cere același document și același părinte.".to_string());
+        }
+        let preflight = plan_html_move(
+            model,
+            &ProjectHtmlMoveIntent {
+                source_source_id: Some(source_id.clone()),
+                target_source_id: Some(target_source_id.to_string()),
+                source_tag: None,
+                target_tag: target_tag.map(str::to_string),
+                position,
+                native_block_slot: None,
+            },
+        );
+        if !preflight.allowed {
+            return Err(preflight
+                .diagnostic
+                .unwrap_or_else(|| "Move Engine a blocat un membru al selecției.".to_string()));
+        }
+    }
+
+    let target_index = parent
+        .children
+        .iter()
+        .position(|id| id == target_source_id)
+        .ok_or_else(|| "Destinația nu aparține părintelui comun.".to_string())?;
+    let mut desired = parent
+        .children
+        .iter()
+        .filter(|id| !selected.contains(id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let target_after_removal = desired
+        .iter()
+        .position(|id| id == target_source_id)
+        .ok_or_else(|| "Destinația a dispărut din ordinea fraților.".to_string())?;
+    let insertion_index =
+        target_after_removal + usize::from(position == ProjectMovePosition::After);
+    desired.splice(
+        insertion_index..insertion_index,
+        ordered_ids.iter().cloned(),
+    );
+    if desired == parent.children {
+        return Err("Elementele selectate sunt deja în poziția cerută.".to_string());
+    }
+
+    let mut spans = ordered_ids
+        .iter()
+        .map(|source_id| {
+            let node = model.source_graph.node_by_id(source_id).unwrap();
+            let envelope = structural_envelope_for_html_node(model, &file.contents, node)?;
+            if envelope.kind != StructuralEnvelopeKind::HtmlElement
+                || zola_image_contract_start(
+                    &file.contents,
+                    node.range
+                        .as_ref()
+                        .map(|range| range.start)
+                        .unwrap_or(envelope.span.start),
+                )?
+                .is_some()
+            {
+                return Err(
+                    "Mutarea batch v1 a refuzat un contract structural specializat.".to_string(),
+                );
+            }
+            let removal = removal_range_for_span(&file.contents, envelope.span);
+            Ok((removal.start, removal.end, source_id.clone()))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    spans.sort_by_key(|(start, _, _)| *start);
+    if spans.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err("Mutarea batch a refuzat subarbori sursă suprapuși.".to_string());
+    }
+    let target_envelope = structural_envelope_for_html_node(model, &file.contents, target)?;
+    if target_envelope.kind != StructuralEnvelopeKind::HtmlElement {
+        return Err(
+            "Mutarea batch v1 a refuzat o destinație structurală specializată.".to_string(),
+        );
+    }
+    let target_removal = removal_range_for_span(&file.contents, target_envelope.span);
+    let insertion_original = if position == ProjectMovePosition::Before {
+        target_removal.start
+    } else {
+        target_removal.end
+    };
+    let fragments = spans
+        .iter()
+        .map(|(start, end, _)| {
+            file.contents
+                .get(*start..*end)
+                .ok_or_else(|| "Mutarea batch a calculat un fragment UTF-8 invalid.".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .concat();
+    let removed_before = spans
+        .iter()
+        .filter(|(_, end, _)| *end <= insertion_original)
+        .map(|(start, end, _)| end - start)
+        .sum::<usize>();
+    let insertion = insertion_original
+        .checked_sub(removed_before)
+        .ok_or_else(|| "Mutarea batch a calculat un offset invalid.".to_string())?;
+    let mut contents = file.contents.clone();
+    for (start, end, _) in spans.iter().rev() {
+        contents.replace_range(*start..*end, "");
+    }
+    contents.insert_str(insertion, &fragments);
+    if contents == file.contents {
+        return Err(format!(
+            "Mutarea batch nu a schimbat ordinea fraților (ținta inițială {target_index})."
+        ));
+    }
+    Ok(ProjectHtmlBatchMovePatch {
+        file: target.file.clone(),
+        resolved_source_ids: ordered_ids,
+        resolved_target_id: target.id.clone(),
+        contents,
+    })
 }
 
 /// Plans an HTML move after the caller has validated a Rust-issued
@@ -127,18 +311,16 @@ pub fn plan_html_move(
 pub fn plan_html_move_in_edit_scope(
     model: &ProjectModel,
     intent: &ProjectHtmlMoveIntent,
-    aliases: &HashMap<String, String>,
 ) -> ProjectHtmlMovePlan {
-    plan_html_move_with_authority(model, intent, aliases, true)
+    plan_html_move_with_authority(model, intent, true)
 }
 
 fn plan_html_move_with_authority(
     model: &ProjectModel,
     intent: &ProjectHtmlMoveIntent,
-    aliases: &HashMap<String, String>,
     edit_scope_authorized: bool,
 ) -> ProjectHtmlMovePlan {
-    match plan_html_move_inner(model, intent, aliases, edit_scope_authorized) {
+    match plan_html_move_inner(model, intent, edit_scope_authorized) {
         Ok(patch) => ProjectHtmlMovePlan {
             allowed: true,
             diagnostic: None,
@@ -154,104 +336,53 @@ fn plan_html_move_with_authority(
     }
 }
 
-pub fn html_identity_aliases(
-    before: &ProjectModel,
-    after: &ProjectModel,
-) -> HashMap<String, String> {
-    let before_spans = html_node_spans(before);
-    let after_spans = html_node_spans(after);
-    let mut after_by_key: HashMap<String, Vec<&HtmlNodeSpan>> = HashMap::new();
-    for span in &after_spans {
-        after_by_key
-            .entry(format!("{}::{}", span.file, span.fingerprint))
-            .or_default()
-            .push(span);
-    }
-
-    let mut aliases = HashMap::new();
-    for span in &before_spans {
-        let key = format!("{}::{}", span.file, span.fingerprint);
-        let Some(candidates) = after_by_key.get(&key) else {
-            continue;
-        };
-        if candidates.len() == 1 && candidates[0].id != span.id {
-            aliases.insert(span.id.clone(), candidates[0].id.clone());
-        }
-    }
-    aliases
-}
-
-pub fn html_node_id_at_line(
-    model: &ProjectModel,
-    file: &str,
-    label: &str,
-    line: usize,
-) -> Option<String> {
-    let matches: Vec<&SourceNode> = model
-        .source_graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            node.kind == SourceNodeKind::Html
-                && same_model_path(&node.file, file)
-                && node.label == label
-                && node.range.as_ref().is_some_and(|range| range.line == line)
-        })
-        .collect();
-    if matches.len() == 1 {
-        Some(matches[0].id.clone())
-    } else {
-        None
-    }
-}
-
-pub fn html_node_id_at_location(
-    model: &ProjectModel,
-    location: &ProjectSourceEditLocation,
-    tag: &str,
-) -> Option<String> {
-    resolve_html_node_at_location(model, location, Some(tag)).map(|node| node.id.clone())
-}
-
 fn plan_html_move_inner(
     model: &ProjectModel,
     intent: &ProjectHtmlMoveIntent,
-    aliases: &HashMap<String, String>,
     edit_scope_authorized: bool,
 ) -> Result<ProjectHtmlMovePatch, String> {
+    if let Some(context) = intent.native_block_slot.as_ref() {
+        validate_native_block_slot_move(
+            model,
+            context,
+            intent.source_source_id.as_deref(),
+            intent.target_source_id.as_deref(),
+            intent.position,
+        )?;
+    }
     let source_node = resolve_html_node_for_anchor(
         model,
         intent.source_source_id.as_deref(),
-        intent.source_location.as_ref(),
         intent.source_tag.as_deref(),
-        aliases,
     )
-    .ok_or_else(|| {
-        source_missing_message(
-            "sursă",
-            intent.source_source_id.as_deref(),
-            intent.source_location.as_ref(),
-            intent.source_selector.as_deref(),
-        )
-    })?;
+    .ok_or_else(|| source_missing_message("sursă", intent.source_source_id.as_deref()))?;
     let target_node = resolve_html_node_for_anchor(
         model,
         intent.target_source_id.as_deref(),
-        intent.target_location.as_ref(),
         intent.target_tag.as_deref(),
-        aliases,
     )
-    .ok_or_else(|| {
-        source_missing_message(
-            "destinație",
-            intent.target_source_id.as_deref(),
-            intent.target_location.as_ref(),
-            intent.target_selector.as_deref(),
-        )
-    })?;
+    .ok_or_else(|| source_missing_message("destinație", intent.target_source_id.as_deref()))?;
 
     if source_node.id == target_node.id {
         return Err("Elementul este deja pe această țintă.".to_string());
+    }
+    if intent.native_block_slot.is_none()
+        && (node_is_slider_managed_scaffold(model, source_node)
+            || (node_is_slider_managed_scaffold(model, target_node)
+                && !(intent.position == ProjectMovePosition::Inside
+                    && node_is_slider_slot_item(model, target_node))))
+    {
+        return Err(
+            "Structura administrată Slider se reordonează numai prin BlockPropertiesPane."
+                .to_string(),
+        );
+    }
+    if node_subtree_contains_native_block(model, source_node, "slider")
+        && (node_has_native_block_ancestor(model, target_node, "slider")
+            || (intent.position == ProjectMovePosition::Inside
+                && node_is_native_block(model, target_node, "slider")))
+    {
+        return Err("Slider în slider este blocat de contractul Rust v1.".to_string());
     }
     if !same_model_path(&source_node.file, &target_node.file) {
         return Err(
@@ -351,13 +482,14 @@ fn plan_html_move_inner(
         source_location_at_offset(&file.contents, &source_node.file, source_span.start);
     let target_location =
         source_location_at_offset(&file.contents, &target_node.file, target_span.start);
+    let placement = StructuralPlacement::for_html_target(model, &file.contents, target_node);
     let applied = apply_html_move(
         &file.contents,
         source_span,
         target_span,
         &target_tag,
         intent.position,
-        &semantic_html_indent(model, &file.contents, target_node),
+        &placement,
         source_envelope.preserves_internal_indentation(),
     )?;
 
@@ -366,6 +498,8 @@ fn plan_html_move_inner(
         resolved_source_id: source_node.id.clone(),
         resolved_target_id: target_node.id.clone(),
         source_label: source_node.label.clone(),
+        target_label: target_node.label.clone(),
+        position: intent.position,
         before_revision: file.revision.clone(),
         after_revision: content_revision(&applied.contents),
         contents: applied.contents,
@@ -374,6 +508,7 @@ fn plan_html_move_inner(
         source_start_line: applied.source_start_line,
         source_end_line: applied.source_end_line,
         new_start_line: applied.new_start_line,
+        target_start_line: applied.target_start_line,
     })
 }
 
@@ -392,160 +527,21 @@ fn html_move_capability_allowed(node: &SourceNode, edit_scope_authorized: bool) 
             ))
 }
 
-fn resolve_html_node<'a>(
-    model: &'a ProjectModel,
-    source_id: &str,
-    aliases: &HashMap<String, String>,
-) -> Option<&'a SourceNode> {
-    let mut current = source_id.to_string();
-    let mut visited = HashSet::new();
-    loop {
-        if !visited.insert(current.clone()) {
-            break;
-        }
-        // An alias records the logical identity selected before a committed
-        // mutation. It must win over a positional ID which may have been
-        // reused by another node in the new source graph.
-        if let Some(next) = aliases.get(&current) {
-            if visited.contains(next) {
-                break;
-            }
-            current = next.clone();
-            // Alias updates are published from one exact ProjectModel
-            // revision to the next. A same-tag reorder can produce a
-            // permutation whose target IDs are also alias keys; once the
-            // direct target is live, following that key again would walk into
-            // a sibling's mapping (or a cycle) instead of the selected node.
-            if let Some(node) = model
-                .source_graph
-                .nodes
-                .iter()
-                .find(|node| node.id == current && node.kind == SourceNodeKind::Html)
-            {
-                return Some(node);
-            }
-            continue;
-        }
-        if let Some(node) = model
-            .source_graph
-            .nodes
-            .iter()
-            .find(|node| node.id == current && node.kind == SourceNodeKind::Html)
-        {
-            return Some(node);
-        }
-        break;
-    }
-
-    // Alias cycles must not exist after cache publication, but recover
-    // deterministically from an older in-memory map: accept the cycle only
-    // when exactly one of its identities is live in the current model.
-    let mut live_cycle_nodes = model
+fn resolve_html_node<'a>(model: &'a ProjectModel, source_id: &str) -> Option<&'a SourceNode> {
+    model
         .source_graph
-        .nodes
-        .iter()
-        .filter(|node| node.kind == SourceNodeKind::Html && visited.contains(&node.id));
-    let node = live_cycle_nodes.next()?;
-    if live_cycle_nodes.next().is_some() {
-        None
-    } else {
-        Some(node)
-    }
+        .node_by_id(source_id)
+        .filter(|node| node.kind == SourceNodeKind::Html)
 }
 
 pub(super) fn resolve_html_node_for_anchor<'a>(
     model: &'a ProjectModel,
     source_id: Option<&str>,
-    location: Option<&ProjectSourceEditLocation>,
-    tag: Option<&str>,
-    aliases: &HashMap<String, String>,
-) -> Option<&'a SourceNode> {
-    let id_node = source_id
-        .and_then(|id| resolve_html_node(model, id, aliases))
-        .filter(|node| node_tag_matches(node, tag));
-    let location_node =
-        location.and_then(|location| resolve_html_node_at_location(model, location, tag));
-
-    // A Rust-published alias represents the logical element across an already
-    // committed structural mutation. The Canvas fast path can keep the old
-    // source location until the background canonical projection settles; for
-    // same-tag siblings that old position may now belong to another element.
-    // In that narrow case the authoritative alias must win. Unaliased stale or
-    // contradictory identities remain conjunctive and fail closed below.
-    if source_id.is_some_and(|id| {
-        aliases
-            .get(id)
-            .is_some_and(|resolved| !resolved.trim().is_empty() && resolved != id)
-    }) {
-        if let Some(id_node) = id_node {
-            return Some(id_node);
-        }
-    }
-    resolve_conjunctive_anchor(source_id, location, id_node, location_node)
-}
-
-pub(super) fn resolve_conjunctive_anchor<'a>(
-    source_id: Option<&str>,
-    location: Option<&ProjectSourceEditLocation>,
-    id_node: Option<&'a SourceNode>,
-    location_node: Option<&'a SourceNode>,
-) -> Option<&'a SourceNode> {
-    match (source_id, location) {
-        (Some(_), Some(_)) => match (id_node, location_node) {
-            (Some(id_node), Some(location_node)) if id_node.id == location_node.id => Some(id_node),
-            _ => None,
-        },
-        (Some(_), None) => id_node,
-        (None, Some(_)) => location_node,
-        (None, None) => None,
-    }
-}
-
-pub(super) fn direct_location_without_source_id<'a>(
-    source_id: Option<&str>,
-    location: Option<&'a ProjectSourceEditLocation>,
-) -> Option<&'a ProjectSourceEditLocation> {
-    match (source_id, location) {
-        (None, Some(location)) if location.line > 0 && location.column > 0 => Some(location),
-        _ => None,
-    }
-}
-
-fn resolve_html_node_at_location<'a>(
-    model: &'a ProjectModel,
-    location: &ProjectSourceEditLocation,
     tag: Option<&str>,
 ) -> Option<&'a SourceNode> {
-    if location.line == 0 || location.column == 0 {
-        return None;
-    }
-
-    let mut candidates: Vec<&SourceNode> = model
-        .source_graph
-        .nodes
-        .iter()
-        .filter(|node| {
-            node.kind == SourceNodeKind::Html
-                && same_model_path(&node.file, &location.file)
-                && node
-                    .range
-                    .as_ref()
-                    .is_some_and(|range| range.line == location.line)
-                && node_tag_matches(node, tag)
-        })
-        .collect();
-
-    candidates.retain(|node| {
-        node.range
-            .as_ref()
-            .is_some_and(|range| range.column == location.column)
-    });
-
-    if candidates.len() == 1 {
-        candidates.pop()
-    } else {
-        None
-    }
+    source_id
+        .and_then(|id| resolve_html_node(model, id))
+        .filter(|node| node_tag_matches(node, tag))
 }
 
 fn normalize_model_path(path: &str) -> &str {
@@ -568,62 +564,9 @@ fn node_tag_matches(node: &SourceNode, tag: Option<&str>) -> bool {
             .starts_with(&format!("<{normalized}"))
 }
 
-fn source_location_label(location: Option<&ProjectSourceEditLocation>) -> String {
-    match location {
-        Some(location) if location.column > 0 => {
-            format!("{}:{}:{}", location.file, location.line, location.column)
-        }
-        Some(location) => format!("{}:{}", location.file, location.line),
-        None => "fără locație".to_string(),
-    }
-}
-
-pub(super) fn source_missing_message(
-    kind: &str,
-    source_id: Option<&str>,
-    location: Option<&ProjectSourceEditLocation>,
-    selector: Option<&str>,
-) -> String {
+pub(super) fn source_missing_message(kind: &str, source_id: Option<&str>) -> String {
     let id = source_id.unwrap_or("fără Source ID");
-    let loc = source_location_label(location);
-    match selector {
-        Some(selector) if !selector.is_empty() => format!(
-            "Nu am putut ancora {kind} în Project Model. Source ID: {id}; locație: {loc}; selector live: {selector}."
-        ),
-        _ => format!("Nu am putut ancora {kind} în Project Model. Source ID: {id}; locație: {loc}."),
-    }
-}
-
-fn html_node_spans(model: &ProjectModel) -> Vec<HtmlNodeSpan> {
-    model
-        .source_graph
-        .nodes
-        .iter()
-        .filter(|node| node.kind == SourceNodeKind::Html)
-        .filter_map(|node| {
-            let file = model
-                .files
-                .iter()
-                .find(|file| same_model_path(&file.relative_path, &node.file))?;
-            let range = node.range.as_ref()?;
-            let span = resolve_html_element_span(&file.contents, range.start).ok()?;
-            let snippet = file.contents.get(span.start..span.end)?;
-            Some(HtmlNodeSpan {
-                id: node.id.clone(),
-                file: node.file.clone(),
-                fingerprint: html_fingerprint(&node.label, snippet),
-            })
-        })
-        .collect()
-}
-
-fn html_fingerprint(label: &str, snippet: &str) -> String {
-    let normalized = snippet
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase();
-    format!("{label}::{normalized}")
+    format!("Nu am putut ancora {kind} în Project Model. SourceNodeId: {id}.")
 }
 
 fn apply_html_move(
@@ -632,7 +575,7 @@ fn apply_html_move(
     target_span: Span,
     target_tag: &str,
     position: ProjectMovePosition,
-    semantic_target_indent: &str,
+    placement: &StructuralPlacement,
     preserve_internal_indentation: bool,
 ) -> Result<MoveApplication, String> {
     let removal = removal_range_for_span(source, source_span);
@@ -652,39 +595,47 @@ fn apply_html_move(
     };
     let adjusted_target_start = adjust_index(target_span.start);
     let adjusted_target_end = adjust_index(target_span.end);
-    let source_indent = line_indent_at_offset(source, source_span.start);
-    let target_indent = semantic_target_indent.to_string();
+    let source_indent = indent_at(source, source_span.start);
+    let target_indent = placement.indent.as_str();
     let source_start_line = line_number_at_offset(source, source_span.start);
     let source_end_line = line_number_at_offset(source, source_span.end);
 
     match position {
         ProjectMovePosition::Before => {
-            let moving = reindent_structural_fragment(
+            let moving = format_structural_fragment(
                 &moving_source,
                 &source_indent,
-                &target_indent,
+                target_indent,
+                placement,
                 preserve_internal_indentation,
-            );
+            )?;
             let insert_at = line_block_before_index(&without_source, adjusted_target_start);
             let new_start_line = inserted_block_start_line(&without_source, insert_at);
+            let contents = insert_line_block(&without_source, insert_at, &moving);
+            let inserted_length = contents.len().saturating_sub(without_source.len());
+            let target_offset = adjusted_target_start.saturating_add(inserted_length);
             Ok(MoveApplication {
-                contents: insert_line_block(&without_source, insert_at, &moving),
+                target_start_line: line_number_at_offset(&contents, target_offset),
+                contents,
                 source_start_line,
                 source_end_line,
                 new_start_line,
             })
         }
         ProjectMovePosition::After => {
-            let moving = reindent_structural_fragment(
+            let moving = format_structural_fragment(
                 &moving_source,
                 &source_indent,
-                &target_indent,
+                target_indent,
+                placement,
                 preserve_internal_indentation,
-            );
+            )?;
             let insert_at = line_block_after_index(&without_source, adjusted_target_end);
             let new_start_line = inserted_block_start_line(&without_source, insert_at);
+            let contents = insert_line_block(&without_source, insert_at, &moving);
             Ok(MoveApplication {
-                contents: insert_line_block(&without_source, insert_at, &moving),
+                target_start_line: line_number_at_offset(&contents, adjusted_target_start),
+                contents,
                 source_start_line,
                 source_end_line,
                 new_start_line,
@@ -703,49 +654,56 @@ fn apply_html_move(
                 parse_html_tag_at(&without_source, adjusted_target_start).ok_or_else(|| {
                     "Nu am putut reciti tag-ul destinație după eliminarea sursei.".to_string()
                 })?;
-            let child_indent = format!("{target_indent}  ");
-            let moving = reindent_structural_fragment(
+            let child_indent = placement.child_indent();
+            let moving = format_structural_fragment(
                 &moving_source,
                 &source_indent,
                 &child_indent,
+                placement,
                 preserve_internal_indentation,
-            );
+            )?;
             let insert_at = adjusted_target_start + close_offset;
             let before_insert = inside_prefix_for_insert(&without_source, opening.end, insert_at);
+            let moved_start_offset = before_insert.len() + placement.style.line_ending().len();
             let next_contents = format!(
-                "{}\n{}\n{}{}",
+                "{}{}{}{}{}{}",
                 before_insert,
+                placement.style.line_ending(),
                 moving,
+                placement.style.line_ending(),
                 target_indent,
                 &without_source[insert_at..]
             );
-            let contents =
-                reindent_html_subtree_at(&next_contents, adjusted_target_start, &target_indent)
-                    .unwrap_or(next_contents);
+            let contents = normalize_html_subtree(
+                &next_contents,
+                adjusted_target_start,
+                target_indent,
+                &placement.style,
+            )?;
+            let new_start_line = line_number_at_offset(&next_contents, moved_start_offset);
             Ok(MoveApplication {
+                target_start_line: line_number_at_offset(&contents, adjusted_target_start),
                 contents,
                 source_start_line,
                 source_end_line,
-                new_start_line: line_number_at_offset(&without_source, insert_at) + 1,
+                new_start_line,
             })
         }
     }
 }
 
-fn reindent_html_subtree_at(
+fn format_structural_fragment(
     source: &str,
-    opening_start: usize,
-    base_indent: &str,
-) -> Option<String> {
-    let span = resolve_html_element_span(source, opening_start).ok()?;
-    let fragment = source.get(span.start..span.end)?;
-    let formatted = reindent_html_fragment(fragment, base_indent);
-    Some(format!(
-        "{}{}{}",
-        &source[..span.start],
-        formatted,
-        &source[span.end..]
-    ))
+    source_indent: &str,
+    target_indent: &str,
+    placement: &StructuralPlacement,
+    preserve_internal_indentation: bool,
+) -> Result<String, String> {
+    if preserve_internal_indentation {
+        relocate_lossless_fragment(source, source_indent, target_indent, &placement.style)
+    } else {
+        format_html_fragment(source, target_indent, &placement.style)
+    }
 }
 
 pub(super) fn line_block_before_index(source: &str, opening_start: usize) -> usize {
@@ -783,14 +741,20 @@ pub(super) fn line_block_after_index(source: &str, span_end: usize) -> usize {
 
 pub(super) fn insert_line_block(source: &str, index: usize, block: &str) -> String {
     let index = index.min(source.len());
+    let style = StructuralIndentationStyle::detect(source);
+    let line_ending = style.line_ending();
     let needs_leading_break = index > 0 && source.as_bytes().get(index - 1) != Some(&b'\n');
     let needs_trailing_break = index < source.len() && source.as_bytes().get(index) != Some(&b'\n');
     format!(
         "{}{}{}{}{}",
         &source[..index],
-        if needs_leading_break { "\n" } else { "" },
+        if needs_leading_break { line_ending } else { "" },
         block.trim_matches(|character| character == '\n' || character == '\r'),
-        if needs_trailing_break { "\n" } else { "" },
+        if needs_trailing_break {
+            line_ending
+        } else {
+            ""
+        },
         &source[index..]
     )
 }
@@ -799,6 +763,9 @@ pub(super) struct DocumentFragmentAppend {
     pub(super) contents: String,
     pub(super) inserted_start_line: usize,
     pub(super) line_shift: isize,
+    pub(super) insertion_offset: usize,
+    pub(super) inserted_length: usize,
+    pub(super) inserted_offset: usize,
 }
 
 /// Appends one top-level structural unit before the source's trailing
@@ -807,7 +774,11 @@ pub(super) struct DocumentFragmentAppend {
 /// a second drop follows the first one instead of targeting generated DOM.
 pub(super) fn append_document_fragment(source: &str, fragment: &str) -> DocumentFragmentAppend {
     let insert_at = source.trim_end_matches(char::is_whitespace).len();
+    let style = StructuralIndentationStyle::detect(source);
+    let needs_leading_break = insert_at > 0 && source.as_bytes().get(insert_at - 1) != Some(&b'\n');
+    let inserted_offset = insert_at + usize::from(needs_leading_break) * style.line_ending().len();
     let contents = insert_line_block(source, insert_at, fragment);
+    let inserted_length = contents.len().saturating_sub(source.len());
     let inserted_start_line = inserted_block_start_line(source, insert_at);
     let before_lines = source.bytes().filter(|byte| *byte == b'\n').count() as isize;
     let after_lines = contents.bytes().filter(|byte| *byte == b'\n').count() as isize;
@@ -815,40 +786,15 @@ pub(super) fn append_document_fragment(source: &str, fragment: &str) -> Document
         contents,
         inserted_start_line,
         line_shift: after_lines - before_lines,
+        insertion_offset: insert_at,
+        inserted_length,
+        inserted_offset,
     }
 }
 
 pub(super) fn inserted_block_start_line(source: &str, index: usize) -> usize {
     line_number_at_offset(source, index)
         + usize::from(index > 0 && source.as_bytes().get(index - 1) != Some(&b'\n'))
-}
-
-pub(super) fn reindent_structural_fragment(
-    source: &str,
-    source_indent: &str,
-    target_indent: &str,
-    preserve_internal_indentation: bool,
-) -> String {
-    if !preserve_internal_indentation {
-        return reindent_html_fragment(source, target_indent);
-    }
-    let trimmed = source.trim_matches(|character| character == '\n' || character == '\r');
-    trimmed
-        .split('\n')
-        .enumerate()
-        .map(|(index, line)| {
-            if line.trim().is_empty() {
-                return String::new();
-            }
-            let relative = if index == 0 {
-                line
-            } else {
-                line.strip_prefix(source_indent).unwrap_or(line)
-            };
-            format!("{target_indent}{}", relative.trim_end())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 pub(super) fn inside_prefix_for_insert(
@@ -864,7 +810,29 @@ pub(super) fn inside_prefix_for_insert(
             .unwrap_or(before_insert)
             .to_string()
     } else {
-        before_insert.trim_end().to_string()
+        let close_line_start = before_insert
+            .rfind('\n')
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let close_prefix = before_insert.get(close_line_start..).unwrap_or("");
+        if close_prefix
+            .bytes()
+            .all(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            let content_end = if close_line_start >= 2
+                && before_insert
+                    .as_bytes()
+                    .get(close_line_start - 2..close_line_start)
+                    .is_some_and(|ending| ending == b"\r\n")
+            {
+                close_line_start - 2
+            } else {
+                close_line_start.saturating_sub(1)
+            };
+            before_insert[..content_end].to_string()
+        } else {
+            before_insert.to_string()
+        }
     }
 }
 
@@ -1078,131 +1046,6 @@ pub(super) fn source_location_at_offset(
     }
 }
 
-pub(super) fn offset_for_source_location(
-    source: &str,
-    location: &ProjectSourceEditLocation,
-) -> Result<usize, String> {
-    if location.line == 0 {
-        return Err("Locația sursă are linie invalidă pentru editare.".to_string());
-    }
-
-    let mut line = 1usize;
-    let mut line_start = 0usize;
-    for (index, character) in source.char_indices() {
-        if line == location.line {
-            break;
-        }
-        if character == '\n' {
-            line += 1;
-            line_start = index + character.len_utf8();
-        }
-    }
-    if line != location.line {
-        return Err(format!(
-            "Locația {}:{} nu există în sursa curentă.",
-            location.file, location.line
-        ));
-    }
-
-    if location.column <= 1 {
-        return Ok(line_start);
-    }
-
-    let target_column = location.column;
-    let mut column = 1usize;
-    let mut cursor = line_start;
-    for (relative_index, character) in source[line_start..].char_indices() {
-        if character == '\n' || character == '\r' {
-            break;
-        }
-        if column == target_column {
-            return Ok(line_start + relative_index);
-        }
-        column += 1;
-        cursor = line_start + relative_index + character.len_utf8();
-    }
-    if column == target_column {
-        return Ok(cursor);
-    }
-
-    Err(format!(
-        "Coloana {} nu există pe linia {} în {}.",
-        location.column, location.line, location.file
-    ))
-}
-
-pub(super) fn line_indent_at_offset(source: &str, offset: usize) -> String {
-    let prefix = source.get(..offset.min(source.len())).unwrap_or("");
-    let line_start = prefix.rfind('\n').map(|index| index + 1).unwrap_or(0);
-    source
-        .get(line_start..)
-        .unwrap_or("")
-        .chars()
-        .take_while(|character| {
-            character.is_whitespace() && *character != '\n' && *character != '\r'
-        })
-        .collect()
-}
-
-pub(super) fn reindent_html_fragment(source: &str, base_indent: &str) -> String {
-    let trimmed = source.trim_matches(|character| character == '\n' || character == '\r');
-    let mut level = 0usize;
-    trimmed
-        .split('\n')
-        .map(|line| {
-            let content = line.trim();
-            if content.is_empty() {
-                return String::new();
-            }
-            let leading_closes = leading_closing_tag_count(content);
-            let display_level = level.saturating_sub(leading_closes);
-            let (opens, closes) = html_line_depth_delta(content);
-            level = display_level + opens;
-            level = level.saturating_sub(closes.saturating_sub(leading_closes));
-            format!("{}{}{}", base_indent, "  ".repeat(display_level), content)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn leading_closing_tag_count(line: &str) -> usize {
-    let mut count = 0usize;
-    let mut cursor = 0usize;
-    while cursor < line.len() {
-        while line
-            .as_bytes()
-            .get(cursor)
-            .is_some_and(|byte| byte.is_ascii_whitespace())
-        {
-            cursor += 1;
-        }
-        let Some(tag) = parse_html_tag_at(line, cursor) else {
-            break;
-        };
-        if !tag.is_closing {
-            break;
-        }
-        count += 1;
-        cursor = tag.end;
-    }
-    count
-}
-
-fn html_line_depth_delta(line: &str) -> (usize, usize) {
-    let mut opens = 0usize;
-    let mut closes = 0usize;
-    let mut cursor = 0usize;
-    while let Some(tag) = next_html_tag(line, cursor) {
-        cursor = tag.end;
-        if tag.is_closing {
-            closes += 1;
-        } else if !tag.is_self_closing && !is_void_tag(&tag.tag) {
-            opens += 1;
-        }
-    }
-    (opens, closes)
-}
-
 pub(super) fn can_receive_children(tag: &str) -> bool {
     CONTAINER_TAGS
         .iter()
@@ -1221,29 +1064,89 @@ pub(crate) fn content_revision(contents: &str) -> String {
     format!("f_{:016x}", hasher.finish())
 }
 
-#[allow(dead_code)]
-fn source_id_for_html_opening(file: &str, label: &str, start: usize, end: usize) -> String {
-    source_node_id(file, &SourceNodeKind::Html, label, Some(start), Some(end))
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use crate::project_model::build_project_model;
+    use crate::project_model::test_support::ProjectModelTestFixture;
 
     use super::*;
 
     #[test]
+    fn html_batch_move_permutates_siblings_once_and_preserves_indentation() {
+        let root = unique_test_dir();
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
+            concat!(
+                "<main>\n",
+                "  <p class=\"a\">A</p>\n",
+                "  <p class=\"x\">X</p>\n",
+                "  <p class=\"b\">B</p>\n",
+                "  <p class=\"target\">T</p>\n",
+                "</main>\n",
+            ),
+        )
+        .unwrap();
+        let model = fixture.build_model().unwrap();
+        let template = model
+            .files
+            .iter()
+            .find(|file| file.relative_path.ends_with("templates/index.html"))
+            .unwrap();
+        let source_id =
+            |class_name: &str| {
+                model
+                    .source_graph
+                    .nodes
+                    .iter()
+                    .filter(|node| {
+                        node.kind == SourceNodeKind::Html
+                            && node.range.as_ref().is_some_and(|range| {
+                                template.contents.get(range.start..range.end).is_some_and(
+                                    |source| source.contains(&format!("class=\"{class_name}\"")),
+                                )
+                            })
+                    })
+                    .min_by_key(|node| {
+                        node.range
+                            .as_ref()
+                            .map(|range| range.end.saturating_sub(range.start))
+                            .unwrap_or(usize::MAX)
+                    })
+                    .unwrap()
+                    .id
+                    .clone()
+            };
+        let patch = plan_html_batch_move(
+            &model,
+            &[source_id("a"), source_id("b")],
+            &source_id("target"),
+            Some("p"),
+            ProjectMovePosition::Before,
+        )
+        .unwrap();
+
+        assert!(patch.contents.contains(concat!(
+            "  <p class=\"x\">X</p>\n",
+            "  <p class=\"a\">A</p>\n",
+            "  <p class=\"b\">B</p>\n",
+            "  <p class=\"target\">T</p>\n",
+        )));
+        assert_eq!(patch.contents.matches("class=\"a\"").count(), 1);
+        assert_eq!(patch.contents.matches("class=\"b\"").count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn html_move_refuses_cross_source_transfer_from_partial_to_page() {
         let root = unique_test_dir();
-        write_project(&root);
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let fixture = project_fixture(root.clone());
+        let projection_before = fixture.projection();
+        let model = fixture.build_model().unwrap();
         let source = model
             .source_graph
             .nodes
@@ -1264,25 +1167,16 @@ mod tests {
                     && node.label.starts_with("<section")
             })
             .unwrap();
-        let index_path = root.join("templates/index.html");
-        let partial_path = root.join("templates/partials/card.html");
-        let index_before = fs::read_to_string(&index_path).unwrap();
-        let partial_before = fs::read_to_string(&partial_path).unwrap();
-
         let plan = plan_html_move(
             &model,
             &ProjectHtmlMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_tag: Some("article".to_string()),
                 target_tag: Some("section".to_string()),
-                source_selector: Some(".card".to_string()),
-                target_selector: Some(".hero".to_string()),
                 position: ProjectMovePosition::Before,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         assert!(!plan.allowed);
@@ -1291,28 +1185,15 @@ mod tests {
             .diagnostic
             .as_deref()
             .is_some_and(|message| message.contains("template-uri diferite")));
-        assert_eq!(fs::read_to_string(index_path).unwrap(), index_before);
-        assert_eq!(fs::read_to_string(partial_path).unwrap(), partial_before);
+        assert_eq!(fixture.projection(), projection_before);
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn html_move_inside_tera_requires_the_explicit_scoped_planner() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/index.html"),
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "{% for item in section.pages %}\n",
                 "  <section class=\"grid\"></section>\n",
@@ -1321,7 +1202,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = model
             .source_graph
             .nodes
@@ -1341,17 +1222,14 @@ mod tests {
         let intent = ProjectHtmlMoveIntent {
             source_source_id: Some(source.id.clone()),
             target_source_id: Some(target.id.clone()),
-            source_location: None,
-            target_location: None,
             source_tag: Some("article".to_string()),
             target_tag: Some("section".to_string()),
-            source_selector: None,
-            target_selector: None,
             position: ProjectMovePosition::Before,
+            native_block_slot: None,
         };
 
-        let unscoped = plan_html_move(&model, &intent, &HashMap::new());
-        let scoped = plan_html_move_in_edit_scope(&model, &intent, &HashMap::new());
+        let unscoped = plan_html_move(&model, &intent);
+        let scoped = plan_html_move_in_edit_scope(&model, &intent);
 
         assert!(!unscoped.allowed);
         assert!(scoped.allowed, "{:?}", scoped.diagnostic);
@@ -1361,20 +1239,8 @@ mod tests {
     #[test]
     fn html_move_keeps_a_dynamic_widget_contract_atomic_and_repairs_indentation() {
         let root = unique_test_dir();
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/index.html"),
+        let fixture = ProjectModelTestFixture::standard_zola(
+            root.clone(),
             concat!(
                 "<main>\n",
                 "  <div>\n",
@@ -1387,7 +1253,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let model = build_project_model(&root, &HashMap::new()).unwrap();
+        let model = fixture.build_model().unwrap();
         let source = model
             .source_graph
             .nodes
@@ -1412,48 +1278,34 @@ mod tests {
             &ProjectHtmlMoveIntent {
                 source_source_id: Some(source.id.clone()),
                 target_source_id: Some(target.id.clone()),
-                source_location: None,
-                target_location: None,
                 source_tag: Some("h2".to_string()),
                 target_tag: Some("p".to_string()),
-                source_selector: None,
-                target_selector: None,
                 position: ProjectMovePosition::After,
+                native_block_slot: None,
             },
-            &HashMap::new(),
         );
 
         fs::remove_dir_all(root).unwrap();
         assert!(plan.allowed, "{:?}", plan.diagnostic);
         let contents = plan.patch.unwrap().contents;
-        let target_at = contents.find("<p class=\"target\"").unwrap();
-        let start_at = contents.find("{# pana:widget").unwrap();
-        let body_at = contents
-            .find("<h2 data-pana-widget-instance=\"dynamic-field-atomic01\"")
-            .unwrap();
-        let end_at = contents.find("{# /pana:widget").unwrap();
-        assert!(target_at < start_at && start_at < body_at && body_at < end_at);
-        assert_eq!(contents.matches("dynamic-field-atomic01").count(), 3);
-        assert!(contents.contains("\n    {# pana:widget"));
-        assert!(contents.contains("\n    <h2 data-pana-widget-instance"));
-        assert!(contents.contains("\n    {# /pana:widget"));
+        assert_eq!(
+            contents,
+            concat!(
+                "<main>\n",
+                "  <div>\n",
+                "    <p class=\"target\">Țintă</p>\n",
+                "    {# pana:widget schema=2 provider=dynamic-field instance=dynamic-field-atomic01 props=00 #}\n",
+                "    <h2 data-pana-widget-instance=\"dynamic-field-atomic01\">{{ page.title }}</h2>\n",
+                "    {# /pana:widget instance=dynamic-field-atomic01 #}\n",
+                "  </div>\n",
+                "</main>\n",
+            )
+        );
     }
 
-    fn write_project(root: &PathBuf) {
-        fs::create_dir_all(root.join("content")).unwrap();
-        fs::create_dir_all(root.join("templates/partials")).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = \"http://example.test\"\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("content/_index.md"),
-            "+++\ntitle = \"Acasă\"\ntemplate = \"index.html\"\n+++\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join("templates/index.html"),
+    fn project_fixture(root: PathBuf) -> ProjectModelTestFixture {
+        let mut fixture = ProjectModelTestFixture::standard_zola(
+            root,
             concat!(
                 "<main>\n",
                 "  <section class=\"hero\"></section>\n",
@@ -1462,11 +1314,11 @@ mod tests {
             ),
         )
         .unwrap();
-        fs::write(
-            root.join("templates/partials/card.html"),
+        fixture.source(
+            "templates/partials/card.html",
             "<article class=\"card\"><p>Card</p></article>\n",
-        )
-        .unwrap();
+        );
+        fixture
     }
 
     fn unique_test_dir() -> PathBuf {

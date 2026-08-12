@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{path::PathBuf, time::Instant};
 
 use tauri::State;
 
@@ -15,7 +15,6 @@ pub(super) struct PreviewWriteCommandContext {
     pub(super) root: PathBuf,
     pub(super) session: ProjectSessionSnapshot,
     pub(super) accepted_disk: AcceptedProjectDiskManifest,
-    pub(super) aliases: HashMap<String, String>,
     pub(super) active_document_path: Option<String>,
     pub(super) workspace_revision: u64,
 }
@@ -27,16 +26,6 @@ pub(super) fn prepare_preview_write_command(
     let (root, session, accepted_disk, workspace_revision) =
         capture_preview_workspace_authority(state)?;
     require_preview_command_identity(&session, identity)?;
-    let aliases = state
-        .project_workspace
-        .lock()
-        .map_err(|_| {
-            "Nu am putut bloca ProjectWorkspace pentru aliasurile Source Identity.".to_string()
-        })?
-        .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?
-        .source_identity_aliases
-        .clone();
     let workbench = state.workbench.read(&session)?;
     let active_document_path = workbench
         .groups
@@ -56,7 +45,6 @@ pub(super) fn prepare_preview_write_command(
         root,
         session,
         accepted_disk,
-        aliases,
         active_document_path,
         workspace_revision,
     })
@@ -81,7 +69,38 @@ pub(super) fn require_preview_command_identity(
     Ok(())
 }
 
-pub(super) fn with_preview_write_workspace<R>(
+pub(super) fn capture_preview_write_workspace_candidate(
+    state: &State<AppState>,
+    context: &PreviewWriteCommandContext,
+) -> Result<(crate::kernel::project_workspace::ProjectWorkspace, u64), String> {
+    let clone_started = Instant::now();
+    let candidate = {
+        let workspace = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
+        let workspace = workspace
+            .as_ref()
+            .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+        require_preview_accepted_snapshot(
+            Some(&workspace.accepted_disk),
+            &context.session,
+            &context.accepted_disk,
+        )?;
+        if workspace.revision != context.workspace_revision {
+            return Err(format!(
+                "Preview Projection a refuzat o mutație stale: revizia pregătită {}, revizia activă {}.",
+                context.workspace_revision, workspace.revision
+            ));
+        }
+        workspace.clone()
+    };
+    let clone_ms = clone_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    require_accepted_disk_unchanged(&context.root, &context.accepted_disk)?;
+    Ok((candidate, clone_ms))
+}
+
+pub(super) fn with_preview_write_workspace_cas<R>(
     state: &State<AppState>,
     context: &PreviewWriteCommandContext,
     execute: impl FnOnce(&mut crate::kernel::project_workspace::ProjectWorkspace) -> Result<R, String>,
@@ -89,19 +108,18 @@ pub(super) fn with_preview_write_workspace<R>(
     let mut workspace = state
         .project_workspace
         .lock()
-        .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
+        .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru CAS.".to_string())?;
     let workspace = workspace
         .as_mut()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+        .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru CAS.".to_string())?;
     require_preview_accepted_snapshot(
         Some(&workspace.accepted_disk),
-        &context.root,
         &context.session,
         &context.accepted_disk,
     )?;
     if workspace.revision != context.workspace_revision {
         return Err(format!(
-            "Preview Projection a refuzat o mutație stale: revizia pregătită {}, revizia activă {}.",
+            "Preview Projection CAS a refuzat candidatul stale: revizia pregătită {}, revizia activă {}.",
             context.workspace_revision, workspace.revision
         ));
     }
@@ -150,7 +168,6 @@ fn capture_preview_workspace_authority(
 
 fn require_preview_accepted_snapshot<'a>(
     live: Option<&'a AcceptedProjectDiskManifest>,
-    root: &std::path::Path,
     session: &ProjectSessionSnapshot,
     expected: &AcceptedProjectDiskManifest,
 ) -> Result<&'a AcceptedProjectDiskManifest, String> {
@@ -164,7 +181,6 @@ fn require_preview_accepted_snapshot<'a>(
                 .to_string(),
         );
     }
-    require_accepted_disk_unchanged(root, live)?;
     Ok(live)
 }
 

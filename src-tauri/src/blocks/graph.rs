@@ -160,8 +160,8 @@ mod tests {
     }
 
     #[test]
-    fn unknown_legacy_marker_is_preserved_as_a_diagnostic_instance() {
-        let graph = build_block_graph(&graph_with_marker("legacy-widget"));
+    fn unknown_provider_is_preserved_as_a_diagnostic_instance() {
+        let graph = build_block_graph(&graph_with_marker("custom-widget"));
 
         assert_eq!(graph.source_instances.len(), 1);
         assert!(graph.source_instances[0].definition_id.is_none());

@@ -1741,7 +1741,6 @@ pub fn set_reusable_css_rule_at_viewport(
     selector: String,
     properties: HashMap<String, String>,
     viewport: String,
-    cachebust_assets: bool,
     identity: FileBufferRequestIdentity,
     expected_selection: Option<SelectionMutationIdentity>,
     app: AppHandle,
@@ -1765,6 +1764,7 @@ pub fn set_reusable_css_rule_at_viewport(
         &identity,
         expected_selection.as_ref(),
         move |project_root, _zola_root, store, project_model| {
+            let cachebust_assets = crate::commands::config::cachebust_assets_from_store(store)?;
             let model = project_model.ok_or_else(|| {
                 "ProjectModel-ul reviziei curente nu este disponibil pentru legarea SCSS reutilizabilă. Reîncearcă după resincronizarea editorului."
                     .to_string()
@@ -1887,7 +1887,6 @@ pub fn set_page_css_rule_at_viewport(
     selector: String,
     properties: HashMap<String, String>,
     viewport: String,
-    cachebust_assets: bool,
     identity: FileBufferRequestIdentity,
     expected_selection: Option<SelectionMutationIdentity>,
     app: AppHandle,
@@ -1899,7 +1898,6 @@ pub fn set_page_css_rule_at_viewport(
         selector,
         properties,
         viewport,
-        cachebust_assets,
         &identity,
         expected_selection.as_ref(),
         &app,
@@ -1915,7 +1913,6 @@ fn set_page_css_rule_at_viewport_impl(
     selector: String,
     properties: HashMap<String, String>,
     viewport: String,
-    cachebust_assets: bool,
     identity: &FileBufferRequestIdentity,
     expected_selection: Option<&SelectionMutationIdentity>,
     app: &AppHandle,
@@ -1930,6 +1927,7 @@ fn set_page_css_rule_at_viewport_impl(
         identity,
         expected_selection,
         move |project_root, _zola_root, store| {
+            let cachebust_assets = crate::commands::config::cachebust_assets_from_store(store)?;
             if properties.is_empty() {
                 return Ok((
                     None,

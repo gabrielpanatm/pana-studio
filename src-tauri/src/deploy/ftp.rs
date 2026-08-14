@@ -689,7 +689,7 @@ mod tests {
         DeployTarget {
             id: "ftp-production".to_string(),
             name: "FTP production".to_string(),
-            credential_ref: "ftp-secret".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_FTP".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::Ftp(FtpTargetConfig {
                 host: "example.com".to_string(),

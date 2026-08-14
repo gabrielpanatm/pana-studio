@@ -4,20 +4,23 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Runtime};
 
 use crate::{
     js::{
+        generate_page_js, js_relative_path, motion_source_relative_path,
         page_js_text_changes_from_plan, page_js_text_deletes_from_plan,
-        plan_page_js_save_for_project, PageJsConfig,
+        plan_page_js_save_for_project_preserving_source, read_page_motion_config,
+        serialize_motion_source, template_path_from_motion_source, PageJsConfig, PageRuntimePlan,
     },
     kernel::{
         file_buffer_store::{
             hash_bytes, hash_text, FileBufferMutationExpectation, FileBufferStore,
         },
-        generated_assets::{
-            plan_generated_asset_intent, registry::generated_asset_definition,
-            GeneratedAssetAction, GeneratedAssetId, GeneratedAssetPlanStatus,
+        generated_assets::registry::{
+            anime_esm_project_license_path, anime_module_assets, anime_module_dependency_closure,
+            anime_modules_referenced_by_source, EMBEDDED_ANIME_LICENSE,
         },
         project_path::normalize_project_relative_path,
         write_authority::WriteReceipt,
@@ -25,6 +28,7 @@ use crate::{
     project::{
         project_disk_manifest_changed_paths, read_project_disk_manifest, resolve_project_write_path,
     },
+    zola_links::template_contains_asset_path,
 };
 
 use super::save_journal::{
@@ -552,7 +556,7 @@ fn materialize_workspace_for_save(
         .collect::<HashSet<_>>();
     let mut derived_generated_paths = HashSet::new();
     let mut accepted_page_js = workspace.accepted_page_js.clone();
-    let mut requires_anime = false;
+    let mut required_anime_entry_modules = BTreeSet::new();
     let now_ms = crate::kernel::observability::now_ms();
 
     for draft in workspace.page_js.drafts.values() {
@@ -565,19 +569,122 @@ fn materialize_workspace_for_save(
                 draft.template_path
             ));
         }
-        let plan = plan_page_js_save_for_project(
+        let motion_path = motion_source_relative_path(&draft.template_path)?;
+        let serialized_motion = serialize_motion_source(&draft.current)?;
+        if user_changed_paths.contains(&motion_path)
+            && documents.text_for(&motion_path).as_deref() != serialized_motion.as_deref()
+        {
+            return Err(format!(
+                "Save Motion a detectat un conflict între editorul vizual și editarea directă a sursei {motion_path}. Păstrează o singură variantă înainte de Save."
+            ));
+        }
+        match serialized_motion {
+            Some(source) => {
+                if deleted_documents.contains(&motion_path) {
+                    deleted_documents.remove(&motion_path);
+                }
+                stage_materialized_text(&mut documents, &motion_path, source, now_ms)?;
+            }
+            None => {
+                let tracked = documents.files.remove(&motion_path).is_some();
+                let exists_on_disk = project_root
+                    .join(&motion_path)
+                    .try_exists()
+                    .map_err(|error| {
+                        format!(
+                            "Nu am putut inspecta sursa Motion {motion_path} înainte de Save: {error}"
+                        )
+                    })?;
+                if tracked || exists_on_disk {
+                    deleted_documents.insert(motion_path);
+                } else {
+                    deleted_documents.remove(&motion_path);
+                }
+            }
+        }
+        accepted_page_js.insert(draft.template_path.clone(), draft.current.clone());
+    }
+
+    let orphan_motion_sources = documents
+        .files
+        .keys()
+        .filter_map(|path| {
+            template_path_from_motion_source(path)
+                .filter(|template| !documents.files.contains_key(template))
+                .map(|template| (path.clone(), template))
+        })
+        .collect::<Vec<_>>();
+    for (motion_path, template_path) in orphan_motion_sources {
+        documents.files.remove(&motion_path);
+        deleted_documents.insert(motion_path);
+        accepted_page_js.remove(&template_path);
+    }
+
+    let mut template_paths = documents
+        .files
+        .keys()
+        .filter(|path| is_page_runtime_template_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    template_paths.sort();
+
+    for template_path in template_paths {
+        let template_source = documents.text_for(&template_path).ok_or_else(|| {
+            format!("Materializarea Page Runtime a pierdut template-ul {template_path}.")
+        })?;
+        let motion_path = motion_source_relative_path(&template_path)?;
+        let config = if deleted_documents.contains(&motion_path) {
+            PageJsConfig::default()
+        } else {
+            read_page_motion_config(project_root, &documents, &template_path)?
+        };
+        if config.motion.is_some() {
+            accepted_page_js.insert(template_path.clone(), config.clone());
+        } else {
+            accepted_page_js.remove(&template_path);
+        }
+        let runtime_plan = PageRuntimePlan::from_sources(&template_source, &config);
+        required_anime_entry_modules.extend(runtime_plan.anime_entry_modules());
+        let js_path = js_relative_path(&template_path);
+        let js_asset_path = js_path.strip_prefix("static/").unwrap_or(&js_path);
+        let has_generated_file = documents.files.contains_key(&js_path)
+            || zola_root.join(&js_path).try_exists().map_err(|error| {
+                format!("Nu am putut inspecta artefactul Page Runtime {js_path}: {error}")
+            })?;
+        let has_generated_link = template_contains_asset_path(&template_source, js_asset_path);
+        if !runtime_plan.has_runtime() && !has_generated_file && !has_generated_link {
+            continue;
+        }
+        let cachebust_assets = workspace
+            .page_js
+            .drafts
+            .get(&template_path)
+            .map(|draft| draft.cachebust_assets)
+            .unwrap_or(false);
+        let preserve_page_js_source = page_js_source_is_manual_override(
+            workspace,
+            &template_path,
+            &template_source,
+            &config,
+            &js_path,
+        );
+        if preserve_page_js_source {
+            if let Some(source) = documents.text_for(&js_path) {
+                required_anime_entry_modules.extend(anime_modules_referenced_by_source(&source));
+            }
+        }
+        let plan = plan_page_js_save_for_project_preserving_source(
             zola_root,
             &workspace.session,
             &documents,
-            &draft.template_path,
-            draft.current.clone(),
-            draft.cachebust_assets,
+            &template_path,
+            config,
+            cachebust_assets,
+            preserve_page_js_source,
         )?;
         if plan.page_js_resource.blocked {
             return Err(plan.page_js_resource.message.clone());
         }
-        requires_anime |= plan.ensure_anime_asset;
-
         for change in page_js_text_changes_from_plan(&plan) {
             if deleted_documents.contains(&change.relative_path) {
                 return Err(format!(
@@ -618,12 +725,47 @@ fn materialize_workspace_for_save(
             documents.files.remove(&delete.relative_path);
             deleted_documents.insert(delete.relative_path);
         }
-        accepted_page_js.insert(draft.template_path.clone(), draft.current.clone());
     }
 
-    if requires_anime {
-        materialize_anime_runtime(zola_root, &mut documents, &deleted_documents, now_ms)?;
+    remove_legacy_public_motion_asset(
+        zola_root,
+        &mut documents,
+        &mut deleted_documents,
+        "static/js/anime.min.js",
+        "6cec04e0bb754ed6dd9fa1882ba664834271b549b3c7934a0893643a899b6ad9",
+    )?;
+    remove_legacy_public_motion_asset(
+        zola_root,
+        &mut documents,
+        &mut deleted_documents,
+        "static/js/pana-motion-runtime.js",
+        "80cd37ddadb6596d5df5befc5fb756c83ae66307250c1ea679a45ceb18631dc2",
+    )?;
+
+    let required_anime_modules = anime_module_dependency_closure(required_anime_entry_modules)?;
+    for asset in anime_module_assets() {
+        materialize_managed_text_asset(
+            zola_root,
+            workspace,
+            &mut documents,
+            &mut deleted_documents,
+            &asset.project_path,
+            asset.source,
+            required_anime_modules.contains(asset.module_path),
+            now_ms,
+        )?;
     }
+    let anime_license_path = anime_esm_project_license_path();
+    materialize_managed_text_asset(
+        zola_root,
+        workspace,
+        &mut documents,
+        &mut deleted_documents,
+        &anime_license_path,
+        EMBEDDED_ANIME_LICENSE,
+        !required_anime_modules.is_empty(),
+        now_ms,
+    )?;
 
     Ok(MaterializedWorkspaceSave {
         documents,
@@ -634,53 +776,186 @@ fn materialize_workspace_for_save(
     })
 }
 
-fn materialize_anime_runtime(
+fn managed_text_is_manual_override(
+    workspace: &ProjectWorkspace,
+    relative_path: &str,
+    expected: &str,
+) -> bool {
+    let Some(current) = workspace.documents.text_for(relative_path) else {
+        return false;
+    };
+    if current == expected {
+        return false;
+    }
+    match workspace
+        .accepted_documents
+        .get(relative_path)
+        .map(|entry| entry.current_text())
+    {
+        Some(accepted) => accepted != expected || current != accepted,
+        None => true,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_managed_text_asset(
     zola_root: &Path,
+    workspace: &ProjectWorkspace,
     documents: &mut FileBufferStore,
-    deleted_documents: &BTreeSet<String>,
+    deleted_documents: &mut BTreeSet<String>,
+    relative_path: &str,
+    expected: &str,
+    required: bool,
     now_ms: u128,
 ) -> Result<(), String> {
-    let definition = generated_asset_definition(GeneratedAssetId::AnimeJsRuntime);
-    if deleted_documents.contains(definition.project_relative_path) {
+    if required && deleted_documents.contains(relative_path) {
         return Err(format!(
-            "Save Page JS a fost blocat: {} este necesar, dar este șters în sesiunea curentă.",
-            definition.project_relative_path
+            "Save Motion a fost blocat: modulul necesar {relative_path} este șters în sesiunea curentă."
         ));
     }
-    if let Some(current) = documents.text_for(definition.project_relative_path) {
-        if current.as_bytes() != definition.bytes {
-            return Err(format!(
-                "Save Page JS nu poate suprascrie {}: conținutul curent diferă de runtime-ul administrat de nucleu.",
-                definition.project_relative_path
-            ));
+
+    if documents.files.contains_key(relative_path) {
+        if managed_text_is_manual_override(workspace, relative_path, expected) {
+            deleted_documents.remove(relative_path);
+            return Ok(());
+        }
+        let current = documents.text_for(relative_path).unwrap_or_default();
+        if current != expected {
+            if required {
+                return Err(format!(
+                    "Save Motion nu poate suprascrie modulul administrat {relative_path}: sursa diferă de versiunea internă."
+                ));
+            }
+            return Ok(());
+        }
+        if required {
+            deleted_documents.remove(relative_path);
+        } else {
+            documents.files.remove(relative_path);
+            deleted_documents.insert(relative_path.to_string());
         }
         return Ok(());
     }
 
-    let plan = plan_generated_asset_intent(
-        zola_root,
-        GeneratedAssetId::AnimeJsRuntime,
-        GeneratedAssetAction::EnsurePresent,
-    );
-    match plan.status {
-        GeneratedAssetPlanStatus::Blocked => Err(format!(
-            "Save Page JS a blocat runtime-ul Anime: {}",
-            plan.diagnostics.join(" ")
-        )),
-        GeneratedAssetPlanStatus::Noop => Ok(()),
-        GeneratedAssetPlanStatus::Ready => {
-            let contents = std::str::from_utf8(definition.bytes).map_err(|_| {
-                "Registry-ul Anime conține bytes non-UTF-8 și nu poate intra în tranzacția text ProjectWorkspace."
-                    .to_string()
-            })?;
-            stage_materialized_text(
-                documents,
-                definition.project_relative_path,
-                contents.to_string(),
-                now_ms,
-            )
+    let absolute_path = zola_root.join(relative_path);
+    match std::fs::symlink_metadata(&absolute_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_dir() => {
+            if required {
+                Err(format!(
+                    "Save Motion nu poate materializa {relative_path}: destinația nu este un fișier text obișnuit."
+                ))
+            } else {
+                Ok(())
+            }
         }
+        Ok(_) => {
+            let disk_source = std::fs::read_to_string(&absolute_path).map_err(|error| {
+                format!("Save Motion nu poate verifica {relative_path}: {error}")
+            })?;
+            if disk_source != expected {
+                if required {
+                    return Err(format!(
+                        "Save Motion păstrează override-ul manual {relative_path} și refuză să îl suprascrie automat."
+                    ));
+                }
+                return Ok(());
+            }
+            if required {
+                stage_materialized_text(documents, relative_path, expected.to_string(), now_ms)?;
+                deleted_documents.remove(relative_path);
+            } else {
+                deleted_documents.insert(relative_path.to_string());
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if required {
+                stage_materialized_text(documents, relative_path, expected.to_string(), now_ms)?;
+                deleted_documents.remove(relative_path);
+            } else {
+                deleted_documents.remove(relative_path);
+            }
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "Save Motion nu poate inspecta destinația {relative_path}: {error}"
+        )),
     }
+}
+
+fn is_page_runtime_template_path(path: &str) -> bool {
+    motion_source_relative_path(path).is_ok()
+}
+
+fn page_js_source_is_manual_override(
+    workspace: &ProjectWorkspace,
+    template_path: &str,
+    current_template_source: &str,
+    current_config: &PageJsConfig,
+    js_path: &str,
+) -> bool {
+    let Some(current_source) = workspace.documents.text_for(js_path) else {
+        return false;
+    };
+    let current_plan = PageRuntimePlan::from_sources(current_template_source, current_config);
+    let current_generated = current_plan
+        .has_runtime()
+        .then(|| generate_page_js(&current_plan));
+    if current_generated.as_deref() == Some(current_source.as_str()) {
+        return false;
+    }
+
+    let Some(accepted_source) = workspace
+        .accepted_documents
+        .get(js_path)
+        .map(|entry| entry.current_text())
+    else {
+        return current_generated.as_deref() != Some(current_source.as_str());
+    };
+    let accepted_template_source = workspace
+        .accepted_documents
+        .get(template_path)
+        .map(|entry| entry.current_text())
+        .unwrap_or(current_template_source);
+    let accepted_config = workspace
+        .accepted_page_js
+        .get(template_path)
+        .cloned()
+        .unwrap_or_default();
+    let accepted_plan = PageRuntimePlan::from_sources(accepted_template_source, &accepted_config);
+    let accepted_generated = accepted_plan
+        .has_runtime()
+        .then(|| generate_page_js(&accepted_plan));
+    let accepted_was_generated = accepted_generated.as_deref() == Some(accepted_source);
+
+    !accepted_was_generated || current_source != accepted_source
+}
+
+fn remove_legacy_public_motion_asset(
+    zola_root: &Path,
+    documents: &mut FileBufferStore,
+    deleted_documents: &mut BTreeSet<String>,
+    relative_path: &str,
+    expected_sha256: &str,
+) -> Result<(), String> {
+    let current = documents
+        .text_for(relative_path)
+        .map(|source| source.into_bytes())
+        .or_else(|| std::fs::read(zola_root.join(relative_path)).ok());
+    let Some(current) = current else {
+        deleted_documents.remove(relative_path);
+        return Ok(());
+    };
+    let actual_sha256 = format!("{:x}", Sha256::digest(&current));
+    if actual_sha256 == expected_sha256 {
+        documents.files.remove(relative_path);
+        deleted_documents.insert(relative_path.to_string());
+    } else {
+        // A divergent file is authored code. The obsolete generated tag is
+        // removed from templates, but the source itself remains untouched.
+        deleted_documents.remove(relative_path);
+    }
+    Ok(())
 }
 
 fn stage_materialized_text(
@@ -1196,6 +1471,48 @@ mod tests {
     use super::*;
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn legacy_motion_asset_cleanup_is_hash_exact_and_preserves_authored_code() {
+        let root = unique_test_dir();
+        std::fs::create_dir_all(root.join("static/js")).unwrap();
+        let legacy_path = "static/js/legacy.js";
+        std::fs::write(root.join(legacy_path), "generated").unwrap();
+        let expected = format!("{:x}", Sha256::digest(b"generated"));
+        let mut documents = FileBufferStore::new(
+            "legacy-motion-cleanup-test",
+            root.to_string_lossy(),
+            1,
+            FileBufferStoreLimits {
+                max_files: 10,
+                max_file_bytes: 1024 * 1024,
+                max_total_bytes: 4 * 1024 * 1024,
+            },
+        );
+        let mut deleted = BTreeSet::new();
+        remove_legacy_public_motion_asset(
+            &root,
+            &mut documents,
+            &mut deleted,
+            legacy_path,
+            &expected,
+        )
+        .unwrap();
+        assert!(deleted.contains(legacy_path));
+
+        std::fs::write(root.join(legacy_path), "authored").unwrap();
+        deleted.clear();
+        remove_legacy_public_motion_asset(
+            &root,
+            &mut documents,
+            &mut deleted,
+            legacy_path,
+            &expected,
+        )
+        .unwrap();
+        assert!(!deleted.contains(legacy_path));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn binary_create_and_delete_are_planned_with_reversible_bytes() {

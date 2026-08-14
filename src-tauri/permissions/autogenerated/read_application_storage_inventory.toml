@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-application-storage-inventory"
+description = "Enables the read_application_storage_inventory command without any pre-configured scope."
+commands.allow = ["read_application_storage_inventory"]
+
+[[permission]]
+identifier = "deny-read-application-storage-inventory"
+description = "Denies the read_application_storage_inventory command without any pre-configured scope."
+commands.deny = ["read_application_storage_inventory"]

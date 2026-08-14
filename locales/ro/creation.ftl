@@ -62,6 +62,24 @@ assets-usages = Utilizări
 assets-pending-note = Resursa există momentan numai în sesiune. Ctrl+S o persistă pe disc.
 assets-edit-usage-action = Editează utilizarea
 assets-open = Deschide resursa
+assets-delete = Șterge resursa
+assets-delete-title = Ștergi „{ $name }”?
+assets-delete-description = Resursa { $path } va fi eliminată din proiect prin ProjectWorkspace.
+assets-delete-used-warning =
+    { $count ->
+        [one] Source Graph cunoaște o utilizare activă:
+       *[other] Source Graph cunoaște { $count } utilizări active:
+    }
+assets-delete-references-preserved = Referințele nu vor fi modificate automat; ștergerea poate produce resurse lipsă în site.
+assets-delete-unused-note = Source Graph nu cunoaște utilizări active. Referințele dinamice pot să nu fie detectabile static.
+assets-delete-auxiliary-note = Fișierele auxiliare și licențele pot fi necesare chiar dacă nu au referințe în cod.
+assets-delete-confirm = Șterge resursa
+assets-delete-anyway = Șterge oricum
+assets-deleting = Se elimină prin Rust…
+assets-delete-entry-unavailable = Resursa { $path } nu există în proiecția File Explorer curentă.
+assets-delete-plan-blocked = Rust a blocat ștergerea resursei în starea curentă.
+assets-delete-staged-success = Importul { $path } a fost retras din sesiune.
+assets-delete-success = Resursa { $path } este pregătită pentru ștergere — Ctrl+S persistă pe disc.
 assets-select-help = Selectează o resursă pentru informații.
 blocks-view-all = Toate
 blocks-view-elements = Elemente
@@ -243,6 +261,10 @@ design-stylesheet-created-success = Stylesheet creat: { $path } — Ctrl+S persi
 design-local-fonts-required = Alege și analizează fonturile locale înainte de import.
 design-local-font-conflicts = Rezolvă conflictele din plan înainte de import.
 design-operation-local-font-import = Importul fonturilor locale
+design-bundled-font-required = Selectează o familie din biblioteca inclusă.
+design-operation-bundled-font-install = Instalarea fontului inclus
+design-bundled-font-warning = Fontul { $family } este în sesiune; interfața necesită resincronizare.
+design-bundled-font-success = Fontul { $family }, licența și declarațiile @font-face sunt pregătite local în proiect.
 design-local-files-warning =
     { $count ->
         [one] Un fișier de font este în sesiune; interfața necesită resincronizare.
@@ -314,6 +336,7 @@ design-role-missing = ${ $variable } lipsește
 design-font-registered-in = Înregistrat în { $stylesheets }
 design-font-unregistered-help = Fișiere prezente, dar familia nu are @font-face
 design-origin-local = Local
+design-origin-bundled = Inclus în aplicație
 design-origin-theme = Temă
 design-origin-external = Extern
 design-romanian-coverage = Acoperire română
@@ -339,7 +362,19 @@ design-class-name = Nume clasă
 design-destination-stylesheet = Stylesheet destinație
 design-project-path = Cale în proiect
 design-font-source = Sursa fontului
+design-included-library = Incluse
 design-from-computer = Din calculator
+design-bundled-catalog = Biblioteca Pană Studio
+design-bundled-description = 36 de familii WOFF2 variabile, disponibile offline și validate de Rust pentru limba română.
+design-font-category = Categoria fontului
+design-loading-bundled-catalog = Se citește catalogul inclus din binarul aplicației…
+design-bundled-families-label = Familii incluse în aplicație
+design-empty-bundled-search = Nu există familii pentru aceste filtre.
+design-bundled-preview = Previzualizare locală
+design-bundled-preview-text = Construiește clar, cu diacritice: ăâîșț.
+design-bundled-preview-loading = Se încarcă exclusiv familia selectată…
+design-bundled-preview-ready = Mostră WOFF2 încărcată din aplicație.
+design-bundled-contract = Contract instalare
 design-google-catalog = Catalog Google Fonts
 design-google-description = Familia va fi instalată local în proiect și înregistrată automat prin CSS.
 design-search-family = Caută familie

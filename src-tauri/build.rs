@@ -1,3 +1,5 @@
+#[path = "build/font_library.rs"]
+mod font_library;
 #[path = "src/tauri_command_registry.rs"]
 mod tauri_command_registry;
 
@@ -53,9 +55,169 @@ fn main() {
         .permissions_path_pattern(permission_pattern);
 
     generate_embedded_locale_catalog(Path::new(&out_dir).join("pana-studio-locales.rs"));
+    generate_embedded_anime_module_catalog(
+        Path::new(&out_dir).join("pana-studio-anime-modules.rs"),
+    );
+    font_library::generate(
+        Path::new(
+            &env::var_os("CARGO_MANIFEST_DIR").expect("Cargo did not provide CARGO_MANIFEST_DIR"),
+        ),
+        Path::new(&out_dir).join("pana-studio-font-library.rs"),
+    );
 
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(app_manifest))
         .expect("failed to build Pană Studio Tauri ACL manifest");
+}
+
+fn generate_embedded_anime_module_catalog(output_path: PathBuf) {
+    let manifest_dir = PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR").expect("Cargo did not provide CARGO_MANIFEST_DIR"),
+    );
+    let umd_path = manifest_dir.join("resources/anime.umd.min.js");
+    println!("cargo:rerun-if-changed={}", umd_path.display());
+    let umd_source = fs::read_to_string(&umd_path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read Anime.js UMD resource {}: {error}",
+            umd_path.display()
+        )
+    });
+    let version = anime_version_from_notice(&umd_source);
+    let resource_directory = format!("animejs-{version}");
+    let modules_root = manifest_dir
+        .join("resources")
+        .join(&resource_directory)
+        .join("modules");
+    let license_path = manifest_dir
+        .join("resources")
+        .join(&resource_directory)
+        .join("LICENSE.md");
+    println!("cargo:rerun-if-changed={}", modules_root.display());
+    println!("cargo:rerun-if-changed={}", license_path.display());
+    assert!(license_path.is_file(), "Anime.js module license must exist");
+
+    let mut modules = Vec::new();
+    collect_javascript_modules(&modules_root, &modules_root, &mut modules);
+    modules.sort_by(|left, right| left.0.cmp(&right.0));
+    assert!(
+        !modules.is_empty(),
+        "Anime.js module catalog must not be empty"
+    );
+
+    let mut generated = format!(
+        "pub const EMBEDDED_ANIME_VERSION: &str = {version:?};\n\
+         pub const EMBEDDED_ANIME_LICENSE: &str = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/resources/{resource_directory}/LICENSE.md\"));\n\
+         pub const EMBEDDED_ANIME_MODULES: &[EmbeddedAnimeModule] = &[\n"
+    );
+    for (relative_path, absolute_path) in modules {
+        println!("cargo:rerun-if-changed={}", absolute_path.display());
+        let source = fs::read_to_string(&absolute_path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read Anime.js module {}: {error}",
+                absolute_path.display()
+            )
+        });
+        let dependencies = javascript_module_dependencies(&relative_path, &source);
+        generated.push_str("    EmbeddedAnimeModule {\n");
+        generated.push_str(&format!("        relative_path: {:?},\n", relative_path));
+        generated.push_str(&format!(
+            "        source: include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/resources/{resource_directory}/modules/{}\")),\n",
+            relative_path,
+        ));
+        generated.push_str("        dependencies: &[\n");
+        for dependency in dependencies {
+            generated.push_str(&format!("            {:?},\n", dependency));
+        }
+        generated.push_str("        ],\n    },\n");
+    }
+    generated.push_str("];\n");
+    write_if_changed(&output_path, &generated);
+}
+
+fn anime_version_from_notice(source: &str) -> String {
+    let version = source
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("* @version v"))
+        .map(str::trim)
+        .filter(|version| {
+            !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || byte == b'.' || byte == b'-')
+        })
+        .expect("Anime.js UMD resource must declare a valid `@version v...` notice");
+    version.to_string()
+}
+
+fn collect_javascript_modules(root: &Path, directory: &Path, modules: &mut Vec<(String, PathBuf)>) {
+    let mut entries = fs::read_dir(directory)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", directory.display()))
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            collect_javascript_modules(root, &path, modules);
+            continue;
+        }
+        if path.extension().and_then(|extension| extension.to_str()) != Some("js") {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .expect("Anime.js module must remain under its resource root")
+            .to_string_lossy()
+            .replace('\\', "/");
+        modules.push((relative, path));
+    }
+}
+
+fn javascript_module_dependencies(module_path: &str, source: &str) -> Vec<String> {
+    let mut dependencies = Vec::new();
+    for marker in ["from\"", "from'", "import\"", "import'"] {
+        let quote = marker.as_bytes()[marker.len() - 1] as char;
+        let mut cursor = 0;
+        while let Some(relative_start) = source[cursor..].find(marker) {
+            let start = cursor + relative_start + marker.len();
+            let Some(relative_end) = source[start..].find(quote) else {
+                break;
+            };
+            let specifier = &source[start..start + relative_end];
+            if specifier.starts_with('.') {
+                dependencies.push(resolve_javascript_specifier(module_path, specifier));
+            }
+            cursor = start + relative_end + quote.len_utf8();
+        }
+    }
+    dependencies.sort();
+    dependencies.dedup();
+    dependencies
+}
+
+fn resolve_javascript_specifier(module_path: &str, specifier: &str) -> String {
+    let mut segments = module_path
+        .split('/')
+        .take(module_path.split('/').count().saturating_sub(1))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for segment in specifier.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                assert!(
+                    segments.pop().is_some(),
+                    "Anime.js import escaped module root"
+                );
+            }
+            segment => segments.push(segment.to_string()),
+        }
+    }
+    let resolved = segments.join("/");
+    assert!(
+        resolved.ends_with(".js"),
+        "Anime.js imports must resolve to .js files"
+    );
+    resolved
 }
 
 fn generate_embedded_locale_catalog(output_path: PathBuf) {

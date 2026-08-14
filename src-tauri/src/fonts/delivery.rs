@@ -1,6 +1,11 @@
 use serde::Serialize;
 
-use crate::localization::LocalizedDiagnostic;
+use crate::{
+    localization::LocalizedDiagnostic,
+    project_model::managed_head_engine::{
+        has_unique_html_head, managed_head_block_body, reconcile_managed_head_block,
+    },
+};
 
 use super::{
     managed_font_end_marker, managed_font_start_marker, normalize_font_family_name, FontFaceFamily,
@@ -76,6 +81,12 @@ pub fn annotate_font_preloads<'a>(
 ) -> Vec<FontFaceFamily> {
     let templates = sources
         .filter(|(path, _)| is_template_path(path))
+        .map(|(path, source)| {
+            let managed_source = managed_head_block_body(source, path, PRELOAD_START, PRELOAD_END)
+                .ok()
+                .flatten();
+            (path, source, managed_source)
+        })
         .collect::<Vec<_>>();
 
     for family in &mut families {
@@ -83,20 +94,18 @@ pub fn annotate_font_preloads<'a>(
             let public_url = public_font_url(&file.file);
             let mut paths = Vec::new();
             let mut managed = false;
-            for (path, source) in &templates {
+            for (path, source, managed_source) in &templates {
                 let links = font_preload_hrefs(source);
                 if links
                     .iter()
                     .any(|href| normalize_public_href(href) == public_url)
                 {
                     paths.push((*path).to_string());
-                    managed |= managed_preload_source(source).ok().flatten().is_some_and(
-                        |managed_source| {
-                            font_preload_hrefs(managed_source)
-                                .iter()
-                                .any(|href| normalize_public_href(href) == public_url)
-                        },
-                    );
+                    managed |= managed_source.is_some_and(|managed_source| {
+                        font_preload_hrefs(managed_source)
+                            .iter()
+                            .any(|href| normalize_public_href(href) == public_url)
+                    });
                 }
             }
             paths.sort();
@@ -143,7 +152,7 @@ pub fn select_font_preload_template<'a>(
     sources: impl Iterator<Item = (&'a str, &'a str)>,
 ) -> Option<String> {
     sources
-        .filter(|(path, source)| is_template_path(path) && contains_ascii_case(source, "</head>"))
+        .filter(|(path, source)| is_template_path(path) && has_unique_html_head(source, path))
         .map(|(path, source)| {
             let normalized = path.replace('\\', "/");
             let local = !normalized.starts_with("themes/") && !normalized.contains("/themes/");
@@ -172,6 +181,7 @@ pub fn select_font_preload_template<'a>(
 
 pub fn prepare_font_preload_update(
     source: &str,
+    template_name: &str,
     graph_families: &[FontFaceFamily],
     target_file: &str,
     enabled: bool,
@@ -188,7 +198,8 @@ pub fn prepare_font_preload_update(
         ));
     }
 
-    let managed_source = managed_preload_source(source)?;
+    let managed_source =
+        managed_head_block_body(source, template_name, PRELOAD_START, PRELOAD_END)?;
     let managed_hrefs = managed_source.map(font_preload_hrefs).unwrap_or_default();
     let mut selected = graph_families
         .iter()
@@ -208,7 +219,23 @@ pub fn prepare_font_preload_update(
     }
     selected.sort_by(|left, right| left.file.cmp(&right.file));
     selected.dedup_by(|left, right| left.file == right.file);
-    upsert_font_preload_block(source, &selected)
+    let body_lines = selected
+        .iter()
+        .map(|file| {
+            format!(
+                "<link rel=\"preload\" href=\"{}\" as=\"font\" type=\"{}\" crossorigin>",
+                public_font_url(&file.file),
+                font_mime_type(file)
+            )
+        })
+        .collect::<Vec<_>>();
+    reconcile_managed_head_block(
+        source,
+        template_name,
+        PRELOAD_START,
+        PRELOAD_END,
+        &body_lines,
+    )
 }
 
 pub fn font_delivery_diagnostics(
@@ -365,82 +392,6 @@ fn update_managed_font_display(
     ))
 }
 
-fn upsert_font_preload_block(source: &str, files: &[LocalFontFile]) -> Result<String, String> {
-    let existing_start = source.find(PRELOAD_START);
-    let existing_range = if let Some(start) = existing_start {
-        let search_start = start + PRELOAD_START.len();
-        let relative_end = source[search_start..].find(PRELOAD_END).ok_or_else(|| {
-            "Blocul preload are marker de început fără marker de sfârșit.".to_string()
-        })?;
-        Some((start, search_start + relative_end + PRELOAD_END.len()))
-    } else {
-        if source.contains(PRELOAD_END) {
-            return Err("Blocul preload are marker de sfârșit fără marker de început.".to_string());
-        }
-        None
-    };
-
-    if files.is_empty() {
-        let Some((start, end)) = existing_range else {
-            return Ok(source.to_string());
-        };
-        let mut removal_end = end;
-        if source[removal_end..].starts_with('\n') {
-            removal_end += 1;
-        }
-        return Ok(format!("{}{}", &source[..start], &source[removal_end..]));
-    }
-
-    let indent = existing_range
-        .map(|(start, _)| line_indent_at(source, start))
-        .unwrap_or_else(|| {
-            find_ascii_case(source, "</head>")
-                .map(|index| line_indent_at(source, index))
-                .unwrap_or_default()
-        });
-    let block = build_font_preload_block(files, &indent);
-    if let Some((start, end)) = existing_range {
-        return Ok(format!("{}{}{}", &source[..start], block, &source[end..]));
-    }
-
-    let head_end = find_ascii_case(source, "</head>").ok_or_else(|| {
-        "Template-ul ales pentru preload nu conține un element </head>.".to_string()
-    })?;
-    let prefix = &source[..head_end];
-    let separator = if prefix.ends_with('\n') { "" } else { "\n" };
-    Ok(format!(
-        "{prefix}{separator}{block}\n{}",
-        &source[head_end..]
-    ))
-}
-
-fn build_font_preload_block(files: &[LocalFontFile], indent: &str) -> String {
-    let mut lines = vec![format!("{indent}{PRELOAD_START}")];
-    for file in files {
-        lines.push(format!(
-            "{indent}<link rel=\"preload\" href=\"{}\" as=\"font\" type=\"{}\" crossorigin>",
-            public_font_url(&file.file),
-            font_mime_type(file)
-        ));
-    }
-    lines.push(format!("{indent}{PRELOAD_END}"));
-    lines.join("\n")
-}
-
-fn managed_preload_source(source: &str) -> Result<Option<&str>, String> {
-    let Some(start) = source.find(PRELOAD_START) else {
-        if source.contains(PRELOAD_END) {
-            return Err("Blocul preload are marker de sfârșit fără marker de început.".to_string());
-        }
-        return Ok(None);
-    };
-    let body_start = start + PRELOAD_START.len();
-    let relative_end = source[body_start..].find(PRELOAD_END).ok_or_else(|| {
-        "Blocul preload are marker de început fără marker de sfârșit.".to_string()
-    })?;
-    Ok(Some(&source[body_start..body_start + relative_end]))
-}
-
 fn font_preload_hrefs(source: &str) -> Vec<String> {
     html_link_tags(source)
         .into_iter()
@@ -557,24 +508,6 @@ fn is_template_path(path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".html")
 }
 
-fn contains_ascii_case(source: &str, needle: &str) -> bool {
-    find_ascii_case(source, needle).is_some()
-}
-
-fn find_ascii_case(source: &str, needle: &str) -> Option<usize> {
-    source
-        .to_ascii_lowercase()
-        .find(&needle.to_ascii_lowercase())
-}
-
-fn line_indent_at(source: &str, index: usize) -> String {
-    let line_start = source[..index].rfind('\n').map_or(0, |offset| offset + 1);
-    source[line_start..index]
-        .chars()
-        .take_while(|character| matches!(character, ' ' | '\t'))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -631,6 +564,7 @@ mod tests {
         let source = "<html>\n  <head>\n  </head>\n</html>\n";
         let inserted = prepare_font_preload_update(
             source,
+            "templates/base.html",
             &[family(font_file.clone())],
             &font_file.file,
             true,
@@ -643,11 +577,64 @@ mod tests {
             vec![family(font_file.clone())],
             [("templates/base.html", inserted.as_str())].into_iter(),
         );
-        let removed =
-            prepare_font_preload_update(&inserted, &graph_families, &font_file.file, false)
-                .expect("remove preload");
+        let removed = prepare_font_preload_update(
+            &inserted,
+            "templates/base.html",
+            &graph_families,
+            &font_file.file,
+            false,
+        )
+        .expect("remove preload");
         assert!(!removed.contains(PRELOAD_START));
         assert!(!removed.contains("geist-400.woff2"));
+    }
+
+    #[test]
+    fn toggling_multiple_font_preloads_keeps_the_managed_block_stable() {
+        let regular = file("static/fonturi/geist/geist-400.woff2");
+        let mut bold = file("static/fonturi/geist/geist-700.woff2");
+        bold.declared_weight = Some(700);
+        let mut geist = family(regular.clone());
+        geist.files.push(bold.clone());
+        let source = "<html>\n  <head>\n  </head>\n</html>\n";
+
+        let regular_only = prepare_font_preload_update(
+            source,
+            "templates/base.html",
+            &[geist.clone()],
+            &regular.file,
+            true,
+        )
+        .expect("enable regular");
+        let graph = annotate_font_preloads(
+            vec![geist.clone()],
+            [("templates/base.html", regular_only.as_str())].into_iter(),
+        );
+        let both = prepare_font_preload_update(
+            &regular_only,
+            "templates/base.html",
+            &graph,
+            &bold.file,
+            true,
+        )
+        .expect("enable bold");
+        let graph = annotate_font_preloads(
+            vec![geist],
+            [("templates/base.html", both.as_str())].into_iter(),
+        );
+        let bold_only =
+            prepare_font_preload_update(&both, "templates/base.html", &graph, &regular.file, false)
+                .expect("disable regular");
+
+        assert_eq!(both.matches(PRELOAD_START).count(), 1);
+        assert_eq!(both.matches(PRELOAD_END).count(), 1);
+        assert!(both.contains("geist-400.woff2"));
+        assert!(both.contains("geist-700.woff2"));
+        assert!(both.contains(&format!("\n    {PRELOAD_START}\n")));
+        assert!(!both.contains(&format!("\n        {PRELOAD_START}\n")));
+        assert!(bold_only.contains(&format!("\n    {PRELOAD_START}\n")));
+        assert!(!bold_only.contains("geist-400.woff2"));
+        assert!(bold_only.contains("geist-700.woff2"));
     }
 
     #[test]

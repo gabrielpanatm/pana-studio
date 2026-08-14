@@ -114,13 +114,7 @@ fn utf8_segments(path: &Path) -> Result<Vec<&str>, String> {
 
 fn validate_internal_path(owner: WriteOwner, segments: &[&str]) -> bool {
     match owner {
-        WriteOwner::AppConfig => {
-            segments == ["config.json"]
-                || (segments.len() == 2
-                    && segments[0] == "projects"
-                    && (is_hex_json_name(segments[1])
-                        || is_hex_deploy_secrets_json_name(segments[1])))
-        }
+        WriteOwner::AppConfig => segments == ["config.json"],
         WriteOwner::McpContext => {
             matches!(
                 segments,
@@ -133,6 +127,10 @@ fn validate_internal_path(owner: WriteOwner, segments: &[&str]) -> bool {
                 && !segments[1].is_empty()
                 && segments[2].ends_with(".json")
         }
+        WriteOwner::StorageMaintenance => {
+            matches!(segments, ["sessions", id] if valid_storage_session_id(id))
+                || matches!(segments, ["preview", entry] if valid_storage_preview_entry(entry))
+        }
         WriteOwner::ProjectSession => session_tail(segments) == Some(&["manifest.json"][..]),
         WriteOwner::Workbench => session_tail(segments) == Some(&["workbench.json"][..]),
         WriteOwner::ProjectWorkspace => {
@@ -144,6 +142,27 @@ fn validate_internal_path(owner: WriteOwner, segments: &[&str]) -> bool {
         WriteOwner::Kernel => validate_kernel_session_tail(session_tail(segments)),
         _ => false,
     }
+}
+
+fn valid_storage_session_id(value: &str) -> bool {
+    value.len() == 16
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn valid_storage_preview_entry(value: &str) -> bool {
+    value == "export"
+        || value
+            .strip_prefix("project-")
+            .or_else(|| value.strip_prefix("template-sandbox-"))
+            .is_some_and(|suffix| {
+                !suffix.is_empty()
+                    && suffix.len() <= 32
+                    && suffix
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            })
 }
 
 fn session_tail<'a>(segments: &'a [&str]) -> Option<&'a [&'a str]> {
@@ -186,26 +205,27 @@ fn validate_project_path(intent: &WriteIntent, segments: &[&str]) -> bool {
         WriteOwner::ProjectWorkspace => {
             !segments.is_empty() && intent.category == WriteCategory::ProjectSourceWrite
         }
+        WriteOwner::ProjectEnvStore => {
+            segments == [".env"] && intent.category == WriteCategory::ProjectSourceWrite
+        }
         _ => false,
     }
 }
 
-fn is_hex_json_name(value: &str) -> bool {
-    value.strip_suffix(".json").is_some_and(is_project_hash)
-}
-
-fn is_hex_deploy_secrets_json_name(value: &str) -> bool {
-    value
-        .strip_suffix(".deploy-secrets.json")
-        .is_some_and(is_project_hash)
-}
-
-fn is_project_hash(value: &str) -> bool {
-    value.len() == 16 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 pub fn known_write_declarations() -> Vec<WriteDeclaration> {
     vec![
+        WriteDeclaration {
+            category: WriteCategory::InternalAppWrite,
+            owner: WriteOwner::StorageMaintenance,
+            operations: vec![WriteOperationKind::RemoveDirectoryTree],
+            path_authority:
+                "ApplicationHome.{data/sessions|cache/preview}/[validated-storage-entry]",
+            atomicity: WriteAtomicity::FileLifecycle,
+            conflict: ConflictPolicy::SingleOwnerInternal,
+            recovery: RecoveryPolicy::LoggedAtomicFile,
+            validation:
+                "Storage maintenance removes only a validated direct session or preview-cache child after live-session revalidation; arbitrary paths and Application Home roots are never accepted.",
+        },
         WriteDeclaration {
             category: WriteCategory::InternalAppWrite,
             owner: WriteOwner::ProjectSession,
@@ -386,8 +406,7 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
             category: WriteCategory::InternalAppWrite,
             owner: WriteOwner::AppConfig,
             operations: vec![WriteOperationKind::WriteText],
-            path_authority:
-                "ApplicationHome.config/{config.json,projects/[project-id].json,projects/[project-id].deploy-secrets.json}",
+            path_authority: "ApplicationHome.config/config.json",
             atomicity: WriteAtomicity::AtomicRename,
             conflict: ConflictPolicy::SingleOwnerInternal,
             recovery: RecoveryPolicy::LoggedAtomicFile,
@@ -412,6 +431,17 @@ pub fn known_write_declarations() -> Vec<WriteDeclaration> {
             conflict: ConflictPolicy::ExternalBackupRequired,
             recovery: RecoveryPolicy::BackupBeforeWrite,
             validation: "External config writes create a backup and log the operation.",
+        },
+        WriteDeclaration {
+            category: WriteCategory::ProjectSourceWrite,
+            owner: WriteOwner::ProjectEnvStore,
+            operations: vec![WriteOperationKind::WriteText],
+            path_authority: "ProjectSession project root/.env",
+            atomicity: WriteAtomicity::AtomicRename,
+            conflict: ConflictPolicy::RequireDiskBaseline,
+            recovery: RecoveryPolicy::LoggedAtomicFile,
+            validation:
+                "ProjectEnvStore writes only root .env with exact leaf CAS; secret bytes never enter ProjectWorkspace recovery or Application Home.",
         },
         WriteDeclaration {
             category: WriteCategory::ProjectSourceWrite,
@@ -517,17 +547,13 @@ mod tests {
     }
 
     #[test]
-    fn app_config_accepts_only_exact_project_and_deploy_secret_store_names() {
-        for accepted in [
-            "config.json",
-            "projects/0123456789abcdef.json",
-            "projects/0123456789abcdef.deploy-secrets.json",
-        ] {
-            validate_authority_path(&app_config_intent(accepted))
-                .unwrap_or_else(|error| panic!("{accepted} trebuia acceptat: {error}"));
-        }
+    fn app_config_accepts_only_the_global_application_document() {
+        validate_authority_path(&app_config_intent("config.json"))
+            .unwrap_or_else(|error| panic!("config.json trebuia acceptat: {error}"));
 
         for rejected in [
+            "projects/0123456789abcdef.json",
+            "projects/0123456789abcdef.deploy-secrets.json",
             "projects/0123456789abcde.deploy-secrets.json",
             "projects/0123456789abcdeg.deploy-secrets.json",
             "projects/0123456789abcdef.deploy-secrets.json.bak",
@@ -537,6 +563,68 @@ mod tests {
             assert!(
                 validate_authority_path(&app_config_intent(rejected)).is_err(),
                 "{rejected} trebuia refuzat"
+            );
+        }
+    }
+
+    #[test]
+    fn storage_maintenance_accepts_only_typed_direct_children() {
+        let intent = |root: &str, relative_path: &str| {
+            WriteIntent::new(
+                WriteCategory::InternalAppWrite,
+                WriteOwner::StorageMaintenance,
+                WriteOperationKind::RemoveDirectoryTree,
+                WriteTarget::new(
+                    PathBuf::from(root).join(relative_path),
+                    PathBuf::from(root),
+                    format!("storage/{relative_path}"),
+                ),
+                WritePolicy::internal_lifecycle(),
+                "storage path contract test",
+            )
+        };
+
+        for accepted in [
+            intent("/app/data", "sessions/0123456789abcdef"),
+            intent("/app/cache", "preview/project-deadbeef"),
+            intent("/app/cache", "preview/template-sandbox-acde1234"),
+            intent("/app/cache", "preview/export"),
+        ] {
+            validate_authority_path(&accepted).unwrap();
+        }
+        for rejected in [
+            intent("/app/data", "sessions"),
+            intent("/app/data", "sessions/0123456789abcdef/recovery"),
+            intent("/app/data", "kernel/write-authority-wal"),
+            intent("/app/cache", "preview"),
+            intent("/app/cache", "preview/random"),
+            intent("/app/cache", "scratch/session.json"),
+        ] {
+            assert!(validate_authority_path(&rejected).is_err());
+        }
+    }
+
+    #[test]
+    fn project_env_store_accepts_only_root_env() {
+        let intent = |relative_path: &str| {
+            WriteIntent::new(
+                WriteCategory::ProjectSourceWrite,
+                WriteOwner::ProjectEnvStore,
+                WriteOperationKind::WriteText,
+                WriteTarget::new(
+                    PathBuf::from("/project").join(relative_path),
+                    PathBuf::from("/project"),
+                    format!("project/{relative_path}"),
+                ),
+                WritePolicy::project_sensitive_atomic(),
+                "project env path contract test",
+            )
+        };
+        validate_authority_path(&intent(".env")).unwrap();
+        for rejected in ["config/.env", ".env.local", "credentials.env"] {
+            assert!(
+                validate_authority_path(&intent(rejected)).is_err(),
+                "{rejected}"
             );
         }
     }
@@ -602,7 +690,9 @@ mod tests {
             if declaration.category == WriteCategory::ProjectSourceWrite {
                 assert!(matches!(
                     declaration.owner,
-                    WriteOwner::ProjectWorkspace | WriteOwner::ProjectInitializer
+                    WriteOwner::ProjectWorkspace
+                        | WriteOwner::ProjectEnvStore
+                        | WriteOwner::ProjectInitializer
                 ));
             }
         }

@@ -789,7 +789,7 @@ mod tests {
         DeployTarget {
             id: "sftp-production".to_string(),
             name: "SFTP production".to_string(),
-            credential_ref: "sftp-secret".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_SFTP".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::Sftp(SftpTargetConfig {
                 host: "example.com".to_string(),

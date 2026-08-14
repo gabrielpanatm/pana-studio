@@ -19,13 +19,6 @@ pub struct NativeBlockOptionIntent {
     pub value: BlockOptionValue,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum NativeBlockMarkerKind {
-    Canonical,
-    Legacy,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeBlockOptionState {
@@ -38,7 +31,6 @@ pub struct NativeBlockOptionState {
 #[serde(rename_all = "camelCase")]
 pub struct NativeBlockSourceInspection {
     pub provider_id: String,
-    pub marker_kind: NativeBlockMarkerKind,
     pub editable: bool,
     pub diagnostic: Option<String>,
     pub definition: Option<crate::source_graph::model::BlockDefinition>,
@@ -49,28 +41,15 @@ pub(crate) fn inspect_native_block_source(
     opening_tag: &str,
 ) -> Result<NativeBlockSourceInspection, String> {
     let attributes = tag_attribute_map(opening_tag);
-    let canonical = attribute_value(&attributes, "data-pana-block");
-    let legacy = attribute_value(&attributes, "data-pana-component");
-    let (provider_id, marker_kind) = match (canonical, legacy) {
-        (Some(provider), _) if !provider.trim().is_empty() => (
-            provider.trim().to_string(),
-            NativeBlockMarkerKind::Canonical,
-        ),
-        (None, Some(provider)) if !provider.trim().is_empty() => {
-            (provider.trim().to_string(), NativeBlockMarkerKind::Legacy)
-        }
-        _ => {
-            return Err(
-                "Elementul sursă nu are un marcaj data-pana-block sau data-pana-component valid."
-                    .to_string(),
-            );
-        }
-    };
+    let provider_id = attribute_value(&attributes, "data-pana-block")
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+        .ok_or_else(|| "Elementul sursă nu are un marcaj data-pana-block valid.".to_string())?
+        .to_string();
 
     let Some(block) = native_block_by_id(&provider_id) else {
         return Ok(NativeBlockSourceInspection {
             provider_id: provider_id.clone(),
-            marker_kind,
             editable: false,
             diagnostic: Some(format!(
                 "Providerul `{provider_id}` nu există în NativeBlockRegistry. Instanța rămâne read-only."
@@ -85,18 +64,9 @@ pub(crate) fn inspect_native_block_source(
         .iter()
         .map(|option| option_state_from_attributes(option, &attributes, &mut diagnostics))
         .collect();
-    let editable = marker_kind == NativeBlockMarkerKind::Canonical;
-    if !editable {
-        diagnostics.push(
-            "Marcajul data-pana-component este compatibil la citire, dar proprietățile sale sunt read-only."
-                .to_string(),
-        );
-    }
-
     Ok(NativeBlockSourceInspection {
         provider_id,
-        marker_kind,
-        editable,
+        editable: true,
         diagnostic: (!diagnostics.is_empty()).then(|| diagnostics.join(" ")),
         definition: Some(crate::blocks::native_block_contract_definition(block)),
         options,
@@ -118,7 +88,7 @@ pub(crate) fn plan_native_block_option_attribute(
     if !inspection.editable {
         return Err(inspection
             .diagnostic
-            .unwrap_or_else(|| "Instanța legacy sau necunoscută este read-only.".to_string()));
+            .unwrap_or_else(|| "Instanța necunoscută este read-only.".to_string()));
     }
     let block = native_block_by_id(&inspection.provider_id).ok_or_else(|| {
         format!(
@@ -323,12 +293,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_markup_is_read_only() {
-        let inspection = inspect_native_block_source(r#"<div data-pana-component="accordion">"#)
-            .expect("inspection");
+    fn noncanonical_markup_is_rejected() {
+        let error = inspect_native_block_source(r#"<div data-provider="accordion">"#)
+            .expect_err("missing canonical marker");
 
-        assert!(!inspection.editable);
-        assert_eq!(inspection.marker_kind, NativeBlockMarkerKind::Legacy);
+        assert!(error.contains("data-pana-block"));
     }
 
     #[test]

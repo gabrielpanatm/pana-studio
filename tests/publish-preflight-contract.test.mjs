@@ -113,7 +113,8 @@ test("mutațiile workspace și schimbările deploy invalidează autorizația", (
   for (const command of ["save_deploy_settings", "save_deploy_credential", "delete_deploy_credential"]) {
     const index = deploy.indexOf(`pub fn ${command}`);
     assert.notEqual(index, -1);
-    assert.match(deploy.slice(index, index + 1800), /invalidate_publish_authorization/);
+    const nextCommand = deploy.indexOf("#[tauri::command]", index);
+    assert.match(deploy.slice(index, nextCommand === -1 ? undefined : nextCommand), /invalidate_publish_authorization/);
   }
   assert.match(frontend, /app\?\.invalidatePublishAuthorization\(\)/);
   assert.match(frontend, /plan\.preflightToken !== publishBuild\.preflightToken/);

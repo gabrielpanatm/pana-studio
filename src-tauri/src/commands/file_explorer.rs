@@ -496,14 +496,9 @@ fn prepare_workspace_changes(
             .ok_or_else(|| {
                 format!("FileExplorer nu poate demonstra bytes pentru resursa binară {path}.")
             })?;
-        if accepted_before.is_none() {
-            return Err(format!(
-                "FileExplorer nu poate muta sau șterge încă resursa binară nesalvată {path}; salvează proiectul pentru a fixa baseline-ul."
-            ));
-        }
         prepared.binary_changes.push(WorkspaceBinaryRestoreChange {
             relative_path: path.clone(),
-            before: accepted_before,
+            before: accepted_before.or_else(|| Some(current.clone())),
             after: None,
         });
         if let Some(destination) = destination {
@@ -839,5 +834,32 @@ mod tests {
         assert!(root.join("static/logo.png").is_file());
         assert!(!root.join("static/images/logo.png").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_binary_delete_captures_session_bytes_without_requiring_save() {
+        let root = Path::new("/project");
+        let mut projection = projection(root, HashMap::new(), Vec::new());
+        let bytes = vec![0x89, b'P', b'N', b'G'];
+        projection
+            .resource_bytes
+            .insert("static/images/new-logo.png".to_string(), bytes.clone());
+        let prepared = prepare_workspace_changes(
+            root,
+            &projection,
+            &plan(
+                FileExplorerOperationRequest::Delete {
+                    entry_id: "new-logo".to_string(),
+                },
+                Some("static/images/new-logo.png"),
+                None,
+                &["static/images/new-logo.png"],
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(prepared.binary_changes.len(), 1);
+        assert_eq!(prepared.binary_changes[0].before.as_ref(), Some(&bytes));
+        assert!(prepared.binary_changes[0].after.is_none());
     }
 }

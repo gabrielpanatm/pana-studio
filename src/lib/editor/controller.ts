@@ -1,7 +1,20 @@
-import { createCodeEditorTheme, languageExtensionFor, selectedSourceRangeField, setSelectedSourceRange } from "$lib/editor/codemirror";
+import {
+  createCodeEditorTheme,
+  languageExtensionFor,
+  selectedSourceProjectionExtension,
+  setSelectedSourceProjection,
+  type CodeSelectionPresentation,
+} from "$lib/editor/codemirror";
 import type { SourceLanguage } from "$lib/types";
 import { defaultKeymap } from "@codemirror/commands";
-import { bracketMatching, defaultHighlightStyle, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { Compartment, EditorState, Transaction } from "@codemirror/state";
 import {
   drawSelection,
@@ -39,7 +52,11 @@ export type CodeEditorController = {
   setLanguage: (language: SourceLanguage) => void;
   setTheme: (theme: "dark" | "light") => void;
   setReadOnly: (readOnly: boolean) => void;
-  setSelectedRange: (range: CodeSelectionRanges | null, reveal?: boolean) => void;
+  setSelectedRange: (
+    range: CodeSelectionRanges | null,
+    reveal?: boolean,
+    presentation?: CodeSelectionPresentation,
+  ) => void;
   revealLineColumn: (line: number, column: number) => void;
 };
 
@@ -60,6 +77,7 @@ export type CodeEditorContextMenuRequest = {
 
 const panaStudioEditorSetup = [
   lineNumbers(),
+  foldGutter(),
   highlightActiveLineGutter(),
   highlightSpecialChars(),
   drawSelection(),
@@ -69,7 +87,7 @@ const panaStudioEditorSetup = [
   syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
   bracketMatching(),
   highlightActiveLine(),
-  keymap.of(defaultKeymap),
+  keymap.of([...defaultKeymap, ...foldKeymap]),
 ];
 
 export function createCodeEditorController(options: CodeEditorControllerOptions): CodeEditorController {
@@ -92,7 +110,7 @@ export function createCodeEditorController(options: CodeEditorControllerOptions)
           EditorState.readOnly.of(Boolean(options.readOnly)),
           EditorView.editable.of(!options.readOnly),
         ]),
-        selectedSourceRangeField,
+        selectedSourceProjectionExtension,
         EditorView.domEventHandlers({
           contextmenu: (event, view) => {
             if (!options.onContextMenu) return false;
@@ -189,10 +207,10 @@ export function createCodeEditorController(options: CodeEditorControllerOptions)
         ]),
       });
     },
-    setSelectedRange(range, reveal = false) {
+    setSelectedRange(range, reveal = false, presentation = "range") {
       syncingSelection = true;
-      const effects: Array<ReturnType<typeof setSelectedSourceRange.of> | ReturnType<typeof EditorView.scrollIntoView>> = [
-        setSelectedSourceRange.of(range),
+      const effects: Array<ReturnType<typeof setSelectedSourceProjection.of> | ReturnType<typeof EditorView.scrollIntoView>> = [
+        setSelectedSourceProjection.of(range ? { ranges: range, presentation } : null),
       ];
 
       if (reveal && range) {
@@ -219,7 +237,7 @@ export function createCodeEditorController(options: CodeEditorControllerOptions)
       view.dispatch({
         selection: { anchor: position, head: end },
         effects: [
-          setSelectedSourceRange.of(range),
+          setSelectedSourceProjection.of({ ranges: range, presentation: "range" }),
           EditorView.scrollIntoView(position, { y: "center" }),
         ],
       });

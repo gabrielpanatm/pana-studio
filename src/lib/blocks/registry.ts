@@ -52,8 +52,7 @@ function sourceInstanceMatchesSelection(
   instance: UiBlockSourceInstance,
   selection: BlockSelectionContext,
 ) {
-  return instance.providerId === selection.providerId
-    && (!instance.markerKind || instance.markerKind === selection.markerKind);
+  return instance.providerId === selection.providerId;
 }
 
 export function resolveUiBlockSourceInstanceForSelection(

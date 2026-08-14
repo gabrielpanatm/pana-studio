@@ -59,7 +59,7 @@
         <span>{t("inspector-js-element")}</span>
         <strong>[data-anim="{dataAnim}"]</strong>
       </div>
-      <small>Anime.js 4.4.1</small>
+      <small>Anime.js {workspace.runtimeContract?.animeVersion ?? "—"}</small>
     </div>
     <MotionStudioPanel {workspace} {dataAnim} />
   {/if}

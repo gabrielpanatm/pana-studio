@@ -41,6 +41,7 @@ const SKIPPED_SOURCE_DIRECTORIES: &[&str] = &[
     "public",
     "export",
 ];
+const SENSITIVE_SOURCE_FILES: &[&str] = &[".env"];
 
 /// Exact source state materialized in the persistent editor-preview root.
 /// Hashes describe the unannotated ProjectWorkspace sources, even though HTML
@@ -889,6 +890,12 @@ fn copy_entry_recursive(
         for entry in sorted_directory_entries(source)? {
             let name = entry.file_name();
             let name_text = name.to_string_lossy();
+            if SENSITIVE_SOURCE_FILES
+                .iter()
+                .any(|sensitive| name_text.eq_ignore_ascii_case(sensitive))
+            {
+                continue;
+            }
             if SKIPPED_SOURCE_DIRECTORIES
                 .iter()
                 .any(|skip| name_text.eq_ignore_ascii_case(skip))
@@ -980,12 +987,35 @@ fn zola_relative_projection_path(project_relative: &str) -> Result<Option<PathBu
         return Err("Proiecția Preview refuză rădăcina proiectului ca document.".to_string());
     }
     let path = Path::new(relative);
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            SENSITIVE_SOURCE_FILES
+                .iter()
+                .any(|sensitive| name.eq_ignore_ascii_case(sensitive))
+        })
+    {
+        return Ok(None);
+    }
     for component in path.components() {
         if !matches!(component, Component::Normal(_)) {
             return Err(format!(
                 "Proiecția Preview refuză path-ul nesigur {project_relative}."
             ));
         }
+    }
+    if path
+        .iter()
+        .next()
+        .and_then(|component| component.to_str())
+        .is_some_and(|component| {
+            SKIPPED_SOURCE_DIRECTORIES
+                .iter()
+                .any(|skip| component.eq_ignore_ascii_case(skip))
+        })
+    {
+        return Ok(None);
     }
     Ok(Some(path.to_path_buf()))
 }
@@ -1201,6 +1231,11 @@ mod tests {
             zola_relative_projection_path("README.md").unwrap(),
             Some(PathBuf::from("README.md"))
         );
+        assert_eq!(
+            zola_relative_projection_path(".panastudio/motion/templates/index.json").unwrap(),
+            None
+        );
+        assert_eq!(zola_relative_projection_path(".env").unwrap(), None);
         assert!(zola_relative_projection_path("templates/../outside.html").is_err());
     }
 

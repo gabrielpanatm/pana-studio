@@ -71,6 +71,7 @@
     type StableHtmlInspectorProjection,
   } from "$lib/inspector/html-projection-stability";
   import {
+    cssInspectorReadIsCurrent,
     cssInspectorSubjectKey,
     cssSemanticSelectionKey,
     sameCssSemanticSelection,
@@ -218,7 +219,6 @@
     previewRevision = "",
     blockPropertiesHeight = 220,
     blockPropertiesCollapsed = false,
-    cachebustAssets = false,
     projectFiles = [],
     scssVariables = [],
     fontFamilies = [],
@@ -297,7 +297,6 @@
     previewRevision?: string;
     blockPropertiesHeight?: number;
     blockPropertiesCollapsed?: boolean;
-    cachebustAssets?: boolean;
     projectFiles?: ProjectFile[];
     scssVariables?: ScssVariable[];
     fontFamilies?: string[];
@@ -551,24 +550,6 @@
     void focusInspectorTab(inspectorTabs[nextIndex]);
   }
 
-  const coordinatedCssState = $derived(
-    presentedSelectionSnapshot?.focus.kind === "cssRule"
-      || presentedSelectionSnapshot?.focus.kind === "cssProperty"
-      ? inspectorStateForCssSelector(presentedSelectionSnapshot.focus.selector)
-      : null,
-  );
-  const selectedClass = $derived(coordinatedCssState?.selectedClass ?? null);
-  const selectorSuffix = $derived(coordinatedCssState?.selectorSuffix ?? "");
-  const customSuffix = $derived(coordinatedCssState?.customSuffix ?? "");
-  const usingCustom = $derived(coordinatedCssState?.usingCustom ?? false);
-  const activeSuffix = $derived(usingCustom ? customSuffix : selectorSuffix);
-  const effectiveSelector = $derived(selectedClass ? "." + selectedClass + activeSuffix : null);
-  const viewportLabel = $derived(
-    previewDevice === "tablet" ? t("inspector-viewport-tablet")
-      : previewDevice === "mobile" ? t("inspector-viewport-mobile")
-        : t("inspector-viewport-desktop"),
-  );
-
   let classRules = $state<CssProperty[]>([]);
   let cssRuleContext = $state<CssRuleContext | null>(null);
   let cssInspectorResolution = $state<CssInspectorContextResolution | null>(null);
@@ -584,6 +565,46 @@
   let lastCssSelectionKey = "";
   let lastHandledRefreshToken: number | null = null;
   let cssTargetInfo = $state<PageCssTarget | null>(null);
+
+  const coordinatedCssState = $derived(
+    presentedSelectionSnapshot?.focus.kind === "cssRule"
+      || presentedSelectionSnapshot?.focus.kind === "cssProperty"
+      ? inspectorStateForCssSelector(presentedSelectionSnapshot.focus.selector)
+      : null,
+  );
+  const selectedClass = $derived(coordinatedCssState?.selectedClass ?? null);
+  const selectorSuffix = $derived(coordinatedCssState?.selectorSuffix ?? "");
+  const customSuffix = $derived(coordinatedCssState?.customSuffix ?? "");
+  const usingCustom = $derived(coordinatedCssState?.usingCustom ?? false);
+  const activeSuffix = $derived(usingCustom ? customSuffix : selectorSuffix);
+  const effectiveSelector = $derived(selectedClass ? "." + selectedClass + activeSuffix : null);
+  const presentedCssState = $derived(
+    inspectorStateForCssSelector(cssInspectorResolution?.selector ?? "")
+      ?? coordinatedCssState,
+  );
+  const presentedCssSelector = $derived(
+    cssInspectorResolution?.selector ?? effectiveSelector,
+  );
+  const presentedCssViewport = $derived(
+    cssInspectorResolution?.viewport ?? previewDevice,
+  );
+  const viewportLabel = $derived(
+    presentedCssViewport === "tablet" ? t("inspector-viewport-tablet")
+      : presentedCssViewport === "mobile" ? t("inspector-viewport-mobile")
+        : t("inspector-viewport-desktop"),
+  );
+  const cssProjectionTransitioning = $derived(Boolean(
+    cssInspectorResolution
+    && effectiveSelector
+    && (
+      cssInspectorResolution.selector !== effectiveSelector
+      || cssInspectorResolution.viewport !== previewDevice
+      || (
+        cssInspectorResolution.target
+        && cssInspectorResolution.target.file !== targetCssFile
+      )
+    )
+  ));
 
   $effect(() => registerEditFlushHandler("inspector-css-workspace", async () => {
     await flushStagedCssPanelMutations();
@@ -653,8 +674,26 @@
     });
   }
 
+  function hasStableCssInspectorProjection(
+    expectedSelection: SelectionMutationIdentity,
+  ) {
+    return Boolean(
+      cssInspectorResolution
+      && cssInspectorResolution.state !== "ambiguous"
+      && cssInspectorResolution.target
+      && sameCssSemanticSelection(
+        cssInspectorSelectionIdentity,
+        expectedSelection,
+      )
+    );
+  }
+
   function selectedTemplatePath() {
-    const provenance = primarySelectionEntry(selectionSnapshot)?.provenance;
+    const primary = primarySelectionEntry(selectionSnapshot);
+    if (primary?.subject.kind === "cssRule") {
+      return activeRenderedTemplatePath ?? null;
+    }
+    const provenance = primary?.provenance;
     return provenance?.definition?.file
       ?? provenance?.composition?.file
       ?? activeRenderedTemplatePath
@@ -698,6 +737,15 @@
     return Boolean(
       expectedKey
       && expectedKey === cssInspectorSubjectKey(captureCssSelectionIdentity()),
+    );
+  }
+
+  function isCurrentCssInspectorRead(
+    expected: SelectionMutationIdentity,
+  ): boolean {
+    return cssInspectorReadIsCurrent(
+      expected,
+      captureCssSelectionIdentity(),
     );
   }
 
@@ -817,7 +865,7 @@
           selectorToRefresh,
           fileToRefresh,
           viewportToRefresh,
-          { preserveProjection: true },
+          { retainProjection: true },
         );
       });
       return;
@@ -876,12 +924,16 @@
     const sel = effectiveSelector;
     const file = targetCssFile;
     const viewport = previewDevice;
+    // Selecția Rust face parte din identitatea citirii chiar dacă selectorul
+    // semantic rămâne identic. O revizie nouă trebuie să lanseze cererea care
+    // o înlocuiește pe cea anulată de SelectionCoordinator.
+    const selectionRevision = selectionSnapshot?.selectionRevision ?? 0;
     // ProjectSession face parte din cheia proiecției. O redeschidere la același
     // path trebuie să invalideze explicit citirea Inspectorului din runtime A.
     const sessionRoot = projectRoot;
     const sessionId = runtimeSessionId;
     if (projectionQuiesced) return;
-    if (!sel || !file || !sessionRoot || !sessionId) {
+    if (!sel || !file || !sessionRoot || !sessionId || selectionRevision <= 0) {
       loadingClassRules = false;
       classRules = [];
       cssRuleContext = null;
@@ -894,7 +946,7 @@
     pendingValues = untrack(() => pendingValuesForCurrentSelector());
 
     untrack(() => {
-      void loadRulesForClass(sel, file, viewport);
+      void loadRulesForClass(sel, file, viewport, { retainProjection: true });
     });
   });
 
@@ -902,7 +954,7 @@
     selector: string,
     file: string,
     viewport: CssViewport,
-    options: { preserveProjection?: boolean } = {},
+    options: { retainProjection?: boolean } = {},
   ) {
     if (historyProjectionQuiesced) return;
     const expectedSelection = captureCssSelectionIdentity();
@@ -910,16 +962,12 @@
     const identity = captureCssIdentity();
     const expectedRefreshToken = refreshToken;
     const myCallId = ++loadCallId;
-    const preserveProjection = Boolean(
-      options.preserveProjection
-      && cssInspectorResolution
-      && cssInspectorResolution.state !== "ambiguous"
-      && cssInspectorResolution.selector === selector
-      && cssInspectorResolution.viewport === viewport
-      && cssInspectorResolution.target?.file === file,
+    const retainProjection = Boolean(
+      options.retainProjection
+      && hasStableCssInspectorProjection(expectedSelection),
     );
-    loadingClassRules = !preserveProjection;
-    if (!preserveProjection) {
+    loadingClassRules = !retainProjection;
+    if (!retainProjection) {
       classRules = [];
       cssRuleContext = null;
       cssInspectorResolution = null;
@@ -941,7 +989,7 @@
         || !isCurrentCssIdentity(identity)
         || historyProjectionQuiesced
         || refreshToken !== expectedRefreshToken
-        || !isCurrentCssInspectorSubject(expectedSelection)
+        || !isCurrentCssInspectorRead(expectedSelection)
       ) return;
       if (
         resolution.state !== "ambiguous"
@@ -953,7 +1001,7 @@
           file: resolution.target.file,
           expectedSelectionRevision: expectedSelection.selectionRevision,
         });
-        if (!allowed && myCallId === loadCallId) {
+        if (!allowed && myCallId === loadCallId && !retainProjection) {
           classRules = [];
           cssRuleContext = null;
           cssInspectorResolution = null;
@@ -968,9 +1016,10 @@
         !isCurrentCssIdentity(identity)
         || historyProjectionQuiesced
         || refreshToken !== expectedRefreshToken
+        || !isCurrentCssInspectorRead(expectedSelection)
       ) return;
       if (myCallId === loadCallId) {
-        if (!preserveProjection) {
+        if (!retainProjection) {
           classRules = [];
           cssRuleContext = null;
           cssInspectorResolution = null;
@@ -997,7 +1046,8 @@
     const selector = `.${className}`;
     const identity = captureCssIdentity();
     const myCallId = ++loadCallId;
-    loadingClassRules = true;
+    const retainProjection = hasStableCssInspectorProjection(expectedSelection);
+    loadingClassRules = !retainProjection;
     try {
       const resolution = await resolveCssInspectorContext({
         templatePath: selectedTemplatePath(),
@@ -1012,8 +1062,10 @@
         || !isCurrentCssIdentity(identity)
         || !isCurrentCssInspectorSubject(expectedSelection)
       ) return "blocked";
-      applyCssInspectorResolution(resolution, expectedSelection);
-      if (resolution.state === "ambiguous" || !resolution.target) return "blocked";
+      if (resolution.state === "ambiguous" || !resolution.target) {
+        applyCssInspectorResolution(resolution, expectedSelection);
+        return "blocked";
+      }
       const allowed = await onCssCodeTargetChange?.({
         selector,
         file: resolution.target.file,
@@ -1124,7 +1176,6 @@
           selector,
           properties,
           viewport,
-          cachebustAssets,
           expectedSelection,
         }, identity),
       };
@@ -1143,7 +1194,6 @@
           selector,
           properties,
           viewport,
-          cachebustAssets,
           expectedSelection,
         }, identity),
       };
@@ -1364,10 +1414,10 @@
         {#if inspectorTab === "css"}
         <CssPane
           selectionSummary={presentedInspectorSelectionSummary}
-          {selectedClass}
-          {effectiveSelector}
+          selectedClass={presentedCssState?.selectedClass ?? selectedClass}
+          effectiveSelector={presentedCssSelector}
           {viewportLabel}
-          {previewDevice}
+          previewDevice={presentedCssViewport}
           pageCssTarget={cssTargetInfo}
           resolution={cssInspectorResolution}
           {cssRuleContext}
@@ -1378,9 +1428,10 @@
           {installedFontAxes}
           {scannedAssets}
           {loadingClassRules}
-          {selectorSuffix}
-          {customSuffix}
-          {usingCustom}
+          selectorSuffix={presentedCssState?.selectorSuffix ?? selectorSuffix}
+          customSuffix={presentedCssState?.customSuffix ?? customSuffix}
+          usingCustom={presentedCssState?.usingCustom ?? usingCustom}
+          projectionTransitioning={cssProjectionTransitioning}
           {cssPropertyEdit}
           {gridOverlayEnabled}
           {onGridOverlayChange}

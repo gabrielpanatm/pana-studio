@@ -63,12 +63,19 @@ impl DeploySettings {
             ));
         }
         let mut target_ids = std::collections::HashSet::new();
+        let mut credential_prefixes = std::collections::HashSet::new();
         for target in &self.targets {
             target.validate()?;
             if !target_ids.insert(target.id.as_str()) {
                 return Err(format!(
                     "Ținta deploy '{}' este definită de mai multe ori.",
                     target.id
+                ));
+            }
+            if !credential_prefixes.insert(target.credential_env_prefix.as_str()) {
+                return Err(format!(
+                    "Prefixul ENV '{}' aparține mai multor ținte deploy; fiecare țintă trebuie să aibă propriul namespace.",
+                    target.credential_env_prefix
                 ));
             }
         }
@@ -88,7 +95,7 @@ impl DeploySettings {
 pub struct DeployTarget {
     pub id: String,
     pub name: String,
-    pub credential_ref: String,
+    pub credential_env_prefix: String,
     #[serde(default)]
     pub cleanup_policy: DeployCleanupPolicy,
     #[serde(flatten)]
@@ -107,7 +114,7 @@ impl DeployTarget {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("ID-ul țintei", &self.id)?;
         validate_display_name(&self.name)?;
-        validate_identifier("Referința credentialelor", &self.credential_ref)?;
+        crate::kernel::project_env_store::validate_env_prefix(&self.credential_env_prefix)?;
         if self.cleanup_policy == DeployCleanupPolicy::MirrorDestination
             && matches!(self.provider, DeployTargetProvider::CloudflarePages(_))
         {
@@ -730,7 +737,7 @@ mod tests {
         DeployTarget {
             id: "production".to_string(),
             name: "Production".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider,
         }
@@ -757,6 +764,18 @@ mod tests {
         };
         assert!(duplicate.validate().unwrap_err().contains("mai multe ori"));
 
+        let mut second = settings.targets[0].clone();
+        second.id = "staging".to_string();
+        second.name = "Staging".to_string();
+        let duplicate_prefix = DeploySettings {
+            targets: vec![settings.targets[0].clone(), second],
+            ..settings.clone()
+        };
+        assert!(duplicate_prefix
+            .validate()
+            .unwrap_err()
+            .contains("propriul namespace"));
+
         let stale = DeploySettings {
             active_target_id: Some("missing".to_string()),
             ..settings
@@ -769,7 +788,7 @@ mod tests {
         let target: DeployTarget = serde_json::from_value(serde_json::json!({
             "id": "production",
             "name": "Production",
-            "credentialRef": "production-credentials",
+            "credentialEnvPrefix": "PANA_DEPLOY_PRODUCTION",
             "provider": "bunny",
             "config": {
                 "storageZone": "site",
@@ -900,7 +919,7 @@ mod tests {
             cache_control: None,
         }));
         let json = serde_json::to_string(&target).unwrap();
-        assert!(json.contains("credentialRef"));
+        assert!(json.contains("credentialEnvPrefix"));
         for forbidden in ["secretAccessKey", "password", "privateKey", "apiToken"] {
             assert!(!json.contains(forbidden));
         }

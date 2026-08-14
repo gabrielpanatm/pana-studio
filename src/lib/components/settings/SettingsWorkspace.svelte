@@ -4,6 +4,7 @@
     IconActivity,
     IconClipboard,
     IconCpu,
+    IconDatabase,
     IconDeviceDesktop,
     IconFolder,
     IconInfoCircle,
@@ -19,13 +20,14 @@
   import ObservabilityLogControl from "$lib/components/kernel/ObservabilityLogControl.svelte";
   import WriteAuthorityRecoveryControl from "$lib/components/kernel/WriteAuthorityRecoveryControl.svelte";
   import AiIntegrationPane from "$lib/components/settings/AiIntegrationPane.svelte";
+  import StoragePane from "$lib/components/settings/StoragePane.svelte";
   import { readAppHome } from "$lib/application/io";
   import { localeOptions, l10n, t } from "$lib/i18n/runtime.svelte";
   import type { AppState } from "$lib/state/app.svelte";
   import type { GlobalStatusKind } from "$lib/status/global-status";
   import type { AppHomeSnapshot } from "$lib/types";
 
-  type SettingsSection = "general" | "ai" | "system" | "about";
+  type SettingsSection = "general" | "ai" | "system" | "storage" | "about";
 
   let { app }: { app: AppState } = $props();
 
@@ -35,7 +37,7 @@
   let informationLoading = $state(false);
   let informationError = $state("");
   let diagnosticsRefreshToken = $state(0);
-  const settingsSections: SettingsSection[] = ["general", "ai", "system", "about"];
+  const settingsSections: SettingsSection[] = ["general", "ai", "system", "storage", "about"];
 
   const directoryEntries = $derived.by(() => {
     if (!appHome) return [];
@@ -213,6 +215,21 @@
     >
       <IconActivity size={16} stroke={1.8} />
       <span>{t("settings-section-system")}</span>
+    </button>
+    <button
+      id="settings-tab-storage"
+      class="ui-tab"
+      type="button"
+      role="tab"
+      class:active={activeSection === "storage"}
+      aria-selected={activeSection === "storage"}
+      aria-controls="settings-tab-panel"
+      tabindex={activeSection === "storage" ? 0 : -1}
+      onclick={() => selectSettingsSection("storage")}
+      onkeydown={(event) => handleSettingsTabKeydown(event, "storage")}
+    >
+      <IconDatabase size={16} stroke={1.8} />
+      <span>{t("settings-section-storage")}</span>
     </button>
     <button
       id="settings-tab-about"
@@ -450,6 +467,8 @@
           onStatusUpdate={(text, kind) => app.setGlobalStatus(text, kind)}
         />
       </div>
+    {:else if activeSection === "storage"}
+      <StoragePane {app} />
     {:else}
       <div class="content-column">
         <section class="about-card">

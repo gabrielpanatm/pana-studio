@@ -330,6 +330,17 @@ mod tests {
     fn embedded_build_replaces_default_output_with_sass_and_static_assets() {
         let root = fixture_root("default-output");
         create_minimal_site(&root, None);
+        fs::create_dir_all(root.join(".panastudio/motion/templates")).unwrap();
+        fs::write(
+            root.join(".panastudio/motion/templates/index.json"),
+            r#"{"schemaVersion":1}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".env"),
+            "PANA_DEPLOY_TEST__API_TOKEN=production-secret\n",
+        )
+        .unwrap();
         fs::create_dir_all(root.join("public")).unwrap();
         fs::write(root.join("public/stale.txt"), "stale").unwrap();
 
@@ -339,6 +350,11 @@ mod tests {
         assert!(root.join("public/index.html").is_file());
         assert!(root.join("public/site.css").is_file());
         assert!(root.join("public/asset.txt").is_file());
+        assert!(!root.join("public/.panastudio").exists());
+        assert!(!root.join("public/.env").exists());
+        assert!(!fs::read_to_string(root.join("public/index.html"))
+            .unwrap()
+            .contains("production-secret"));
         assert!(!root.join("public/stale.txt").exists());
         cleanup(root);
     }

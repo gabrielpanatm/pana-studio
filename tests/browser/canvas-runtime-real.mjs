@@ -42,10 +42,26 @@ const interactiveRuntime = await readFile(
   resolve(repoRoot, "src-tauri/src/preview/interactive_runtime.js"),
   "utf8",
 );
-const blockRuntime = await readFile(
+const blockRuntimeCore = await readFile(
   resolve(repoRoot, "src-tauri/src/blocks/runtime.js"),
   "utf8",
 );
+const blockRuntimeProviders = await Promise.all(
+  ["accordion.js", "slider.js"].map((provider) => readFile(
+    resolve(repoRoot, "src-tauri/src/blocks/runtime", provider),
+    "utf8",
+  )),
+);
+const blockRuntime = [
+  blockRuntimeCore,
+  ...blockRuntimeProviders,
+  'window.PanaBlockRuntime.installPageConfig({blocks:[{id:"accordion"},{id:"slider"}]});',
+].join("\n");
+assert.equal(blockRuntime.match(/PANA BLOCK RUNTIME CORE/g)?.length, 1);
+assert.equal(blockRuntime.match(/PANA BLOCK PROVIDER: accordion/g)?.length, 1);
+assert.equal(blockRuntime.match(/PANA BLOCK PROVIDER: slider/g)?.length, 1);
+assert.doesNotMatch(blockRuntime, /PANA BLOCK PROVIDER: (?:counter|tabs|dialog|offcanvas|nav-menu)/);
+assert.doesNotMatch(blockRuntime, /__panaMotionV2Config/);
 const fontFixture = await readFile(
   resolve(
     repoRoot,
@@ -184,17 +200,6 @@ const interactiveDocument = `<!doctype html>
     </script>
     <script>${escapeInlineScript(blockRuntime)}</script>
     <script>${escapeInlineScript(interactiveRuntime)}</script>
-    <script>window.PanaBlockRuntime.installPageConfig({
-      version:2,
-      blocks:[{id:"accordion"},{id:"slider"}],
-      motion:{
-        schemaVersion:2,
-        animeVersion:"4.4.1",
-        interactions:[{id:"motion-1"}],
-        behaviors:[],
-        customCode:[]
-      }
-    });</script>
   </body>
 </html>`;
 
@@ -1857,11 +1862,9 @@ const harness = `<!doctype html>
     }
     if (
       configReceipt.blockCount !== 2
-      || configReceipt.motionInteractionCount !== 1
-      || configReceipt.motionBehaviorCount !== 0
-      || configReceipt.motionCustomCodeCount !== 0
+      || Object.keys(configReceipt).some((key) => key.startsWith("motion"))
     ) {
-      throw new Error("PageJsConfig lifecycle receipt mismatch");
+      throw new Error("block-only runtime receipt mismatch");
     }
     if (!domSnapshot.nodes?.some((node) => node.sourceId === "source-accordion")) {
       throw new Error("interactive read-only DOM snapshot lost source provenance");
@@ -1900,22 +1903,24 @@ const harness = `<!doctype html>
     const slider = interactiveDoc.querySelector("[data-pana-source-id='source-slider']");
     const sliderTrack = slider.querySelector("[data-pana-slider-track]");
     const sliderNext = slider.querySelector("[data-pana-slider-next]");
+    const activeSlideIndex = (root) => [...root.querySelectorAll("[data-pana-slider-slide]")]
+      .findIndex((slide) => !slide.hidden);
     if (sliderTrack.getAttribute("aria-live") !== "polite"
         || slider.querySelectorAll("[data-pana-slider-indicators] button").length !== 2) {
       throw new Error("slider default accessibility contract was not mounted");
     }
     sliderNext.click();
-    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "1") {
+    if (activeSlideIndex(slider) !== 1) {
       throw new Error("slider next navigation did not activate exactly one slide");
     }
     slider.querySelectorAll("[data-pana-slider-slide]")[1].dispatchEvent(
       new interactiveWindow.KeyboardEvent("keydown", { key: "Home", bubbles: true }),
     );
-    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "1") {
+    if (activeSlideIndex(slider) !== 1) {
       throw new Error("slider intercepted keyboard navigation from editable slide content");
     }
     slider.dispatchEvent(new interactiveWindow.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
-    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "0") {
+    if (activeSlideIndex(slider) !== 0) {
       throw new Error("slider keyboard navigation did not return to the first slide");
     }
     const insertedSlide = interactiveDoc.createElement("div");
@@ -1930,7 +1935,7 @@ const harness = `<!doctype html>
       throw new Error("slider structural change did not remount the runtime instance");
     }
     sliderNext.click();
-    if (sliderTrack.style.getPropertyValue("--pana-slider-index") !== "1") {
+    if (activeSlideIndex(slider) !== 1) {
       throw new Error("slider structural remount duplicated navigation listeners");
     }
 
@@ -1943,7 +1948,7 @@ const harness = `<!doctype html>
     }
     autoplayNext.focus();
     await new Promise((resolve) => setTimeout(resolve, 1100));
-    if (autoplayTrack.style.getPropertyValue("--pana-slider-index") !== "0"
+    if (activeSlideIndex(autoplaySlider) !== 0
         || autoplayTrack.getAttribute("aria-live") !== "polite") {
       throw new Error("slider autoplay did not pause while focus remained inside");
     }
@@ -1968,8 +1973,8 @@ const harness = `<!doctype html>
     if (triggers[0].getAttribute("aria-expanded") !== "true") {
       throw new Error("interactive lifecycle dispose leaked a listener");
     }
-    if (interactiveWindow.__panaMotionV2Config?.interactions?.length !== 1) {
-      throw new Error("Motion v2 was not derived from PageJsConfig in the interactive realm");
+    if (interactiveWindow.__panaMotionV2Config !== undefined) {
+      throw new Error("block runtime leaked a private Motion configuration bridge");
     }
     if (interactiveMessages.some((message) => message.type === "lifecycle-error")) {
       throw new Error("interactive lifecycle emitted an error");
@@ -1994,7 +1999,7 @@ const harness = `<!doctype html>
       sameDocument: true,
       interactiveNodes: domSnapshot.nodes.length,
       interactiveLifecycle: "mount/reconcile/dispose",
-      motionInteractions: interactiveWindow.__panaMotionV2Config.interactions.length,
+      blockProviders: configReceipt.blockCount,
       canvasAgentHover: "trusted-hover",
       canvasAgentGesture: "trusted-click",
       canvasAgentIconDescendant: "atomic-root",

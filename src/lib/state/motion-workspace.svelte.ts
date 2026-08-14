@@ -1,7 +1,6 @@
 import { applyMotionMutation, getPageJsWorkspaceState } from "$lib/project/io";
 import { emptyPageJsConfig, normalizePageJsConfig } from "$lib/js/page-config";
 import { normalizePageJsTemplatePath } from "$lib/js/page-path";
-import { normalizeMotionDocument } from "$lib/js/motion-v2";
 import {
   createPageJsRequestIdentity,
   isPageJsRequestIdentityCurrent,
@@ -12,6 +11,7 @@ import type {
   MotionInteraction,
   MotionMutation,
   MotionPageMutationReceipt,
+  MotionRuntimeContract,
   PageJsConfig,
 } from "$lib/types";
 import { t } from "$lib/i18n/runtime.svelte";
@@ -62,6 +62,7 @@ export class MotionWorkspaceState {
   owner = $state<MotionOwner | null>(null);
   config = $state<PageJsConfig>(emptyPageJsConfig());
   accepted = $state<PageJsConfig>(emptyPageJsConfig());
+  runtimeContract = $state<MotionRuntimeContract | null>(null);
   loadState = $state<MotionWorkspaceLoadState>("idle");
   error = $state("");
   entryRevision = $state<number | null>(null);
@@ -83,10 +84,6 @@ export class MotionWorkspaceState {
   private loadSerial = 0;
   private previewSerial = 0;
   private mutationTail: Promise<void> = Promise.resolve();
-
-  get motion() {
-    return normalizeMotionDocument(this.config.motion);
-  }
 
   get interactions() {
     return this.config.motion?.interactions ?? [];
@@ -140,6 +137,7 @@ export class MotionWorkspaceState {
     this.owner = null;
     this.config = emptyPageJsConfig();
     this.accepted = emptyPageJsConfig();
+    this.runtimeContract = null;
     this.entryRevision = null;
     this.loadState = error ? "error" : "idle";
     this.error = error;
@@ -184,6 +182,7 @@ export class MotionWorkspaceState {
       }
       this.accepted = normalizePageJsConfig(workspace.accepted);
       this.config = normalizePageJsConfig(workspace.current);
+      this.runtimeContract = workspace.motionRuntime;
       this.entryRevision = workspace.entryRevision;
       this.context.refreshToken = context.refreshToken;
       this.reconcileSelection();

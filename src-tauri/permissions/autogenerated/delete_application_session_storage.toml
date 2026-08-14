@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-application-session-storage"
+description = "Enables the delete_application_session_storage command without any pre-configured scope."
+commands.allow = ["delete_application_session_storage"]
+
+[[permission]]
+identifier = "deny-delete-application-session-storage"
+description = "Denies the delete_application_session_storage command without any pre-configured scope."
+commands.deny = ["delete_application_session_storage"]

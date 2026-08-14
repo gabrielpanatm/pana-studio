@@ -8,8 +8,8 @@ use crate::{
 };
 
 use super::{
-    extract_data_anims, js_relative_path, parse_page_js, paths::normalize_template_path,
-    PageJsConfig,
+    extract_data_anims, motion_source_relative_path, parse_motion_source,
+    paths::normalize_template_path, PageJsConfig,
 };
 
 pub fn read_page_data_anims(
@@ -25,17 +25,17 @@ pub fn read_page_data_anims(
     Ok(extract_data_anims(&content))
 }
 
-pub fn read_page_js_config(
+pub fn read_page_motion_config(
     project_root: &Path,
     store: &FileBufferStore,
     template_path: &str,
 ) -> Result<PageJsConfig, String> {
     let template_path = normalize_template_path(strip_zola_root_prefix(template_path))?;
-    let relative_path = project_relative_zola_path(&js_relative_path(&template_path));
+    let relative_path = motion_source_relative_path(&template_path)?;
     let Some(content) = read_optional_project_text(project_root, store, &relative_path)? else {
         return Ok(PageJsConfig::default());
     };
-    Ok(parse_page_js(&content))
+    parse_motion_source(&content).map_err(|error| format!("{relative_path}: {error}"))
 }
 
 fn project_relative_zola_path(path: &str) -> String {
@@ -75,7 +75,7 @@ pub(super) fn read_optional_project_text(
 mod tests {
     use std::fs;
 
-    use super::{read_page_data_anims, read_page_js_config};
+    use super::{read_page_data_anims, read_page_motion_config};
     use crate::kernel::{
         file_buffer_store::{FileBufferStore, FileBufferStoreLimits},
         project_session::{
@@ -127,7 +127,7 @@ mod tests {
         );
 
         assert_eq!(
-            read_page_js_config(&root, &store, "templates/index.html").unwrap(),
+            read_page_motion_config(&root, &store, "templates/index.html").unwrap(),
             Default::default()
         );
         assert!(read_page_data_anims(&root, &store, "templates/index.html")
@@ -135,6 +135,52 @@ mod tests {
             .is_empty());
         assert!(!root.join("templates/index.html").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn portable_motion_source_reopens_after_the_project_moves() {
+        let root = std::env::temp_dir().join(format!(
+            "pana-motion-portable-{}-source",
+            std::process::id()
+        ));
+        let moved =
+            std::env::temp_dir().join(format!("pana-motion-portable-{}-moved", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&moved);
+        fs::create_dir_all(root.join(".panastudio/motion/templates")).unwrap();
+        fs::write(
+            root.join(".panastudio/motion/templates/index.json"),
+            r#"{
+  "schemaVersion": 2,
+  "customCode": [{
+    "id": "portable",
+    "name": "Portable",
+    "code": "window.__portable=true"
+  }]
+}
+"#,
+        )
+        .unwrap();
+        fs::rename(&root, &moved).unwrap();
+
+        let live = session(&moved);
+        let store = FileBufferStore::for_project_session(
+            &live,
+            1,
+            FileBufferStoreLimits {
+                max_files: 10,
+                max_file_bytes: 4096,
+                max_total_bytes: 8192,
+            },
+        );
+        let config = read_page_motion_config(&moved, &store, "templates/index.html").unwrap();
+
+        assert_eq!(
+            config.motion.as_ref().unwrap().custom_code[0].id,
+            "portable"
+        );
+        assert!(!moved.join("static/js/pana-index.js").exists());
+        fs::remove_dir_all(moved).unwrap();
     }
 
     #[test]
@@ -157,7 +203,7 @@ mod tests {
         );
 
         let data_error = read_page_data_anims(&root, &store, "../secret.html").unwrap_err();
-        let config_error = read_page_js_config(&root, &store, r"..\secret.html").unwrap_err();
+        let config_error = read_page_motion_config(&root, &store, r"..\secret.html").unwrap_err();
 
         assert!(data_error.contains("traversal"));
         assert!(config_error.contains("traversal"));

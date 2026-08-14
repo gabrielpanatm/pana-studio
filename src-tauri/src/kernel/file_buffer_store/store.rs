@@ -72,6 +72,16 @@ impl FileBufferStore {
         contents: String,
         updated_at_ms: u128,
     ) -> Result<FileBufferFileSnapshot, String> {
+        if Path::new(relative_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(".env")
+        {
+            return Err(
+                "FileBufferStore nu acceptă .env; fișierul sensibil aparține ProjectEnvStore."
+                    .to_string(),
+            );
+        }
         if self.files.contains_key(relative_path) {
             return Err(format!(
                 "FileBufferStore urmărește deja resursa {relative_path}."
@@ -589,6 +599,16 @@ impl FileBufferStore {
         project_root: &Path,
     ) -> Result<(), String> {
         for entry in entries {
+            if Path::new(&entry.relative_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some(".env")
+            {
+                return Err(
+                    "FileBufferStore a refuzat restore pentru .env; resursa aparține ProjectEnvStore."
+                        .to_string(),
+                );
+            }
             if self.files.contains_key(&entry.relative_path) {
                 return Err(format!(
                     "FileBufferStore a blocat restore: există deja baseline pentru {}.",

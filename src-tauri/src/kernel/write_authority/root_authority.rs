@@ -96,7 +96,6 @@ pub struct ApplicationAuthorityPaths {
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
     pub log_dir: PathBuf,
-    pub projects_config_dir: PathBuf,
     pub mcp_dir: PathBuf,
     pub sessions_dir: PathBuf,
     pub kernel_dir: PathBuf,
@@ -141,11 +140,6 @@ impl ApplicationAuthorities {
         )?;
 
         for (authority, path, label) in [
-            (
-                &config,
-                &paths.projects_config_dir,
-                "application-home/config/projects",
-            ),
             (&config, &paths.mcp_dir, "application-home/config/mcp"),
             (&data, &paths.sessions_dir, "application-home/data/sessions"),
             (&data, &paths.kernel_dir, "application-home/data/kernel"),
@@ -1229,7 +1223,6 @@ mod tests {
             data_dir: root.join("data"),
             cache_dir: root.join("cache"),
             log_dir: root.join("logs"),
-            projects_config_dir: root.join("config/projects"),
             mcp_dir: root.join("config/mcp"),
             sessions_dir: root.join("data/sessions"),
             kernel_dir: root.join("data/kernel"),

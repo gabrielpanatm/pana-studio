@@ -453,20 +453,14 @@ fn add_mixed_html_nodes(
                 });
             }
         }
-        let block_marker_attribute = ["data-pana-block", "data-pana-component"]
-            .into_iter()
-            .find(|attribute| html_attribute_value(source, tag, attribute).is_some());
-        if let Some((marker_attribute, block_id)) = block_marker_attribute
-            .and_then(|attribute| {
-                html_attribute_value(source, tag, attribute).map(|value| (attribute, value))
-            })
-            .map(|(attribute, value)| (attribute, value.trim()))
-            .filter(|(_, value)| !value.is_empty())
+        if let Some(block_id) = html_attribute_value(source, tag, "data-pana-block")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
         {
             let marker_range = tag
                 .attributes
                 .iter()
-                .find(|attribute| attribute.name.eq_ignore_ascii_case(marker_attribute))
+                .find(|attribute| attribute.name.eq_ignore_ascii_case("data-pana-block"))
                 .map(|attribute| {
                     source_range(
                         source,

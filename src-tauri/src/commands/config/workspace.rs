@@ -87,6 +87,19 @@ pub(super) fn execute_config_workspace_mutation<R>(
         &FileBufferStore,
     ) -> Result<(Option<ConfigWorkspaceMutationInput>, R), String>,
 ) -> Result<R, String> {
+    execute_config_workspace_mutation_at_revision(app, state, None, build).map(|(value, _)| value)
+}
+
+pub(super) fn execute_config_workspace_mutation_at_revision<R>(
+    app: &AppHandle,
+    state: &State<AppState>,
+    expected_workspace_revision: Option<u64>,
+    build: impl FnOnce(
+        &Path,
+        &Path,
+        &FileBufferStore,
+    ) -> Result<(Option<ConfigWorkspaceMutationInput>, R), String>,
+) -> Result<(R, u64), String> {
     let project_root = require_current_project_root(state)?;
     let zola_root = zola_project_root(&project_root);
     let mut slot = state
@@ -96,6 +109,13 @@ pub(super) fn execute_config_workspace_mutation<R>(
     let workspace = slot
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+    if expected_workspace_revision.is_some_and(|expected| expected != workspace.revision) {
+        return Err(format!(
+            "Configurația proiectului este stale: revizia așteptată {}, revizia curentă {}.",
+            expected_workspace_revision.unwrap_or_default(),
+            workspace.revision
+        ));
+    }
     workspace.accepted_disk.require_live_complete(
         &workspace.runtime_session_id(),
         &workspace.session.project_root,
@@ -103,7 +123,7 @@ pub(super) fn execute_config_workspace_mutation<R>(
     )?;
     let (input, result_value) = build(&project_root, &zola_root, &workspace.documents)?;
     let Some(input) = input else {
-        return Ok(result_value);
+        return Ok((result_value, workspace.revision));
     };
     commit_project_workspace_session_mutation(app, workspace, |candidate| {
         let identity = ProjectWorkspaceIdentity {
@@ -123,5 +143,5 @@ pub(super) fn execute_config_workspace_mutation<R>(
             crate::kernel::file_buffer_store::now_ms(),
         )
     })?;
-    Ok(result_value)
+    Ok((result_value, workspace.revision))
 }

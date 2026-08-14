@@ -566,6 +566,28 @@ mod tests {
         assert_eq!(snapshot.revision, 2);
     }
 
+    #[test]
+    fn record_restored_entries_rejects_sensitive_env_payloads() {
+        let mut store = test_store();
+        let entry = FileBufferEntry {
+            relative_path: ".env".to_string(),
+            absolute_path: "/old/project/.env".to_string(),
+            language: TextBufferLanguage::Plain,
+            role: TextBufferRole::Config,
+            baseline: clean_baseline_for_test("PANA_DEPLOY_TEST__TOKEN=secret\n"),
+            baseline_text: "PANA_DEPLOY_TEST__TOKEN=secret\n".to_string(),
+            draft: None,
+            revision: 1,
+        };
+
+        let error = store
+            .record_restored_entries(&[entry], std::path::Path::new("/tmp/project"))
+            .unwrap_err();
+
+        assert!(error.contains("ProjectEnvStore"));
+        assert!(store.files.is_empty());
+    }
+
     fn test_store() -> FileBufferStore {
         FileBufferStore::new(
             "session-1",

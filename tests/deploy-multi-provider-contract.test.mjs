@@ -57,7 +57,7 @@ test("credentialele sunt referențiate public și materialul secret rămâne bac
   const model = source("../src-tauri/src/deploy/model.rs");
   const types = source("../src/lib/types.ts");
 
-  assert.match(model, /pub credential_ref: String/);
+  assert.match(model, /pub credential_env_prefix: String/);
   assert.match(credentials, /enum StoredDeployCredential/);
   assert.doesNotMatch(credentials, /pub\(crate\) enum StoredDeployCredential[\s\S]*derive\([^)]*Debug/);
   assert.match(credentials, /DeployCredentialStatus/);

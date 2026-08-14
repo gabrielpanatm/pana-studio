@@ -578,7 +578,6 @@
     var blockContext = observation.blockContext;
     var physicalBlockContext = blockContext ? {
       providerId: boundedCanvasAgentString(blockContext.providerId, 256),
-      markerKind: blockContext.markerKind === "canonical" ? "canonical" : "legacy",
       rootSelector: boundedCanvasAgentString(blockContext.rootSelector, 4096),
       rootTag: boundedCanvasAgentString(blockContext.rootTag, 64).toLowerCase()
     } : null;

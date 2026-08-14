@@ -1506,10 +1506,9 @@ async function applyDomInspection(
       observedTag: observation.tag,
       elementId: observation.id,
       classes: observation.classes,
-      blockContext: observation.blockContext
+          blockContext: observation.blockContext
         ? {
             providerId: observation.blockContext.providerId,
-            markerKind: observation.blockContext.markerKind,
             rootTag: observation.blockContext.rootTag,
           }
         : null,

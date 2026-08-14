@@ -110,7 +110,6 @@
       previewRevision={app.activeCanvasIdentity?.previewRevision ?? ""}
       blockPropertiesHeight={app.applicationSettings?.blockPropertiesHeight ?? 220}
       blockPropertiesCollapsed={app.applicationSettings?.blockPropertiesCollapsed ?? false}
-      cachebustAssets={app.cachebustAssets}
       projectFiles={app.scannedProject?.files ?? []}
       scssVariables={app.scssVariables}
       fontFamilies={installedFontFamilies}

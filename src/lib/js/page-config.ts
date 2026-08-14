@@ -6,36 +6,21 @@ import {
 
 export function emptyPageJsConfig(): PageJsConfig {
   return {
-    version: 2,
-    blocks: [],
     motion: undefined,
   };
 }
 
-type LegacyPageJsConfig = Partial<PageJsConfig> & {
-  components?: Array<{ id: string }>;
-};
-
-export function normalizePageJsConfig(config: LegacyPageJsConfig | null | undefined): PageJsConfig {
-  const rawBlocks = Array.isArray(config?.blocks)
-    ? config.blocks
-    : Array.isArray(config?.components)
-      ? config.components
-      : [];
+export function normalizePageJsConfig(config: Partial<PageJsConfig> | null | undefined): PageJsConfig {
   return {
-    version: 2,
-    blocks: rawBlocks
-      .map((block) => ({ id: String(block.id || "").trim() }))
-      .filter((block) => block.id.length > 0),
     motion: config?.motion ? normalizeMotionDocument(config.motion) : undefined,
   };
 }
 
-export function clonePageJsConfig(config: LegacyPageJsConfig | null | undefined): PageJsConfig {
+export function clonePageJsConfig(config: Partial<PageJsConfig> | null | undefined): PageJsConfig {
   return normalizePageJsConfig(config);
 }
 
-export function isPageJsConfigEmpty(config: LegacyPageJsConfig | null | undefined): boolean {
+export function isPageJsConfigEmpty(config: Partial<PageJsConfig> | null | undefined): boolean {
   const normalized = normalizePageJsConfig(config);
-  return normalized.blocks.length === 0 && isMotionDocumentEmpty(normalized.motion);
+  return isMotionDocumentEmpty(normalized.motion);
 }

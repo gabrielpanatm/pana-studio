@@ -7,6 +7,9 @@ import { selectionResolution } from "$lib/kernel/selection-read-model";
 import type {
   CssInspectorContextResolution,
   CssMutationCommandReceipt,
+  BundledFontCatalogFamily,
+  BundledFontInstallReceipt,
+  BundledFontPreview,
   EditableStyles,
   FontManagerSnapshot,
   FontDeliveryMutationReceipt,
@@ -120,7 +123,7 @@ import type {
   PreviewTeraInsertDropExecutionInput,
   PreviewTeraInsertDropExecutionReceipt,
   PreviewStructuralCommandIdentity,
-  ProjectAppConfig,
+  ProjectConfigurationSnapshot,
   ProjectDiskManifest,
   AuditRequest,
   AuditRunReceipt,
@@ -257,6 +260,11 @@ import {
   EDITOR_MOVE_EXECUTION_SCHEMA_VERSION,
   EDITOR_MOVE_LIVE_PROJECTION_SCHEMA_VERSION,
   EDITOR_MOVE_PLAN_SCHEMA_VERSION,
+  PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION,
+  PROJECT_SETTINGS_SCHEMA_VERSION,
+  DEPLOY_SETTINGS_SCHEMA_VERSION,
+  DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
+  DEPLOY_CONFIGURATION_SCHEMA_VERSION,
 } from "$lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
@@ -271,20 +279,72 @@ function schemaMismatch(resource: string, actual: number, expected: number) {
   return new Error(t("io-schema-mismatch", { resource, actual, expected }));
 }
 
-export function openProject(
+function validateProjectOpenBootstrapReceipt(receipt: ProjectOpenBootstrapReceipt) {
+  if (receipt.schemaVersion !== PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "ProjectOpenBootstrap",
+      receipt.schemaVersion,
+      PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION,
+    );
+  }
+  validateProjectSettingsSnapshot(receipt.projectSettings);
+  validateDeploySettings(receipt.deploySettings);
+}
+
+function validateProjectSettingsSnapshot(snapshot: ProjectConfigurationSnapshot["projectSettings"]) {
+  if (snapshot.schemaVersion !== PROJECT_SETTINGS_SCHEMA_VERSION) {
+    throw schemaMismatch("ProjectSettings", snapshot.schemaVersion, PROJECT_SETTINGS_SCHEMA_VERSION);
+  }
+}
+
+function validateProjectConfigurationSnapshot(snapshot: ProjectConfigurationSnapshot) {
+  validateProjectSettingsSnapshot(snapshot.projectSettings);
+}
+
+function validateDeploySettings(settings: DeploySettings) {
+  if (settings.schemaVersion !== DEPLOY_SETTINGS_SCHEMA_VERSION) {
+    throw schemaMismatch("DeploySettings", settings.schemaVersion, DEPLOY_SETTINGS_SCHEMA_VERSION);
+  }
+}
+
+function validateDeployCredentialStatus(status: DeployCredentialStatus) {
+  if (status.schemaVersion !== DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "DeployCredentialStatus",
+      status.schemaVersion,
+      DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
+    );
+  }
+}
+
+function validateDeployConfigurationSnapshot(snapshot: DeployConfigurationSnapshot) {
+  if (snapshot.schemaVersion !== DEPLOY_CONFIGURATION_SCHEMA_VERSION) {
+    throw schemaMismatch(
+      "DeployConfiguration",
+      snapshot.schemaVersion,
+      DEPLOY_CONFIGURATION_SCHEMA_VERSION,
+    );
+  }
+  validateDeploySettings(snapshot.settings);
+  snapshot.credentialStatuses.forEach(validateDeployCredentialStatus);
+}
+
+export async function openProject(
   path: string,
   operationId: string,
   candidateToken: string,
   operatorDecisionId?: string,
   recoveryDecision?: ProjectOpenRecoveryDecisionInput,
 ): Promise<ProjectOpenBootstrapReceipt> {
-  return invoke<ProjectOpenBootstrapReceipt>("open_project", {
+  const receipt = await invoke<ProjectOpenBootstrapReceipt>("open_project", {
     path,
     operationId,
     candidateToken,
     operatorDecisionId,
     recoveryDecision,
   });
+  validateProjectOpenBootstrapReceipt(receipt);
+  return receipt;
 }
 
 export function inspectProjectOpen(
@@ -343,8 +403,10 @@ export function readProjectSession(): Promise<ProjectSessionSnapshot | null> {
   return invoke<ProjectSessionSnapshot | null>("read_project_session");
 }
 
-export function reattachProjectSession(): Promise<ProjectOpenBootstrapReceipt | null> {
-  return invoke<ProjectOpenBootstrapReceipt | null>("reattach_project_session");
+export async function reattachProjectSession(): Promise<ProjectOpenBootstrapReceipt | null> {
+  const receipt = await invoke<ProjectOpenBootstrapReceipt | null>("reattach_project_session");
+  if (receipt) validateProjectOpenBootstrapReceipt(receipt);
+  return receipt;
 }
 
 export function readVersioningSnapshot(
@@ -2358,7 +2420,7 @@ export async function readUiBlockGraph(
     identity,
   });
   if (
-    snapshot.schemaVersion !== 3
+    snapshot.schemaVersion !== 4
     || snapshot.projectRoot !== identity.expectedProjectRoot
     || snapshot.runtimeSessionId !== identity.expectedSessionId
   ) {
@@ -3006,6 +3068,27 @@ export function getFontPreviewAsset(
   return invoke<FontPreviewAsset>("get_font_preview_asset", { file, identity });
 }
 
+export function getBundledFontCatalog(): Promise<BundledFontCatalogFamily[]> {
+  return invoke<BundledFontCatalogFamily[]>("get_bundled_font_catalog");
+}
+
+export function getBundledFontPreview(
+  familyId: string,
+  style: "normal" | "italic" = "normal",
+): Promise<BundledFontPreview> {
+  return invoke<BundledFontPreview>("get_bundled_font_preview", { familyId, style });
+}
+
+export function installBundledFontFamily(
+  familyId: string,
+  identity: ProjectWorkspaceIdentity,
+): Promise<BundledFontInstallReceipt> {
+  return invoke<BundledFontInstallReceipt>("install_bundled_font_family", {
+    familyId,
+    identity,
+  });
+}
+
 export function assignFontRole(
   roleId: FontRoleId,
   familyId: string,
@@ -3259,7 +3342,6 @@ export function setPageCssRuleAtViewport(options: {
   selector: string;
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
-  cachebustAssets: boolean;
   expectedSelection?: SelectionMutationIdentity | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<PageCssWriteResult>> {
   return invokeBoundCssMutation<PageCssWriteResult>("set_page_css_rule_at_viewport", options, identity);
@@ -3271,7 +3353,6 @@ export function setReusableCssRuleAtViewport(options: {
   selector: string;
   properties: Partial<Record<keyof EditableStyles | string, string>>;
   viewport: CssViewport;
-  cachebustAssets: boolean;
   expectedSelection?: SelectionMutationIdentity | null;
 }, identity: CssRequestIdentity): Promise<CssMutationCommandReceipt<ReusableCssWriteResult>> {
   return invokeBoundCssMutation<ReusableCssWriteResult>(
@@ -3292,14 +3373,22 @@ export function cleanupPageCssContract(
   );
 }
 
-export function readProjectAppConfig(): Promise<ProjectAppConfig> {
-  return invoke<ProjectAppConfig>("read_project_app_config");
+export async function readProjectConfiguration(): Promise<ProjectConfigurationSnapshot> {
+  const snapshot = await invoke<ProjectConfigurationSnapshot>("read_project_configuration");
+  validateProjectConfigurationSnapshot(snapshot);
+  return snapshot;
 }
 
-export function saveProjectAppConfig(config: {
-  cachebustAssets: boolean;
-}): Promise<ProjectAppConfig> {
-  return invoke<ProjectAppConfig>("save_project_app_config", { config });
+export async function saveProjectConfiguration(config: {
+  projectSettings: {
+    expectedWorkspaceRevision: number;
+    cachebustAssets: boolean;
+  };
+  zolaSettings: ZolaProjectSettings;
+}): Promise<ProjectConfigurationSnapshot> {
+  const snapshot = await invoke<ProjectConfigurationSnapshot>("save_project_configuration", { config });
+  validateProjectConfigurationSnapshot(snapshot);
+  return snapshot;
 }
 
 export function readZolaProjectSettings(): Promise<ZolaProjectSettings> {
@@ -3308,14 +3397,6 @@ export function readZolaProjectSettings(): Promise<ZolaProjectSettings> {
 
 export function saveZolaProjectSettings(settings: ZolaProjectSettings): Promise<ZolaProjectSettings> {
   return invoke<ZolaProjectSettings>("save_zola_project_settings", { settings });
-}
-
-export function readProjectEnv(): Promise<Record<string, string>> {
-  return invoke<Record<string, string>>("read_project_env");
-}
-
-export function saveProjectEnv(vars: Record<string, string>): Promise<void> {
-  return invoke("save_project_env", { vars });
 }
 
 export function readZolaBaseUrl(): Promise<string> {
@@ -3426,25 +3507,31 @@ export function zolaCheckWorkspace(): Promise<string> {
   return invoke<string>("zola_check_workspace");
 }
 
-export function readDeployConfiguration(): Promise<DeployConfigurationSnapshot> {
-  return invoke<DeployConfigurationSnapshot>("read_deploy_configuration");
+export async function readDeployConfiguration(): Promise<DeployConfigurationSnapshot> {
+  const snapshot = await invoke<DeployConfigurationSnapshot>("read_deploy_configuration");
+  validateDeployConfigurationSnapshot(snapshot);
+  return snapshot;
 }
 
-export function saveDeploySettings(
+export async function saveDeploySettings(
   settings: DeploySettings,
 ): Promise<DeployConfigurationSnapshot> {
-  return invoke<DeployConfigurationSnapshot>("save_deploy_settings", { settings });
+  const snapshot = await invoke<DeployConfigurationSnapshot>("save_deploy_settings", { settings });
+  validateDeployConfigurationSnapshot(snapshot);
+  return snapshot;
 }
 
-export function saveDeployCredential(
+export async function saveDeployCredential(
   targetId: string,
   credential: DeployCredentialWriteInput,
 ): Promise<DeployCredentialStatus> {
-  return invoke<DeployCredentialStatus>("save_deploy_credential", { targetId, credential });
+  const status = await invoke<DeployCredentialStatus>("save_deploy_credential", { targetId, credential });
+  validateDeployCredentialStatus(status);
+  return status;
 }
 
-export function deleteDeployCredential(credentialRef: string): Promise<boolean> {
-  return invoke<boolean>("delete_deploy_credential", { credentialRef });
+export function deleteDeployCredential(credentialEnvPrefix: string): Promise<boolean> {
+  return invoke<boolean>("delete_deploy_credential", { credentialEnvPrefix });
 }
 
 export function testDeployConnection(targetId: string): Promise<DeployConnectionTestReceipt> {

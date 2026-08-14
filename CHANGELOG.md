@@ -5,6 +5,48 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-14
+
+### Added
+
+- bibliotecă offline cu 36 de familii de fonturi variabile WOFF2, subseturi
+  Latin și Latin Extended, previzualizare locală și instalare Rust-first în proiect;
+- panou „Stocare” pentru inventarierea și curățarea controlată a cache-ului,
+  jurnalelor și sesiunilor aplicației;
+- setări și destinații de publicare portabile în `.panastudio`, cu credențiale
+  păstrate separat în fișierul `.env` al proiectului;
+- status bar pentru editorul de cod, folding HTML/SCSS/JS și evidențierea
+  delimitatorilor structurali ai selecției;
+- ștergere autorizată Rust și previzualizare stabilă pentru resursele media locale.
+
+### Changed
+
+- blocurile native livrează exclusiv CSS-ul și JavaScript-ul funcțional cerut
+  de instanțele inserate, fără stiluri vizuale implicite sau runtime-uri nefolosite;
+- configurația Motion este stocată în `.panastudio`, iar proiectul publicat
+  primește numai Anime.js și codul minim compilat pentru interacțiunile paginii;
+- runtime-ul și sursele interne Motion sunt incluse în aplicație, nu copiate ca
+  infrastructură editabilă în fiecare proiect;
+- documentele HTML complete sunt detectate structural în Template Workbench,
+  fără excepții hardcodate pentru `base.html`;
+- fișierele generate ale proiectului sunt editabile în modul Cod, în timp ce
+  aplicația păstrează contractele de regenerare și reconciliere autoritative.
+
+### Fixed
+
+- selectoarele SCSS pot fi selectate imediat după pornirea aplicației, iar
+  panoul CSS își schimbă valorile fără demontări și flash-uri duble;
+- schimbarea rapidă a documentului nu mai transformă o selecție CSS validă
+  într-o eroare stale și nu mai pierde legătura cu Inspectorul;
+- selecția în cod evidențiază doar tagurile HTML sau selectorul și acoladele,
+  fără a acoperi întregul conținut al elementului ori regulii;
+- preload-ul fonturilor este scris în poziția corectă din `head`, iar
+  documentele complete rămân previzualizabile independent;
+- thumbnail-urile și previzualizările media importate folosesc URL-ul corect al
+  sesiunii, fără resurse rupte după import;
+- fișierele Motion și Anime.js proiectate în explorator se deschid și se editează
+  prin aceeași cale autoritativă ca restul surselor proiectului.
+
 ## [0.1.6] - 2026-08-12
 
 ### Added

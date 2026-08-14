@@ -1,4 +1,5 @@
 mod app_home;
+mod application_storage;
 mod blocks;
 mod commands;
 mod css;
@@ -47,9 +48,9 @@ use commands::{
     command_center::search_command_center,
     components::apply_component_mutation,
     config::{
-        read_application_settings, read_project_app_config, read_project_env, read_zola_base_url,
-        read_zola_project_settings, save_application_settings, save_project_app_config,
-        save_project_env, save_zola_base_url, save_zola_project_settings,
+        read_application_settings, read_project_configuration, read_zola_base_url,
+        read_zola_project_settings, save_application_settings, save_project_configuration,
+        save_zola_base_url, save_zola_project_settings,
     },
     content_models::{
         apply_content_model_mutation, plan_content_model_mutation, read_content_model_catalog,
@@ -83,9 +84,11 @@ use commands::{
         select_file_explorer_entry,
     },
     fonts::{
-        apply_local_font_import, assign_font_role, download_google_font_family, get_font_manager,
-        get_font_preview_asset, plan_font_family_removal, plan_local_font_import,
-        remove_font_family, search_google_fonts, set_font_display, set_font_preload,
+        apply_local_font_import, assign_font_role, download_google_font_family,
+        get_bundled_font_catalog, get_bundled_font_preview, get_font_manager,
+        get_font_preview_asset, install_bundled_font_family, plan_font_family_removal,
+        plan_local_font_import, remove_font_family, search_google_fonts, set_font_display,
+        set_font_preload,
     },
     insert_catalog::read_insert_catalog,
     js::{
@@ -144,6 +147,10 @@ use commands::{
         inspect_project_open, inspect_startup_folder, plan_startup_creation,
         read_project_lifecycle, read_startup_creation_catalog, read_startup_flow,
         report_project_capability_degraded,
+    },
+    storage::{
+        clear_application_cache_storage, clear_application_log_storage,
+        delete_application_session_storage, read_application_storage_inventory,
     },
     taxonomies::{apply_taxonomy_mutation, plan_taxonomy_mutation},
     templates::{

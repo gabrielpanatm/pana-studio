@@ -30,6 +30,7 @@ pub mod project_model;
 pub mod publish;
 pub mod source_graph;
 pub mod startup;
+pub mod storage;
 pub mod taxonomies;
 pub mod templates;
 pub mod themes;

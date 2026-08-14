@@ -730,7 +730,7 @@ mod tests {
         DeployTarget {
             id: "r2-production".to_string(),
             name: "R2 production".to_string(),
-            credential_ref: "r2-secret".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_R2".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::S3(S3TargetConfig {
                 bucket: "site".to_string(),

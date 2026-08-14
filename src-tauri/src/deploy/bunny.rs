@@ -25,12 +25,6 @@ use super::{
     retry::retry_idempotent,
 };
 
-#[cfg(test)]
-use super::{
-    artifact::build_deploy_artifact_manifest,
-    env::{env_require, read_env_from_root},
-};
-
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -193,72 +187,6 @@ impl BunnyRuntimeConfig {
             pull_zone_id: pull_zone_id.clone(),
             cdn_key: cdn_api_key.clone(),
             remote_prefix: remote_prefix.clone(),
-        })
-    }
-}
-
-#[cfg(test)]
-fn deploy_project_with_transport<T, F>(
-    project_root: &Path,
-    zola_root: &Path,
-    env_root: &Path,
-    transport: &T,
-    endpoints: F,
-) -> Result<String, String>
-where
-    T: BunnyTransport,
-    F: FnOnce(&BunnyCredentials) -> Result<BunnyEndpoints, String>,
-{
-    deploy_project_with_transport_cancellable(
-        project_root,
-        zola_root,
-        env_root,
-        transport,
-        endpoints,
-        || false,
-    )
-}
-
-#[cfg(test)]
-fn deploy_project_with_transport_cancellable<T, F, C>(
-    project_root: &Path,
-    zola_root: &Path,
-    env_root: &Path,
-    transport: &T,
-    endpoints: F,
-    is_cancelled: C,
-) -> Result<String, String>
-where
-    T: BunnyTransport,
-    F: FnOnce(&BunnyCredentials) -> Result<BunnyEndpoints, String>,
-    C: Fn() -> bool,
-{
-    // Ordering is a safety contract: the complete bounded/no-follow artifact
-    // must exist in memory before the transport can receive an upload call.
-    let manifest = build_deploy_artifact_manifest(project_root, zola_root)?;
-    let credentials = BunnyCredentials::from_root(env_root)?;
-    let endpoints = endpoints(&credentials)?;
-    upload_manifest_and_purge(transport, endpoints, credentials, manifest, is_cancelled)
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-struct BunnyCredentials {
-    zone: String,
-    storage_key: String,
-    pull_zone_id: String,
-    cdn_key: String,
-}
-
-#[cfg(test)]
-impl BunnyCredentials {
-    fn from_root(root: &Path) -> Result<Self, String> {
-        let env = read_env_from_root(root)?;
-        Ok(Self {
-            zone: env_require(&env, "BUNNY_STORAGE_ZONE")?,
-            storage_key: env_require(&env, "BUNNY_STORAGE_KEY")?,
-            pull_zone_id: env_require(&env, "BUNNY_PULL_ZONE_ID")?,
-            cdn_key: env_require(&env, "BUNNY_CDN_API_KEY")?,
         })
     }
 }
@@ -810,64 +738,6 @@ fn mutation_failure_status(receipt: &DeployReceipt) -> DeployReceiptStatus {
 }
 
 #[cfg(test)]
-fn upload_manifest_and_purge<T: BunnyTransport, C: Fn() -> bool>(
-    transport: &T,
-    endpoints: BunnyEndpoints,
-    credentials: BunnyCredentials,
-    manifest: DeployArtifactManifest,
-    is_cancelled: C,
-) -> Result<String, String> {
-    let total_files = manifest.files.len();
-    let total_bytes = manifest.total_bytes;
-    let artifact_root = manifest.root.display().to_string();
-    let mut uploaded = 0usize;
-    let mut log = String::new();
-
-    for file in manifest.files {
-        if is_cancelled() {
-            return Err(format!(
-                "[publish_cancelled] Deploy Bunny anulat după {uploaded}/{total_files} uploaduri. Cache-ul CDN nu a fost purjat."
-            ));
-        }
-        let remote_path = file.relative_path.clone();
-        let url = storage_file_url(&endpoints.storage_base, &credentials.zone, &file)?;
-        let content_type = mime_for_extension(Path::new(&file.relative_path));
-        transport
-            .upload(
-                url,
-                &credentials.storage_key,
-                content_type,
-                &file.sha256_uppercase,
-                file.bytes,
-            )
-            .map_err(|error| {
-                format!(
-                    "Deploy Bunny oprit după {uploaded}/{total_files} uploaduri la {remote_path}: {error}. Cache-ul CDN nu a fost purjat."
-                )
-            })?;
-        uploaded += 1;
-        log.push_str(&format!("upload {remote_path}\n"));
-    }
-
-    if is_cancelled() {
-        return Err(format!(
-            "[publish_cancelled] Deploy Bunny anulat după {uploaded}/{total_files} uploaduri. Cache-ul CDN nu a fost purjat."
-        ));
-    }
-
-    purge_cdn_cache(
-        transport,
-        &endpoints.api_base,
-        &credentials.pull_zone_id,
-        &credentials.cdn_key,
-    )?;
-    log.push_str("CDN cache purged\n");
-    Ok(format!(
-        "Deploy complet: {uploaded} fișiere / {total_bytes} bytes din {artifact_root}; checksum SHA-256 verificat, purge CDN confirmat.\n\n{log}"
-    ))
-}
-
-#[cfg(test)]
 fn storage_file_url(
     storage_base: &Url,
     zone: &str,
@@ -1002,9 +872,7 @@ mod tests {
     use sha2::Digest;
     use std::{
         cell::{Cell, RefCell},
-        fs,
         path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[derive(Default)]
@@ -1198,132 +1066,6 @@ mod tests {
         assert!(storage_host("de/path").is_err());
         assert_eq!(storage_host("DE").unwrap(), "storage.bunnycdn.com");
         assert_eq!(storage_host("ny").unwrap(), "ny.storage.bunnycdn.com");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn artifact_preflight_failure_makes_zero_transport_calls() {
-        use std::os::unix::fs::symlink;
-
-        let root = deploy_fixture("zero-request");
-        let outside = root.parent().unwrap().join("outside");
-        fs::create_dir_all(&outside).unwrap();
-        symlink(outside, fixture_output(&root)).unwrap();
-        let transport = FakeTransport::default();
-
-        let error =
-            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
-                Ok(test_endpoints())
-            })
-            .unwrap_err();
-
-        assert!(error.contains("symlink"));
-        assert!(transport.uploads.borrow().is_empty());
-        assert_eq!(transport.purge_calls.get(), 0);
-        cleanup(root);
-    }
-
-    #[test]
-    fn upload_failure_is_terminal_and_skips_purge() {
-        let root = deploy_fixture("upload-failure");
-        let output = fixture_output(&root);
-        fs::create_dir_all(&output).unwrap();
-        fs::write(output.join("index.html"), "payload").unwrap();
-        let transport = FakeTransport {
-            fail_upload: true,
-            ..FakeTransport::default()
-        };
-
-        let error =
-            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
-                Ok(test_endpoints())
-            })
-            .unwrap_err();
-
-        assert!(error.contains("nu a fost purjat"));
-        assert_eq!(transport.uploads.borrow().len(), 1);
-        assert_eq!(transport.purge_calls.get(), 0);
-        cleanup(root);
-    }
-
-    #[test]
-    fn successful_manifest_sends_uppercase_checksum_then_purges_once() {
-        let root = deploy_fixture("checksum-purge");
-        let output = fixture_output(&root);
-        fs::create_dir_all(&output).unwrap();
-        fs::write(output.join("index.html"), "abc").unwrap();
-        let transport = FakeTransport::default();
-
-        let result =
-            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
-                Ok(test_endpoints())
-            })
-            .unwrap();
-
-        let uploads = transport.uploads.borrow();
-        assert_eq!(uploads.len(), 1);
-        assert_eq!(
-            uploads[0].1,
-            "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"
-        );
-        assert_eq!(uploads[0].2, b"abc");
-        assert_eq!(transport.purge_calls.get(), 1);
-        assert!(result.contains("purge CDN confirmat"));
-        drop(uploads);
-        cleanup(root);
-    }
-
-    #[test]
-    fn cancellation_stops_between_uploads_and_skips_purge() {
-        let root = deploy_fixture("cancel-between-uploads");
-        let output = fixture_output(&root);
-        fs::create_dir_all(&output).unwrap();
-        fs::write(output.join("a.html"), "a").unwrap();
-        fs::write(output.join("b.html"), "b").unwrap();
-        let transport = FakeTransport::default();
-        let cancellation_checks = Cell::new(0usize);
-
-        let error = deploy_project_with_transport_cancellable(
-            &root,
-            &root.to_path_buf(),
-            &root,
-            &transport,
-            |_| Ok(test_endpoints()),
-            || {
-                let next = cancellation_checks.get() + 1;
-                cancellation_checks.set(next);
-                next >= 2
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.contains("[publish_cancelled]"));
-        assert_eq!(transport.uploads.borrow().len(), 1);
-        assert_eq!(transport.purge_calls.get(), 0);
-        cleanup(root);
-    }
-
-    #[test]
-    fn purge_failure_is_terminal_after_successful_uploads() {
-        let root = deploy_fixture("purge-failure");
-        let output = fixture_output(&root);
-        fs::create_dir_all(&output).unwrap();
-        fs::write(output.join("index.html"), "payload").unwrap();
-        let transport = FakeTransport {
-            fail_purge: true,
-            ..FakeTransport::default()
-        };
-
-        let error =
-            deploy_project_with_transport(&root, &root.to_path_buf(), &root, &transport, |_| {
-                Ok(test_endpoints())
-            })
-            .unwrap_err();
-
-        assert!(error.contains("nu este confirmat complet"));
-        assert_eq!(transport.uploads.borrow().len(), 1);
-        assert_eq!(transport.purge_calls.get(), 1);
-        cleanup(root);
     }
 
     #[test]
@@ -1587,27 +1329,6 @@ mod tests {
         assert_eq!(transport.purge_calls.get(), 0);
     }
 
-    fn deploy_fixture(label: &str) -> PathBuf {
-        let outer = unique_temp_dir(label);
-        let root = outer.join("site");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("zola.toml"),
-            "base_url = '/'\noutput_dir = '../export'\n",
-        )
-        .unwrap();
-        fs::write(
-            root.join(".env"),
-            "BUNNY_STORAGE_ZONE=zone\nBUNNY_STORAGE_KEY=storage-key\nBUNNY_PULL_ZONE_ID=42\nBUNNY_CDN_API_KEY=cdn-key\n",
-        )
-        .unwrap();
-        root.canonicalize().unwrap()
-    }
-
-    fn fixture_output(root: &Path) -> PathBuf {
-        root.parent().unwrap().join("export")
-    }
-
     fn test_endpoints() -> BunnyEndpoints {
         BunnyEndpoints {
             storage_base: Url::parse("https://storage.invalid/").unwrap(),
@@ -1619,7 +1340,7 @@ mod tests {
         DeployTarget {
             id: "production".to_string(),
             name: "Production".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::Bunny(BunnyTargetConfig {
                 storage_zone: "site".to_string(),
@@ -1651,21 +1372,5 @@ mod tests {
             total_bytes: files.iter().map(|(_, bytes)| bytes.len() as u64).sum(),
             artifact_id: artifact_id.to_string(),
         }
-    }
-
-    fn unique_temp_dir(label: &str) -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "panastudio-bunny-{label}-{}-{stamp}",
-            std::process::id()
-        ))
-    }
-
-    fn cleanup(path: PathBuf) {
-        let target = path.parent().unwrap_or(&path).to_path_buf();
-        let _ = fs::remove_dir_all(target);
     }
 }

@@ -28,6 +28,29 @@ export function projectAssetPublicUrl(asset: ProjectFile): string {
   return `/${publicPath.replace(/^\/+/, "")}`;
 }
 
+/**
+ * Resolves a public project resource against one immutable Rust Preview
+ * generation. Encoding each segment keeps filesystem names containing spaces,
+ * diacritics, query markers or fragments inside the URL path.
+ */
+export function projectPreviewResourceUrl(
+  previewBaseUrl: string | null | undefined,
+  publicPath: string,
+  previewRevision: string | null | undefined,
+): string {
+  const normalizedPath = publicPath.replaceAll("\\", "/").replace(/^\/+/, "");
+  if (!previewBaseUrl?.trim() || !normalizedPath) return "";
+  try {
+    const encodedPath = normalizedPath.split("/").map(encodeURIComponent).join("/");
+    const url = new URL(`/${encodedPath}`, previewBaseUrl);
+    const revision = previewRevision?.trim();
+    if (revision) url.searchParams.set("__pana_preview_revision", revision);
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
 function normalizedZolaAssetPath(asset: ProjectFile) {
   return zolaRelativePath(asset.relativePath).replaceAll("\\", "/").replace(/^\/+/, "");
 }

@@ -3,7 +3,6 @@ use std::{path::Path, time::Instant};
 use crate::{
     blocks::{plan_native_block_contract, NativeBlockContractRequest},
     css::page::page_scss_relative_path,
-    js::{self, PageJsDraftStageInput},
     kernel::{
         file_buffer_store::now_ms,
         project_workspace::{
@@ -12,7 +11,7 @@ use crate::{
             WorkspaceResourceMutation,
         },
     },
-    project::{strip_zola_root_prefix, zola_project_root},
+    project::strip_zola_root_prefix,
     project_model::{
         model::ProjectModel, rebuild_project_model_after_workspace_change_with_source_changes,
         ProjectModelIncrementalBuildReport, ProjectModelIncrementalIntent,
@@ -258,7 +257,7 @@ fn is_template_source(relative_path: &str) -> bool {
 }
 
 fn stage_structural_write_with_native_block_contract(
-    project_root: &Path,
+    _project_root: &Path,
     workspace: &mut ProjectWorkspace,
     identity: &ProjectWorkspaceIdentity,
     metadata: WorkspaceMutationMetadata,
@@ -279,44 +278,18 @@ fn stage_structural_write_with_native_block_contract(
         .as_ref()
         .map(|snapshot| snapshot.text.clone())
         .unwrap_or_default();
-    let page_js_entry = workspace.page_js.drafts.get(&template_path);
-    let page_js_config = match page_js_entry {
-        Some(entry) => entry.current.clone(),
-        None => js::read_page_js_config(project_root, &workspace.documents, &template_path)?,
-    };
-    let page_js_base_config = match page_js_entry {
-        Some(entry) => entry.base.clone(),
-        None => workspace
-            .accepted_page_js_config(&template_path)
-            .cloned()
-            .unwrap_or_else(|| page_js_config.clone()),
-    };
     let plan = plan_native_block_contract(NativeBlockContractRequest {
         template_path: template_path.clone(),
         template_source: structural_contents.to_string(),
         stylesheet_source: Some(stylesheet_source.clone()),
-        page_js_config: Some(page_js_config),
         ensure_block_id: None,
-        cachebust_assets: Some(false),
+        cachebust_assets: Some(crate::commands::config::cachebust_assets_from_store(
+            &workspace.documents,
+        )?),
     });
 
-    if plan.page_js_changed {
-        let preflight = js::plan_page_js_save_for_project(
-            &zola_project_root(project_root),
-            &workspace.session,
-            &workspace.documents,
-            &template_path,
-            plan.page_js_config.clone(),
-            false,
-        )?;
-        if preflight.page_js_resource.blocked {
-            return Err(preflight.page_js_resource.message);
-        }
-    }
-
-    let requires_composite = plan.stylesheet.changed
-        || plan.page_js_changed
-        || plan.template.contents != structural_contents;
+    let requires_composite =
+        plan.stylesheet.changed || plan.template.contents != structural_contents;
     let native_block_contract_ms = elapsed_ms(native_block_contract_started);
     let workspace_stage_started = Instant::now();
     let mutation = if !requires_composite {
@@ -349,25 +322,7 @@ fn stage_structural_write_with_native_block_contract(
                 });
             }
         }
-        let page_js = plan.page_js_changed.then(|| PageJsDraftStageInput {
-            template_path,
-            expected_project_root: workspace.session.project_root.clone(),
-            expected_session_id: workspace.runtime_session_id(),
-            base_config: page_js_base_config,
-            current_config: plan.page_js_config,
-            cachebust_assets: false,
-            source: Some("blocks.contract".to_string()),
-            coalesce_key: None,
-            transaction_id: None,
-        });
-        workspace.stage_composite_changes(
-            identity,
-            metadata,
-            mutations,
-            deletes,
-            page_js,
-            now_ms(),
-        )?
+        workspace.stage_composite_changes(identity, metadata, mutations, deletes, None, now_ms())?
     };
     Ok(TimedWorkspaceStage {
         mutation,
@@ -918,7 +873,7 @@ mod tests {
         fs::write(root.join("zola.toml"), "base_url = '/'\n").unwrap();
         let relative_path = "templates/index.html";
         let before = "{% block content %}<main></main>{% endblock content %}\n";
-        let with_block = r#"{% block content %}<main><span class="counter ps-counter-a" data-anim="ps-counter-a" data-pana-block="counter" data-pana-instance="counter-ps-counter-a" data-tinta="10">0</span></main>{% endblock content %}
+        let with_block = r#"{% block content %}<main><div class="dialog ps-dialog-a" data-anim="ps-dialog-a" data-pana-block="dialog" data-pana-instance="dialog-dialog-a"></div></main>{% endblock content %}
 "#;
         fs::write(root.join(relative_path), before).unwrap();
 
@@ -990,23 +945,18 @@ mod tests {
             .documents
             .text_for(relative_path)
             .unwrap()
-            .contains("data-pana-block=\"counter\""));
+            .contains("data-pana-block=\"dialog\""));
         assert!(workspace
             .documents
             .text_for("sass/pagini/index.scss")
             .unwrap()
-            .contains("pana:block counter:start"));
-        assert_eq!(
-            workspace
-                .page_js
-                .drafts
-                .get(relative_path)
-                .unwrap()
-                .current
-                .blocks[0]
-                .id,
-            "counter"
-        );
+            .contains("pana:block dialog:start"));
+        assert!(!workspace.page_js.drafts.contains_key(relative_path));
+        let projection = workspace.capture_projection_snapshot().unwrap();
+        assert!(projection
+            .source_texts
+            .get("static/js/pana-index.js")
+            .is_some_and(|source| source.contains("PANA BLOCK PROVIDER: dialog")));
         let transaction_id = inserted
             .workspace_mutation
             .transaction_id
@@ -1063,7 +1013,13 @@ mod tests {
             .documents
             .text_for("sass/pagini/index.scss")
             .is_some());
-        assert!(workspace.page_js.drafts.contains_key(relative_path));
+        assert!(!workspace.page_js.drafts.contains_key(relative_path));
+        assert!(workspace
+            .capture_projection_snapshot()
+            .unwrap()
+            .source_texts
+            .get("static/js/pana-index.js")
+            .is_some_and(|source| source.contains("PANA BLOCK PROVIDER: dialog")));
 
         let deleted = stage_preview_structural_write(
             &root,

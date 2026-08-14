@@ -13,13 +13,14 @@ use crate::{
         require_current_project_root, require_project_workspace_available_for_write,
     },
     fonts::{
-        annotate_font_preloads, build_font_face_graph, font_delivery_diagnostics,
-        normalize_font_family_name, plan_google_font_family_download, prepare_font_display_update,
-        prepare_font_preload_update, prepare_font_role_assignment, prepare_local_font_import,
-        read_font_roles, remove_managed_font_face_block,
-        search_google_fonts as search_google_fonts_impl, select_font_face_stylesheet,
-        select_font_preload_template, upsert_managed_font_face_block, FontCssRegistration,
-        FontDeliveryDiagnostic, FontDisplayMode, FontFaceGraph, FontOrigin, FontOwnership,
+        annotate_font_preloads, build_font_face_graph, bundled_font_catalog, bundled_font_preview,
+        font_delivery_diagnostics, normalize_font_family_name, plan_google_font_family_download,
+        prepare_bundled_font_install, prepare_font_display_update, prepare_font_preload_update,
+        prepare_font_role_assignment, prepare_local_font_import, read_font_roles,
+        remove_managed_font_face_block, search_google_fonts as search_google_fonts_impl,
+        select_font_face_stylesheet, select_font_preload_template, upsert_managed_font_face_block,
+        BundledFontCatalogFamily, BundledFontPreview, FontCssRegistration, FontDeliveryDiagnostic,
+        FontDisplayMode, FontFaceFamily, FontFaceGraph, FontOrigin, FontOwnership,
         FontRoleAssignment, FontRoleId, GoogleFontAxis, GoogleFontCatalogFamily,
         GoogleFontDownloadResult, LocalFontImportFamilyPlan, LocalFontImportPlan,
         LocalFontImportPrepared, LOCAL_FONT_IMPORT_SCHEMA_VERSION,
@@ -44,6 +45,16 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct GoogleFontInstallReceipt {
     pub result: GoogleFontDownloadResult,
+    pub mutation: ProjectWorkspaceMutationReceipt,
+    pub workspace: ProjectWorkspaceSnapshot,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundledFontInstallReceipt {
+    pub family: FontFaceFamily,
+    pub license_file: String,
+    pub license_source_url: String,
     pub mutation: ProjectWorkspaceMutationReceipt,
     pub workspace: ProjectWorkspaceSnapshot,
 }
@@ -130,6 +141,22 @@ struct BuiltFontFamilyRemovalPlan {
     binary_changes: Vec<WorkspaceBinaryRestoreChange>,
 }
 
+struct PreparedProjectFontInstall {
+    family: FontFaceFamily,
+    font_face_css: String,
+    license_file: String,
+    license_text: String,
+    writes: Vec<(String, Vec<u8>)>,
+    label: String,
+    source: String,
+}
+
+struct CommittedProjectFontInstall {
+    family: FontFaceFamily,
+    mutation: ProjectWorkspaceMutationReceipt,
+    workspace: ProjectWorkspaceSnapshot,
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct FontFaceGraphCacheKey {
     project_root: String,
@@ -211,6 +238,63 @@ pub async fn get_font_preview_asset(
     })
     .await
     .map_err(|error| format!("Pregătirea mostrei fontului a căzut în task-ul de fundal: {error}"))?
+}
+
+#[tauri::command]
+pub fn get_bundled_font_catalog() -> Vec<BundledFontCatalogFamily> {
+    bundled_font_catalog()
+}
+
+#[tauri::command]
+pub async fn get_bundled_font_preview(
+    family_id: String,
+    style: Option<String>,
+) -> Result<BundledFontPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || bundled_font_preview(&family_id, style.as_deref()))
+        .await
+        .map_err(|error| {
+            format!("Previzualizarea fontului inclus a căzut în task-ul de fundal: {error}")
+        })?
+}
+
+#[tauri::command]
+pub async fn install_bundled_font_family(
+    family_id: String,
+    identity: ProjectWorkspaceIdentity,
+    app: AppHandle,
+) -> Result<BundledFontInstallReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let plan = prepare_bundled_font_install(&family_id)?;
+        let license_file = plan.license_file.clone();
+        let license_source_url = plan.license_source_url.clone();
+        let family_name = plan.family.family.clone();
+        let committed = commit_prepared_project_font_install(
+            &app,
+            &identity,
+            PreparedProjectFontInstall {
+                family: plan.family,
+                font_face_css: plan.font_face_css,
+                license_file: plan.license_file,
+                license_text: plan.license_text,
+                writes: plan
+                    .writes
+                    .into_iter()
+                    .map(|write| (write.project_relative_path, write.bytes))
+                    .collect(),
+                label: format!("Instalează fontul inclus {family_name}"),
+                source: "project_workspace.font_install.bundled".to_string(),
+            },
+        )?;
+        Ok(BundledFontInstallReceipt {
+            family: committed.family,
+            license_file,
+            license_source_url,
+            mutation: committed.mutation,
+            workspace: committed.workspace,
+        })
+    })
+    .await
+    .map_err(|error| format!("Instalarea fontului inclus a căzut în task-ul de fundal: {error}"))?
 }
 
 #[tauri::command]
@@ -441,15 +525,20 @@ pub fn set_font_preload(
             .map(|(path, entry)| (path.as_str(), entry.current_text())),
     )
     .ok_or_else(|| {
-        "Font Manager nu a găsit un template HTML urmărit care conține </head> pentru blocul preload."
+        "Font Manager nu a găsit un template HTML urmărit cu exact un element <head> structural valid pentru blocul preload."
             .to_string()
     })?;
     let template_source = workspace
         .documents
         .text_for(&template_path)
         .ok_or_else(|| format!("ProjectWorkspace nu mai urmărește {template_path}."))?;
-    let template_after =
-        prepare_font_preload_update(&template_source, &graph.families, &file, enabled)?;
+    let template_after = prepare_font_preload_update(
+        &template_source,
+        &template_path,
+        &graph.families,
+        &file,
+        enabled,
+    )?;
     if template_after == template_source {
         return Err(format!(
             "Preload-ul pentru {} este deja {}.",
@@ -945,9 +1034,6 @@ fn download_google_font_family_blocking<R: Runtime>(
     character_set: Option<String>,
     identity: ProjectWorkspaceIdentity,
 ) -> Result<GoogleFontInstallReceipt, String> {
-    let state = app.state::<AppState>();
-    let project_root = require_current_project_root(&state)?;
-    require_project_workspace_available_for_write(&state)?;
     let mut plan = plan_google_font_family_download(
         &family,
         &weights,
@@ -956,6 +1042,39 @@ fn download_google_font_family_blocking<R: Runtime>(
         &axes,
         character_set.as_deref(),
     )?;
+    let committed = commit_prepared_project_font_install(
+        app,
+        &identity,
+        PreparedProjectFontInstall {
+            family: plan.result.family.clone(),
+            font_face_css: plan.result.font_face_css.clone(),
+            license_file: plan.result.license_file.clone(),
+            license_text: plan.license_text,
+            writes: plan
+                .writes
+                .into_iter()
+                .map(|write| (write.project_relative_path, write.bytes))
+                .collect(),
+            label: format!("Instalează fontul {}", plan.result.family.family),
+            source: "project_workspace.font_install.google".to_string(),
+        },
+    )?;
+    plan.result.family = committed.family;
+    Ok(GoogleFontInstallReceipt {
+        result: plan.result,
+        mutation: committed.mutation,
+        workspace: committed.workspace,
+    })
+}
+
+fn commit_prepared_project_font_install<R: Runtime>(
+    app: &AppHandle<R>,
+    identity: &ProjectWorkspaceIdentity,
+    prepared: PreparedProjectFontInstall,
+) -> Result<CommittedProjectFontInstall, String> {
+    let state = app.state::<AppState>();
+    let project_root = require_current_project_root(&state)?;
+    require_project_workspace_available_for_write(&state)?;
     let mut workspace_slot = state
         .project_workspace
         .lock()
@@ -966,7 +1085,7 @@ fn download_google_font_family_blocking<R: Runtime>(
     if workspace.session.project_root != project_root.to_string_lossy() {
         return Err("Font Manager a refuzat un ProjectWorkspace din alt proiect.".to_string());
     }
-    workspace.require_identity(&identity)?;
+    workspace.require_identity(identity)?;
     workspace.accepted_disk.require_live_complete(
         &workspace.runtime_session_id(),
         &workspace.session.project_root,
@@ -994,8 +1113,8 @@ fn download_google_font_family_blocking<R: Runtime>(
         })?;
     let stylesheet_after = upsert_managed_font_face_block(
         &stylesheet_source,
-        &plan.result.family.family,
-        &plan.result.font_face_css,
+        &prepared.family.family,
+        &prepared.font_face_css,
     )?;
     let mut text_changes = (stylesheet_after != stylesheet_source)
         .then(|| WorkspaceResourceMutation {
@@ -1005,30 +1124,25 @@ fn download_google_font_family_blocking<R: Runtime>(
         })
         .into_iter()
         .collect::<Vec<_>>();
-    let current_license = workspace.documents.text_for(&plan.result.license_file);
-    if current_license.as_deref() != Some(plan.license_text.as_str()) {
+    let current_license = workspace.documents.text_for(&prepared.license_file);
+    if current_license.as_deref() != Some(prepared.license_text.as_str()) {
         text_changes.push(WorkspaceResourceMutation {
-            relative_path: plan.result.license_file.clone(),
-            contents: plan.license_text.clone(),
+            relative_path: prepared.license_file.clone(),
+            contents: prepared.license_text,
             create_only: false,
         });
     }
 
-    let binary_changes = plan
+    let binary_changes = prepared
         .writes
         .iter()
-        .filter_map(|write| {
-            match font_resource_already_available(
-                workspace,
-                &project_root,
-                &write.project_relative_path,
-                &write.bytes,
-            ) {
+        .filter_map(|(relative_path, bytes)| {
+            match font_resource_already_available(workspace, &project_root, relative_path, bytes) {
                 Ok(true) => None,
                 Ok(false) => Some(Ok(WorkspaceBinaryRestoreChange {
-                    relative_path: write.project_relative_path.clone(),
+                    relative_path: relative_path.clone(),
                     before: None,
-                    after: Some(write.bytes.clone()),
+                    after: Some(bytes.clone()),
                 })),
                 Err(error) => Some(Err(error)),
             }
@@ -1037,10 +1151,10 @@ fn download_google_font_family_blocking<R: Runtime>(
 
     let mutation = commit_project_workspace_session_mutation(app, workspace, |candidate| {
         candidate.stage_project_bundle_changes(
-            &identity,
+            identity,
             WorkspaceMutationMetadata {
-                label: format!("Instalează fontul {}", plan.result.family.family),
-                source: "project_workspace.font_install.google".to_string(),
+                label: prepared.label,
+                source: prepared.source,
                 coalesce_key: None,
                 transaction_id: None,
             },
@@ -1051,14 +1165,15 @@ fn download_google_font_family_blocking<R: Runtime>(
         )
     })?;
 
-    plan.result.family.registration = FontCssRegistration {
+    let mut family = prepared.family;
+    family.registration = FontCssRegistration {
         registered: true,
         managed: true,
         stylesheets: vec![stylesheet_path],
         display_modes: vec!["swap".to_string()],
     };
-    Ok(GoogleFontInstallReceipt {
-        result: plan.result,
+    Ok(CommittedProjectFontInstall {
+        family,
         mutation,
         workspace: workspace.snapshot(),
     })
@@ -1644,4 +1759,146 @@ fn is_managed_font_license_path(path: &str, directory: &str) -> bool {
             .as_deref(),
         Some("licenta.txt" | "license.txt" | "ofl.txt" | "ufl.txt")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        js::PageJsDraftStore,
+        kernel::{
+            file_buffer_store::{FileBufferStore, FileBufferStoreLimits},
+            project_session::{
+                ProjectRootFingerprint, ProjectSessionScanSummary, ProjectSessionSnapshot,
+            },
+            project_workspace::ProjectWorkspace,
+        },
+        project::{AcceptedProjectDiskManifest, ProjectDiskManifest},
+    };
+
+    #[test]
+    fn bundled_binary_reinstall_is_idempotent_and_divergence_is_blocked() {
+        let mut workspace = test_workspace();
+        let identity = ProjectWorkspaceIdentity {
+            expected_project_root: workspace.session.project_root.clone(),
+            expected_session_id: workspace.runtime_session_id(),
+            expected_revision: workspace.revision,
+        };
+        let path = "static/fonturi/inter/inter-normal-100-900-latin.woff2";
+        let bytes = b"validated-woff2-placeholder".to_vec();
+        let mutation = workspace
+            .stage_project_bundle_changes(
+                &identity,
+                WorkspaceMutationMetadata {
+                    label: "test font install".to_string(),
+                    source: "test.font.install".to_string(),
+                    coalesce_key: None,
+                    transaction_id: None,
+                },
+                Vec::new(),
+                Vec::new(),
+                vec![WorkspaceBinaryRestoreChange {
+                    relative_path: path.to_string(),
+                    before: None,
+                    after: Some(bytes.clone()),
+                }],
+                1,
+            )
+            .expect("first bundled font transaction");
+        assert!(mutation.changed);
+        assert_eq!(workspace.revision, 1);
+        assert!(font_resource_already_available(
+            &workspace,
+            Path::new(&workspace.session.project_root),
+            path,
+            &bytes,
+        )
+        .expect("exact staged resource"));
+        let conflict = font_resource_already_available(
+            &workspace,
+            Path::new(&workspace.session.project_root),
+            path,
+            b"different-font",
+        )
+        .expect_err("divergent staged resource must be blocked");
+        assert!(conflict.contains("staged divergentă"));
+    }
+
+    #[test]
+    fn font_resource_paths_cannot_escape_the_project() {
+        let workspace = test_workspace();
+        let error = font_resource_already_available(
+            &workspace,
+            Path::new(&workspace.session.project_root),
+            "../outside.woff2",
+            b"font",
+        )
+        .expect_err("path traversal must be blocked");
+        assert!(!error.trim().is_empty());
+    }
+
+    #[test]
+    fn bundled_install_uses_the_existing_managed_removal_contract() {
+        let plan = prepare_bundled_font_install("inter").expect("bundled plan");
+        let original = "$color: red;\n";
+        let installed =
+            upsert_managed_font_face_block(original, &plan.family.family, &plan.font_face_css)
+                .expect("managed font block");
+        let removed = remove_managed_font_face_block(&installed, &plan.family.family)
+            .expect("managed removal");
+        assert_eq!(removed, original);
+        assert!(is_managed_font_license_path(
+            &plan.license_file,
+            "static/fonturi/inter",
+        ));
+    }
+
+    fn test_workspace() -> ProjectWorkspace {
+        let root = format!("/tmp/pana-bundled-font-test-{}", std::process::id());
+        let session = ProjectSessionSnapshot {
+            schema_version: 1,
+            id: "bundled-font-test".to_string(),
+            project_root: root.clone(),
+            zola_root: root.clone(),
+            session_dir: format!("{root}/session"),
+            manifest_path: format!("{root}/session.json"),
+            opened_at_ms: 1,
+            last_seen_at_ms: 1,
+            root_fingerprint: ProjectRootFingerprint {
+                canonical_path: root.clone(),
+                modified_ms: 1,
+                size: 0,
+                readonly: false,
+                unix_device: None,
+                unix_inode: None,
+            },
+            scan_summary: ProjectSessionScanSummary {
+                active_theme: None,
+                file_count: 0,
+                directory_count: 1,
+            },
+        };
+        let documents = FileBufferStore::for_project_session(
+            &session,
+            1,
+            FileBufferStoreLimits {
+                max_files: 8,
+                max_file_bytes: 1024 * 1024,
+                max_total_bytes: 2 * 1024 * 1024,
+            },
+        );
+        let accepted = AcceptedProjectDiskManifest::new(
+            session.runtime_instance_id(),
+            root.clone(),
+            ProjectDiskManifest {
+                root,
+                files: Vec::new(),
+                truncated: false,
+                max_files: 8,
+            },
+        )
+        .expect("accepted manifest");
+        let page_js = PageJsDraftStore::new(&session);
+        ProjectWorkspace::new(session, accepted, documents, page_js).expect("workspace")
+    }
 }

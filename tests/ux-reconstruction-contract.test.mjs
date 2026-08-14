@@ -343,7 +343,7 @@ test("inspectorul HTML CSS și JS folosește o singură suprafață vizuală", (
   assert.doesNotMatch(motion, /<span>→<\/span>/);
   assert.match(motion, /IconArrowRight class="value-arrow"/);
 
-  assert.match(css, /<section class="css-pane">/);
+  assert.match(css, /<section\s+[\s\S]*?class="css-pane"/);
   assert.doesNotMatch(css, /inspector-group/);
   assert.match(css, /\.css-context\s*\{[^}]*border-bottom:\s*1px solid var\(--border-subtle\);/);
   assert.doesNotMatch(css, /\.css-pane\s*\{[^}]*border(?:-radius)?:/);

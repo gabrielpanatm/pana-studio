@@ -10,29 +10,15 @@ import type {
   MotionValue,
 } from "$lib/types";
 
-export const MOTION_SCHEMA_VERSION = 2 as const;
-export const MOTION_ANIME_VERSION = "4.4.1" as const;
-
 export function motionId(prefix: string): string {
   const value = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   return `${prefix}-${value}`;
 }
 
-export function emptyMotionDocument(): MotionDocument {
-  return {
-    schemaVersion: MOTION_SCHEMA_VERSION,
-    animeVersion: MOTION_ANIME_VERSION,
-    interactions: [],
-    behaviors: [],
-    customCode: [],
-  };
-}
-
 export function normalizeMotionDocument(
-  value: MotionDocument | null | undefined,
+  value: MotionDocument,
 ): MotionDocument {
-  if (!value) return emptyMotionDocument();
   return structuredClone(value);
 }
 

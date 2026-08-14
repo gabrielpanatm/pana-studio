@@ -96,9 +96,11 @@
   const activeTarget = $derived(
     settings.targets.find((target) => target.id === settings.activeTargetId) ?? null,
   );
+  const selectedCredentialStatus = $derived(
+    selectedTarget ? credentialStatusForTarget(selectedTarget) : null,
+  );
   const selectedCredentialConfigured = $derived(
-    !!selectedTarget &&
-      credentialStatusForTarget(selectedTarget)?.configured === true,
+    selectedCredentialStatus?.configured === true,
   );
   const selectedCapabilities = $derived(
     selectedTarget
@@ -187,7 +189,7 @@
 
   function credentialStatusForTarget(target: DeployTarget) {
     return snapshot?.credentialStatuses.find(
-      (status) => status.credentialRef === target.credentialRef
+      (status) => status.credentialEnvPrefix === target.credentialEnvPrefix
         && credentialKindSupportsProvider(status.kind, target.provider),
     );
   }
@@ -241,7 +243,7 @@
       provider,
       config: next.config,
       cleanupPolicy: next.cleanupPolicy,
-      credentialRef: `${selectedTarget.id}-credentials`,
+      credentialEnvPrefix: selectedTarget.credentialEnvPrefix,
     } as Partial<DeployTarget>);
     syncCredentialKind();
   }
@@ -261,6 +263,10 @@
 
   function removeSelectedTarget() {
     if (!selectedTarget) return;
+    if (selectedCredentialConfigured) {
+      fail("Șterge mai întâi credentialele țintei; Pană Studio nu lasă secrete orfane în .env.");
+      return;
+    }
     const removedId = selectedTarget.id;
     const targets = settings.targets.filter((target) => target.id !== removedId);
     settings = {
@@ -309,7 +315,7 @@
       app?.invalidatePublishAuthorization();
       await loadConfiguration(selectedTarget.id);
       secretDraft = {};
-      succeed("Credentialele au fost salvate în magazia internă separată.");
+      succeed("Credentialele au fost salvate în .env din rădăcina proiectului.");
     } catch (error) {
       fail(`Credentialele nu au putut fi salvate: ${errorMessage(error)}`);
     } finally {
@@ -320,7 +326,7 @@
   async function removeCredential() {
     if (!selectedTarget || settingsDirty) return;
     try {
-      await deleteDeployCredential(selectedTarget.credentialRef);
+      await deleteDeployCredential(selectedTarget.credentialEnvPrefix);
       app?.invalidatePublishAuthorization();
       await loadConfiguration(selectedTarget.id);
       succeed("Credentialele țintei au fost eliminate.");
@@ -414,32 +420,32 @@
   }
 
   function credentialInput(target: DeployTarget): DeployCredentialWriteInput {
-    const credentialRef = target.credentialRef;
+    const credentialEnvPrefix = target.credentialEnvPrefix;
     switch (credentialKind) {
       case "bunny":
         return {
-          credentialRef,
+          credentialEnvPrefix,
           kind: "bunny",
           storageKey: secret("storageKey"),
           cdnApiKey: secret("cdnApiKey"),
         };
       case "ftp":
         return {
-          credentialRef,
+          credentialEnvPrefix,
           kind: "ftp",
           username: secret("username"),
           password: secret("password"),
         };
       case "sftp_password":
         return {
-          credentialRef,
+          credentialEnvPrefix,
           kind: "sftp_password",
           username: secret("username"),
           password: secret("password"),
         };
       case "sftp_private_key":
         return {
-          credentialRef,
+          credentialEnvPrefix,
           kind: "sftp_private_key",
           username: secret("username"),
           privateKeyPem: secret("privateKeyPem"),
@@ -447,14 +453,14 @@
         };
       case "s3":
         return {
-          credentialRef,
+          credentialEnvPrefix,
           kind: "s3",
           accessKeyId: secret("accessKeyId"),
           secretAccessKey: secret("secretAccessKey"),
           sessionToken: optionalSecret("sessionToken"),
         };
       case "cloudflare_pages":
-        return { credentialRef, kind: "cloudflare_pages", apiToken: secret("apiToken") };
+        return { credentialEnvPrefix, kind: "cloudflare_pages", apiToken: secret("apiToken") };
     }
   }
 
@@ -515,7 +521,7 @@
     const common = {
       id,
       name: "Production",
-      credentialRef: `${id}-credentials`,
+      credentialEnvPrefix: envPrefixForTargetId(id),
       cleanupPolicy: "managed_only" as const,
     };
     switch (provider) {
@@ -530,6 +536,14 @@
       case "cloudflare_pages":
         return { ...common, provider, config: { accountId: "", projectName: "", branch: null } };
     }
+  }
+
+  function envPrefixForTargetId(id: string) {
+    const suffix = id
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "TARGET";
+    return `PANA_DEPLOY_${suffix}`;
   }
 
   function targetScopeIsRoot(target: DeployTarget) {
@@ -597,7 +611,7 @@
     <header class="section-header">
       <div>
         <h3>Ținte deploy</h3>
-        <p>Configurația publică păstrează doar referințe; secretele sunt salvate separat.</p>
+        <p>Configurația publică păstrează doar referințe; secretele sunt salvate în <code>.env</code> din rădăcina proiectului.</p>
       </div>
       <button type="button" class="secondary-button" onclick={addTarget} disabled={deployRunning}>
         <IconPlus size={14} /> Adaugă țintă
@@ -627,7 +641,7 @@
                 {#each providerOptions as option}<option value={option.value}>{option.label}</option>{/each}
               </select>
             </label>
-            <label><span>Referință credentiale</span><input value={selectedTarget.credentialRef} oninput={(event) => updateTarget({ credentialRef: event.currentTarget.value })} /></label>
+            <label><span>Prefix ENV credentiale</span><input value={selectedTarget.credentialEnvPrefix} oninput={(event) => updateTarget({ credentialEnvPrefix: event.currentTarget.value.toUpperCase() })} /></label>
           </div>
 
           {#if selectedTarget.provider === "bunny"}
@@ -704,8 +718,17 @@
 
           <div class="credentials-card">
             <header>
-              <div><strong>Credentiale</strong><small>{selectedCredentialConfigured ? "Configurate" : "Lipsesc"}</small></div>
-              <code>{selectedTarget.credentialRef}</code>
+              <div>
+                <strong>Credentiale</strong>
+                <small>
+                  {selectedCredentialConfigured
+                    ? "Configurate"
+                    : selectedCredentialStatus?.missingFields.length
+                      ? `Lipsesc: ${selectedCredentialStatus.missingFields.join(", ")}`
+                      : "Lipsesc"}
+                </small>
+              </div>
+              <code>{selectedTarget.credentialEnvPrefix}__*</code>
             </header>
             {#if selectedTarget.provider === "sftp"}
               <label><span>Autentificare</span><select value={credentialKind} onchange={(event) => { credentialKind = event.currentTarget.value as DeployCredentialKind; secretDraft = {}; }}><option value="sftp_password">Parolă</option><option value="sftp_private_key">Cheie privată</option></select></label>
@@ -725,7 +748,7 @@
                 {@render secretField("apiToken", "Cloudflare API token")}
               {/if}
             </div>
-            <p>Valorile existente nu sunt returnate în interfață. Salvarea înlocuiește setul complet de credentiale.</p>
+            <p>Valorile existente nu sunt returnate în interfață. Sunt păstrate exclusiv în .env, sub prefixul țintei.</p>
             <div class="target-actions">
               <button type="button" class="primary-button" onclick={persistCredential} disabled={settingsDirty || savingCredential}>{savingCredential ? "Se salvează…" : "Salvează credentialele"}</button>
               <button type="button" class="secondary-button" onclick={runConnectionTest} disabled={settingsDirty || !selectedCredentialConfigured || testingConnection}><IconPlugConnected size={14} /> {testingConnection ? "Se testează…" : "Test conexiune"}</button>

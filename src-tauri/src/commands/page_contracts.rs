@@ -65,6 +65,7 @@ pub(super) struct PageContractSourceSnapshot {
     pub stylesheet_known: bool,
     pub page_js_config: PageJsConfig,
     pub page_js_base_config: PageJsConfig,
+    pub cachebust_assets: bool,
     template_revision: FileBufferTextSnapshot,
     stylesheet_revision: Option<FileBufferTextSnapshot>,
 }
@@ -100,7 +101,6 @@ pub(super) fn apply_authoritative_page_contract<Plan>(
     expected_project_root: &str,
     expected_session_id: &str,
     template_path: &str,
-    cachebust_assets: bool,
     build_plan: impl FnOnce(&PageContractSourceSnapshot) -> Plan,
     mutation_plan: impl FnOnce(&Plan) -> PageContractMutationPlan,
 ) -> Result<AppliedPageContract<Plan>, String> {
@@ -129,6 +129,8 @@ pub(super) fn apply_authoritative_page_contract<Plan>(
         &workspace.session.project_root,
         root,
     )?;
+    let cachebust_assets =
+        crate::commands::config::cachebust_assets_from_store(&workspace.documents)?;
 
     commit_project_workspace_session_mutation(app, workspace, |workspace| {
         let operation_id = format!(
@@ -295,7 +297,7 @@ fn read_page_contract_sources(
         .map(|snapshot| snapshot.text.clone())
         .unwrap_or_default();
     let page_js_entry = workspace.page_js.drafts.get(&template_path);
-    let disk_config = || js::read_page_js_config(project_root, store, &template_path);
+    let disk_config = || js::read_page_motion_config(project_root, store, &template_path);
     let page_js_config = match page_js_entry {
         Some(entry) => entry.current.clone(),
         None => disk_config()?,
@@ -317,6 +319,7 @@ fn read_page_contract_sources(
         stylesheet_known: stylesheet_revision.is_some(),
         page_js_config,
         page_js_base_config,
+        cachebust_assets: crate::commands::config::cachebust_assets_from_store(store)?,
         template_revision,
         stylesheet_revision,
     })

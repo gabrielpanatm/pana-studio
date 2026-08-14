@@ -927,7 +927,7 @@ mod tests {
         DeployTarget {
             id: "pages-production".to_string(),
             name: "Cloudflare Pages".to_string(),
-            credential_ref: "pages-secret".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PAGES".to_string(),
             cleanup_policy: crate::deploy::model::DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::CloudflarePages(CloudflarePagesTargetConfig {
                 account_id: "0123456789abcdef0123456789abcdef".to_string(),

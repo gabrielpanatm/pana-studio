@@ -122,7 +122,6 @@ pub struct MotionMutationReceipt {
 pub fn apply_motion_mutation(input: MotionMutationInput) -> Result<MotionMutationReceipt, String> {
     let before_hash = hash_config(&input.config)?;
     let mut config = input.config;
-    config.version = Some(2);
     let mut document = config.motion.take().unwrap_or_default();
     let inverse = apply_mutation(&mut document, &input.mutation)?;
     document.validate()?;
@@ -556,11 +555,7 @@ mod tests {
     }
 
     fn empty_config() -> PageJsConfig {
-        PageJsConfig {
-            version: Some(2),
-            blocks: Vec::new(),
-            motion: None,
-        }
+        PageJsConfig::default()
     }
 
     #[test]

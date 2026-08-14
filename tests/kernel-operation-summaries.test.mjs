@@ -79,13 +79,23 @@ test("session commands publish only after recovery persistence succeeds", () => 
     .filter((path) => /persist_project_workspace_recovery\(/.test(readFileSync(path, "utf8")))
     .map((path) => path.slice(repoRoot.length + 1));
 
-  assert.deepEqual(directRecoveryWriters, ["src-tauri/src/commands/project.rs"]);
+  assert.deepEqual(directRecoveryWriters, [
+    "src-tauri/src/commands/deploy.rs",
+    "src-tauri/src/commands/project.rs",
+  ]);
 
   const projectCommands = source("src-tauri/src/commands/project.rs");
   assert.equal(projectCommands.match(/persist_project_workspace_recovery\(/g)?.length, 1);
   assert.match(
     projectCommands,
     /save_project_workspace[\s\S]*persist_project_workspace_recovery\(&app, workspace\)/,
+  );
+
+  const deployCommands = source("src-tauri/src/commands/deploy.rs");
+  assert.equal(deployCommands.match(/persist_project_workspace_recovery\(/g)?.length, 2);
+  assert.match(
+    deployCommands,
+    /ProjectEnvStore::write_namespace[\s\S]*accept_sensitive_env_disk_state\(next_disk\)\?[\s\S]*persist_project_workspace_recovery\(&app, workspace\)/,
   );
 });
 

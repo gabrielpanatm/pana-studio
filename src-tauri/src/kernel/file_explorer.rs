@@ -156,6 +156,8 @@ pub struct FileExplorerEntry {
     pub parent_id: Option<String>,
     pub name: String,
     pub relative_path: String,
+    pub absolute_path: String,
+    pub file_kind: ProjectFileKind,
     pub depth: usize,
     pub kind: FileExplorerEntryKind,
     pub role: FileExplorerRole,
@@ -1067,6 +1069,8 @@ fn build_entry(
         parent_id,
         name: file.name,
         relative_path: file.relative_path,
+        absolute_path: file.absolute_path,
+        file_kind: file.kind,
         depth,
         kind,
         role,
@@ -1165,15 +1169,15 @@ fn binary_subtree_is_mutable(
         if projection.source_texts.contains_key(path) {
             continue;
         }
-        let Some(accepted_size) = accepted.get(path.as_str()).copied() else {
-            return false;
-        };
-        let current_size = projection
+        let accepted_size = accepted.get(path.as_str()).copied();
+        let staged_size = projection
             .resource_bytes
             .get(path)
-            .map(|bytes| bytes.len() as u64)
-            .unwrap_or(accepted_size);
-        if accepted_size > PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES
+            .map(|bytes| bytes.len() as u64);
+        let Some(current_size) = staged_size.or(accepted_size) else {
+            return false;
+        };
+        if accepted_size.is_some_and(|size| size > PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES)
             || current_size > PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES
         {
             return false;
@@ -1315,6 +1319,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn staged_binary_resource_is_deletable_before_save() {
+        let mut projection = projection(HashMap::new());
+        projection.resource_bytes.insert(
+            "static/images/new-logo.png".to_string(),
+            vec![0x89, b'P', b'N', b'G'],
+        );
+
+        let capabilities = entry_capabilities(
+            FileExplorerEntryKind::Binary,
+            "static/images/new-logo.png",
+            &projection,
+        );
+
+        assert!(capabilities.delete.allowed);
+        assert!(capabilities.rename.allowed);
+        assert!(capabilities.move_entry.allowed);
+    }
+
     fn entry(
         id: &str,
         parent_id: Option<&str>,
@@ -1326,6 +1349,12 @@ mod tests {
             parent_id: parent_id.map(str::to_string),
             name: path.rsplit('/').next().unwrap_or(path).to_string(),
             relative_path: path.to_string(),
+            absolute_path: format!("/project/{path}"),
+            file_kind: match kind {
+                FileExplorerEntryKind::Directory => ProjectFileKind::Dir,
+                FileExplorerEntryKind::Text => ProjectFileKind::Other,
+                FileExplorerEntryKind::Binary => ProjectFileKind::Other,
+            },
             depth: path.matches('/').count(),
             kind,
             role: FileExplorerRole::Asset,

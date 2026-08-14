@@ -17,7 +17,8 @@ use tauri_utils::html::{parse, serialize_node, NodeRef};
 use walkdir::WalkDir;
 
 use crate::{
-    js::parse_page_js,
+    blocks::NativeBlockRuntimePlan,
+    js::{motion_source_relative_path, parse_motion_source},
     kernel::dynamic_widgets::RenderedDynamicWidgetInstance,
     project_model::model::ProjectModel,
     source_graph::model::{
@@ -1313,46 +1314,82 @@ fn derive_runtime_nodes(
         routes.sort();
         routes.dedup();
 
-        let config = parse_page_js(&file.contents);
-        for block in &config.blocks {
-            runtime_nodes.push(canvas_runtime_node(
-                script,
-                &routes,
-                CanvasRuntimeKind::NativeBlock,
-                CanvasNodeOrigin::PanaRuntime,
-                &block.id,
-            ));
+        let logical_path = script.logical_path.trim_start_matches('/');
+        if matches!(
+            logical_path,
+            "js/anime.min.js" | "js/pana-motion-runtime.js"
+        ) || logical_path.starts_with("js/vendor/animejs-")
+        {
+            continue;
         }
-        if let Some(motion) = config.motion.as_ref() {
-            for interaction in &motion.interactions {
-                runtime_nodes.push(canvas_runtime_node(
-                    script,
-                    &routes,
-                    CanvasRuntimeKind::Motion,
-                    CanvasNodeOrigin::PanaRuntime,
-                    &interaction.id,
-                ));
+        let generated_page_runtime = logical_path.starts_with("js/pana-");
+        if generated_page_runtime {
+            for template in model
+                .source_graph
+                .templates
+                .iter()
+                .filter(|template| related_sources.contains(template.node_id.as_str()))
+            {
+                let Some(template_file) = model.files.iter().find(|file| {
+                    normalized_project_path(&file.relative_path)
+                        == normalized_project_path(&template.file)
+                }) else {
+                    continue;
+                };
+                let block_plan =
+                    NativeBlockRuntimePlan::from_template_source(&template_file.contents);
+                for provider_id in block_plan.provider_ids() {
+                    runtime_nodes.push(canvas_runtime_node(
+                        script,
+                        &routes,
+                        CanvasRuntimeKind::NativeBlock,
+                        CanvasNodeOrigin::PanaRuntime,
+                        provider_id,
+                    ));
+                }
+                let Ok(motion_path) = motion_source_relative_path(&template.file) else {
+                    continue;
+                };
+                let Some(motion_file) = model.files.iter().find(|file| {
+                    normalized_project_path(&file.relative_path)
+                        == normalized_project_path(&motion_path)
+                }) else {
+                    continue;
+                };
+                let Ok(config) = parse_motion_source(&motion_file.contents) else {
+                    continue;
+                };
+                if let Some(motion) = config.motion.as_ref() {
+                    for interaction in &motion.interactions {
+                        runtime_nodes.push(canvas_runtime_node(
+                            script,
+                            &routes,
+                            CanvasRuntimeKind::Motion,
+                            CanvasNodeOrigin::PanaRuntime,
+                            &interaction.id,
+                        ));
+                    }
+                    for behavior in &motion.behaviors {
+                        runtime_nodes.push(canvas_runtime_node(
+                            script,
+                            &routes,
+                            CanvasRuntimeKind::Motion,
+                            CanvasNodeOrigin::PanaRuntime,
+                            behavior.id(),
+                        ));
+                    }
+                    for custom in &motion.custom_code {
+                        runtime_nodes.push(canvas_runtime_node(
+                            script,
+                            &routes,
+                            CanvasRuntimeKind::Motion,
+                            CanvasNodeOrigin::PanaRuntime,
+                            &custom.id,
+                        ));
+                    }
+                }
             }
-            for behavior in &motion.behaviors {
-                runtime_nodes.push(canvas_runtime_node(
-                    script,
-                    &routes,
-                    CanvasRuntimeKind::Motion,
-                    CanvasNodeOrigin::PanaRuntime,
-                    behavior.id(),
-                ));
-            }
-            for custom in &motion.custom_code {
-                runtime_nodes.push(canvas_runtime_node(
-                    script,
-                    &routes,
-                    CanvasRuntimeKind::Motion,
-                    CanvasNodeOrigin::PanaRuntime,
-                    &custom.id,
-                ));
-            }
-        }
-        if !config.has_page_js() {
+        } else {
             runtime_nodes.push(canvas_runtime_node(
                 script,
                 &routes,
@@ -3054,12 +3091,39 @@ mod tests {
                 ),
                 (
                     "templates/index.html".to_string(),
-                    "<main>Home</main><script src='/js/index.js'></script><script src='/js/custom.js'></script>".to_string(),
+                    "<main data-pana-block='accordion'>Home</main><script src='/js/pana-index.js'></script><script src='/js/custom.js'></script>".to_string(),
                 ),
                 (
-                    "static/js/index.js".to_string(),
-                    "// @pana-motion {\"version\":2,\"motion\":{\"schemaVersion\":2,\"animeVersion\":\"4.4.1\",\"interactions\":[{\"id\":\"hero-motion\",\"name\":\"Hero motion\",\"trigger\":{\"type\":\"load\"},\"triggerTarget\":{\"kind\":\"document\"},\"actions\":[{\"type\":\"animate\",\"id\":\"hero-fade\",\"name\":\"Fade\",\"target\":{\"kind\":\"selector\",\"selector\":\"main\"},\"duration\":300,\"properties\":[{\"id\":\"opacity\",\"name\":\"opacity\",\"category\":\"style\",\"to\":{\"kind\":\"number\",\"value\":\"1\"}}]}]}]}}\n// @pana-component id=accordion\n"
+                    "static/js/pana-index.js".to_string(),
+                    "void import('/js/vendor/animejs-4.4.1/timeline/index.js');\n"
                         .to_string(),
+                ),
+                (
+                    ".panastudio/motion/templates/index.json".to_string(),
+                    r#"{
+  "schemaVersion": 2,
+  "interactions": [{
+    "id": "hero-motion",
+    "name": "Hero motion",
+    "trigger": { "type": "load" },
+    "triggerTarget": { "kind": "document" },
+    "actions": [{
+      "type": "animate",
+      "id": "hero-fade",
+      "name": "Fade",
+      "target": { "kind": "selector", "selector": "main" },
+      "duration": 300,
+      "properties": [{
+        "id": "opacity",
+        "name": "opacity",
+        "category": "style",
+        "to": { "kind": "number", "value": "1" }
+      }]
+    }]
+  }]
+}
+"#
+                    .to_string(),
                 ),
                 (
                     "static/js/custom.js".to_string(),
@@ -3070,7 +3134,8 @@ mod tests {
             deleted_sources: HashSet::new(),
             changed_paths: HashSet::from([
                 "templates/index.html".to_string(),
-                "static/js/index.js".to_string(),
+                "static/js/pana-index.js".to_string(),
+                ".panastudio/motion/templates/index.json".to_string(),
                 "static/js/custom.js".to_string(),
             ]),
             accepted_disk: AcceptedProjectDiskManifest::new(

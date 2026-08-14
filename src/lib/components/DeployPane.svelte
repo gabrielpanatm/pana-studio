@@ -5,20 +5,18 @@
   } from "@tabler/icons-svelte";
   import { t } from "$lib/i18n/runtime.svelte";
   import {
-    readProjectAppConfig,
-    readZolaProjectSettings,
-    saveProjectAppConfig,
-    saveZolaProjectSettings,
+    readProjectConfiguration,
+    saveProjectConfiguration,
     zolaBuild,
     cancelPublishOperation,
   } from "$lib/project/io";
   import {
-    appConfigDraftFromConfig,
-    appConfigFromDraft,
+    projectSettingsDraftFromSnapshot,
+    projectSettingsFromDraft,
     createDefaultZolaSettings,
     textFieldsFromZolaSettings,
     zolaSettingsWithTextFields,
-    type ProjectAppConfig,
+    type ProjectSettingsSnapshot,
   } from "$lib/project/deploy-settings";
   import DeployTargetsPanel from "$lib/components/deploy/DeployTargetsPanel.svelte";
   import SelectControl from "$lib/components/ui/SelectControl.svelte";
@@ -50,6 +48,7 @@
 
   let zolaSettings = $state<ZolaProjectSettings>(createDefaultZolaSettings());
   let cachebustAssetsDraft = $state(false);
+  let projectSettingsRevision = $state(0);
   let feedFilenamesText = $state("");
   let feedLimitText = $state("");
   let searchTruncateText = $state("");
@@ -78,14 +77,11 @@
     loading = true;
     configLoaded = false;
     try {
-      const [settings, appConfig] = await Promise.all([
-        readZolaProjectSettings(),
-        readProjectAppConfig(),
-      ]);
-      zolaSettings = settings;
-      syncAppConfigFields(appConfig);
-      syncTextFields(settings);
-      onCachebustAssetsChange?.(appConfig.cachebustAssets);
+      const config = await readProjectConfiguration();
+      zolaSettings = config.zolaSettings;
+      syncProjectSettings(config.projectSettings);
+      syncTextFields(config.zolaSettings);
+      onCachebustAssetsChange?.(config.projectSettings.cachebustAssets);
       configDirty = false;
       app?.invalidatePublishAuthorization();
     } catch (e) {
@@ -103,17 +99,19 @@
         feedLimitText,
         searchTruncateText,
       });
-      const [savedSettings, appConfig] = await Promise.all([
-        saveZolaProjectSettings(settingsToSave),
-        saveProjectAppConfig(appConfigFromDraft({
-          cachebustAssetsDraft,
-        })),
-      ]);
-      zolaSettings = savedSettings;
-      syncAppConfigFields(appConfig);
-      syncTextFields(savedSettings);
+      const config = await saveProjectConfiguration({
+        projectSettings: projectSettingsFromDraft(
+          { cachebustAssetsDraft },
+          projectSettingsRevision,
+        ),
+        zolaSettings: settingsToSave,
+      });
+      zolaSettings = config.zolaSettings;
+      syncProjectSettings(config.projectSettings);
+      syncTextFields(config.zolaSettings);
       configDirty = false;
-      onCachebustAssetsChange?.(appConfig.cachebustAssets);
+      app?.invalidatePublishAuthorization();
+      onCachebustAssetsChange?.(config.projectSettings.cachebustAssets);
       onStatusUpdate?.(t("deploy-config-saved"), "saved");
     } catch (e) {
       onStatusUpdate?.(t("deploy-config-error", { error: errorMessage(e) }), "error");
@@ -127,9 +125,10 @@
     searchTruncateText = textFields.searchTruncateText;
   }
 
-  function syncAppConfigFields(config: ProjectAppConfig) {
-    const draft = appConfigDraftFromConfig(config);
+  function syncProjectSettings(settings: ProjectSettingsSnapshot) {
+    const draft = projectSettingsDraftFromSnapshot(settings);
     cachebustAssetsDraft = draft.cachebustAssetsDraft;
+    projectSettingsRevision = settings.workspaceRevision;
   }
 
   function markConfigDirty() {

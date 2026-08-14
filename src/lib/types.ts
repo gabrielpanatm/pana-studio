@@ -58,7 +58,6 @@ export type DomNodeLink = {
 
 export type BlockSelectionContext = {
   providerId: string;
-  markerKind: "canonical" | "legacy";
   rootSelector: string;
   rootTag: string;
   sourceInstanceIds: string[];
@@ -69,7 +68,6 @@ export type BlockSelectionContext = {
 
 export type CanvasBlockObservation = {
   providerId: string;
-  markerKind: "canonical" | "legacy";
   rootSelector: string;
   rootTag: string;
 };
@@ -186,7 +184,7 @@ export type CssPropertySuggestion = ScssVariable & {
   directValue?: boolean;
 };
 
-export type FontOrigin = "local" | "theme" | "external";
+export type FontOrigin = "bundled" | "local" | "theme" | "external";
 
 export type FontDeliveryKind = "local" | "system" | "external" | "missing";
 
@@ -378,6 +376,49 @@ export type FontPreviewAsset = {
   format: string;
   dataUrl: string;
   contentHash: string;
+};
+
+export type BundledFontCatalogFamily = {
+  id: string;
+  family: string;
+  category: string;
+  lastModified: string;
+  specimenUrl: string;
+  cssUrl: string;
+  styles: string[];
+  weightRange: FontWeightRange;
+  fileCount: number;
+  sizeBytes: number;
+  variable: boolean;
+  romanianSupported: boolean;
+  license: FontLicenseMetadata;
+  licenseFile: string;
+};
+
+export type BundledFontPreviewFace = {
+  libraryPath: string;
+  subset: string;
+  unicodeRange: string;
+  style: string;
+  weightRange: FontWeightRange;
+  format: string;
+  dataUrl: string;
+  contentHash: string;
+  sourceUrl: string;
+};
+
+export type BundledFontPreview = {
+  familyId: string;
+  family: string;
+  faces: BundledFontPreviewFace[];
+};
+
+export type BundledFontInstallReceipt = {
+  family: FontFaceFamily;
+  licenseFile: string;
+  licenseSourceUrl: string;
+  mutation: ProjectWorkspaceMutationReceipt;
+  workspace: ProjectWorkspaceSnapshot;
 };
 
 export type GoogleFontDownloadResult = {
@@ -633,10 +674,17 @@ export type SitePartialIncludeReceipt = {
   authority: SiteStructureAuthorityReceipt;
 };
 
-export type ProjectAppConfig = {
-  projectPath: string;
+export type ProjectSettingsSnapshot = {
+  schemaVersion: typeof PROJECT_SETTINGS_SCHEMA_VERSION;
+  workspaceRevision: number;
   cachebustAssets: boolean;
-  deploy: DeploySettings;
+};
+
+export const PROJECT_SETTINGS_SCHEMA_VERSION = 1 as const;
+
+export type ProjectConfigurationSnapshot = {
+  projectSettings: ProjectSettingsSnapshot;
+  zolaSettings: ZolaProjectSettings;
 };
 
 export type DeployProviderKind = "bunny" | "ftp" | "sftp" | "s3" | "cloudflare_pages";
@@ -692,16 +740,20 @@ export type DeployTargetProvider =
 export type DeployTarget = {
   id: string;
   name: string;
-  credentialRef: string;
+  credentialEnvPrefix: string;
   cleanupPolicy: DeployCleanupPolicy;
 } & DeployTargetProvider;
 
 export type DeploySettings = {
-  schemaVersion: number;
+  schemaVersion: typeof DEPLOY_SETTINGS_SCHEMA_VERSION;
   revision: number;
   activeTargetId: string | null;
   targets: DeployTarget[];
 };
+
+export const DEPLOY_SETTINGS_SCHEMA_VERSION = 1 as const;
+export const DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION = 2 as const;
+export const DEPLOY_CONFIGURATION_SCHEMA_VERSION = 2 as const;
 
 export type ProviderCapabilities = {
   remoteInventory: boolean;
@@ -721,10 +773,11 @@ export type DeployCredentialKind =
   | "cloudflare_pages";
 
 export type DeployCredentialStatus = {
-  schemaVersion: number;
-  credentialRef: string;
+  schemaVersion: typeof DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION;
+  credentialEnvPrefix: string;
   kind: DeployCredentialKind;
   configured: boolean;
+  missingFields: string[];
 };
 
 export type DeployTargetCapabilitySnapshot = {
@@ -734,32 +787,31 @@ export type DeployTargetCapabilitySnapshot = {
 };
 
 export type DeployConfigurationSnapshot = {
-  schemaVersion: number;
+  schemaVersion: typeof DEPLOY_CONFIGURATION_SCHEMA_VERSION;
   settings: DeploySettings;
   credentialStatuses: DeployCredentialStatus[];
   targetCapabilities: DeployTargetCapabilitySnapshot[];
-  legacyBunnyFallback: boolean;
 };
 
 export type DeployCredentialWriteInput =
-  | { credentialRef: string; kind: "bunny"; storageKey: string; cdnApiKey: string }
-  | { credentialRef: string; kind: "ftp"; username: string; password: string }
-  | { credentialRef: string; kind: "sftp_password"; username: string; password: string }
+  | { credentialEnvPrefix: string; kind: "bunny"; storageKey: string; cdnApiKey: string }
+  | { credentialEnvPrefix: string; kind: "ftp"; username: string; password: string }
+  | { credentialEnvPrefix: string; kind: "sftp_password"; username: string; password: string }
   | {
-      credentialRef: string;
+      credentialEnvPrefix: string;
       kind: "sftp_private_key";
       username: string;
       privateKeyPem: string;
       passphrase: string | null;
     }
   | {
-      credentialRef: string;
+      credentialEnvPrefix: string;
       kind: "s3";
       accessKeyId: string;
       secretAccessKey: string;
       sessionToken: string | null;
     }
-  | { credentialRef: string; kind: "cloudflare_pages"; apiToken: string };
+  | { credentialEnvPrefix: string; kind: "cloudflare_pages"; apiToken: string };
 
 export type DeployActionKind = "upload" | "skip" | "delete";
 export type DeployDeleteOrigin = "managed" | "unmanaged";
@@ -1015,14 +1067,13 @@ export type ApplicationSettingsPatch = {
   blockPropertiesCollapsed?: boolean;
 };
 export type AppHomeSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   identifier: string;
   configDir: string;
   dataDir: string;
   cacheDir: string;
   logDir: string;
   tempDir: string;
-  projectsConfigDir: string;
   mcpDir: string;
   sessionsDir: string;
   kernelDir: string;
@@ -1030,6 +1081,75 @@ export type AppHomeSnapshot = {
   scratchDir: string;
   previewCacheDir: string;
   appLogsDir: string;
+};
+export type StorageAreaSnapshot = {
+  path: string;
+  bytes: number;
+  entries: number;
+};
+export type StorageCacheSnapshot = {
+  webkit: StorageAreaSnapshot;
+  preview: StorageAreaSnapshot;
+  totalBytes: number;
+  reclaimableBytes: number;
+  protectedPreviewBytes: number;
+  webkitCleanupSupported: boolean;
+};
+export type StorageLogsSnapshot = {
+  area: StorageAreaSnapshot;
+  activeBytes: number;
+  archiveCount: number;
+};
+export type StorageSessionSnapshot = {
+  id: string;
+  projectName: string;
+  projectRoot: string;
+  bytes: number;
+  entries: number;
+  lastSeenAtMs: number;
+  projectExists: boolean;
+  hasRecovery: boolean;
+  recoverySignals: string[];
+  manifestStatus: string;
+  active: boolean;
+  deletable: boolean;
+  defaultSelected: boolean;
+};
+export type StorageSessionsSnapshot = {
+  path: string;
+  revision: string;
+  totalBytes: number;
+  reclaimableBytes: number;
+  count: number;
+  orphanCount: number;
+  recoveryCount: number;
+  activeCount: number;
+  items: StorageSessionSnapshot[];
+};
+export type ApplicationStorageSnapshot = {
+  schemaVersion: 1;
+  scannedAtMs: number;
+  totalBytes: number;
+  reclaimableBytes: number;
+  cache: StorageCacheSnapshot;
+  logs: StorageLogsSnapshot;
+  sessions: StorageSessionsSnapshot;
+};
+export type DeleteStorageSessionsRequest = {
+  expectedRevision: string;
+  sessionIds: string[];
+  confirmedRecoverySessionIds: string[];
+};
+export type StorageCleanupReceipt = {
+  schemaVersion: 1;
+  operation: "cache" | "logs" | "sessions";
+  removedItems: number;
+  bytesBefore: number;
+  bytesAfter: number;
+  freedBytes: number;
+  protectedBytes: number;
+  failures: string[];
+  snapshot: ApplicationStorageSnapshot;
 };
 export type ProjectPaneTab = "layers" | "files";
 export type InspectorTab = "html" | "css" | "js";
@@ -1413,7 +1533,7 @@ export type VersionRestoreRecoveryResolutionReceipt = {
   workspace: ProjectWorkspaceSnapshot | null;
 };
 
-export type ProjectFileKind = "DIR" | "HTML" | "MD" | "CSS" | "SCSS" | "JS" | "IMAGE" | "OTHER";
+export type ProjectFileKind = "DIR" | "HTML" | "MD" | "CSS" | "SCSS" | "JS" | "IMAGE" | "FONT" | "OTHER";
 export type ProjectFileRole = "page" | "template" | "style" | "script" | "asset";
 
 export type ProjectFile = {
@@ -1608,17 +1728,20 @@ export type ProjectOpenInspectionReceipt = {
 };
 
 export type ProjectOpenBootstrapReceipt = {
-  schemaVersion: 3;
+  schemaVersion: typeof PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION;
   project: ProjectScan;
   lifecycle: ProjectLifecycleSnapshot;
   fileBuffers: FileBufferStoreSnapshot;
   workspace: ProjectWorkspaceSnapshot;
-  projectConfig: ProjectAppConfig;
+  projectSettings: ProjectSettingsSnapshot;
+  deploySettings: DeploySettings;
   workbench: WorkbenchSnapshot;
   activeDocument: ProjectBootstrapDocument | null;
   targetCssFile: string | null;
   initialSurface: ProjectBootstrapInitialSurface | null;
 };
+
+export const PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION = 4 as const;
 
 export type ProjectBootstrapInitialSurface = {
   documentPath: string;
@@ -2178,6 +2301,8 @@ export type FileExplorerEntry = {
   parentId: string | null;
   name: string;
   relativePath: string;
+  absolutePath: string;
+  fileKind: ProjectFileKind;
   depth: number;
   kind: FileExplorerEntryKind;
   role: FileExplorerRole;
@@ -3986,7 +4111,8 @@ export type SelectionSubjectKind =
   | "htmlElement"
   | "teraBoundary"
   | "markdownBoundary"
-  | "runtimeElement";
+  | "runtimeElement"
+  | "cssRule";
 
 export type SelectionSubject = {
   kind: SelectionSubjectKind;
@@ -4159,7 +4285,6 @@ export type InspectorSelectionSummaryReason =
 
 export type InspectorSelectionBlockContext = {
   providerId: string;
-  markerKind: "canonical" | "legacy";
   rootTag: string;
 };
 
@@ -4836,8 +4961,6 @@ export type BlockGraph = {
   diagnostics: BlockDiagnostic[];
 };
 
-export type NativeBlockMarkerKind = "canonical" | "legacy";
-
 export type NativeBlockOptionState = {
   id: string;
   value: BlockOptionValue;
@@ -4853,7 +4976,6 @@ export type UiBlockSourceInstance = {
   rootSourceNodeId: string | null;
   rootLocation: ProjectSourceEditLocation | null;
   status: BlockResolutionStatus;
-  markerKind: NativeBlockMarkerKind | null;
   editable: boolean;
   diagnostic: LocalizedDiagnostic | null;
   options: NativeBlockOptionState[];
@@ -4915,7 +5037,7 @@ export type NativeIconMutationIntent = {
 };
 
 export type UiBlockGraphSnapshot = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   projectRoot: string;
   runtimeSessionId: string;
   workspaceRevision: number;
@@ -6223,7 +6345,7 @@ export type PublishPreflightGate = {
 export type PublishPreflightTargetIdentity = {
   targetId: string;
   provider: string;
-  credentialRef: string;
+  credentialEnvPrefix: string;
   credentialKind: string;
   credentialConfigured: boolean;
 };
@@ -6954,7 +7076,6 @@ export type NativeBlockContractInput = {
   stylesheetSource?: string | null;
   pageJsConfig?: PageJsConfig | null;
   ensureBlockId?: string | null;
-  cachebustAssets?: boolean | null;
 };
 
 export type NativeBlockContractApplyInput = {
@@ -6962,7 +7083,6 @@ export type NativeBlockContractApplyInput = {
   expectedSessionId: string;
   templatePath: string;
   ensureBlockId?: string | null;
-  cachebustAssets?: boolean | null;
 };
 
 export type NativeBlockContractPlan = {
@@ -7664,10 +7784,6 @@ export type UiContextProjection = {
 
 // ── JS / Motion tab types ─────────────────────────────────────────────────────
 
-export type NativeBlockRuntimeEntry = {
-  id: string;
-};
-
 export type MotionTargetKind = "element" | "selector" | "trigger" | "relative" | "viewport" | "document";
 export type MotionTargetRelation =
   | "selfElement"
@@ -7883,17 +7999,20 @@ export type MotionCustomCode = {
   code: string;
 };
 
+export type MotionRuntimeContract = {
+  schemaVersion: number;
+  animeVersion: string;
+};
+
 export type MotionDocument = {
   schemaVersion: 2;
-  animeVersion: "4.4.1";
+  animeVersion: string;
   interactions: MotionInteraction[];
   behaviors: MotionBehavior[];
   customCode: MotionCustomCode[];
 };
 
 export type PageJsConfig = {
-  version?: 2;
-  blocks: NativeBlockRuntimeEntry[];
   motion?: MotionDocument | null;
 };
 
@@ -7988,7 +8107,6 @@ export type PageJsDraftStageInput = {
   templatePath: string;
   baseConfig: PageJsConfig;
   currentConfig: PageJsConfig;
-  cachebustAssets: boolean;
   source?: string | null;
   coalesceKey?: string | null;
   transactionId?: string | null;
@@ -8009,6 +8127,7 @@ export type PageJsCommandReceipt<T> = {
 
 export type PageJsWorkspaceState = {
   templatePath: string;
+  motionRuntime: MotionRuntimeContract;
   accepted: PageJsConfig;
   current: PageJsConfig;
   dirty: boolean;

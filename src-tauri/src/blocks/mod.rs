@@ -20,10 +20,10 @@ pub(crate) use native::{
     NativeBlockRegistrySnapshot,
 };
 pub(crate) use options::{
-    inspect_native_block_source, plan_native_block_option_attribute, NativeBlockMarkerKind,
-    NativeBlockOptionIntent, NativeBlockOptionState,
+    inspect_native_block_source, plan_native_block_option_attribute, NativeBlockOptionIntent,
+    NativeBlockOptionState,
 };
-pub(crate) use runtime::{install_native_block_runtime, NATIVE_BLOCK_RUNTIME_SCRIPT};
+pub(crate) use runtime::{render_native_block_runtime, NativeBlockRuntimePlan};
 pub(crate) use slots::{
     inspect_native_block_slots, node_has_native_block_ancestor, node_is_native_block,
     node_is_slider_managed_scaffold, node_is_slider_slot_container, node_is_slider_slot_item,

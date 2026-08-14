@@ -172,6 +172,7 @@ import type {
   EditorNavigationSnapshot,
   ExternalDiskState,
   FileExplorerCommitReceipt,
+  FileExplorerEntry,
   FileExplorerOperationPlan,
   FileExplorerOperationRequest,
   FileExplorerSnapshot,
@@ -640,6 +641,17 @@ function editorNavigationRefreshKey(
   ]);
 }
 
+function projectFileFromExplorerEntry(entry: FileExplorerEntry): ProjectFile {
+  return {
+    name: entry.name,
+    relativePath: entry.relativePath,
+    absolutePath: entry.absolutePath,
+    kind: entry.fileKind,
+    role: entry.role,
+    previewPath: entry.previewPath,
+  };
+}
+
 export class AppState {
   // Expose constants for template access
   readonly motionWorkspace = new MotionWorkspaceState();
@@ -1065,7 +1077,6 @@ export class AppState {
       !physical
       || !bounded
       || bounded.providerId !== physical.providerId
-      || bounded.markerKind !== physical.markerKind
       || bounded.rootTag !== physical.rootTag
     ) return null;
     const navigationSnapshot = this.editorNavigationSnapshot;
@@ -1237,6 +1248,24 @@ export class AppState {
     }
   }
 
+  async resolveWorkspaceProjectFile(relativePath: string): Promise<ProjectFile | null> {
+    const workspace = this.projectWorkspaceSnapshot;
+    if (!workspace) return null;
+    let explorer = this.fileExplorerSnapshot;
+    if (
+      !explorer
+      || explorer.projectRoot !== workspace.projectRoot
+      || explorer.runtimeSessionId !== workspace.runtimeSessionId
+      || explorer.workspaceRevision !== workspace.revision
+    ) {
+      explorer = await this.refreshFileExplorerSnapshot();
+    }
+    const entry = explorer?.entries.find(
+      (candidate) => candidate.relativePath === relativePath && candidate.kind === "text",
+    );
+    return entry ? projectFileFromExplorerEntry(entry) : null;
+  }
+
   selectFileExplorerEntry(entryId: string) {
     const serial = ++this.fileExplorerSelectionSerial;
     const selection = this.fileExplorerSelectionTail.then(async () => {
@@ -1281,12 +1310,16 @@ export class AppState {
       if (serial !== this.fileExplorerSelectionSerial) return;
       const selection = receipt.snapshot.selectedEntry;
       if (!selection || selection.kind !== "text") return;
-      const file = this.scannedProject?.files.find(
-        (candidate) => candidate.relativePath === selection.relativePath,
+      const entry = receipt.snapshot.entries.find(
+        (candidate) => candidate.relativePath === selection.relativePath
+          && candidate.kind === "text",
       );
-      if (file) {
-        await this.loadScannedProjectFile(file, { syncWorkbench: false });
+      if (!entry) {
+        throw new Error(t("workbench-document-missing", { path: selection.relativePath }));
       }
+      await this.loadScannedProjectFile(projectFileFromExplorerEntry(entry), {
+        syncWorkbench: false,
+      });
     } catch (error) {
       if (serial !== this.fileExplorerSelectionSerial) return;
       this.fileExplorerError = errorMessage(error);

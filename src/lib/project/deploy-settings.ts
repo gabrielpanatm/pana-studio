@@ -1,7 +1,7 @@
-import type { ProjectAppConfig, ZolaProjectSettings } from "$lib/types";
-export type { ProjectAppConfig } from "$lib/types";
+import type { ProjectSettingsSnapshot, ZolaProjectSettings } from "$lib/types";
+export type { ProjectSettingsSnapshot } from "$lib/types";
 
-export type ProjectAppConfigDraft = {
+export type ProjectSettingsDraft = {
   cachebustAssetsDraft: boolean;
 };
 
@@ -68,14 +68,20 @@ export function zolaSettingsWithTextFields(
   };
 }
 
-export function appConfigDraftFromConfig(config: ProjectAppConfig): ProjectAppConfigDraft {
+export function projectSettingsDraftFromSnapshot(
+  settings: ProjectSettingsSnapshot,
+): ProjectSettingsDraft {
   return {
-    cachebustAssetsDraft: config.cachebustAssets,
+    cachebustAssetsDraft: settings.cachebustAssets,
   };
 }
 
-export function appConfigFromDraft(draft: ProjectAppConfigDraft): { cachebustAssets: boolean } {
+export function projectSettingsFromDraft(
+  draft: ProjectSettingsDraft,
+  expectedWorkspaceRevision: number,
+): { expectedWorkspaceRevision: number; cachebustAssets: boolean } {
   return {
+    expectedWorkspaceRevision,
     cachebustAssets: draft.cachebustAssetsDraft,
   };
 }

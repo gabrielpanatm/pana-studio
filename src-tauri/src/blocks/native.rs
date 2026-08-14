@@ -41,7 +41,9 @@ pub struct NativeBlockDefinition {
     pub class_name: &'static str,
     pub text: &'static str,
     pub html: &'static str,
-    pub scss: &'static str,
+    /// CSS structural indispensabil funcționării blocului. Nu conține temă,
+    /// decor sau design implicit.
+    pub functional_scss: &'static str,
     pub capabilities: BlockCapabilities,
     pub requirements: &'static [NativeBlockRequirement],
     pub options: &'static [NativeBlockOptionDefinition],
@@ -133,7 +135,14 @@ pub struct NativeBlockIdentity {
     pub instance_id: String,
 }
 
-const NATIVE_RUNTIME_REQUIREMENTS: &[NativeBlockRequirement] = &[
+const NATIVE_JS_REQUIREMENTS: &[NativeBlockRequirement] = &[NativeBlockRequirement {
+    id: "pana-block-runtime",
+    kind: BlockRequirementKind::Runtime,
+    minimum_version: 1,
+    required: true,
+}];
+
+const NATIVE_JS_FUNCTIONAL_STYLE_REQUIREMENTS: &[NativeBlockRequirement] = &[
     NativeBlockRequirement {
         id: "pana-block-runtime",
         kind: BlockRequirementKind::Runtime,
@@ -141,7 +150,7 @@ const NATIVE_RUNTIME_REQUIREMENTS: &[NativeBlockRequirement] = &[
         required: true,
     },
     NativeBlockRequirement {
-        id: "pana-block-styles",
+        id: "pana-block-functional-styles",
         kind: BlockRequirementKind::Stylesheet,
         minimum_version: 1,
         required: true,
@@ -543,7 +552,7 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         // Geometria nu este publicată drept payload HTML în frontend. Rendererul
         // Rust o construiește din registrul compilat pentru fiecare inserare.
         html: "",
-        scss: "",
+        functional_scss: "",
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
@@ -567,16 +576,14 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         text: "0",
         class_name: "counter",
         html: r#"<span class="counter __PANA_CLASS__" data-anim="__PANA_DATA_ANIM__" data-pana-block="counter" data-pana-instance="__PANA_INSTANCE__" data-tinta="1250" data-sufix="+">0</span>"#,
-        scss: r#".counter {
-  font-variant-numeric: tabular-nums;
-}"#,
+        functional_scss: "",
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
             supports_variants: false,
             supports_slots: false,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_REQUIREMENTS,
         options: COUNTER_OPTIONS,
         slots: NO_SLOTS,
     },
@@ -612,69 +619,14 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     </div>
   </div>
 </div>"#,
-        scss: r#".accordion {
-  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  border-radius: 0.75rem;
-  background: var(--pana-block-surface, Canvas);
-  overflow: hidden;
-}
-
-.accordion__item + .accordion__item {
-  border-top: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-}
-
-.accordion__trigger {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.125rem;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-}
-
-.accordion__trigger:focus-visible {
-  outline: 2px solid var(--pana-block-accent, Highlight);
-  outline-offset: -2px;
-}
-
-.accordion__icon {
-  transition: transform 180ms ease;
-}
-
-.accordion__item[data-open] .accordion__icon {
-  transform: rotate(45deg);
-}
-
-.accordion__panel {
-  padding: 0 1.125rem 1rem;
-  color: var(--pana-block-text-muted, GrayText);
-}
-
-.accordion__panel > :first-child {
-  margin-top: 0;
-}
-
-.accordion__panel > :last-child {
-  margin-bottom: 0;
-}
-
-.accordion__panel[hidden] {
-  display: none;
-}"#,
+        functional_scss: "",
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
             supports_variants: false,
             supports_slots: true,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_REQUIREMENTS,
         options: ACCORDION_OPTIONS,
         slots: ACCORDION_SLOTS,
     },
@@ -706,68 +658,14 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     <p>Descrie pasii sau procesul aici.</p>
   </div>
 </div>"#,
-        scss: r#".tabs {
-  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  border-radius: 0.75rem;
-  background: var(--pana-block-surface, Canvas);
-  overflow: hidden;
-}
-
-.tabs__list {
-  display: flex;
-  gap: 0.25rem;
-  padding: 0.35rem;
-  border-bottom: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  background: var(--pana-block-muted, color-mix(in srgb, CanvasText 5%, Canvas));
-  overflow-x: auto;
-}
-
-.tabs__tab {
-  border: 0;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: var(--pana-block-text-muted, GrayText);
-  font: inherit;
-  font-weight: 700;
-  padding: 0.7rem 1rem;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.tabs__tab[aria-selected="true"] {
-  background: var(--pana-block-surface, Canvas);
-  color: var(--pana-block-text, CanvasText);
-  box-shadow: var(--pana-block-shadow-s, 0 1px 3px color-mix(in srgb, CanvasText 12%, transparent));
-}
-
-.tabs__tab:focus-visible {
-  outline: 2px solid var(--pana-block-accent, Highlight);
-  outline-offset: 2px;
-}
-
-.tabs__panel {
-  padding: 1rem 1.125rem;
-  color: var(--pana-block-text-muted, GrayText);
-}
-
-.tabs__panel > :first-child {
-  margin-top: 0;
-}
-
-.tabs__panel > :last-child {
-  margin-bottom: 0;
-}
-
-.tabs__panel[hidden] {
-  display: none;
-}"#,
+        functional_scss: "",
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
             supports_variants: false,
             supports_slots: true,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_REQUIREMENTS,
         options: TABS_OPTIONS,
         slots: TABS_SLOTS,
     },
@@ -803,79 +701,14 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     <button class="slider__button slider__autoplay" data-pana-slider-autoplay type="button" aria-label="Opreste rotatia" hidden>Opreste</button>
   </div>
 </div>"#,
-        scss: r#".slider {
-  display: grid;
-  gap: 0.75rem;
-  color: var(--pana-block-text, CanvasText);
-}
-
-.slider__viewport {
-  overflow: hidden;
-  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  border-radius: 0.75rem;
-  background: var(--pana-block-surface, Canvas);
-}
-
-.slider__track {
-  display: flex;
-  transform: translateX(calc(var(--pana-slider-index, 0) * -100%));
-  transition: transform 260ms ease;
-}
-
-.slider__slide {
-  flex: 0 0 100%;
-  min-width: 0;
-  padding: 1.25rem;
-}
-
-.slider__slide[hidden] {
-  display: block;
-  visibility: hidden;
-}
-
-.slider__slide > :first-child { margin-top: 0; }
-.slider__slide > :last-child { margin-bottom: 0; }
-
-.slider__controls {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.slider__button,
-.slider__indicator {
-  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  border-radius: 0.5rem;
-  background: var(--pana-block-surface, Canvas);
-  color: inherit;
-  font: inherit;
-  padding: 0.5rem 0.75rem;
-  cursor: pointer;
-}
-
-.slider__button:focus-visible,
-.slider__indicator:focus-visible {
-  outline: 2px solid var(--pana-block-accent, Highlight);
-  outline-offset: 2px;
-}
-
-.slider__button:disabled { cursor: not-allowed; opacity: 0.45; }
-.slider__indicators { display: flex; align-items: center; gap: 0.35rem; }
-.slider__indicator { width: 0.75rem; height: 0.75rem; padding: 0; border-radius: 999px; }
-.slider__indicator[aria-current="true"] { background: var(--pana-block-accent, Highlight); }
-
-@media (prefers-reduced-motion: reduce) {
-  .slider__track { transition: none; }
-}"#,
+        functional_scss: "",
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
             supports_variants: false,
             supports_slots: true,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_REQUIREMENTS,
         options: SLIDER_OPTIONS,
         slots: SLIDER_SLOTS,
     },
@@ -906,37 +739,13 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     </div>
   </div>
 </div>"#,
-        scss: r#".dialog {
-  display: inline-block;
-}
-
-.dialog__trigger,
-.dialog__button {
-  border: 0;
-  border-radius: 0.5rem;
-  background: var(--pana-block-action, var(--pana-block-text, CanvasText));
-  color: var(--pana-block-text-inverse, Canvas);
-  font: inherit;
-  font-weight: 700;
-  padding: 0.75rem 1rem;
-  cursor: pointer;
-}
-
-.dialog__trigger:focus-visible,
-.dialog__button:focus-visible,
-.dialog__close:focus-visible {
-  outline: 2px solid var(--pana-block-accent, Highlight);
-  outline-offset: 2px;
-}
-
-.dialog__overlay {
+        functional_scss: r#".dialog__overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: grid;
   place-items: center;
-  padding: 1rem;
-  background: var(--pana-block-overlay, color-mix(in srgb, CanvasText 55%, transparent));
+  overflow: auto;
 }
 
 .dialog__overlay[hidden] {
@@ -944,40 +753,11 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
 }
 
 .dialog__panel {
-  width: min(100%, 34rem);
-  max-height: min(90vh, 48rem);
+  max-width: 100%;
+  max-height: 100%;
   overflow: auto;
-  border-radius: 0.875rem;
-  background: var(--pana-block-surface, Canvas);
-  color: var(--pana-block-text, CanvasText);
-  padding: 1.25rem;
-  box-shadow: var(--pana-block-shadow-l, 0 24px 60px color-mix(in srgb, CanvasText 28%, transparent));
-}
-
-.dialog__close {
-  float: right;
-  border: 0;
-  border-radius: 0.375rem;
-  background: var(--pana-block-muted, color-mix(in srgb, CanvasText 7%, Canvas));
-  color: var(--pana-block-text-muted, GrayText);
-  font: inherit;
-  padding: 0.45rem 0.65rem;
-  cursor: pointer;
-}
-
-.dialog__title {
-  margin: 0 2.5rem 0.75rem 0;
-}
-
-.dialog__panel > :last-child {
-  margin-bottom: 0;
-}
-
-.dialog__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1rem;
+  background: Canvas;
+  color: CanvasText;
 }"#,
         capabilities: BlockCapabilities {
             can_insert: true,
@@ -985,7 +765,7 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
             supports_variants: true,
             supports_slots: true,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_FUNCTIONAL_STYLE_REQUIREMENTS,
         options: DIALOG_OPTIONS,
         slots: DIALOG_SLOTS,
     },
@@ -1016,36 +796,13 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     </aside>
   </div>
 </div>"#,
-        scss: r#".offcanvas {
-  display: inline-block;
-}
-
-.offcanvas__trigger,
-.offcanvas__button {
-  border: 0;
-  border-radius: 0.5rem;
-  background: var(--pana-block-action, var(--pana-block-text, CanvasText));
-  color: var(--pana-block-text-inverse, Canvas);
-  font: inherit;
-  font-weight: 700;
-  padding: 0.75rem 1rem;
-  cursor: pointer;
-}
-
-.offcanvas__trigger:focus-visible,
-.offcanvas__button:focus-visible,
-.offcanvas__close:focus-visible {
-  outline: 2px solid var(--pana-block-accent, Highlight);
-  outline-offset: 2px;
-}
-
-.offcanvas__overlay {
+        functional_scss: r#".offcanvas__overlay {
   position: fixed;
   inset: 0;
   z-index: 1000;
   display: flex;
   justify-content: flex-end;
-  background: var(--pana-block-overlay, color-mix(in srgb, CanvasText 45%, transparent));
+  overflow: hidden;
 }
 
 .offcanvas__overlay[hidden] {
@@ -1053,66 +810,25 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
 }
 
 .offcanvas__panel {
-  width: min(28rem, 92vw);
+  width: min(28rem, 100%);
   height: 100%;
   overflow: auto;
-  background: var(--pana-block-surface, Canvas);
-  color: var(--pana-block-text, CanvasText);
-  padding: 1.25rem;
-  box-shadow: var(--pana-block-shadow-start, -18px 0 48px color-mix(in srgb, CanvasText 24%, transparent));
-  transform: translateX(100%);
-  transition: transform 220ms ease;
-}
-
-.offcanvas[data-open] .offcanvas__panel {
-  transform: translateX(0);
+  background: Canvas;
+  color: CanvasText;
 }
 
 .offcanvas[data-pana-offcanvas-side="start"] .offcanvas__overlay {
   justify-content: flex-start;
 }
 
-.offcanvas[data-pana-offcanvas-side="start"] .offcanvas__panel {
-  box-shadow: var(--pana-block-shadow-end, 18px 0 48px color-mix(in srgb, CanvasText 24%, transparent));
-  transform: translateX(-100%);
-}
-
-.offcanvas[data-pana-offcanvas-side="start"][data-open] .offcanvas__panel {
-  transform: translateX(0);
-}
-
-.offcanvas__close {
-  float: right;
-  border: 0;
-  border-radius: 0.375rem;
-  background: var(--pana-block-muted, color-mix(in srgb, CanvasText 7%, Canvas));
-  color: var(--pana-block-text-muted, GrayText);
-  font: inherit;
-  padding: 0.45rem 0.65rem;
-  cursor: pointer;
-}
-
-.offcanvas__title {
-  margin: 0 2.5rem 0.75rem 0;
-}
-
-.offcanvas__panel > :last-child {
-  margin-bottom: 0;
-}
-
-.offcanvas__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1rem;
-}"#,
+"#,
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
             supports_variants: true,
             supports_slots: true,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_FUNCTIONAL_STYLE_REQUIREMENTS,
         options: OFFCANVAS_OPTIONS,
         slots: OFFCANVAS_SLOTS,
     },
@@ -1131,7 +847,7 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
         html: r#"<nav class="nav-menu __PANA_CLASS__" data-anim="__PANA_DATA_ANIM__" data-pana-block="nav-menu" data-pana-instance="__PANA_INSTANCE__" aria-label="Navigatie principala">
   <div class="nav-menu__bar">
     <a class="nav-menu__brand" href="/">Pana Site</a>
-    <button class="nav-menu__toggle" data-pana-nav-menu-toggle type="button" aria-expanded="false">
+    <button class="nav-menu__toggle" data-pana-nav-menu-toggle type="button" aria-expanded="false" hidden>
       <span class="nav-menu__toggle-label">Meniu</span>
       <span class="nav-menu__toggle-icon" aria-hidden="true">
         <span></span>
@@ -1147,127 +863,14 @@ const NATIVE_BLOCKS: &[NativeBlockDefinition] = &[
     <li><a class="nav-menu__link" href="/contact/">Contact</a></li>
   </ul>
 </nav>"#,
-        scss: r#".nav-menu {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  width: 100%;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  border-radius: 0.75rem;
-  background: var(--pana-block-surface, Canvas);
-  color: var(--pana-block-text, CanvasText);
-}
-
-.nav-menu__bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.nav-menu__brand {
-  color: inherit;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.nav-menu__toggle {
-  display: none;
-  align-items: center;
-  gap: 0.55rem;
-  border: 1px solid var(--pana-block-border-strong, color-mix(in srgb, currentColor 25%, transparent));
-  border-radius: 0.5rem;
-  background: var(--pana-block-surface, Canvas);
-  color: inherit;
-  font: inherit;
-  font-weight: 700;
-  padding: 0.55rem 0.75rem;
-  cursor: pointer;
-}
-
-.nav-menu__toggle:focus-visible,
-.nav-menu__link:focus-visible {
-  outline: 2px solid var(--pana-block-accent, Highlight);
-  outline-offset: 2px;
-}
-
-.nav-menu__toggle-icon {
-  display: inline-grid;
-  gap: 0.2rem;
-}
-
-.nav-menu__toggle-icon span {
-  display: block;
-  width: 1rem;
-  height: 2px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.nav-menu__list {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.nav-menu__list[hidden] {
-  display: flex;
-}
-
-.nav-menu__link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.35rem;
-  border-radius: 0.5rem;
-  color: var(--pana-block-text-muted, GrayText);
-  font-weight: 700;
-  text-decoration: none;
-  padding: 0.45rem 0.7rem;
-}
-
-.nav-menu__link:hover {
-  background: var(--pana-block-muted, color-mix(in srgb, CanvasText 7%, Canvas));
-  color: var(--pana-block-text, CanvasText);
-}
-
-@media (max-width: 720px) {
-  .nav-menu {
-    display: block;
-  }
-
-  .nav-menu__toggle {
-    display: inline-flex;
-  }
-
-  .nav-menu__list,
-  .nav-menu__list[hidden] {
-    display: none;
-  }
-
-  .nav-menu[data-open] .nav-menu__list {
-    display: grid;
-    gap: 0.25rem;
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--pana-block-border, color-mix(in srgb, currentColor 18%, transparent));
-  }
-
-  .nav-menu__link {
-    width: 100%;
-  }
-}"#,
+        functional_scss: "",
         capabilities: BlockCapabilities {
             can_insert: true,
             can_edit_properties: true,
             supports_variants: true,
             supports_slots: true,
         },
-        requirements: NATIVE_RUNTIME_REQUIREMENTS,
+        requirements: NATIVE_JS_REQUIREMENTS,
         options: NAV_MENU_OPTIONS,
         slots: NAV_MENU_SLOTS,
     },
@@ -1347,7 +950,7 @@ pub(crate) fn native_block_contract_definition(block: &NativeBlockDefinition) ->
 pub fn native_block_preview_css<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
     ids.into_iter()
         .filter_map(native_block_by_id)
-        .map(|block| block.scss.trim())
+        .map(|block| block.functional_scss.trim())
         .filter(|scss| !scss.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -1673,6 +1276,28 @@ mod tests {
         assert!(slider.html.contains("aria-roledescription=\"carousel\""));
         assert!(slider.html.contains("tabindex=\"0\""));
         assert!(!slider.html.contains("data-autoplay=\"true\""));
-        assert!(!slider.scss.contains("100vw"));
+        assert!(slider.functional_scss.is_empty());
+    }
+
+    #[test]
+    fn native_styles_are_functional_only() {
+        for block in NATIVE_BLOCKS {
+            assert!(!block.functional_scss.contains("--pana-block-"));
+            assert!(!block.functional_scss.contains("box-shadow"));
+            assert!(!block.functional_scss.contains("border-radius"));
+            assert!(!block.functional_scss.contains("transition"));
+        }
+
+        for id in ["icon", "counter", "accordion", "tabs", "slider", "nav-menu"] {
+            assert!(native_block_by_id(id).unwrap().functional_scss.is_empty());
+        }
+        for id in ["dialog", "offcanvas"] {
+            let block = native_block_by_id(id).unwrap();
+            assert!(!block.functional_scss.is_empty());
+            assert!(block
+                .requirements
+                .iter()
+                .any(|requirement| requirement.kind == BlockRequirementKind::Stylesheet));
+        }
     }
 }

@@ -1,27 +1,52 @@
-use super::{MotionDocument, PageJsConfig};
+use super::motion_compiler::{compile_motion_production_js, execution_payload};
+use super::{MotionDocument, MotionRuntimeContract, PageJsConfig};
 
-pub fn generate_motion_js(config: &PageJsConfig) -> String {
-    let Some(motion) = config.motion.as_ref().filter(|motion| !motion.is_empty()) else {
-        return String::new();
-    };
-    if let Err(error) = motion.validate() {
-        return format!(
-            "  console.error('[Pană Motion v2] Configurația nu poate fi executată', {});",
-            serde_json::to_string(&error)
-                .unwrap_or_else(|_| "\"Configurație invalidă\"".to_string())
-        );
-    }
-    generate_motion_runtime(motion)
+#[derive(Clone, Debug, PartialEq)]
+pub struct MotionExecutionPlan {
+    document: MotionDocument,
+    features: super::motion_compiler::MotionFeatureSet,
 }
 
-fn generate_motion_runtime(motion: &MotionDocument) -> String {
-    let payload = serde_json::to_string(motion).unwrap_or_else(|_| "{}".to_string());
+impl MotionExecutionPlan {
+    pub fn from_editor_config(config: &PageJsConfig) -> Option<Self> {
+        let document = config
+            .motion
+            .as_ref()
+            .filter(|document| !document.is_empty())?;
+        let features = super::motion_compiler::MotionFeatureSet::from_document(document);
+        features.has_runtime().then(|| Self {
+            document: document.clone(),
+            features,
+        })
+    }
+
+    pub fn features(&self) -> &super::motion_compiler::MotionFeatureSet {
+        &self.features
+    }
+}
+
+pub fn generate_motion_js(plan: Option<&MotionExecutionPlan>) -> String {
+    let Some(plan) = plan else {
+        return String::new();
+    };
+    compile_motion_production_js(&plan.document)
+}
+
+pub(crate) fn generate_motion_preview_payload(config: &PageJsConfig) -> Option<String> {
+    MotionExecutionPlan::from_editor_config(config).map(|plan| execution_payload(&plan.document))
+}
+
+pub(crate) fn generate_motion_preview_runtime() -> String {
+    let runtime_contract = MotionRuntimeContract::current();
+    let schema_version = runtime_contract.schema_version;
+    let anime_version = serde_json::to_string(&runtime_contract.anime_version)
+        .unwrap_or_else(|_| "\"unknown\"".to_string());
     format!(
-        r#"  /* PANA MOTION V2 · Anime.js 4.4.1 */
-  (function(){{
+        r#"/* PANA MOTION RUNTIME */
+(function(global){{
     'use strict';
-    var documentConfig={payload};
-    var anime=window.anime||{{}};
+  function install(documentConfig){{
+    var anime=global.anime||{{}};
     var createTimeline=anime.createTimeline||function(){{return null;}};
     var createScope=anime.createScope||function(){{return null;}};
     var createDraggable=anime.createDraggable||function(){{return null;}};
@@ -30,16 +55,25 @@ fn generate_motion_runtime(motion: &MotionDocument) -> String {
     var stagger=anime.stagger||function(value){{return value;}};
     var splitText=anime.splitText||(anime.text&&anime.text.splitText);
     var svg=anime.svg||{{}};
+    var animeRegistrations=Array.isArray(global.AnimeJS)?global.AnimeJS:[];
+    var actualAnimeVersion='';
+    for(var animeIndex=animeRegistrations.length-1;animeIndex>=0;animeIndex--){{
+      var animeRegistration=animeRegistrations[animeIndex];
+      if(animeRegistration&&typeof animeRegistration.version==='string'){{
+        actualAnimeVersion=animeRegistration.version;
+        break;
+      }}
+    }}
     var PROGRESS_DURATION=1000;
-    var previewOnly=false;
-    try{{previewOnly=new URLSearchParams(window.location.search).get('__pana_motion_mode')==='preview';}}catch(error){{}}
-    var previousRegistry=window.__panaMotionV2;
+    var previewOnly=true;
+    var previousRegistry=global.__panaMotionV2;
     if(previousRegistry&&typeof previousRegistry.destroy==='function'){{
       try{{previousRegistry.destroy();}}catch(error){{}}
     }}
-    var registry=window.__panaMotionV2={{}};
-    registry.schemaVersion=2;
-    registry.animeVersion='4.4.1';
+    var registry=global.__panaMotionV2={{}};
+    registry.schemaVersion={schema_version};
+    registry.expectedAnimeVersion={anime_version};
+    registry.animeVersion=actualAnimeVersion||null;
     registry.document=documentConfig;
     registry.instances={{}};
     registry.scopes={{}};
@@ -48,6 +82,7 @@ fn generate_motion_runtime(motion: &MotionDocument) -> String {
     registry.errors=[];
     registry.cleanups=[];
     registry.effectCleanups=[];
+    registry.destroy=function(){{}};
     var instanceIds=new WeakMap();
     var nextInstanceId=1;
 
@@ -55,6 +90,29 @@ fn generate_motion_runtime(motion: &MotionDocument) -> String {
       var diagnostic={{id:owner&&owner.id||'',message:error&&error.message?error.message:String(error)}};
       registry.errors.push(diagnostic);
       if(window.console&&console.warn)console.warn('[Pană Motion v2]',diagnostic.id,error);
+    }}
+    var runtimeContractError='';
+    if(!registry.animeVersion){{
+      runtimeContractError='Metadata versiunii Anime.js încărcate nu este disponibilă.';
+    }}else if(registry.animeVersion!==registry.expectedAnimeVersion){{
+      runtimeContractError='Anime.js '+registry.animeVersion+' este încărcat, dar runtime-ul cere '+registry.expectedAnimeVersion+'.';
+    }}else{{
+      var missingAnimeApis=[];
+      if(typeof anime.createTimeline!=='function')missingAnimeApis.push('createTimeline');
+      if(typeof anime.createScope!=='function')missingAnimeApis.push('createScope');
+      if(typeof anime.createDraggable!=='function')missingAnimeApis.push('createDraggable');
+      if(typeof anime.createLayout!=='function')missingAnimeApis.push('createLayout');
+      if(typeof anime.onScroll!=='function')missingAnimeApis.push('onScroll');
+      if(typeof anime.stagger!=='function')missingAnimeApis.push('stagger');
+      if(typeof splitText!=='function')missingAnimeApis.push('splitText');
+      if(!svg||typeof svg.createMotionPath!=='function')missingAnimeApis.push('svg.createMotionPath');
+      if(!svg||typeof svg.morphTo!=='function')missingAnimeApis.push('svg.morphTo');
+      if(!svg||typeof svg.createDrawable!=='function')missingAnimeApis.push('svg.createDrawable');
+      if(missingAnimeApis.length)runtimeContractError='Runtime-ul Anime.js nu oferă API-urile necesare: '+missingAnimeApis.join(', ')+'.';
+    }}
+    if(runtimeContractError){{
+      report({{id:'runtime-contract'}},new Error(runtimeContractError));
+      return;
     }}
     function list(value){{
       if(!value)return[];
@@ -704,7 +762,19 @@ fn generate_motion_runtime(motion: &MotionDocument) -> String {
     }});
     if(!previewOnly)(documentConfig.behaviors||[]).forEach(function(behavior){{try{{installBehavior(behavior);}}catch(error){{report(behavior,error);}}}});
     if(!previewOnly)(documentConfig.customCode||[]).forEach(installCustom);
-  }})();"#
+    return registry;
+  }}
+  global.PanaMotionRuntime=Object.freeze({{install:install}});
+  try{{
+    var configNode=document.querySelector('meta[name="pana-motion-preview-config"]');
+    if(configNode){{
+      var encoded=configNode.getAttribute('content')||'';
+      var bytes=Uint8Array.from(atob(encoded),function(character){{return character.charCodeAt(0);}});
+      install(JSON.parse(new TextDecoder().decode(bytes)));
+    }}
+  }}catch(error){{if(window.console&&console.error)console.error('[Pană Motion Preview]',error);}}
+}})(window);
+"#
     )
 }
 
@@ -727,8 +797,6 @@ mod tests {
 
     fn config() -> PageJsConfig {
         PageJsConfig {
-            version: Some(2),
-            blocks: Vec::new(),
             motion: Some(MotionDocument {
                 interactions: vec![MotionInteraction {
                     id: "hero-load".to_string(),
@@ -775,12 +843,20 @@ mod tests {
         }
     }
 
+    fn compile(config: &PageJsConfig) -> String {
+        let plan = MotionExecutionPlan::from_editor_config(config);
+        let page = generate_motion_js(plan.as_ref());
+        if page.is_empty() {
+            return String::new();
+        }
+        format!("{}\n{}", generate_motion_preview_runtime(), page)
+    }
+
     fn browser_config() -> PageJsConfig {
         serde_json::from_value(json!({
-            "version": 2,
             "motion": {
                 "schemaVersion": 2,
-                "animeVersion": "4.4.1",
+                "animeVersion": MotionRuntimeContract::current().anime_version,
                 "interactions": [
                     {
                         "id": "preview-sequence",
@@ -1018,14 +1094,15 @@ mod tests {
 
     #[test]
     fn empty_document_emits_no_motion_runtime() {
-        assert!(generate_motion_js(&PageJsConfig::default()).is_empty());
+        assert!(compile(&PageJsConfig::default()).is_empty());
     }
 
     #[test]
     fn compiler_emits_one_interaction_timeline_and_preview_api() {
-        let js = generate_motion_js(&config());
-        assert!(js.contains("PANA MOTION V2"));
-        assert!(js.contains("\"schemaVersion\":2"));
+        let js = compile(&config());
+        assert!(js.contains("PANA MOTION RUNTIME"));
+        assert!(js.contains("registry.schemaVersion=2"));
+        assert!(!js.contains("window.PanaMotionRuntime.install({\"schemaVersion\""));
         assert!(js.contains("timeline.add(compiled.targets,compiled.params,position)"));
         assert!(js.contains("registry.preview"));
         assert!(js.contains("type:'state'"));
@@ -1035,8 +1112,18 @@ mod tests {
     }
 
     #[test]
+    fn execution_plan_uses_the_frontend_runtime_camel_case_contract() {
+        let js = compile(&browser_config());
+
+        assert!(js.contains("\"firstClick\":\"restart\""));
+        assert!(js.contains("\"smoothMs\":"));
+        assert!(!js.contains("first_click"));
+        assert!(!js.contains("smooth_ms"));
+    }
+
+    #[test]
     fn generated_runtime_is_valid_javascript_when_node_is_available() {
-        let js = generate_motion_js(&browser_config());
+        let js = compile(&browser_config());
         let mut child = match Command::new("node")
             .args(["--check", "-"])
             .stdin(Stdio::piped())
@@ -1063,17 +1150,66 @@ mod tests {
     }
 
     #[test]
-    fn browser_fixture_emits_exact_runtime() {
-        let js = generate_motion_js(&browser_config());
-        println!(
-            "PANA_MOTION_RUNTIME_JSON={}",
-            serde_json::to_string(&js).expect("runtime JSON")
+    fn generated_runtime_rejects_a_loaded_anime_version_mismatch() {
+        let js = compile(&config());
+        let mut harness = String::from(
+            "global.window={anime:{},AnimeJS:[{version:'0.0.0'}],location:{search:''},console:{warn:function(){}}};global.document={};\n",
+        );
+        harness.push_str(&js);
+        harness.push_str(
+            "\nwindow.PanaMotionRuntime.install({});var registry=window.__panaMotionV2;if(!registry||registry.animeVersion!=='0.0.0'||registry.errors.length!==1||registry.errors[0].id!=='runtime-contract')process.exit(1);",
+        );
+        let mut child = match Command::new("node")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("node could not start: {error}"),
+        };
+        child
+            .stdin
+            .as_mut()
+            .expect("node stdin")
+            .write_all(harness.as_bytes())
+            .expect("runtime harness stdin");
+        let output = child.wait_with_output().expect("node runtime harness");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
     #[test]
-    fn compiler_uses_fixed_anime_version() {
-        let js = generate_motion_js(&config());
-        assert!(js.contains("registry.animeVersion='4.4.1'"));
+    fn browser_fixture_emits_exact_runtime() {
+        let config = browser_config();
+        let plan = MotionExecutionPlan::from_editor_config(&config).unwrap();
+        let fixture = serde_json::json!({
+            "animeVersion": MotionRuntimeContract::current().anime_version,
+            "previewRuntime": generate_motion_preview_runtime(),
+            "previewPayload": generate_motion_preview_payload(&config).unwrap(),
+            "productionRuntime": generate_motion_js(Some(&plan)),
+        });
+        println!(
+            "PANA_MOTION_FIXTURE_JSON={}",
+            serde_json::to_string(&fixture).expect("runtime JSON")
+        );
+    }
+
+    #[test]
+    fn compiler_uses_the_rust_runtime_contract() {
+        let js = compile(&config());
+        let contract = MotionRuntimeContract::current();
+        assert!(js.contains(&format!(
+            "registry.expectedAnimeVersion=\"{}\"",
+            contract.anime_version
+        )));
+        assert!(js.contains("registry.animeVersion=actualAnimeVersion||null"));
+        assert!(js.contains("Array.isArray(global.AnimeJS)"));
+        assert!(js.contains("id:'runtime-contract'"));
     }
 }

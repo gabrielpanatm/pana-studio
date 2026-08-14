@@ -92,6 +92,55 @@ pub(crate) fn read_kernel_log_retention_snapshot(
     read_kernel_log_retention_snapshot_with_policy(path, &policy)
 }
 
+pub(crate) fn clear_kernel_log_retention(
+    runtime: Option<&WriteAuthorityRuntime>,
+    path: &Path,
+) -> Result<(usize, u64, Vec<String>), String> {
+    let boundary = path
+        .parent()
+        .ok_or_else(|| "Observability Log nu are boundary părinte.".to_string())?;
+    let retention = read_kernel_log_retention_snapshot(path)?;
+    let mut targets = retention
+        .archives
+        .iter()
+        .filter(|archive| archive.exists)
+        .map(|archive| {
+            archive_path(path, archive.index).map(|path| {
+                (
+                    path,
+                    archive.bytes,
+                    format!("observability/kernel-log-archive-{}", archive.index),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let active_bytes = retention
+        .total_retained_bytes
+        .saturating_sub(retention.archived_bytes);
+    if active_bytes > 0 || path.is_file() {
+        targets.push((
+            path.to_path_buf(),
+            active_bytes,
+            "observability/kernel-log".to_string(),
+        ));
+    }
+
+    let mut removed_items = 0_usize;
+    let mut removed_bytes = 0_u64;
+    let mut failures = Vec::new();
+    for (target, bytes, label) in targets {
+        match capability_remove_observability_file(runtime, &target, boundary, &label) {
+            Ok(true) => {
+                removed_items += 1;
+                removed_bytes = removed_bytes.saturating_add(bytes);
+            }
+            Ok(false) => {}
+            Err(error) => failures.push(error.into_terminal_diagnostic()),
+        }
+    }
+    Ok((removed_items, removed_bytes, failures))
+}
+
 fn read_kernel_log_retention_snapshot_with_policy(
     path: &Path,
     policy: &KernelLogRetentionPolicy,

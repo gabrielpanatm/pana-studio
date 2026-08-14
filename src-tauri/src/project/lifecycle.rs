@@ -12,7 +12,7 @@ use super::{ProjectDiskManifest, StartupCandidateKind, StartupCandidateSnapshot}
 
 pub const PROJECT_LIFECYCLE_SCHEMA_VERSION: u32 = 1;
 pub const PROJECT_OPEN_INSPECTION_SCHEMA_VERSION: u32 = 1;
-pub const PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION: u32 = 3;
+pub const PROJECT_OPEN_BOOTSTRAP_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

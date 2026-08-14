@@ -96,7 +96,7 @@ pub struct PublishPreflightAuditIdentity {
 pub struct PublishPreflightTargetIdentity {
     pub target_id: String,
     pub provider: String,
-    pub credential_ref: String,
+    pub credential_env_prefix: String,
     pub credential_kind: String,
     pub credential_configured: bool,
 }
@@ -351,7 +351,7 @@ fn preflight_token(
         digest.update([1]);
         hash_field(&mut digest, target.target_id.as_bytes());
         hash_field(&mut digest, target.provider.as_bytes());
-        hash_field(&mut digest, target.credential_ref.as_bytes());
+        hash_field(&mut digest, target.credential_env_prefix.as_bytes());
         hash_field(&mut digest, target.credential_kind.as_bytes());
         digest.update([u8::from(target.credential_configured)]);
     } else {
@@ -555,7 +555,7 @@ mod tests {
         configured.active_target = Some(PublishPreflightTargetIdentity {
             target_id: "production".to_string(),
             provider: "bunny".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             credential_kind: "bunny".to_string(),
             credential_configured: true,
         });
@@ -565,7 +565,7 @@ mod tests {
         missing.active_target = Some(PublishPreflightTargetIdentity {
             target_id: "production".to_string(),
             provider: "bunny".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             credential_kind: "bunny".to_string(),
             credential_configured: false,
         });
@@ -579,7 +579,7 @@ mod tests {
         candidate.active_target = Some(PublishPreflightTargetIdentity {
             target_id: "production".to_string(),
             provider: "s3".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             credential_kind: "s3".to_string(),
             credential_configured: true,
         });

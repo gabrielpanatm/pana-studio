@@ -3,10 +3,26 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::kernel::generated_assets::ANIME_JS_RUNTIME_CONTRACT;
 use crate::localization::LocalizedDiagnostic;
 
 pub const MOTION_SCHEMA_VERSION: u32 = 2;
-pub const MOTION_ANIME_VERSION: &str = "4.4.1";
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionRuntimeContract {
+    pub schema_version: u32,
+    pub anime_version: String,
+}
+
+impl MotionRuntimeContract {
+    pub fn current() -> Self {
+        Self {
+            schema_version: MOTION_SCHEMA_VERSION,
+            anime_version: ANIME_JS_RUNTIME_CONTRACT.version.to_string(),
+        }
+    }
+}
 
 fn default_true() -> bool {
     true
@@ -33,7 +49,7 @@ fn default_duration_ms() -> f64 {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MotionDocument {
     pub schema_version: u32,
     pub anime_version: String,
@@ -49,7 +65,7 @@ impl Default for MotionDocument {
     fn default() -> Self {
         Self {
             schema_version: MOTION_SCHEMA_VERSION,
-            anime_version: MOTION_ANIME_VERSION.to_string(),
+            anime_version: ANIME_JS_RUNTIME_CONTRACT.version.to_string(),
             interactions: Vec::new(),
             behaviors: Vec::new(),
             custom_code: Vec::new(),
@@ -63,19 +79,8 @@ impl MotionDocument {
     }
 
     pub fn from_value(value: Value) -> Result<Self, String> {
-        if value.is_null() {
-            return Ok(Self::default());
-        }
-        let schema_version = value
-            .get("schemaVersion")
-            .and_then(Value::as_u64)
-            .unwrap_or(1);
-        let document = if schema_version >= MOTION_SCHEMA_VERSION as u64 {
-            serde_json::from_value(value)
-                .map_err(|error| format!("Configurația Motion v2 este invalidă: {error}"))?
-        } else {
-            migrate_legacy_motion(value)?
-        };
+        let document: Self = serde_json::from_value(value)
+            .map_err(|error| format!("Configurația Motion este invalidă: {error}"))?;
         document.validate()?;
         Ok(document)
     }
@@ -105,11 +110,11 @@ impl MotionDocument {
                     .with_argument("actual", self.schema_version),
             ));
         }
-        if self.anime_version != MOTION_ANIME_VERSION {
+        if self.anime_version != ANIME_JS_RUNTIME_CONTRACT.version {
             diagnostics.push(MotionDiagnostic::error(
                 "motion.anime_version",
                 LocalizedDiagnostic::new("motion-diagnostic-anime-version")
-                    .with_argument("expected", MOTION_ANIME_VERSION)
+                    .with_argument("expected", ANIME_JS_RUNTIME_CONTRACT.version)
                     .with_argument("actual", self.anime_version.clone()),
             ));
         }
@@ -336,7 +341,11 @@ pub struct MotionInteraction {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum MotionTrigger {
     Load {
         #[serde(default)]
@@ -734,7 +743,11 @@ pub struct MotionActionRepeat {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum MotionSpecialization {
     SplitText {
         #[serde(default)]
@@ -786,7 +799,11 @@ fn default_set_name() -> String {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum MotionSetValue {
     Property { name: String, value: MotionValue },
     Attribute { name: String, value: String },
@@ -1520,820 +1537,11 @@ fn action_path(interaction: &MotionInteraction, action: &MotionAction, field: &s
     )
 }
 
-fn migrate_legacy_motion(value: Value) -> Result<MotionDocument, String> {
-    let items = value
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let by_id = items
-        .iter()
-        .filter_map(|item| {
-            item.get("id")
-                .and_then(Value::as_str)
-                .map(|id| (id.to_string(), item.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let referenced_animation_ids = items
-        .iter()
-        .filter(|item| item.get("type").and_then(Value::as_str) == Some("timeline"))
-        .flat_map(|timeline| {
-            timeline
-                .get("steps")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-        })
-        .filter(|step| step.get("type").and_then(Value::as_str) == Some("animation"))
-        .filter_map(|step| {
-            step.get("targetItemId")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .collect::<BTreeSet<_>>();
-
-    let mut document = MotionDocument::default();
-    for timeline in items
-        .iter()
-        .filter(|item| item.get("type").and_then(Value::as_str) == Some("timeline"))
-    {
-        if let Some(interaction) = migrate_legacy_timeline(timeline, &by_id) {
-            document.interactions.push(interaction);
-        }
-    }
-    for animation in items
-        .iter()
-        .filter(|item| item.get("type").and_then(Value::as_str) == Some("animation"))
-    {
-        let id = legacy_string(animation, "id", "");
-        if referenced_animation_ids.contains(&id) {
-            continue;
-        }
-        if let Some(interaction) = migrate_legacy_animation(animation, None, 0.0, None) {
-            document.interactions.push(interaction);
-        }
-    }
-    for item in &items {
-        match item.get("type").and_then(Value::as_str) {
-            Some("draggable") => document
-                .behaviors
-                .push(MotionBehavior::Draggable(migrate_legacy_draggable(item))),
-            Some("layout") => document
-                .behaviors
-                .push(MotionBehavior::Layout(migrate_legacy_layout(item))),
-            Some("custom") => document.custom_code.push(MotionCustomCode {
-                id: legacy_string(item, "id", "custom"),
-                name: legacy_string(item, "name", "Cod personalizat"),
-                enabled: legacy_bool(item, "enabled", true),
-                code: legacy_string(item, "code", ""),
-            }),
-            Some("interaction") => {
-                if let Some(interaction) = migrate_legacy_basic_interaction(item) {
-                    document.interactions.push(interaction);
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(document)
-}
-
-fn migrate_legacy_timeline(
-    timeline: &Value,
-    by_id: &BTreeMap<String, Value>,
-) -> Option<MotionInteraction> {
-    let timeline_id = legacy_string(timeline, "id", "interaction");
-    let steps = timeline.get("steps").and_then(Value::as_array)?;
-    let mut labels = BTreeMap::new();
-    for label in timeline
-        .get("labels")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-    {
-        let name = legacy_string(&label, "name", "");
-        let position = legacy_string(&label, "position", "0");
-        labels.insert(name, position.parse::<f64>().unwrap_or(0.0));
-    }
-    let mut previous_start = 0.0;
-    let mut previous_end = 0.0;
-    let mut cursor_end = 0.0;
-    let mut actions = Vec::new();
-    let mut markers = Vec::new();
-    let mut first_animation: Option<Value> = None;
-
-    for (index, step) in steps.iter().enumerate() {
-        let start = legacy_position(
-            step.get("position").and_then(Value::as_str),
-            previous_start,
-            previous_end,
-            cursor_end,
-            &labels,
-        );
-        let duration = step.get("duration").and_then(Value::as_f64).unwrap_or(0.0);
-        match step.get("type").and_then(Value::as_str) {
-            Some("animation") => {
-                let target_id = legacy_string(step, "targetItemId", "");
-                if let Some(animation) = by_id.get(&target_id) {
-                    first_animation.get_or_insert_with(|| animation.clone());
-                    if let Some(mut migrated) =
-                        migrate_legacy_animate_action(animation, Some(step), start, index)
-                    {
-                        migrated.duration = if duration > 0.0 {
-                            duration
-                        } else {
-                            migrated.duration
-                        };
-                        previous_start = start;
-                        previous_end = start + migrated.duration;
-                        cursor_end = cursor_end.max(previous_end);
-                        actions.push(MotionAction::Animate(migrated));
-                    }
-                }
-            }
-            Some("set") => {
-                let target_id = legacy_string(step, "targetItemId", "");
-                if let Some(target_item) = by_id.get(&target_id) {
-                    actions.push(MotionAction::Set(MotionSetAction {
-                        id: legacy_string(step, "id", &format!("set-{index}")),
-                        name: legacy_string(step, "label", "Setează"),
-                        enabled: true,
-                        target: migrate_legacy_target(target_item),
-                        start,
-                        values: migrate_legacy_set_values(target_item),
-                    }));
-                    previous_start = start;
-                    previous_end = start;
-                }
-            }
-            Some("callback") => {
-                let callback = step.get("callback").unwrap_or(&Value::Null);
-                actions.push(MotionAction::Call(MotionCallAction {
-                    id: legacy_string(step, "id", &format!("call-{index}")),
-                    name: legacy_string(step, "label", "Callback"),
-                    enabled: callback
-                        .get("enabled")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true),
-                    start,
-                    code: legacy_string(callback, "code", ""),
-                }));
-                previous_start = start;
-                previous_end = start;
-            }
-            Some("label") => {
-                markers.push(MotionMarker {
-                    id: legacy_string(step, "id", &format!("marker-{index}")),
-                    name: legacy_string(step, "label", &format!("Marker {}", index + 1)),
-                    at: start,
-                });
-            }
-            Some("timer") => {
-                previous_start = start;
-                previous_end = start + duration;
-                cursor_end = cursor_end.max(previous_end);
-            }
-            _ => {}
-        }
-    }
-
-    if actions.is_empty() {
-        return None;
-    }
-    let trigger_source = first_animation.as_ref().unwrap_or(timeline);
-    let trigger = migrate_legacy_trigger(trigger_source);
-    let domain = if matches!(
-        trigger,
-        MotionTrigger::Scroll {
-            mode: MotionScrollMode::Scrub,
-            ..
-        } | MotionTrigger::Pointer { .. }
-    ) {
-        MotionTimelineDomain::Progress
-    } else {
-        MotionTimelineDomain::Time
-    };
-    if domain == MotionTimelineDomain::Progress {
-        normalize_actions_to_progress(&mut actions);
-        normalize_markers_to_progress(&mut markers, cursor_end);
-    }
-    if actions.is_empty() {
-        return None;
-    }
-    let playback = if domain == MotionTimelineDomain::Progress {
-        MotionPlayback::default()
-    } else {
-        migrate_legacy_playback(timeline)
-    };
-    Some(MotionInteraction {
-        id: timeline_id,
-        name: legacy_string(timeline, "name", "Interacțiune"),
-        enabled: legacy_bool(timeline, "enabled", true),
-        trigger,
-        trigger_target: migrate_legacy_target(trigger_source),
-        conditions: MotionConditions::default(),
-        playback,
-        domain,
-        actions,
-        markers,
-    })
-}
-
-fn migrate_legacy_animation(
-    animation: &Value,
-    step: Option<&Value>,
-    start: f64,
-    index: Option<usize>,
-) -> Option<MotionInteraction> {
-    let action = migrate_legacy_animate_action(animation, step, start, index.unwrap_or_default())?;
-    let trigger = migrate_legacy_trigger(animation);
-    let domain = if matches!(
-        trigger,
-        MotionTrigger::Scroll {
-            mode: MotionScrollMode::Scrub,
-            ..
-        } | MotionTrigger::Pointer { .. }
-    ) {
-        MotionTimelineDomain::Progress
-    } else {
-        MotionTimelineDomain::Time
-    };
-    let mut actions = vec![MotionAction::Animate(action)];
-    if domain == MotionTimelineDomain::Progress {
-        normalize_actions_to_progress(&mut actions);
-    }
-    if actions.is_empty() {
-        return None;
-    }
-    Some(MotionInteraction {
-        id: legacy_string(animation, "id", "interaction"),
-        name: legacy_string(animation, "name", "Interacțiune"),
-        enabled: legacy_bool(animation, "enabled", true),
-        trigger,
-        trigger_target: migrate_legacy_target(animation),
-        conditions: MotionConditions::default(),
-        playback: MotionPlayback::default(),
-        domain,
-        actions,
-        markers: Vec::new(),
-    })
-}
-
-fn migrate_legacy_animate_action(
-    animation: &Value,
-    step: Option<&Value>,
-    start: f64,
-    index: usize,
-) -> Option<MotionAnimateAction> {
-    let properties = animation
-        .get("properties")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-        .filter_map(|(property_index, property)| migrate_legacy_property(property, property_index))
-        .collect::<Vec<_>>();
-    let keyframes = animation
-        .get("keyframes")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-        .map(|(frame_index, frame)| MotionKeyframe {
-            id: legacy_string(frame, "id", &format!("frame-{frame_index}")),
-            offset: legacy_percent(frame.get("at")).unwrap_or({
-                if frame_index == 0 {
-                    0.0
-                } else {
-                    100.0
-                }
-            }),
-            ease: legacy_string(frame, "ease", ""),
-            properties: frame
-                .get("properties")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .enumerate()
-                .filter_map(|(property_index, property)| {
-                    migrate_legacy_property(property, property_index)
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>();
-    if properties.is_empty() && keyframes.is_empty() {
-        return None;
-    }
-    let playback = animation.get("playback").unwrap_or(&Value::Null);
-    let duration = step
-        .and_then(|value| value.get("duration"))
-        .and_then(Value::as_f64)
-        .filter(|duration| *duration > 0.0)
-        .or_else(|| playback.get("duration").and_then(Value::as_f64))
-        .filter(|duration| *duration > 0.0)
-        .unwrap_or_else(default_duration_ms);
-    let has_from = properties.iter().any(|property| property.from.is_some());
-    Some(MotionAnimateAction {
-        id: step
-            .map(|value| legacy_string(value, "id", &format!("action-{index}")))
-            .unwrap_or_else(|| format!("{}-action", legacy_string(animation, "id", "animation"))),
-        name: step
-            .map(|value| legacy_string(value, "label", "Animație"))
-            .unwrap_or_else(|| legacy_string(animation, "name", "Animație")),
-        enabled: legacy_bool(animation, "enabled", true),
-        target: migrate_legacy_target(animation),
-        start,
-        duration,
-        mode: if has_from {
-            MotionAnimationMode::FromTo
-        } else {
-            MotionAnimationMode::To
-        },
-        ease: properties
-            .first()
-            .and_then(|_| {
-                animation
-                    .get("properties")
-                    .and_then(Value::as_array)
-                    .and_then(|properties| properties.first())
-                    .and_then(|property| property.get("tween"))
-                    .and_then(|tween| tween.get("ease"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .filter(|ease| !ease.trim().is_empty())
-            .unwrap_or_else(default_ease),
-        properties,
-        keyframes,
-        stagger: migrate_legacy_stagger(animation.get("stagger")),
-        repeat: MotionActionRepeat {
-            count: playback
-                .get("loop")
-                .and_then(Value::as_u64)
-                .unwrap_or_default() as u32,
-            infinite: playback.get("loop").and_then(Value::as_i64) == Some(-1),
-            alternate: playback
-                .get("alternate")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            delay_ms: playback
-                .get("loopDelay")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0),
-        },
-        specialization: migrate_legacy_specialization(animation),
-    })
-}
-
-fn migrate_legacy_property(property: &Value, index: usize) -> Option<MotionProperty> {
-    let name = legacy_string(property, "property", "");
-    if name.is_empty() {
-        return None;
-    }
-    let value = property.get("value").unwrap_or(&Value::Null);
-    let unit = legacy_string(value, "unit", "");
-    let kind = legacy_value_kind(legacy_string(value, "mode", "literal").as_str());
-    let to_raw = value
-        .get("to")
-        .or_else(|| value.get("value"))
-        .map(value_to_string)
-        .unwrap_or_default();
-    let from_raw = value
-        .get("from")
-        .map(value_to_string)
-        .filter(|value| !value.is_empty());
-    Some(MotionProperty {
-        id: legacy_string(property, "id", &format!("property-{index}")),
-        name,
-        category: match legacy_string(property, "category", "transform").as_str() {
-            "css" => MotionPropertyCategory::Style,
-            "cssVariable" => MotionPropertyCategory::CssVariable,
-            "htmlAttribute" => MotionPropertyCategory::HtmlAttribute,
-            "svgAttribute" => MotionPropertyCategory::SvgAttribute,
-            "object" => MotionPropertyCategory::Object,
-            _ => MotionPropertyCategory::Transform,
-        },
-        from: from_raw.map(|value| MotionValue {
-            kind,
-            value,
-            unit: unit.clone(),
-        }),
-        to: MotionValue {
-            kind,
-            value: to_raw,
-            unit,
-        },
-    })
-}
-
-fn legacy_value_kind(mode: &str) -> MotionValueKind {
-    match mode {
-        "color" => MotionValueKind::Color,
-        "cssVariable" => MotionValueKind::CssVariable,
-        "relative" => MotionValueKind::Relative,
-        "literal" | "fromTo" | "random" => MotionValueKind::Number,
-        _ => MotionValueKind::Text,
-    }
-}
-
-fn migrate_legacy_target(item: &Value) -> MotionTarget {
-    let target = item.get("target").unwrap_or(&Value::Null);
-    let data_anim = legacy_string(target, "dataAnim", "");
-    let selector = legacy_string(target, "selector", "").trim().to_string();
-    let mode = legacy_string(target, "mode", "");
-    if !data_anim.is_empty() {
-        MotionTarget::for_data_anim(data_anim)
-    } else if !selector.is_empty() {
-        MotionTarget {
-            kind: MotionTargetKind::Selector,
-            data_anim: String::new(),
-            selector,
-            relation: MotionTargetRelation::SelfElement,
-            scope: MotionTargetScope::All,
-        }
-    } else if mode == "selected" || mode == "dataAnim" {
-        MotionTarget::default()
-    } else {
-        MotionTarget {
-            kind: MotionTargetKind::Document,
-            ..MotionTarget::default()
-        }
-    }
-}
-
-fn migrate_legacy_trigger(item: &Value) -> MotionTrigger {
-    match legacy_string(item, "trigger", "load").as_str() {
-        "click" => MotionTrigger::Click {
-            first_click: MotionTriggerCommand::Restart,
-            second_click: MotionTriggerCommand::None,
-            prevent_default: false,
-        },
-        "hover" => MotionTrigger::Hover {
-            enter: MotionTriggerCommand::Restart,
-            leave: MotionTriggerCommand::Reverse,
-        },
-        "scroll" if legacy_bool(item, "scrollScrub", false) => MotionTrigger::Scroll {
-            mode: MotionScrollMode::Scrub,
-            start: default_scroll_start(),
-            end: default_scroll_end(),
-            smooth_ms: 0.0,
-            once: false,
-        },
-        "scroll" => MotionTrigger::InView {
-            threshold: default_in_view_threshold(),
-            once: !legacy_bool(item, "scrollRepeat", false),
-        },
-        _ => MotionTrigger::default(),
-    }
-}
-
-fn migrate_legacy_playback(item: &Value) -> MotionPlayback {
-    let playback = item.get("playback").unwrap_or(&Value::Null);
-    let loop_value = playback.get("loop");
-    MotionPlayback {
-        delay_ms: playback
-            .get("delay")
-            .and_then(Value::as_f64)
-            .unwrap_or_default(),
-        repeat: loop_value.and_then(Value::as_u64).unwrap_or_default() as u32,
-        infinite: loop_value.and_then(Value::as_i64) == Some(-1)
-            || loop_value.and_then(Value::as_bool) == Some(true),
-        loop_delay_ms: playback
-            .get("loopDelay")
-            .and_then(Value::as_f64)
-            .unwrap_or_default(),
-        alternate: playback
-            .get("alternate")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        reversed: playback
-            .get("reversed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        playback_rate: playback
-            .get("playbackRate")
-            .and_then(Value::as_f64)
-            .filter(|value| *value > 0.0)
-            .unwrap_or_else(default_playback_rate),
-        playback_ease: legacy_string(playback, "playbackEase", ""),
-    }
-}
-
-fn migrate_legacy_stagger(value: Option<&Value>) -> Option<MotionStagger> {
-    let stagger = value?;
-    if !legacy_bool(stagger, "enabled", false) {
-        return None;
-    }
-    let total = stagger
-        .get("total")
-        .and_then(Value::as_f64)
-        .unwrap_or_default();
-    Some(MotionStagger {
-        amount: if total > 0.0 {
-            total
-        } else {
-            stagger
-                .get("each")
-                .and_then(Value::as_f64)
-                .unwrap_or_default()
-        },
-        mode: if total > 0.0 {
-            MotionStaggerMode::Total
-        } else {
-            MotionStaggerMode::Each
-        },
-        from: legacy_string(stagger, "from", ""),
-        reversed: legacy_bool(stagger, "reversed", false),
-        ease: legacy_string(stagger, "ease", ""),
-    })
-}
-
-fn migrate_legacy_specialization(item: &Value) -> Option<MotionSpecialization> {
-    match legacy_string(item, "textEffect", "").as_str() {
-        "lines" => Some(MotionSpecialization::SplitText {
-            mode: MotionSplitTextMode::Lines,
-        }),
-        "words" => Some(MotionSpecialization::SplitText {
-            mode: MotionSplitTextMode::Words,
-        }),
-        "chars" => Some(MotionSpecialization::SplitText {
-            mode: MotionSplitTextMode::Chars,
-        }),
-        _ => None,
-    }
-}
-
-fn migrate_legacy_set_values(item: &Value) -> Vec<MotionSetValue> {
-    item.get("properties")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|property| {
-            let property = migrate_legacy_property(property, 0)?;
-            Some(MotionSetValue::Property {
-                name: property.name,
-                value: property.to,
-            })
-        })
-        .collect()
-}
-
-fn migrate_legacy_draggable(item: &Value) -> MotionDraggableBehavior {
-    MotionDraggableBehavior {
-        id: legacy_string(item, "id", "draggable"),
-        name: legacy_string(item, "name", "Draggable"),
-        enabled: legacy_bool(item, "enabled", true),
-        target: migrate_legacy_target(item),
-        axis: match legacy_string(item, "axes", "both").as_str() {
-            "x" => MotionDragAxis::X,
-            "y" => MotionDragAxis::Y,
-            _ => MotionDragAxis::Both,
-        },
-        container: legacy_string(item, "container", ""),
-        snap: item
-            .get("snap")
-            .and_then(|value| {
-                value
-                    .as_f64()
-                    .or_else(|| value.as_str().and_then(|source| source.parse().ok()))
-            })
-            .unwrap_or_default(),
-        friction: item
-            .get("friction")
-            .and_then(Value::as_f64)
-            .unwrap_or_else(default_drag_friction),
-        cursor: legacy_bool(item, "cursor", true),
-    }
-}
-
-fn migrate_legacy_layout(item: &Value) -> MotionLayoutBehavior {
-    MotionLayoutBehavior {
-        id: legacy_string(item, "id", "layout"),
-        name: legacy_string(item, "name", "Layout"),
-        enabled: legacy_bool(item, "enabled", true),
-        target: migrate_legacy_target(item),
-        children_selector: legacy_string(item, "children", ""),
-        properties: legacy_string(item, "properties", "")
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect(),
-        duration_ms: item
-            .get("playback")
-            .and_then(|playback| playback.get("duration"))
-            .and_then(Value::as_f64)
-            .unwrap_or_else(default_duration_ms),
-        ease: default_ease(),
-    }
-}
-
-fn migrate_legacy_basic_interaction(item: &Value) -> Option<MotionInteraction> {
-    let action = legacy_string(item, "action", "");
-    let class_name = legacy_string(item, "value", "");
-    let target = MotionTarget {
-        kind: MotionTargetKind::Selector,
-        data_anim: String::new(),
-        selector: legacy_string(item, "targetSelector", ""),
-        relation: MotionTargetRelation::SelfElement,
-        scope: MotionTargetScope::All,
-    };
-    let values = match action.as_str() {
-        "addClass" => vec![MotionSetValue::AddClass { name: class_name }],
-        "removeClass" => vec![MotionSetValue::RemoveClass { name: class_name }],
-        "toggleClass" => vec![MotionSetValue::ToggleClass { name: class_name }],
-        "show" => vec![MotionSetValue::Property {
-            name: "display".to_string(),
-            value: MotionValue {
-                kind: MotionValueKind::Text,
-                value: String::new(),
-                unit: String::new(),
-            },
-        }],
-        "hide" => vec![MotionSetValue::Property {
-            name: "display".to_string(),
-            value: MotionValue {
-                kind: MotionValueKind::Text,
-                value: "none".to_string(),
-                unit: String::new(),
-            },
-        }],
-        _ => return None,
-    };
-    if target.selector.trim().is_empty() {
-        return None;
-    }
-    Some(MotionInteraction {
-        id: legacy_string(item, "id", "interaction"),
-        name: legacy_string(item, "name", "Interacțiune"),
-        enabled: legacy_bool(item, "enabled", true),
-        trigger: MotionTrigger::Custom {
-            event: legacy_string(item, "event", "click"),
-            prevent_default: false,
-        },
-        trigger_target: migrate_legacy_target(item),
-        conditions: MotionConditions::default(),
-        playback: MotionPlayback::default(),
-        domain: MotionTimelineDomain::Time,
-        actions: vec![MotionAction::Set(MotionSetAction {
-            id: format!("{}-action", legacy_string(item, "id", "interaction")),
-            name: "Setează".to_string(),
-            enabled: true,
-            target,
-            start: 0.0,
-            values,
-        })],
-        markers: Vec::new(),
-    })
-}
-
-fn legacy_position(
-    position: Option<&str>,
-    previous_start: f64,
-    previous_end: f64,
-    cursor_end: f64,
-    labels: &BTreeMap<String, f64>,
-) -> f64 {
-    let position = position.unwrap_or("").trim();
-    if position.is_empty() {
-        return cursor_end;
-    }
-    if let Ok(value) = position.parse::<f64>() {
-        return value.max(0.0);
-    }
-    if let Some(value) = labels.get(position) {
-        return *value;
-    }
-    if position == "<" {
-        return previous_end;
-    }
-    if position == "<<" {
-        return previous_start;
-    }
-    if let Some(offset) = position.strip_prefix("+=") {
-        return cursor_end + offset.parse::<f64>().unwrap_or(0.0);
-    }
-    if let Some(offset) = position.strip_prefix("-=") {
-        return (cursor_end - offset.parse::<f64>().unwrap_or(0.0)).max(0.0);
-    }
-    if let Some(offset) = position.strip_prefix("<<+=") {
-        return previous_start + offset.parse::<f64>().unwrap_or(0.0);
-    }
-    if let Some(offset) = position.strip_prefix("<<-=") {
-        return (previous_start - offset.parse::<f64>().unwrap_or(0.0)).max(0.0);
-    }
-    if let Some(offset) = position.strip_prefix("<+=") {
-        return previous_end + offset.parse::<f64>().unwrap_or(0.0);
-    }
-    if let Some(offset) = position.strip_prefix("<-=") {
-        return (previous_end - offset.parse::<f64>().unwrap_or(0.0)).max(0.0);
-    }
-    cursor_end
-}
-
-fn normalize_actions_to_progress(actions: &mut Vec<MotionAction>) {
-    actions.retain_mut(|action| match action {
-        MotionAction::Animate(action) => {
-            action.repeat = MotionActionRepeat::default();
-            true
-        }
-        MotionAction::Set(action) => {
-            action
-                .values
-                .retain(|value| matches!(value, MotionSetValue::Property { .. }));
-            !action.values.is_empty()
-        }
-        MotionAction::Media(_) | MotionAction::Call(_) => false,
-        MotionAction::Nested(_) => true,
-    });
-    let max_end = actions
-        .iter()
-        .map(|action| action.start() + action.duration())
-        .fold(0.0_f64, f64::max)
-        .max(1.0);
-    for action in actions {
-        match action {
-            MotionAction::Animate(action) => {
-                action.start = action.start / max_end * 100.0;
-                action.duration = action.duration / max_end * 100.0;
-            }
-            MotionAction::Set(action) => action.start = action.start / max_end * 100.0,
-            MotionAction::Media(action) => action.start = action.start / max_end * 100.0,
-            MotionAction::Call(action) => action.start = action.start / max_end * 100.0,
-            MotionAction::Nested(action) => {
-                action.start = action.start / max_end * 100.0;
-                action.duration = action.duration / max_end * 100.0;
-            }
-        }
-    }
-}
-
-fn normalize_markers_to_progress(markers: &mut [MotionMarker], duration: f64) {
-    let duration = duration.max(1.0);
-    for marker in markers {
-        marker.at = marker.at / duration * 100.0;
-    }
-}
-
-fn legacy_string(value: &Value, key: &str, fallback: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or(fallback)
-        .to_string()
-}
-
-fn legacy_bool(value: &Value, key: &str, fallback: bool) -> bool {
-    value.get(key).and_then(Value::as_bool).unwrap_or(fallback)
-}
-
-fn value_to_string(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
-        Value::Bool(value) => value.to_string(),
-        Value::Null => String::new(),
-        value => value.to_string(),
-    }
-}
-
-fn legacy_percent(value: Option<&Value>) -> Option<f64> {
-    let value = value?;
-    if let Some(number) = value.as_f64() {
-        return Some(number);
-    }
-    value
-        .as_str()?
-        .trim()
-        .strip_suffix('%')?
-        .parse::<f64>()
-        .ok()
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
-
-    fn property() -> Value {
-        json!({
-            "id": "property-opacity",
-            "property": "opacity",
-            "category": "css",
-            "value": {
-                "mode": "fromTo",
-                "from": "0",
-                "to": "1",
-                "value": "",
-                "unit": ""
-            }
-        })
-    }
 
     #[test]
     fn v2_roundtrip_is_typed_and_validated() {
@@ -2387,68 +1595,15 @@ mod tests {
     }
 
     #[test]
-    fn migrates_standalone_v1_animation_to_interaction() {
-        let document = MotionDocument::from_value(json!({
+    fn legacy_motion_schema_is_rejected_without_migration() {
+        let error = MotionDocument::from_value(json!({
             "schemaVersion": 1,
-            "animeVersion": "4.4.1",
-            "activeItemId": "animation-a",
-            "items": [{
-                "id": "animation-a",
-                "type": "animation",
-                "name": "Hero",
-                "enabled": true,
-                "trigger": "load",
-                "target": { "mode": "dataAnim", "dataAnim": "hero", "selector": "" },
-                "properties": [property()],
-                "keyframes": [],
-                "playback": { "duration": 800 }
-            }]
+            "animeVersion": MotionRuntimeContract::current().anime_version,
+            "items": []
         }))
-        .expect("migrated");
+        .expect_err("schema v1 must not be migrated");
 
-        assert_eq!(document.schema_version, 2);
-        assert_eq!(document.interactions.len(), 1);
-        assert_eq!(document.interactions[0].actions.len(), 1);
-        assert!(document.behaviors.is_empty());
-    }
-
-    #[test]
-    fn migrates_timeline_without_duplicating_referenced_animation() {
-        let document = MotionDocument::from_value(json!({
-            "schemaVersion": 1,
-            "animeVersion": "4.4.1",
-            "items": [
-                {
-                    "id": "animation-a",
-                    "type": "animation",
-                    "name": "Hero",
-                    "enabled": true,
-                    "trigger": "load",
-                    "target": { "mode": "dataAnim", "dataAnim": "hero", "selector": "" },
-                    "properties": [property()],
-                    "keyframes": [],
-                    "playback": { "duration": 800 }
-                },
-                {
-                    "id": "timeline-a",
-                    "type": "timeline",
-                    "name": "Intro",
-                    "enabled": true,
-                    "steps": [{
-                        "id": "step-a",
-                        "type": "animation",
-                        "position": "0",
-                        "duration": 800,
-                        "targetItemId": "animation-a"
-                    }]
-                }
-            ]
-        }))
-        .expect("migrated");
-
-        assert_eq!(document.interactions.len(), 1);
-        assert_eq!(document.interactions[0].id, "timeline-a");
-        assert_eq!(document.interactions[0].actions.len(), 1);
+        assert!(error.contains("Motion") || error.contains("schema"));
     }
 
     #[test]
@@ -2475,7 +1630,7 @@ mod tests {
     fn rejects_indirect_nested_interaction_cycle() {
         let error = MotionDocument::from_value(json!({
             "schemaVersion": 2,
-            "animeVersion": "4.4.1",
+            "animeVersion": MotionRuntimeContract::current().anime_version,
             "interactions": [
                 {
                     "id": "a",
@@ -2514,7 +1669,7 @@ mod tests {
     fn rejects_side_effects_and_loops_in_progress_domain() {
         let document = serde_json::from_value::<MotionDocument>(json!({
             "schemaVersion": 2,
-            "animeVersion": "4.4.1",
+            "animeVersion": MotionRuntimeContract::current().anime_version,
             "interactions": [{
                 "id": "pointer",
                 "name": "Pointer",
@@ -2545,7 +1700,7 @@ mod tests {
     fn trigger_domain_and_target_must_match_the_trigger_kind() {
         let document = serde_json::from_value::<MotionDocument>(json!({
             "schemaVersion": 2,
-            "animeVersion": "4.4.1",
+            "animeVersion": MotionRuntimeContract::current().anime_version,
             "interactions": [{
                 "id": "in-view",
                 "name": "In view",

@@ -529,13 +529,9 @@ function parseBlockContext(value: unknown): CanvasElementObservation["blockConte
   const providerId = boundedNonEmptyString(value.providerId, 256);
   const rootSelector = boundedNonEmptyString(value.rootSelector, 4_096);
   const rootTag = boundedNonEmptyString(value.rootTag, 64)?.toLowerCase();
-  const markerKind = value.markerKind === "canonical" || value.markerKind === "legacy"
-    ? value.markerKind
-    : null;
-  if (!providerId || !rootSelector || !rootTag || !markerKind) return null;
+  if (!providerId || !rootSelector || !rootTag) return null;
   return {
     providerId,
-    markerKind,
     rootSelector,
     rootTag,
   };

@@ -44,7 +44,10 @@ test("reusable template CSS has a deterministic Rust owner and consumer delivery
   assert.match(stylesheet, /prepare_reusable_consumer_stylesheet_source/);
   assert.match(io, /"set_reusable_css_rule_at_viewport"/);
   assert.match(inspector, /pageTarget\?\.targetKind === "reusable"/);
+  assert.match(pane, /pageCssTarget\?\.targetKind === "reusable"/);
   assert.match(pane, /pageCssTarget\.consumerFiles/);
+  assert.match(pane, /inspector-css-reusable-consumers/);
+  assert.doesNotMatch(pane, /inspector-css-target-file|css-target-note/);
   assert.match(registry, /set_reusable_css_rule_at_viewport/);
 });
 
@@ -165,13 +168,51 @@ test("CSS edits use explicit draft, commit and cancel boundaries", () => {
   assert.match(typography, /edit\.commit\("text-align", v\)/);
 });
 
-test("CSS refresh keeps the previous complete projection until the atomic replacement", () => {
+test("CSS refresh and class switching keep the previous complete projection until atomic replacement", () => {
   const inspector = source("src/lib/components/InspectorPane.svelte");
+  const pane = source("src/lib/components/inspector/panes/CssPane.svelte");
+  const classSwitch = inspector.slice(
+    inspector.indexOf("async function selectClassForCss"),
+    inspector.indexOf("function selectCssVariant"),
+  );
 
-  assert.match(inspector, /\{ preserveProjection: true \}/);
-  assert.match(inspector, /loadingClassRules = !preserveProjection/);
+  assert.match(inspector, /\{ retainProjection: true \}/);
+  assert.match(inspector, /hasStableCssInspectorProjection/);
+  assert.match(inspector, /loadingClassRules = !retainProjection/);
+  assert.match(inspector, /presentedCssSelector/);
+  assert.match(inspector, /cssProjectionTransitioning/);
+  assert.match(pane, /inert=\{projectionTransitioning\}/);
+  assert.match(classSwitch, /const retainProjection = hasStableCssInspectorProjection/);
+  assert.match(
+    classSwitch,
+    /if \(resolution\.state === "ambiguous" \|\| !resolution\.target\) \{\s*applyCssInspectorResolution/,
+  );
+  assert.doesNotMatch(
+    classSwitch.slice(
+      classSwitch.indexOf("const allowed = await onCssCodeTargetChange"),
+      classSwitch.indexOf("return allowed"),
+    ),
+    /applyCssInspectorResolution/,
+  );
   assert.match(inspector, /cssInspectorSubjectKey\(nextSelectionIdentity\)/);
   assert.match(inspector, /selectionSummary=\{presentedInspectorSelectionSummary\}/);
+});
+
+test("CSS reads are latest-selection-wins and stale completions stay silent", () => {
+  const inspector = source("src/lib/components/InspectorPane.svelte");
+  const load = inspector.slice(
+    inspector.indexOf("async function loadRulesForClass"),
+    inspector.indexOf("async function selectClassForCss"),
+  );
+  const beforeInvoke = load.slice(0, load.indexOf("await resolveCssInspectorContext"));
+
+  assert.match(inspector, /const selectionRevision = selectionSnapshot\?\.selectionRevision \?\? 0/);
+  assert.doesNotMatch(beforeInvoke, /isCurrentCssInspectorRead/);
+  assert.match(inspector, /isCurrentCssInspectorRead\(expectedSelection\)/);
+  assert.match(
+    inspector,
+    /catch \(error\)[\s\S]*!isCurrentCssInspectorRead\(expectedSelection\)[\s\S]*inspector-css-read-failed/,
+  );
 });
 
 test("Undo quiesces CSS reads and focus errors until history projection settles", () => {

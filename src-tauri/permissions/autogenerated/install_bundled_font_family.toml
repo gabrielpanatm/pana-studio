@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-bundled-font-family"
+description = "Enables the install_bundled_font_family command without any pre-configured scope."
+commands.allow = ["install_bundled_font_family"]
+
+[[permission]]
+identifier = "deny-install-bundled-font-family"
+description = "Denies the install_bundled_font_family command without any pre-configured scope."
+commands.deny = ["install_bundled_font_family"]

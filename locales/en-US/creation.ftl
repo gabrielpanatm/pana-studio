@@ -62,6 +62,24 @@ assets-usages = Uses
 assets-pending-note = The asset currently exists only in the session. Ctrl+S persists it to disk.
 assets-edit-usage-action = Edit usage
 assets-open = Open asset
+assets-delete = Delete asset
+assets-delete-title = Delete “{ $name }”?
+assets-delete-description = Asset { $path } will be removed from the project through ProjectWorkspace.
+assets-delete-used-warning =
+    { $count ->
+        [one] Source Graph knows about one active use:
+       *[other] Source Graph knows about { $count } active uses:
+    }
+assets-delete-references-preserved = References will not be changed automatically; deleting may leave missing assets in the site.
+assets-delete-unused-note = Source Graph knows of no active uses. Dynamic references may not be statically detectable.
+assets-delete-auxiliary-note = Auxiliary and license files may still be required even when no code references them.
+assets-delete-confirm = Delete asset
+assets-delete-anyway = Delete anyway
+assets-deleting = Removing through Rust…
+assets-delete-entry-unavailable = Asset { $path } is not present in the current File Explorer projection.
+assets-delete-plan-blocked = Rust blocked deleting the asset in the current state.
+assets-delete-staged-success = Import { $path } was withdrawn from the session.
+assets-delete-success = Asset { $path } is staged for deletion — Ctrl+S persists it to disk.
 assets-select-help = Select an asset for information.
 blocks-view-all = All
 blocks-view-elements = Elements
@@ -243,6 +261,10 @@ design-stylesheet-created-success = Stylesheet created: { $path } — Ctrl+S per
 design-local-fonts-required = Choose and analyze the local fonts before importing.
 design-local-font-conflicts = Resolve the plan conflicts before importing.
 design-operation-local-font-import = Local font import
+design-bundled-font-required = Select a family from the included library.
+design-operation-bundled-font-install = Included font installation
+design-bundled-font-warning = { $family } is in the session; the interface needs to resynchronize.
+design-bundled-font-success = { $family }, its license, and its @font-face declarations are prepared locally in the project.
 design-local-files-warning =
     { $count ->
         [one] One font file is in the session; the interface needs to resynchronize.
@@ -314,6 +336,7 @@ design-role-missing = ${ $variable } is missing
 design-font-registered-in = Registered in { $stylesheets }
 design-font-unregistered-help = Files are present, but the family has no @font-face
 design-origin-local = Local
+design-origin-bundled = Included with the application
 design-origin-theme = Theme
 design-origin-external = External
 design-romanian-coverage = Romanian coverage
@@ -339,7 +362,19 @@ design-class-name = Class name
 design-destination-stylesheet = Destination stylesheet
 design-project-path = Project path
 design-font-source = Font source
+design-included-library = Included
 design-from-computer = From computer
+design-bundled-catalog = Pană Studio library
+design-bundled-description = 36 variable WOFF2 families, available offline and validated by Rust for Romanian text.
+design-font-category = Font category
+design-loading-bundled-catalog = Reading the included catalog from the application binary…
+design-bundled-families-label = Families included with the application
+design-empty-bundled-search = No families match these filters.
+design-bundled-preview = Local preview
+design-bundled-preview-text = Build clearly, with Romanian glyphs: ăâîșț.
+design-bundled-preview-loading = Loading only the selected family…
+design-bundled-preview-ready = WOFF2 sample loaded from the application.
+design-bundled-contract = Installation contract
 design-google-catalog = Google Fonts catalog
 design-google-description = The family will be installed locally in the project and registered automatically through CSS.
 design-search-family = Search family

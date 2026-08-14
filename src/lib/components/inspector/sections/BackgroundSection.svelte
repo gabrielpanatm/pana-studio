@@ -57,9 +57,7 @@
   const ATTACHMENTS = ["scroll", "fixed", "local"];
   const BOXES = ["border-box", "padding-box", "content-box", "text"];
 
-  const extension = (asset: ProjectFile) => asset.relativePath.split(".").pop()?.toLowerCase() ?? "";
-  const imageAssets = $derived(scannedAssets.filter((asset) =>
-    asset.kind === "IMAGE" || ["svg", "webp", "avif", "png", "jpg", "jpeg", "gif"].includes(extension(asset))));
+  const imageAssets = $derived(scannedAssets.filter((asset) => asset.kind === "IMAGE"));
 
   function getValue(property: string) {
     return pendingValues[property] ?? rulesMap[property] ?? "";

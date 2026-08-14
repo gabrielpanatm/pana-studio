@@ -80,6 +80,9 @@ pub(crate) fn scan_project_disk_manifest(
 
     for entry in &manifest.files {
         let relative_path = entry.relative_path.as_str();
+        if relative_path == ".env" {
+            continue;
+        }
         let path = root.join(relative_path);
         let Some(kind) = project_file_kind(&path) else {
             continue;
@@ -216,6 +219,9 @@ pub(crate) fn scan_project_workspace_projection_full(
     }
 
     for relative_path in paths {
+        if relative_path == ".env" {
+            continue;
+        }
         let path = root.join(&relative_path);
         if path.file_name().and_then(|name| name.to_str()) == Some(".gitkeep") {
             continue;
@@ -342,6 +348,10 @@ fn collect_project_files(
             continue;
         }
 
+        if file_name == ".env" {
+            continue;
+        }
+
         let Some(kind) = project_file_kind(&path) else {
             continue;
         };
@@ -383,9 +393,10 @@ pub(crate) fn project_file_role_for_path(
             ProjectFileKind::Html | ProjectFileKind::Md => ProjectFileRole::Page,
             ProjectFileKind::Css | ProjectFileKind::Scss => ProjectFileRole::Style,
             ProjectFileKind::Js => ProjectFileRole::Script,
-            ProjectFileKind::Dir | ProjectFileKind::Image | ProjectFileKind::Other => {
-                ProjectFileRole::Asset
-            }
+            ProjectFileKind::Dir
+            | ProjectFileKind::Image
+            | ProjectFileKind::Font
+            | ProjectFileKind::Other => ProjectFileRole::Asset,
         });
     }
 
@@ -523,7 +534,7 @@ fn should_skip_dir(path: &Path, name: &str, zola_mode: bool, output_root: Option
 
 fn project_file_kind(path: &Path) -> Option<ProjectFileKind> {
     if path.file_name().and_then(|name| name.to_str()) == Some(".env") {
-        return Some(ProjectFileKind::Other);
+        return None;
     }
 
     let extension = path
@@ -537,9 +548,10 @@ fn project_file_kind(path: &Path) -> Option<ProjectFileKind> {
         "css" => Some(ProjectFileKind::Css),
         "scss" => Some(ProjectFileKind::Scss),
         "js" | "mjs" => Some(ProjectFileKind::Js),
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "avif" | "ico" | "woff" | "woff2" => {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg" | "avif" | "ico" => {
             Some(ProjectFileKind::Image)
         }
+        "otf" | "ttf" | "woff" | "woff2" => Some(ProjectFileKind::Font),
         _ => Some(ProjectFileKind::Other),
     }
 }
@@ -598,6 +610,25 @@ mod tests {
     }
 
     #[test]
+    fn project_file_kinds_distinguish_fonts_from_images() {
+        for extension in ["otf", "ttf", "woff", "woff2"] {
+            let path = std::path::PathBuf::from(format!("static/fonturi/familie.{extension}"));
+            assert!(matches!(
+                project_file_kind(&path),
+                Some(ProjectFileKind::Font)
+            ));
+        }
+
+        for extension in ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"] {
+            let path = std::path::PathBuf::from(format!("static/imagini/exemplu.{extension}"));
+            assert!(matches!(
+                project_file_kind(&path),
+                Some(ProjectFileKind::Image)
+            ));
+        }
+    }
+
+    #[test]
     fn project_model_routes_replace_provisional_multilingual_paths() {
         let root = temp_project_root("canonical-routes");
         fs::create_dir_all(root.join("content")).unwrap();
@@ -651,17 +682,15 @@ mod tests {
     }
 
     #[test]
-    fn scan_includes_project_env_file_for_config_buffering() {
+    fn scan_excludes_project_env_file_from_public_project_surfaces() {
         let root = temp_project_root("env-file");
         fs::create_dir_all(root.join("content")).unwrap();
         fs::write(root.join("zola.toml"), "").unwrap();
-        fs::write(root.join(".env"), "BUNNY_API_KEY=test\n").unwrap();
+        fs::write(root.join(".env"), "PANA_DEPLOY_TEST__API_TOKEN=test\n").unwrap();
 
         let scan = scan_project_root(&root).unwrap();
 
-        assert!(scan.files.iter().any(
-            |file| file.relative_path == ".env" && matches!(file.kind, ProjectFileKind::Other)
-        ));
+        assert!(!scan.files.iter().any(|file| file.relative_path == ".env"));
 
         fs::remove_dir_all(root).unwrap();
     }

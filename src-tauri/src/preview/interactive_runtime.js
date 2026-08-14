@@ -74,15 +74,6 @@
 
   function ready() {
     var runtime = window.PanaBlockRuntime;
-    var motionPreview = document.documentElement.hasAttribute("data-pana-motion-preview");
-    if (!runtime && !motionPreview) {
-      post("lifecycle-error", {
-        blockId: null,
-        phase: "bootstrap",
-        message: "Runtime-ul canonic pentru blocuri nu a fost încărcat."
-      });
-      return;
-    }
     if (runtime) {
       runtime.setReporter(post);
       runtime.start();

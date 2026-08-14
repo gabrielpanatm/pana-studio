@@ -7,7 +7,7 @@ const PAGE_JS_TEMPLATE_PATH_MAX_BYTES: usize = 4096;
 /// Canonicalizes the project-relative Zola source identity used by every
 /// Page JS boundary. The returned path is relative to `` and can be
 /// joined only after this validation has succeeded.
-pub(super) fn normalize_template_path(input: &str) -> Result<String, String> {
+pub(crate) fn normalize_template_path(input: &str) -> Result<String, String> {
     let mut normalized = input.trim().replace('\\', "/");
     while let Some(next) = normalized.strip_prefix("./") {
         normalized = next.to_string();
@@ -62,6 +62,22 @@ pub fn js_relative_path(template_path: &str) -> String {
     format!("static/js/{}.js", template_to_slug(template_path))
 }
 
+pub fn motion_source_relative_path(template_path: &str) -> Result<String, String> {
+    let template_path = normalize_template_path(template_path)?;
+    let stem = template_path
+        .strip_suffix(".html")
+        .ok_or_else(|| "Motion cere un template HTML canonic.".to_string())?;
+    Ok(format!(".panastudio/motion/{stem}.json"))
+}
+
+pub fn template_path_from_motion_source(path: &str) -> Option<String> {
+    let normalized = path.trim().trim_start_matches('/').replace('\\', "/");
+    let stem = normalized
+        .strip_prefix(".panastudio/motion/")?
+        .strip_suffix(".json")?;
+    normalize_template_path(&format!("{stem}.html")).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +92,23 @@ mod tests {
         assert_eq!(
             js_relative_path("themes/pana-studio/templates/atelier/home_page.html"),
             "static/js/pana-atelier-home-page.js"
+        );
+    }
+
+    #[test]
+    fn motion_source_path_mirrors_the_complete_template_identity() {
+        assert_eq!(
+            motion_source_relative_path("templates/index.html").unwrap(),
+            ".panastudio/motion/templates/index.json"
+        );
+        assert_eq!(
+            motion_source_relative_path("themes/demo/templates/index.html").unwrap(),
+            ".panastudio/motion/themes/demo/templates/index.json"
+        );
+        assert_eq!(
+            template_path_from_motion_source(".panastudio/motion/themes/demo/templates/index.json")
+                .as_deref(),
+            Some("themes/demo/templates/index.html")
         );
     }
 

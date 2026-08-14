@@ -1,6 +1,6 @@
 {
   "name": "pana-studio",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Editor vizual desktop open-source pentru site-uri Zola.",
   "author": "Gabriel Pană",
   "license": "EUPL-1.2-or-later",
@@ -36,16 +36,17 @@
     "node": ">=20.19"
   },
   "dependencies": {
-    "@fluent/bundle": "^0.19.1",
-    "@fluent/langneg": "^0.7.0",
     "@codemirror/commands": "^6.10.3",
     "@codemirror/lang-css": "^6.3.1",
     "@codemirror/lang-html": "^6.4.11",
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/lang-sass": "^6.0.2",
     "@codemirror/language": "^6.12.3",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.1",
+    "@fluent/bundle": "^0.19.1",
+    "@fluent/langneg": "^0.7.0",
     "@tabler/icons-svelte": "^3.41.1",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
@@ -71,12 +72,12 @@
     "cookie": "0.7.2"
   },
   "devDependencies": {
+    "@fluent/syntax": "^0.19.0",
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.9.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^25.6.0",
-    "@fluent/syntax": "^0.19.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",

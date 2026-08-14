@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  cssInspectorReadIsCurrent,
   cssInspectorSubjectKey,
   cssSemanticSelectionKey,
   sameCssSemanticSelection,
@@ -70,4 +71,16 @@ test("CSS Inspector keeps its subject across a preview render replacement", () =
 
   assert.notEqual(cssSemanticSelectionKey(captured), cssSemanticSelectionKey(rebased));
   assert.equal(cssInspectorSubjectKey(captured), cssInspectorSubjectKey(rebased));
+});
+
+test("CSS Inspector rejects a completed read after a newer focus revision", () => {
+  const current = identity(
+    17,
+    "editor:hero-title",
+    "source:hero-title",
+    "render:hero-title",
+  );
+  assert.equal(cssInspectorReadIsCurrent(captured, current), false);
+  assert.equal(cssInspectorReadIsCurrent(current, current), true);
+  assert.equal(cssInspectorReadIsCurrent(current, null), false);
 });

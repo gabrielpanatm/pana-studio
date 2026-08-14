@@ -9,6 +9,7 @@
     IconPhotoCheck,
     IconPlus,
     IconSearch,
+    IconTrash,
     IconUpload,
     IconX,
   } from "@tabler/icons-svelte";
@@ -16,6 +17,7 @@
     chooseAssetFile,
     importProjectAsset,
   } from "$lib/project/io";
+  import { projectPreviewResourceUrl } from "$lib/project/assets";
   import { l10n, t } from "$lib/i18n/runtime.svelte";
   import { settleProjectWorkspaceMutation } from "$lib/session/workspace-mutation-coordinator";
   import type { AppState } from "$lib/state/app.svelte";
@@ -43,6 +45,9 @@
   let selectedAssetId = $state("");
   let applying = $state(false);
   let importing = $state(false);
+  let deleting = $state(false);
+  let pendingDeleteAsset = $state<SourceGraphAsset | null>(null);
+  let deleteError = $state("");
   let formError = $state("");
   let sourcePath = $state("");
   let fileName = $state("");
@@ -50,9 +55,14 @@
 
   const graphAssets = $derived(app.sourceGraph?.assets ?? []);
   const assets = $derived.by(() => {
-    const existing = new Set(graphAssets.map((asset) => asset.file));
+    const deleted = new Set([
+      ...(app.projectWorkspaceSnapshot?.deletedDocuments ?? []),
+      ...(app.projectWorkspaceSnapshot?.deletedBinaryResources ?? []),
+    ]);
+    const visibleGraphAssets = graphAssets.filter((asset) => !deleted.has(asset.file));
+    const existing = new Set(visibleGraphAssets.map((asset) => asset.file));
     const staged = (app.projectWorkspaceSnapshot?.stagedBinaryResources ?? [])
-      .filter((path) => path.startsWith("static/") && !existing.has(path))
+      .filter((path) => path.startsWith("static/") && !deleted.has(path) && !existing.has(path))
       .map((path): SourceGraphAsset => ({
         id: `staged:${path}`,
         file: path,
@@ -61,7 +71,7 @@
         logicalPath: path.replace(/^static\/?/, ""),
         nodeId: `staged-asset:${path}`,
       }));
-    return [...graphAssets, ...staged];
+    return [...visibleGraphAssets, ...staged];
   });
   const normalizedQuery = $derived(query.trim().toLocaleLowerCase(l10n.locale));
   const filteredAssets = $derived(
@@ -78,11 +88,27 @@
     assets.find((asset) => asset.id === selectedAssetId) ?? filteredAssets[0] ?? null,
   );
   const unusedCount = $derived(assets.filter((asset) => usageCount(asset) === 0).length);
+  const assetPreviewRevision = $derived(
+    app.previewWorkspaceRevision
+      ?? app.pendingCanvasProjection?.identity.previewRevision
+      ?? app.activeCanvasIdentity?.previewRevision
+      ?? null,
+  );
   const selectedImageTarget = $derived(
     app.coordinatedElementSelection?.observation.tag === "img"
       ? app.coordinatedElementSelection
       : null,
   );
+  const pendingDeleteUsages = $derived.by(() => {
+    if (!pendingDeleteAsset) return [];
+    const nodes = new Map((app.sourceGraph?.nodes ?? []).map((node) => [node.id, node]));
+    return (app.sourceGraph?.relations ?? [])
+      .filter((relation) => relation.to === pendingDeleteAsset?.nodeId)
+      .map((relation) => ({
+        id: relation.id,
+        label: `${nodes.get(relation.from)?.file ?? relation.from} — ${relation.label}`,
+      }));
+  });
 
   function usageCount(asset: SourceGraphAsset) {
     return (app.sourceGraph?.relations ?? []).filter((relation) => relation.to === asset.nodeId).length;
@@ -119,13 +145,11 @@
   }
 
   function assetUrl(asset: SourceGraphAsset) {
-    const base = app.scannedProject?.previewBaseUrl;
-    if (!base) return "";
-    try {
-      return new URL(`/${asset.logicalPath.replace(/^\/+/, "")}`, base).href;
-    } catch {
-      return "";
-    }
+    return projectPreviewResourceUrl(
+      app.scannedProject?.previewBaseUrl,
+      asset.logicalPath,
+      assetPreviewRevision,
+    );
   }
 
   function sourceValue(asset: SourceGraphAsset) {
@@ -159,6 +183,66 @@
     if (!selectedAsset || assetKind(selectedAsset) !== "images") return;
     formError = "";
     detailMode = "edit";
+  }
+
+  function requestDelete(asset: SourceGraphAsset) {
+    deleteError = "";
+    pendingDeleteAsset = asset;
+  }
+
+  function cancelDelete() {
+    if (deleting) return;
+    pendingDeleteAsset = null;
+    deleteError = "";
+  }
+
+  async function resolveAssetExplorerEntry(asset: SourceGraphAsset) {
+    const workspace = app.projectWorkspaceSnapshot;
+    let explorer = app.fileExplorerSnapshot;
+    if (
+      !workspace
+      || !explorer
+      || explorer.projectRoot !== workspace.projectRoot
+      || explorer.runtimeSessionId !== workspace.runtimeSessionId
+      || explorer.workspaceRevision !== workspace.revision
+      || !explorer.entries.some((entry) => entry.relativePath === asset.file)
+    ) {
+      explorer = await app.refreshFileExplorerSnapshot();
+    }
+    return explorer?.entries.find((entry) => entry.relativePath === asset.file) ?? null;
+  }
+
+  async function confirmDelete() {
+    const asset = pendingDeleteAsset;
+    if (!asset || deleting) return;
+    deleting = true;
+    deleteError = "";
+    const stagedOnly = asset.id.startsWith("staged:");
+    try {
+      const entry = await resolveAssetExplorerEntry(asset);
+      if (!entry) throw new Error(t("assets-delete-entry-unavailable", { path: asset.file }));
+      const plan = await app.planFileExplorerOperation({ kind: "delete", entryId: entry.id });
+      if (!plan.allowed) {
+        throw new Error(plan.diagnostic ?? t("assets-delete-plan-blocked"));
+      }
+      await app.commitFileExplorerOperation(plan);
+      selectedAssetId = "";
+      pendingDeleteAsset = null;
+      app.setGlobalStatus(
+        stagedOnly
+          ? t("assets-delete-staged-success", { path: asset.file })
+          : t("assets-delete-success", { path: asset.file }),
+        app.projectWorkspaceSnapshot?.dirty ? "unsaved" : "idle",
+      );
+    } catch (error) {
+      deleteError = errorMessage(error);
+    } finally {
+      deleting = false;
+    }
+  }
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && pendingDeleteAsset && !deleting) cancelDelete();
   }
 
   async function selectImportFile() {
@@ -244,6 +328,8 @@
     requestAnimationFrame(() => document.getElementById(`assets-tab-${next.id}`)?.focus());
   }
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown} />
 
 <section class="activity-workspace assets-workspace" aria-labelledby="assets-title">
   <header class="workspace-header">
@@ -419,6 +505,9 @@
           <button class="ui-button secondary-action" type="button" onclick={() => { void app.openCurrentProjectInBrowser(sourceValue(selectedAsset)); }}>
             {t("assets-open")} <IconExternalLink size={13} stroke={1.9} />
           </button>
+          <button class="ui-button delete-action" type="button" onclick={() => requestDelete(selectedAsset)}>
+            <IconTrash size={14} /> {t("assets-delete")}
+          </button>
         </div>
       {:else}
         <div class="workspace-state">{t("assets-select-help")}</div>
@@ -427,11 +516,46 @@
   </div>
 </section>
 
+{#if pendingDeleteAsset}
+  <div class="delete-modal-backdrop" role="presentation">
+    <div class="delete-modal" role="dialog" aria-modal="true" aria-labelledby="asset-delete-title">
+      <div class="delete-modal-icon"><IconTrash size={18} stroke={2} /></div>
+      <div class="delete-modal-body">
+        <h3 id="asset-delete-title">{t("assets-delete-title", { name: pendingDeleteAsset.logicalPath.split("/").at(-1) ?? pendingDeleteAsset.logicalPath })}</h3>
+        <p>{t("assets-delete-description", { path: pendingDeleteAsset.file })}</p>
+        {#if pendingDeleteUsages.length > 0}
+          <p class="delete-modal-warning">{t("assets-delete-used-warning", { count: pendingDeleteUsages.length })}</p>
+          <ul class="delete-usage-list">
+            {#each pendingDeleteUsages as usage (usage.id)}<li>{usage.label}</li>{/each}
+          </ul>
+          <p class="delete-modal-note">{t("assets-delete-references-preserved")}</p>
+        {:else}
+          <p class="delete-modal-note neutral">{t("assets-delete-unused-note")}</p>
+        {/if}
+        {#if assetKind(pendingDeleteAsset) === "other"}
+          <p class="delete-modal-note neutral">{t("assets-delete-auxiliary-note")}</p>
+        {/if}
+        {#if deleteError}<p class="form-error delete-error" role="alert"><IconAlertTriangle size={14} /> {deleteError}</p>{/if}
+      </div>
+      <div class="delete-modal-actions">
+        <button type="button" class="delete-cancel-button" disabled={deleting} onclick={cancelDelete}>{t("assets-cancel")}</button>
+        <button type="button" class="delete-confirm-button" disabled={deleting} onclick={() => { void confirmDelete(); }}>
+          {deleting
+            ? t("assets-deleting")
+            : pendingDeleteUsages.length > 0
+              ? t("assets-delete-anyway")
+              : t("assets-delete-confirm")}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
   .workspace-header > dl div.warning { border-color: color-mix(in srgb, var(--wb-warning) 45%, var(--wb-border-subtle)); }
   dt { color: var(--wb-text-muted); font-size: 12px; font-weight: 650; text-transform: uppercase; }
   dd { margin: 3px 0 0; color: var(--text-strong); font-size: 15px; font-weight: 650; }
-  .detail-heading, .file-picker, .form-error, .form-actions, .detail-actions, .primary-action, .secondary-action { display: flex; align-items: center; }
+  .detail-heading, .file-picker, .form-error, .form-actions, .detail-actions, .primary-action, .secondary-action, .delete-action { display: flex; align-items: center; }
   .workspace-body { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(300px, .52fr); min-width: 0; min-height: 0; }
   .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-content: start; gap: 8px; min-width: 0; min-height: 0; padding: 9px; overflow: auto; border-right: 1px solid var(--wb-border-subtle); }
   .asset-card { --ui-entity-background: var(--wb-surface-chrome); --ui-entity-border-color: var(--wb-border-subtle); display: grid; grid-template-rows: 98px auto auto; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-chrome); text-align: left; }
@@ -468,10 +592,25 @@
   .target-card span { overflow: hidden; color: var(--wb-text-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .form-error { align-items: flex-start; gap: 6px; margin: 0; padding: 8px; border: 1px solid color-mix(in srgb, var(--danger) 36%, var(--wb-border-subtle)); border-radius: 6px; color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--wb-surface-document)); font-size: 12px; line-height: 1.4; }
   .form-actions { justify-content: flex-end; gap: 7px; margin-top: 4px; }
-  .form-actions button, .primary-action, .secondary-action { justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; font-weight: 600; }
+  .form-actions button, .primary-action, .secondary-action, .delete-action { justify-content: center; gap: 6px; min-height: 32px; padding: 0 10px; border: 1px solid var(--wb-border-subtle); border-radius: var(--radius-control); color: var(--wb-text-primary); background: var(--wb-surface-document); font-size: 12px; font-weight: 600; }
   .form-actions button.primary, .primary-action { border-color: var(--wb-accent); color: #fff; background: var(--wb-accent); }
-  .detail-actions { align-items: stretch; gap: 7px; margin-top: 10px; }
+  .detail-actions { flex-wrap: wrap; align-items: stretch; gap: 7px; margin-top: 10px; }
   .detail-actions .primary-action, .detail-actions .secondary-action { flex: 1; }
+  .detail-actions .delete-action { flex: 1 0 100%; border-color: color-mix(in srgb, var(--danger) 35%, var(--wb-border-subtle)); color: var(--danger); }
+  .delete-modal-backdrop { position: fixed; z-index: 12000; inset: 0; display: flex; align-items: center; justify-content: center; padding: 18px; background: rgb(0 0 0 / 48%); }
+  .delete-modal { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; width: min(460px, 100%); max-height: min(620px, calc(100vh - 36px)); padding: 14px; overflow: auto; border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--wb-border-subtle)); border-radius: 8px; background: var(--wb-surface-document); box-shadow: 0 24px 70px rgb(0 0 0 / 36%); }
+  .delete-modal-icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 8px; color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--wb-surface-chrome)); }
+  .delete-modal-body h3 { margin: 0 0 7px; color: var(--text-strong); font-size: 14px; font-weight: 900; }
+  .delete-modal-body p { margin: 0; color: var(--wb-text-primary); font-size: 12px; line-height: 1.45; }
+  .delete-modal-body .delete-modal-warning { margin-top: 9px; color: var(--danger); font-weight: 800; }
+  .delete-modal-body .delete-modal-note { margin-top: 8px; color: var(--danger); font-weight: 700; }
+  .delete-modal-body .delete-modal-note.neutral { color: var(--wb-text-muted); font-weight: 500; }
+  .delete-usage-list { display: grid; gap: 4px; max-height: 130px; margin: 7px 0 0; padding: 7px 7px 7px 25px; overflow: auto; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--wb-text-primary); background: var(--wb-surface-chrome); font-size: 12px; }
+  .delete-error { margin-top: 9px; }
+  .delete-modal-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+  .delete-cancel-button, .delete-confirm-button { min-width: 92px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-control); font-size: 12px; font-weight: 800; }
+  .delete-cancel-button { border: 1px solid var(--wb-border-subtle); color: var(--wb-text-primary); background: var(--wb-surface-chrome); }
+  .delete-confirm-button { border: 1px solid var(--danger); color: #fff; background: var(--danger); }
   button:disabled { opacity: .5; }
   button:not(:disabled) { cursor: pointer; }
   button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--wb-focus-ring); outline-offset: 1px; }

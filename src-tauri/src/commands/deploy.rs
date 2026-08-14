@@ -3,22 +3,23 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::{
-    commands::config::{read_project_app_config_for_bootstrap, save_deploy_settings_for_root},
+    commands::config::{read_deploy_settings_from_state, save_deploy_settings_in_workspace},
     commands::project::require_current_project_root,
     deploy::{
-        build_deploy_artifact_manifest, configuration_snapshot,
-        delete_credential as delete_stored_deploy_credential, execute_deploy_with_artifact,
-        plan_deploy_with_artifact, resolve_credential, run_zola_build_cancellable, run_zola_check,
-        save_credential as save_stored_deploy_credential, test_deploy_connection_with_credential,
-        DeployCommandError, DeployConfigurationSnapshot, DeployConnectionTestReceipt,
-        DeployCredentialStatus, DeployCredentialWriteInput, DeployErrorCode, DeployExecutionInput,
-        DeployPlan, DeployPlanInput, DeployProgressEvent, DeployProgressPhase,
-        DeployProgressReporter, DeployReceipt, DeploySettings, DeployTarget,
+        build_deploy_artifact_manifest, configuration_snapshot, credential_status,
+        execute_deploy_with_artifact, plan_deploy_with_artifact, prepare_credential_write,
+        resolve_credential, run_zola_build_cancellable, run_zola_check,
+        test_deploy_connection_with_credential, DeployCommandError, DeployConfigurationSnapshot,
+        DeployConnectionTestReceipt, DeployCredentialStatus, DeployCredentialWriteInput,
+        DeployErrorCode, DeployExecutionInput, DeployPlan, DeployPlanInput, DeployProgressEvent,
+        DeployProgressPhase, DeployProgressReporter, DeployReceipt, DeploySettings, DeployTarget,
         DEPLOY_PROGRESS_SCHEMA_VERSION,
     },
     kernel::{
         file_buffer_store::FileBufferRequestIdentity,
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
+        project_env_store::ProjectEnvStore,
+        project_workspace::persist_project_workspace_recovery,
         publish_operation::{
             PublishOperationCancelReceipt, PublishOperationControl, PublishOperationKind,
         },
@@ -88,7 +89,7 @@ pub async fn build_for_publish(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<PublishBuildReceipt, String> {
-    let preflight = require_current_publish_preflight(&app, &state, &expected_preflight_token)?;
+    let preflight = require_current_publish_preflight(&state, &expected_preflight_token)?;
     let target_id = preflight
         .active_target
         .as_ref()
@@ -121,10 +122,10 @@ pub async fn build_for_publish(
             let runtime = worker_app.state::<WriteAuthorityRuntime>();
             let _project_lease = runtime
                 .acquire_active_project_read_lease_for_session(&root, &runtime_session_id)?;
-            require_current_publish_preflight(&worker_app, &worker_state, &worker_expected_token)?;
+            require_current_publish_preflight(&worker_state, &worker_expected_token)?;
             let log = run_zola_build_cancellable(&root, &zola_root, &cancellation_token)?;
             let artifact = build_deploy_artifact_manifest(&root, &zola_root)?;
-            require_current_publish_preflight(&worker_app, &worker_state, &worker_expected_token)?;
+            require_current_publish_preflight(&worker_state, &worker_expected_token)?;
             let receipt = build_publish_build_receipt(PublishBuildReceiptInput {
                 project_root: worker_preflight.project_root,
                 runtime_session_id: worker_preflight.runtime_session_id,
@@ -141,7 +142,7 @@ pub async fn build_for_publish(
                 completed_at_ms: now_ms(),
                 log,
             });
-            store_publish_build_receipt_if_current(&worker_app, &worker_state, receipt.clone())?;
+            store_publish_build_receipt_if_current(&worker_state, receipt.clone())?;
             Ok(receipt)
         })
         .await;
@@ -225,12 +226,11 @@ pub fn zola_check_workspace(state: State<'_, AppState>) -> Result<String, String
 
 #[tauri::command]
 pub fn read_deploy_configuration(
-    app: AppHandle,
     state: State<AppState>,
 ) -> Result<DeployConfigurationSnapshot, String> {
     let root = require_current_project_root(&state)?;
-    let config = read_project_app_config_for_bootstrap(&app, &root)?;
-    configuration_snapshot(&app, &root, config.deploy)
+    let settings = read_deploy_settings_from_state(&state)?;
+    configuration_snapshot(&root, settings)
 }
 
 #[tauri::command]
@@ -243,9 +243,9 @@ pub fn save_deploy_settings(
         "Configurația deploy nu a putut bloca autoritatea de publicare.".to_string()
     })?;
     let root = require_current_project_root(&state)?;
-    let settings = save_deploy_settings_for_root(&app, &root, settings)?;
+    let settings = save_deploy_settings_in_workspace(settings, &app, &state)?;
     invalidate_publish_authorization(&state)?;
-    configuration_snapshot(&app, &root, settings)
+    configuration_snapshot(&root, settings)
 }
 
 #[tauri::command]
@@ -260,21 +260,56 @@ pub fn save_deploy_credential(
         .lock()
         .map_err(|_| "Credentialele nu au putut bloca autoritatea de publicare.".to_string())?;
     let root = require_current_project_root(&state)?;
-    let config = read_project_app_config_for_bootstrap(&app, &root)?;
-    let target = config
-        .deploy
+    let settings = read_deploy_settings_from_state(&state)?;
+    let target = settings
         .targets
         .iter()
         .find(|target| target.id == target_id)
+        .cloned()
         .ok_or_else(|| format!("Ținta deploy '{target_id}' nu există."))?;
-    let status = save_stored_deploy_credential(&app, &root, target, credential)?;
+    let prepared = prepare_credential_write(&target, credential)?;
+    {
+        let mut slot = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru credentiale.".to_string())?;
+        let workspace = slot.as_mut().ok_or_else(|| {
+            "ProjectWorkspace nu este inițializat pentru credentiale.".to_string()
+        })?;
+        workspace.accepted_disk.require_live_complete(
+            &workspace.runtime_session_id(),
+            &workspace.session.project_root,
+            &root,
+        )?;
+        let current = crate::deploy::read_deploy_settings_from_store(
+            &workspace.documents,
+            workspace.revision,
+        )?;
+        if !current.targets.iter().any(|candidate| candidate == &target) {
+            return Err(
+                "Ținta deploy s-a schimbat înainte de salvarea credentialelor.".to_string(),
+            );
+        }
+        let next_disk = ProjectEnvStore::write_namespace(
+            &app,
+            &root,
+            &workspace.runtime_session_id(),
+            &workspace.accepted_disk,
+            &prepared.credential_env_prefix,
+            Some(&prepared.values),
+        )?;
+        workspace.accept_sensitive_env_disk_state(next_disk)?;
+        persist_project_workspace_recovery(&app, workspace)?;
+    }
+    let mut status = credential_status(&root, &target)?;
+    status.kind = prepared.kind;
     invalidate_publish_authorization(&state)?;
     Ok(status)
 }
 
 #[tauri::command]
 pub fn delete_deploy_credential(
-    credential_ref: String,
+    credential_env_prefix: String,
     app: AppHandle,
     state: State<AppState>,
 ) -> Result<bool, String> {
@@ -283,7 +318,42 @@ pub fn delete_deploy_credential(
         .lock()
         .map_err(|_| "Credentialele nu au putut bloca autoritatea de publicare.".to_string())?;
     let root = require_current_project_root(&state)?;
-    let removed = delete_stored_deploy_credential(&app, &root, &credential_ref)?;
+    let settings = read_deploy_settings_from_state(&state)?;
+    let target = settings
+        .targets
+        .iter()
+        .find(|target| target.credential_env_prefix == credential_env_prefix)
+        .cloned()
+        .ok_or_else(|| "Prefixul ENV nu aparține niciunei ținte deploy.".to_string())?;
+    let removed = !ProjectEnvStore::read_namespace(&root, &credential_env_prefix)?.is_empty();
+    if removed {
+        let mut slot = state
+            .project_workspace
+            .lock()
+            .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru credentiale.".to_string())?;
+        let workspace = slot.as_mut().ok_or_else(|| {
+            "ProjectWorkspace nu este inițializat pentru credentiale.".to_string()
+        })?;
+        let current = crate::deploy::read_deploy_settings_from_store(
+            &workspace.documents,
+            workspace.revision,
+        )?;
+        if !current.targets.iter().any(|candidate| candidate == &target) {
+            return Err(
+                "Ținta deploy s-a schimbat înainte de ștergerea credentialelor.".to_string(),
+            );
+        }
+        let next_disk = ProjectEnvStore::write_namespace(
+            &app,
+            &root,
+            &workspace.runtime_session_id(),
+            &workspace.accepted_disk,
+            &credential_env_prefix,
+            None,
+        )?;
+        workspace.accept_sensitive_env_disk_state(next_disk)?;
+        persist_project_workspace_recovery(&app, workspace)?;
+    }
     if removed {
         invalidate_publish_authorization(&state)?;
     }
@@ -299,9 +369,8 @@ pub async fn test_deploy_connection(
     let root = require_current_project_root(&state).map_err(invalid_deploy_configuration)?;
     let runtime_session_id =
         capture_deploy_runtime_session_id(&state, &root).map_err(invalid_deploy_configuration)?;
-    let config =
-        read_project_app_config_for_bootstrap(&app, &root).map_err(invalid_deploy_configuration)?;
-    let target = configured_target(&config.deploy, &target_id)?;
+    let settings = read_deploy_settings_from_state(&state).map_err(invalid_deploy_configuration)?;
+    let target = configured_target(&settings, &target_id)?;
     let worker_app = app.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -309,7 +378,7 @@ pub async fn test_deploy_connection(
         let _project_lease = runtime
             .acquire_active_project_read_lease_for_session(&root, &runtime_session_id)
             .map_err(|error| DeployCommandError::new(DeployErrorCode::Internal, error))?;
-        let credential = resolve_credential(&worker_app, &root, &target).map_err(|message| {
+        let credential = resolve_credential(&root, &target).map_err(|message| {
             DeployCommandError::new(DeployErrorCode::MissingCredentials, message)
         })?;
         test_deploy_connection_with_credential(&target, &credential)
@@ -333,12 +402,10 @@ pub async fn plan_deploy(
     let runtime_session_id =
         capture_deploy_runtime_session_id(&state, &root).map_err(invalid_deploy_configuration)?;
     let zola_root = zola_project_root(&root);
-    let config =
-        read_project_app_config_for_bootstrap(&app, &root).map_err(invalid_deploy_configuration)?;
-    let settings_revision = config.deploy.revision;
-    let target = configured_target(&config.deploy, &input.target_id)?;
+    let settings = read_deploy_settings_from_state(&state).map_err(invalid_deploy_configuration)?;
+    let settings_revision = settings.revision;
+    let target = configured_target(&settings, &input.target_id)?;
     let build = require_current_publish_build(
-        &app,
         &state,
         &input.expected_build_token,
         &input.expected_artifact_id,
@@ -365,7 +432,6 @@ pub async fn plan_deploy(
             .acquire_active_project_read_lease_for_session(&root, &runtime_session_id)
             .map_err(|error| DeployCommandError::new(DeployErrorCode::Internal, error))?;
         require_current_publish_build(
-            &worker_app,
             &worker_state,
             &worker_input.expected_build_token,
             &worker_input.expected_artifact_id,
@@ -381,7 +447,7 @@ pub async fn plan_deploy(
                 "Artifactul s-a schimbat după buildul autorizat; rulează din nou buildul pentru publicare.",
             ));
         }
-        let credential = resolve_credential(&worker_app, &root, &target).map_err(|message| {
+        let credential = resolve_credential(&root, &target).map_err(|message| {
             DeployCommandError::new(DeployErrorCode::MissingCredentials, message)
         })?;
         let mut plan = plan_deploy_with_artifact(&target, settings_revision, &artifact, &credential)?;
@@ -413,20 +479,18 @@ pub async fn execute_deploy(
     let runtime_session_id =
         capture_deploy_runtime_session_id(&state, &root).map_err(invalid_deploy_configuration)?;
     let zola_root = zola_project_root(&root);
-    let config =
-        read_project_app_config_for_bootstrap(&app, &root).map_err(invalid_deploy_configuration)?;
-    if config.deploy.revision != input.expected_settings_revision {
+    let settings = read_deploy_settings_from_state(&state).map_err(invalid_deploy_configuration)?;
+    if settings.revision != input.expected_settings_revision {
         return Err(DeployCommandError::new(
             DeployErrorCode::InvalidConfiguration,
             format!(
                 "Configurația deploy s-a schimbat: planul folosește revizia {}, iar revizia curentă este {}.",
-                input.expected_settings_revision, config.deploy.revision
+                input.expected_settings_revision, settings.revision
             ),
         ));
     }
-    let target = configured_target(&config.deploy, &input.target_id)?;
+    let target = configured_target(&settings, &input.target_id)?;
     let build = require_current_publish_build(
-        &app,
         &state,
         &input.expected_build_token,
         &input.expected_artifact_id,
@@ -438,7 +502,7 @@ pub async fn execute_deploy(
             "Planul deploy nu aparține Publish Preflight curent.",
         ));
     }
-    let settings_revision = config.deploy.revision;
+    let settings_revision = settings.revision;
     let provider_plan_token = require_authorized_deploy_plan_token(
         &input.expected_plan_token,
         &build,
@@ -483,7 +547,6 @@ pub async fn execute_deploy(
             .acquire_active_project_read_lease_for_session(&root, &runtime_session_id)
             .map_err(|error| DeployCommandError::new(DeployErrorCode::Internal, error))?;
         require_current_publish_build(
-            &worker_app,
             &worker_state,
             &worker_input.expected_build_token,
             &worker_input.expected_artifact_id,
@@ -504,10 +567,9 @@ pub async fn execute_deploy(
                 "Artifactul s-a schimbat după planul autorizat; deploy-ul remote nu a pornit.",
             ));
         }
-        let credential =
-            resolve_credential(&worker_app, &root, &worker_target).map_err(|message| {
-                DeployCommandError::new(DeployErrorCode::MissingCredentials, message)
-            })?;
+        let credential = resolve_credential(&root, &worker_target).map_err(|message| {
+            DeployCommandError::new(DeployErrorCode::MissingCredentials, message)
+        })?;
         let event_app = worker_app.clone();
         let progress_sink = move |event: DeployProgressEvent| {
             if let Err(error) = event_app.emit("deploy-progress", event) {

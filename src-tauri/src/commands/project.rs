@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, Runtime, State};
 use crate::{
     commands::{
         ai_coordination::publish_ai_coordination_state,
-        config::{read_project_app_config_for_bootstrap, ProjectAppConfig},
+        config::{project_settings_from_store, ProjectSettingsSnapshot},
         kernel::current_kernel_project_state_snapshot,
     },
     js::PageJsDraftStore,
@@ -20,8 +20,8 @@ use crate::{
             bootstrap_file_buffer_store, map_text_changes, now_ms as file_buffer_now_ms,
             require_file_buffer_session_binding, FileBufferChangeSetInput,
             FileBufferChangeSetResult, FileBufferCommandReceipt, FileBufferFileSnapshot,
-            FileBufferMutationExpectation, FileBufferRequestIdentity, FileBufferStore,
-            FileBufferStoreSnapshot, FileBufferTextSnapshot,
+            FileBufferMutationExpectation, FileBufferRequestIdentity, FileBufferStoreSnapshot,
+            FileBufferTextSnapshot,
         },
         observability::{append_event, now_ms, KernelEventKind, KernelLogEvent, KernelLogLevel},
         preview_projection::{CanvasPatch, CanvasPatchOperation},
@@ -119,7 +119,8 @@ pub struct ProjectOpenBootstrapReceipt {
     pub lifecycle: crate::project::ProjectLifecycleSnapshot,
     pub file_buffers: FileBufferStoreSnapshot,
     pub workspace: ProjectWorkspaceSnapshot,
-    pub project_config: ProjectAppConfig,
+    pub project_settings: ProjectSettingsSnapshot,
+    pub deploy_settings: crate::deploy::DeploySettings,
     pub workbench: WorkbenchSnapshot,
     pub active_document: Option<ProjectBootstrapDocument>,
     pub target_css_file: Option<String>,
@@ -277,9 +278,12 @@ fn project_index_file(scan: &ProjectScan) -> Option<&ProjectFile> {
                 .find(|file| file.role == crate::project::ProjectFileRole::Page)
         })
         .or_else(|| {
-            scan.files
-                .iter()
-                .find(|file| !matches!(file.kind, ProjectFileKind::Dir | ProjectFileKind::Image))
+            scan.files.iter().find(|file| {
+                !matches!(
+                    file.kind,
+                    ProjectFileKind::Dir | ProjectFileKind::Image | ProjectFileKind::Font
+                )
+            })
         })
 }
 
@@ -355,7 +359,12 @@ fn project_file_from_preview_diagnostic<'a>(
     // remains independent from the private cache location and its session id.
     scan.files
         .iter()
-        .filter(|file| !matches!(file.kind, ProjectFileKind::Dir | ProjectFileKind::Image))
+        .filter(|file| {
+            !matches!(
+                file.kind,
+                ProjectFileKind::Dir | ProjectFileKind::Image | ProjectFileKind::Font
+            )
+        })
         .filter(|file| diagnostic.contains(&file.relative_path))
         .max_by_key(|file| file.relative_path.len())
 }
@@ -699,7 +708,6 @@ fn reattach_project_session_impl(
 /// FileBufferStore, reset Undo/Redo, or touch the disk.
 #[tauri::command]
 pub fn reattach_project_session(
-    app: AppHandle,
     state: State<AppState>,
 ) -> Result<Option<ProjectOpenBootstrapReceipt>, String> {
     let scan = reattach_project_session_impl(state.inner())?;
@@ -712,9 +720,15 @@ pub fn reattach_project_session(
     let workbench = state
         .workbench
         .read_or_restore(&session, || read_persisted_workbench(&session))?;
-    let project_config =
-        read_project_app_config_for_bootstrap(&app, Path::new(&session.project_root))?;
-    let (file_buffers, workspace_snapshot, mut active_document, projection, project_model) = {
+    let (
+        file_buffers,
+        workspace_snapshot,
+        mut active_document,
+        projection,
+        project_model,
+        project_settings,
+        deploy_settings,
+    ) = {
         let workspace = state
             .project_workspace
             .lock()
@@ -737,12 +751,20 @@ pub fn reattach_project_session(
         let project_model = (workspace.project_model_source_revision == Some(projection.revision))
             .then(|| workspace.project_model.clone())
             .flatten();
+        let project_settings =
+            project_settings_from_store(&workspace.documents, workspace.revision)?;
+        let deploy_settings = crate::deploy::read_deploy_settings_from_store(
+            &workspace.documents,
+            workspace.revision,
+        )?;
         (
             workspace.documents.snapshot(),
             workspace.snapshot(),
             active_document,
             projection,
             project_model,
+            project_settings,
+            deploy_settings,
         )
     };
     if let Some(model) = project_model.as_ref() {
@@ -817,7 +839,8 @@ pub fn reattach_project_session(
         lifecycle,
         file_buffers,
         workspace: workspace_snapshot,
-        project_config,
+        project_settings,
+        deploy_settings,
         workbench,
         active_document,
         target_css_file,
@@ -1794,23 +1817,14 @@ fn read_file_buffer_text_impl(
     identity: FileBufferRequestIdentity,
     state: &AppState,
 ) -> Result<FileBufferCommandReceipt<FileBufferTextSnapshot>, String> {
-    with_bound_file_buffer(state, &identity, |_, store| {
-        store
-            .text_snapshot(&relative_path)
-            .ok_or_else(|| format!("FileBufferStore nu are text pentru {relative_path}."))
-    })
-}
-
-fn with_bound_file_buffer<T>(
-    state: &AppState,
-    identity: &FileBufferRequestIdentity,
-    operation: impl FnOnce(&ProjectSessionSnapshot, &mut FileBufferStore) -> Result<T, String>,
-) -> Result<FileBufferCommandReceipt<T>, String> {
-    with_bound_project_workspace(state, identity, |workspace| {
-        let session = workspace.session.clone();
-        let payload = operation(&session, &mut workspace.documents)?;
+    with_bound_project_workspace(state, &identity, |workspace| {
+        let payload = workspace
+            .projected_text_snapshot(&relative_path)?
+            .ok_or_else(|| {
+                format!("ProjectWorkspace nu are text proiectat pentru {relative_path}.")
+            })?;
         Ok(FileBufferCommandReceipt::new(
-            &session,
+            &workspace.session,
             workspace.revision,
             payload,
         ))
@@ -1878,20 +1892,12 @@ fn set_file_buffer_draft_impl(
             let previous_model = candidate.project_model.clone();
             let previous_model_source_revision = candidate.project_model_source_revision;
             let before_source = candidate
-                .documents
-                .text_snapshot(&relative_path)
+                .projected_text_snapshot(&relative_path)?
                 .ok_or_else(|| {
                     format!("ProjectWorkspace nu urmărește documentul {relative_path}.")
                 })?
                 .text;
-            let mut validation_store = candidate.documents.clone();
-            validation_store.set_draft_if_current(
-                &relative_path,
-                contents.clone(),
-                &expectation,
-                file_buffer_now_ms(),
-            )?;
-            let receipt = candidate.stage_document_texts(
+            let file = candidate.stage_projected_document_text(
                 &workspace_identity(candidate),
                 WorkspaceMutationMetadata {
                     label: "Editare document".to_string(),
@@ -1899,13 +1905,15 @@ fn set_file_buffer_draft_impl(
                     coalesce_key: Some(format!("document:{relative_path}")),
                     transaction_id: None,
                 },
-                vec![WorkspaceDocumentMutation {
-                    relative_path: relative_path.clone(),
-                    contents,
-                }],
+                &relative_path,
+                contents,
+                &expectation,
                 file_buffer_now_ms(),
             )?;
-            if receipt.changed {
+            if candidate
+                .projected_text_snapshot(&relative_path)?
+                .is_some_and(|snapshot| snapshot.text != before_source)
+            {
                 publish_code_edit_project_model(
                     candidate,
                     previous_model.as_ref(),
@@ -1915,11 +1923,7 @@ fn set_file_buffer_draft_impl(
                     None,
                 )?;
             }
-            receipt
-                .files
-                .into_iter()
-                .next()
-                .ok_or_else(|| "ProjectWorkspace nu a returnat documentul editat.".to_string())
+            Ok(file)
         })?;
         Ok(FileBufferCommandReceipt::new(
             &workspace.session,
@@ -1957,8 +1961,7 @@ fn apply_file_buffer_changeset_impl(
             let previous_model = candidate.project_model.clone();
             let previous_model_source_revision = candidate.project_model_source_revision;
             let before_source = candidate
-                .documents
-                .text_snapshot(&relative_path)
+                .projected_text_snapshot(&relative_path)?
                 .ok_or_else(|| {
                     format!("ProjectWorkspace nu urmărește documentul {relative_path}.")
                 })?
@@ -1973,7 +1976,7 @@ fn apply_file_buffer_changeset_impl(
                         new_end: change.new_end,
                     })
                     .collect::<Vec<_>>();
-            let result = candidate.apply_document_changeset(
+            let result = candidate.apply_projected_document_changeset(
                 &workspace_identity(candidate),
                 WorkspaceMutationMetadata {
                     label: "Editare document".to_string(),
@@ -2092,6 +2095,34 @@ fn publish_code_edit_project_model(
     exact_edits: Option<Vec<SourceTextEdit>>,
 ) -> Result<(), String> {
     let projection = candidate.capture_projection_snapshot()?;
+    let Some(model) = build_code_edit_project_model(
+        Path::new(&candidate.session.project_root),
+        previous_model,
+        previous_model_source_revision,
+        &projection,
+        relative_path,
+        actual_before_source,
+        exact_edits,
+    )?
+    else {
+        // A code draft is the textual authority even while it is temporarily
+        // invalid Tera. ProjectWorkspace deliberately retains the immutable
+        // prior model and its source revision; freshness gates keep Canvas and
+        // structural commands from consuming that stale semantic projection.
+        return Ok(());
+    };
+    candidate.publish_project_model(&projection, model)
+}
+
+fn build_code_edit_project_model(
+    project_root: &Path,
+    previous_model: Option<&ProjectModel>,
+    previous_model_source_revision: Option<u64>,
+    projection: &crate::kernel::project_workspace::WorkspaceProjectionSnapshot,
+    relative_path: &str,
+    actual_before_source: &str,
+    exact_edits: Option<Vec<SourceTextEdit>>,
+) -> Result<Option<ProjectModel>, String> {
     let source_changes = previous_model.and_then(|model| {
         let before = model
             .files
@@ -2116,16 +2147,130 @@ fn publish_code_edit_project_model(
     } else {
         ProjectModelIncrementalIntent::Unsupported
     };
-    let build = rebuild_project_model_after_workspace_change_with_source_changes(
-        Path::new(&candidate.session.project_root),
+    let build = match rebuild_project_model_after_workspace_change_with_source_changes(
+        project_root,
         previous_model,
         previous_model_source_revision,
-        &projection,
+        projection,
         &[relative_path.to_string()],
         intent,
         source_changes,
-    )?;
-    candidate.publish_project_model(&projection, build.model)
+    ) {
+        Ok(build) => build,
+        Err(error) if is_source_conformance_diagnostic(&error) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(Some(build.model))
+}
+
+fn is_source_conformance_diagnostic(error: &str) -> bool {
+    serde_json::from_str::<crate::localization::LocalizedDiagnostic>(error)
+        .is_ok_and(|diagnostic| diagnostic.code.starts_with("source-graph-"))
+}
+
+#[cfg(test)]
+mod code_edit_project_model_tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use crate::project_model::test_support::ProjectModelTestFixture;
+
+    use super::*;
+
+    #[test]
+    fn invalid_tera_retains_the_last_valid_model_and_a_later_valid_draft_recovers() {
+        let root = unique_code_edit_test_dir();
+        let initial = concat!(
+            "{% block content %}\n",
+            "{% if visible %}\n",
+            "<main><div class=\"existing\">Inițial</div></main>\n",
+            "{% endif %}\n",
+            "{% endblock %}\n",
+        );
+        let invalid = concat!(
+            "{% block content %}\n",
+            "{% if visible %}\n",
+            "<main><div class=\"existing\">Draft</div></main>\n",
+            "{% endblock %}\n",
+        );
+        let recovered = concat!(
+            "{% block content %}\n",
+            "{% if visible %}\n",
+            "<main><div class=\"existing\">Final</div></main>\n",
+            "{% endif %}\n",
+            "{% endblock %}\n",
+        );
+        let mut fixture = ProjectModelTestFixture::standard_zola(&root, initial).unwrap();
+        let initial_model = fixture.build_model().unwrap();
+        let initial_existing_id = html_node_id(&initial_model, "<div .existing>");
+
+        fixture
+            .draft("templates/index.html", invalid)
+            .revision(1, Some("code-invalid-1"));
+        let invalid_projection = fixture.projection();
+        let invalid_refresh = build_code_edit_project_model(
+            fixture.root(),
+            Some(&initial_model),
+            Some(0),
+            &invalid_projection,
+            "templates/index.html",
+            initial,
+            None,
+        )
+        .unwrap();
+        assert!(invalid_refresh.is_none());
+
+        fixture
+            .draft("templates/index.html", recovered)
+            .revision(2, Some("code-recovered-2"));
+        let recovered_projection = fixture.projection();
+        let recovered_model = build_code_edit_project_model(
+            fixture.root(),
+            Some(&initial_model),
+            Some(0),
+            &recovered_projection,
+            "templates/index.html",
+            invalid,
+            None,
+        )
+        .unwrap()
+        .expect("valid Tera must refresh the semantic model after an invalid draft");
+
+        assert_eq!(
+            recovered_model
+                .files
+                .iter()
+                .find(|file| file.relative_path == "templates/index.html")
+                .map(|file| file.contents.as_str()),
+            Some(recovered),
+        );
+        assert_eq!(
+            html_node_id(&recovered_model, "<div .existing>"),
+            initial_existing_id,
+        );
+        assert!(!is_source_conformance_diagnostic("filesystem unavailable"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn html_node_id(model: &ProjectModel, label: &str) -> String {
+        model
+            .source_graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.kind == crate::source_graph::model::SourceNodeKind::Html && node.label == label
+            })
+            .map(|node| node.id.clone())
+            .expect("HTML node")
+    }
+
+    fn unique_code_edit_test_dir() -> PathBuf {
+        static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+        std::env::temp_dir().join(format!(
+            "pana-code-edit-model-{}-{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed),
+        ))
+    }
 }
 
 fn invalidate_code_selection_after_commit<T>(
@@ -2142,9 +2287,14 @@ fn invalidate_code_selection_after_commit<T>(
             .ok_or_else(|| "ProjectWorkspace lipsește după tranzacția Code.".to_string())?;
         if workspace.runtime_session_id() != receipt.runtime_session_id
             || workspace.revision != receipt.workspace_revision
-            || workspace.project_model_source_revision != Some(receipt.workspace_revision)
         {
             return Err("Selecția Code nu poate fi validată pe o revizie stale.".to_string());
+        }
+        if workspace.project_model_source_revision != Some(receipt.workspace_revision) {
+            // The text draft is newer than the last valid semantic model. An
+            // empty retained set clears source-bound selection so stale Canvas
+            // actions cannot target the prior document while code is invalid.
+            return Ok(std::collections::HashSet::new());
         }
         let model = workspace
             .project_model
@@ -2571,7 +2721,14 @@ pub fn open_project(
     let mut authoritative_scan = scan_project_workspace_projection(&bootstrap_projection)?;
     let file_buffers = next_project_workspace.documents.snapshot();
     let workspace_snapshot = next_project_workspace.snapshot();
-    let project_config = read_project_app_config_for_bootstrap(&app, &root)?;
+    let project_settings = project_settings_from_store(
+        &next_project_workspace.documents,
+        next_project_workspace.revision,
+    )?;
+    let deploy_settings = crate::deploy::read_deploy_settings_from_store(
+        &next_project_workspace.documents,
+        next_project_workspace.revision,
+    )?;
     let mut workbench = prepare_bootstrap_workbench(&session, &authoritative_scan)?;
     let target_css_file = authoritative_scan
         .files
@@ -2921,7 +3078,8 @@ pub fn open_project(
         lifecycle,
         file_buffers,
         workspace: workspace_snapshot,
-        project_config,
+        project_settings,
+        deploy_settings,
         workbench,
         active_document,
         target_css_file,
@@ -2936,15 +3094,14 @@ pub fn read_project_file(relative_path: String, state: State<AppState>) -> Resul
         .project_workspace
         .lock()
         .map_err(|_| "Nu am putut bloca ProjectWorkspace.".to_string())?;
-    let store = &project_workspace
+    let workspace = project_workspace
         .as_ref()
-        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?
-        .documents;
-    if let Some(text) = store.text_for(&relative_path) {
-        return Ok(text);
+        .ok_or_else(|| "ProjectWorkspace nu este inițializat.".to_string())?;
+    if let Some(snapshot) = workspace.projected_text_snapshot(&relative_path)? {
+        return Ok(snapshot.text);
     }
     Err(format!(
-        "ProjectWorkspace nu urmărește documentul text {relative_path}; citirea paralelă direct de pe disc este interzisă."
+        "ProjectWorkspace nu urmărește documentul text proiectat {relative_path}; citirea paralelă direct de pe disc este interzisă."
     ))
 }
 

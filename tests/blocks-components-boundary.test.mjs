@@ -9,6 +9,7 @@ function source(relativePath) {
 test("ComponentGraph rămâne exclusiv semantic Zola/Tera", () => {
   const model = source("../src-tauri/src/source_graph/model.rs");
   const graph = source("../src-tauri/src/source_graph/component_graph.rs");
+  const productionGraph = graph.split("#[cfg(test)]", 1)[0];
   const workspace = source("../src/lib/components/creation/ComponentsWorkspace.svelte");
   const types = source("../src/lib/types.ts");
 
@@ -16,7 +17,7 @@ test("ComponentGraph rămâne exclusiv semantic Zola/Tera", () => {
   assert.match(graph, /ComponentDefinitionKind::Shortcode/);
   assert.match(graph, /ComponentDefinitionKind::InlineRepeat/);
   assert.doesNotMatch(model, /Blueprint|RuntimeProvider/);
-  assert.doesNotMatch(graph, /Blueprint|RuntimeProvider|data-pana-block/);
+  assert.doesNotMatch(productionGraph, /Blueprint|RuntimeProvider|data-pana-block/);
   assert.doesNotMatch(types, /"blueprint"|"runtimeProvider"/);
   assert.doesNotMatch(workspace, /NativeBlock|readNativeBlockRegistry|blockGraph/);
 });
@@ -90,6 +91,7 @@ test("Slider este Composition Rust-first și se editează exclusiv în panoul Bl
   const native = source("../src-tauri/src/blocks/native.rs");
   const slots = source("../src-tauri/src/blocks/slots.rs");
   const runtime = source("../src-tauri/src/blocks/runtime.js");
+  const sliderRuntime = source("../src-tauri/src/blocks/runtime/slider.js");
   const blockPane = source("../src/lib/components/inspector/BlockPropertiesPane.svelte");
   const sliderEditor = source("../src/lib/components/inspector/SliderBlockPropertiesEditor.svelte");
   const htmlPane = source("../src/lib/components/inspector/HtmlPane.svelte");
@@ -101,7 +103,7 @@ test("Slider este Composition Rust-first și se editează exclusiv în panoul Bl
   assert.match(slots, /render_native_block_slot_item_html/);
   assert.match(slots, /Slider în slider este blocat/);
   assert.match(runtime, /structureSignature/);
-  assert.match(runtime, /register\("slider"/);
+  assert.match(sliderRuntime, /register\("slider"/);
   assert.match(blockPane, /<SliderBlockPropertiesEditor/);
   assert.match(sliderEditor, /operation:\s*"insert" \| "duplicate" \| "move" \| "delete"|request\("insert"\)/);
   assert.doesNotMatch(htmlPane, /SliderBlockPropertiesEditor|data-pana-slider|inspector-slider/);
@@ -148,7 +150,7 @@ test("proprietățile blocurilor sunt definite și validate exclusiv în Rust", 
   assert.match(native, /COUNTER_OPTIONS/);
   assert.match(native, /OFFCANVAS_OPTIONS/);
   assert.match(options, /plan_native_block_option_attribute/);
-  assert.match(options, /Marcajul data-pana-component.*read-only/s);
+  assert.match(options, /data-pana-block valid/);
   assert.match(attributes, /native_block_option/);
   assert.match(inspector, /readUiBlockGraph/);
   assert.match(inspector, /onblur=\{\(\) => \{ void commit\(option\); \}\}/);
@@ -173,8 +175,8 @@ test("selecția unui descendent alege rădăcina celui mai apropiat bloc imbrica
     navigation.indexOf("pub struct EditorNavigationViewNode"),
   );
 
-  assert.match(embeddedBridge, /element\.closest\("\[data-pana-block\],\[data-pana-component\]"\)/);
-  assert.match(embeddedBridge, /markerKind:\s*canonical \? "canonical" : "legacy"/);
+  assert.match(embeddedBridge, /element\.closest\("\[data-pana-block\]"\)/);
+  assert.doesNotMatch(embeddedBridge, /data-pana-component|markerKind/);
   assert.match(canvasAgent, /physicalBlockContext/);
   assert.doesNotMatch(canvasAgent, /rootSourceId|rootTemplateSourceId|rootSessionId/);
   assert.match(app, /bounded\.providerId !== physical\.providerId/);
@@ -195,31 +197,48 @@ test("selecția unui descendent alege rădăcina celui mai apropiat bloc imbrica
 
 test("preview și site folosesc același runtime canonic de blocuri", () => {
   const runtime = source("../src-tauri/src/blocks/runtime.js");
+  const runtimePlan = source("../src-tauri/src/blocks/runtime.rs");
+  const providers = [
+    "counter",
+    "accordion",
+    "tabs",
+    "slider",
+    "dialog",
+    "offcanvas",
+    "nav_menu",
+  ].map((name) => source(`../src-tauri/src/blocks/runtime/${name}.js`));
   const generator = source("../src-tauri/src/js/generator.rs");
   const interactive = source("../src-tauri/src/preview/interactive_runtime.js");
   const inject = source("../src-tauri/src/preview/inject.rs");
 
-  assert.match(generator, /install_native_block_runtime/);
-  assert.match(inject, /NATIVE_BLOCK_RUNTIME_SCRIPT/);
+  assert.match(generator, /NativeBlockRuntimePlan::from_template_source/);
+  assert.match(generator, /render_native_block_runtime/);
+  assert.match(runtimePlan, /NATIVE_BLOCK_RUNTIME_CORE_SCRIPT/);
+  assert.match(runtimePlan, /NATIVE_BLOCK_RUNTIME_PROVIDERS/);
+  assert.doesNotMatch(inject, /blocks::NATIVE_BLOCK_RUNTIME|include_str!\([^\n]*blocks\/runtime/);
   assert.match(interactive, /window\.PanaBlockRuntime/);
   assert.doesNotMatch(interactive, /function (?:counter|accordion|tabs|overlay|navMenu)Definition/);
   assert.doesNotMatch(generator, /generate_(?:counter|accordion|tabs|dialog|offcanvas|nav_menu)_component/);
   assert.match(runtime, /cancelAnimationFrame/);
-  assert.match(runtime, /IntersectionObserver/);
   assert.match(runtime, /removeEventListener/);
-  assert.match(runtime, /media\.removeListener/);
-  assert.match(runtime, /document\.body\.style\.overflow/);
-  assert.match(runtime, /aria-expanded/);
+  assert.match(providers[0], /IntersectionObserver/);
+  assert.match(providers[4], /document\.body\.style\.overflow/);
+  assert.match(providers[6], /media\.removeListener/);
+  for (const provider of providers) assert.match(provider, /runtime\.register\(/);
+  assert.doesNotMatch(`${runtime}\n${providers.join("\n")}`, /__panaMotionV2Config/);
 });
 
-test("scrierea structurală reconciliază markup, SCSS și Page JS într-o singură tranzacție", () => {
+test("scrierea structurală reconciliază markup și SCSS, iar runtime-ul rămâne derivat", () => {
   const structural = source("../src-tauri/src/kernel/preview_projection/structural_write.rs");
+  const workspaceSave = source("../src-tauri/src/kernel/project_workspace/save.rs");
   const frontend = source("../src/lib/state/html-actions-controller.ts");
 
   assert.match(structural, /stage_structural_write_with_native_block_contract/);
   assert.match(structural, /plan_native_block_contract/);
   assert.match(structural, /stage_composite_changes/);
   assert.match(structural, /native_block_insert_and_last_delete_are_atomic_and_noop_safe/);
+  assert.doesNotMatch(structural, /PageJsDraftStageInput/);
+  assert.match(workspaceSave, /PageRuntimePlan::from_sources/);
   assert.doesNotMatch(frontend, /applyNativeBlockContract|reconcileNativeBlock/);
 });
 
@@ -247,20 +266,25 @@ test("activitatea Blocuri părăsește inserarea numai după confirmarea commitu
   );
 });
 
-test("compatibilitatea legacy este citire controlată, nu un al doilea model", () => {
+test("contractul blocurilor are o singură cale canonică", () => {
   const contract = source("../src-tauri/src/blocks/contract.rs");
   const runtime = source("../src-tauri/src/blocks/runtime.js");
   const scanner = source("../src-tauri/src/source_graph/scan/template.rs");
   const jsTypes = source("../src-tauri/src/js/types.rs");
   const generator = source("../src-tauri/src/js/generator.rs");
+  const productionGenerator = generator.split("#[cfg(test)]", 1)[0];
 
   for (const file of [contract, runtime, scanner]) {
-    assert.match(file, /data-pana-component/);
     assert.match(file, /data-pana-block/);
   }
-  assert.match(jsTypes, /alias = "components"/);
-  assert.doesNotMatch(jsTypes, /rename = "components"/);
-  assert.doesNotMatch(generator, /output\.push_str\("\/\/ @pana-component/);
+  assert.equal(
+    existsSync(new URL("../src-tauri/src/js/parser.rs", import.meta.url)),
+    false,
+  );
+  assert.doesNotMatch(productionGenerator, /@pana-block/);
+  for (const file of [contract, runtime, scanner, jsTypes, productionGenerator]) {
+    assert.doesNotMatch(file, /data-pana-component|@pana-component|pana:components|alias = "components"/);
+  }
   assert.equal(
     existsSync(new URL("../src-tauri/src/page_components/mod.rs", import.meta.url)),
     false,
@@ -269,4 +293,15 @@ test("compatibilitatea legacy este citire controlată, nu un al doilea model", (
     existsSync(new URL("../src/lib/page-components/registry.ts", import.meta.url)),
     false,
   );
+});
+
+test("blocurile livrează exclusiv CSS funcțional, fără punte de temă", () => {
+  const native = source("../src-tauri/src/blocks/native.rs");
+  const productionNative = native.slice(0, native.indexOf("#[cfg(test)]"));
+  const base = source("../src-tauri/resources/theme-packs/pana-studio/theme/sass/css-framework/_baza.scss");
+
+  assert.match(productionNative, /functional_scss/);
+  assert.match(productionNative, /pana-block-functional-styles/);
+  assert.doesNotMatch(productionNative, /--pana-block-|box-shadow|border-radius|transition:/);
+  assert.doesNotMatch(base, /--pana-block-/);
 });

@@ -41,6 +41,7 @@ pub enum ProjectFileKind {
     Scss,
     Js,
     Image,
+    Font,
     Other,
 }
 

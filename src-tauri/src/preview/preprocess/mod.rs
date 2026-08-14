@@ -5,6 +5,7 @@ mod workspace;
 #[cfg(test)]
 pub(crate) use annotate::{preprocess_template, SourceIdIndex};
 
+pub(crate) use project::{preview_project_dir, preview_project_directory_name};
 pub(crate) use workspace::{
     create_persistent_preview_artifact_root, create_source_browser_artifact_root,
     materialize_version_source_tree, persistent_project_workspace_session_root,

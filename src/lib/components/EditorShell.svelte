@@ -7,8 +7,10 @@
   import { SOURCE_LOADING_SENTINEL } from "$lib/editor-runtime/source-state";
   import {
     legacyTranslator,
+    l10n,
     localeRevision,
   } from "$lib/i18n/runtime.svelte";
+  import { measureSourceText } from "$lib/editor/source-metrics";
 
   $: t = legacyTranslator($localeRevision);
   import { resetPreviewFrameDocumentAccess } from "$lib/preview/frame-origin";
@@ -50,7 +52,6 @@
   export let currentSourcePath = "";
   export let source = "";
   export let sourceLanguage: SourceLanguage = "plain";
-  export let sourceLength = 0;
   export let workbenchSnapshot: WorkbenchSnapshot | null = null;
   export let dirtyWorkbenchPaths: string[] = [];
   export let activateWorkbenchDocument: (
@@ -84,6 +85,10 @@
   export let codeEditorHost: HTMLDivElement | undefined = undefined;
 
   $: sourceIsLoading = source === SOURCE_LOADING_SENTINEL;
+  $: sourceMetrics = sourceIsLoading ? null : measureSourceText(source);
+  $: formattedSourceSize = sourceMetrics
+    ? formatSourceSize(sourceMetrics.utf8Bytes, $localeRevision)
+    : "";
   $: workbenchSplit = workbenchSnapshot?.split ?? "none";
   $: splitActive = workbenchSplit !== "none";
   $: splitRatioBasisPoints = workbenchSnapshot?.splitRatioBasisPoints ?? 5_000;
@@ -105,7 +110,6 @@
     try {
       const url = new URL(interactivePreviewUrl);
       url.searchParams.set("__pana_view", "motion");
-      url.searchParams.set("__pana_motion_mode", "preview");
       return url.toString();
     } catch {
       return interactivePreviewUrl;
@@ -193,6 +197,17 @@
   }
 
   onDestroy(() => stopViewportResize(false));
+
+  function formatSourceSize(bytes: number, _localeRevision: number): string {
+    if (bytes < 1_024) return `${l10n.formatNumber(bytes)} B`;
+    if (bytes < 1_024 * 1_024) {
+      return `${l10n.formatNumber(bytes / 1_024, { maximumFractionDigits: 1 })} KB`;
+    }
+    if (bytes < 1_024 * 1_024 * 1_024) {
+      return `${l10n.formatNumber(bytes / (1_024 * 1_024), { maximumFractionDigits: 1 })} MB`;
+    }
+    return `${l10n.formatNumber(bytes / (1_024 * 1_024 * 1_024), { maximumFractionDigits: 1 })} GB`;
+  }
 </script>
 
 <section class="editor-shell" aria-label={t("workbench-editor-shell-aria")}>
@@ -308,21 +323,24 @@
     aria-label={t("workbench-source-code")}
   >
     <div class="code-source-layout" aria-busy={sourceIsLoading}>
-      <div class="source-header">
-        <h2 title={currentSourcePath}>
-          <strong>{t("workbench-code")}</strong>
-          <span>{currentSourcePath || t("workbench-no-file-open")}</span>
-        </h2>
-        {#if !sourceIsLoading}
-          <span class="source-meta">{sourceLanguage.toUpperCase()} • {t("workbench-character-count", {
-            count: sourceLength,
-          })}</span>
-        {/if}
-      </div>
       <div bind:this={codeEditorHost} class="code-editor-host" data-language={sourceLanguage}></div>
       {#if sourceIsLoading}
         <div class="code-loading-stage" aria-label={t("workbench-code-loading")}></div>
       {/if}
+      <footer class="source-status-bar" aria-label={t("workbench-source-status")}>
+        <span class="source-path" title={currentSourcePath}>
+          {currentSourcePath || t("workbench-no-file-open")}
+        </span>
+        {#if sourceMetrics}
+          <div class="source-metrics">
+            <span>{t("workbench-character-count", { count: sourceMetrics.characterCount })}</span>
+            <span>{t("workbench-line-count", { count: sourceMetrics.lineCount })}</span>
+            <span title={t("workbench-source-size", { size: formattedSourceSize })}>
+              {formattedSourceSize}
+            </span>
+          </div>
+        {/if}
+      </footer>
     </div>
   </section>
   </div>
@@ -604,7 +622,7 @@
 
   .code-source-layout {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
     height: 100%;
     min-height: 0;
   }
@@ -613,69 +631,75 @@
     display: none;
   }
 
-  .source-header {
+  .source-status-bar {
+    position: relative;
+    z-index: 6;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
-    height: 34px;
-    padding: 0 10px;
-    border-bottom: 1px solid var(--border-3);
-    color: var(--text-strong);
+    container-type: inline-size;
+    gap: 12px;
+    min-width: 0;
+    min-height: 36px;
+    padding: 3px 7px;
+    border-top: 1px solid var(--wb-border-subtle, var(--border-2));
+    color: var(--wb-text-muted, var(--text-muted));
+    background: var(--surface-panel);
+    font-size: var(--font-meta);
   }
 
-  .source-header h2 {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .source-path {
     min-width: 0;
-    margin: 0;
+    padding: 0 6px;
     overflow: hidden;
-    color: var(--text-strong);
     white-space: nowrap;
     text-overflow: ellipsis;
-    font-size: 13px;
-    font-weight: 650;
+    color: var(--wb-text-primary, var(--text));
+    font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
   }
 
-  .source-header h2 strong {
-    color: var(--wb-accent-strong, var(--brand-strong));
-    font-size: 12px;
-    font-weight: 650;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .source-header h2 span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .source-meta {
-    display: inline-flex;
+  .source-metrics {
+    display: flex;
     align-items: center;
     flex: 0 0 auto;
+    gap: 0;
+    min-width: 0;
+  }
+
+  .source-metrics span {
+    display: inline-flex;
+    align-items: center;
     min-height: 22px;
     padding: 0 7px;
     border: 1px solid var(--border-4);
-    border-radius: var(--radius-control);
+    border-right-width: 0;
     color: var(--text-muted);
     font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-    font-size: 12px;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
     background: var(--surface-2);
   }
 
+  .source-metrics span:first-child {
+    border-radius: var(--radius-control) 0 0 var(--radius-control);
+  }
+
+  .source-metrics span:last-child {
+    border-right-width: 1px;
+    border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  }
+
   .code-editor-host {
-    grid-area: 2 / 1;
+    grid-area: 1 / 1;
     min-height: 0;
     height: 100%;
     overflow: hidden;
   }
 
   .code-loading-stage {
-    grid-area: 2 / 1;
+    grid-area: 1 / 1;
     z-index: 1;
     min-height: 0;
     background: var(--surface);

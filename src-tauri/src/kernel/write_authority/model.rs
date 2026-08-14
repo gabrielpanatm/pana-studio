@@ -19,6 +19,7 @@ pub enum WriteOwner {
     Kernel,
     ProjectSession,
     ProjectWorkspace,
+    ProjectEnvStore,
     Workbench,
     ScratchState,
     AppConfig,
@@ -26,6 +27,7 @@ pub enum WriteOwner {
     CodexMcp,
     ProjectInitializer,
     Preview,
+    StorageMaintenance,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -337,6 +339,18 @@ impl WritePolicy {
             atomicity: WriteAtomicity::AtomicRename,
             conflict: ConflictPolicy::RequireDiskBaseline,
             recovery: RecoveryPolicy::HotRollbackJournal,
+            log_required: true,
+        }
+    }
+
+    /// Atomic project-root write for `.env`. It deliberately avoids the
+    /// ProjectWorkspace rollback journal because that journal lives in
+    /// Application Home and must never receive secret bytes.
+    pub fn project_sensitive_atomic() -> Self {
+        Self {
+            atomicity: WriteAtomicity::AtomicRename,
+            conflict: ConflictPolicy::RequireDiskBaseline,
+            recovery: RecoveryPolicy::LoggedAtomicFile,
             log_required: true,
         }
     }

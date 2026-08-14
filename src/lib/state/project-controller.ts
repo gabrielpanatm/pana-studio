@@ -4,6 +4,7 @@ import { t } from "$lib/i18n/runtime.svelte";
 import type { PreviewRefreshReason } from "$lib/preview/controlled";
 import { openUrl as openExternalUrl } from "@tauri-apps/plugin-opener";
 import {
+  reanchorFileBufferDraftSyncCursor,
   resetFileBufferDraftSyncState,
   setFileBufferDraftSyncSession,
 } from "$lib/session/file-buffer-draft-sync";
@@ -35,7 +36,7 @@ import {
   readStartupCreationCatalog,
   readProjectLifecycle,
   reportProjectCapabilityDegraded,
-  readProjectFile,
+  readFileBufferText,
   readProjectWorkspaceState,
   readKernelProjectTransitionPolicy,
   recordProjectTransitionOperatorDecision,
@@ -536,7 +537,7 @@ async function projectPublishedSessionIntoFrontend(
   }
   const targetCssFile = options.bootstrap.targetCssFile ?? openPlan.targetCssFile;
   if (targetCssFile) host.targetCssFile = targetCssFile;
-  host.cachebustAssets = options.bootstrap.projectConfig.cachebustAssets;
+  host.cachebustAssets = options.bootstrap.projectSettings.cachebustAssets;
   host.workbenchSnapshot = options.bootstrap.workbench;
   host.hydrateWorkbenchBootstrap?.(options.bootstrap.workbench);
   const bootstrapFile = options.bootstrap.activeDocument
@@ -2210,11 +2211,19 @@ export async function loadScannedProjectFile(
     host.source = cachedSource;
   } else {
     try {
-      const text = await readProjectFile(file.relativePath);
+      const snapshot = await readFileBufferText(file.relativePath, {
+        expectedProjectRoot: expectedRoot,
+        expectedSessionId,
+      });
+      const text = snapshot.text;
       if (
         host.activeScannedPath !== file.relativePath
         || !projectLoadLeaseMatches(host, expectedRoot, expectedSessionId, expectedSessionEpoch)
       ) return;
+      reanchorFileBufferDraftSyncCursor(file.relativePath, {
+        revision: snapshot.revision,
+        hash: snapshot.hash,
+      });
       host.sourceCache = { ...host.sourceCache, [loadPlan.cacheKey]: text };
       host.source = text;
     } catch (error) {

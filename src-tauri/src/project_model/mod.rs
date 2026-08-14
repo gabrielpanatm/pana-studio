@@ -8,6 +8,7 @@ mod files;
 pub(crate) mod html_editor_schema;
 pub(crate) mod incremental;
 pub mod insert_engine;
+pub(crate) mod managed_head_engine;
 pub mod model;
 pub mod move_engine;
 mod ranges;

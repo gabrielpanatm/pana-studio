@@ -1,8 +1,8 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use crate::{
     css::page::{page_css_href, page_scss_relative_path, remove_page_stylesheet_link},
-    js::{MotionTarget, MotionTargetKind, NativeBlockRuntimeEntry, PageJsConfig},
+    js::{MotionTarget, MotionTargetKind, PageJsConfig},
     zola_links::template_contains_asset_path,
 };
 use serde::{Deserialize, Serialize};
@@ -408,25 +408,8 @@ fn remove_block_comments(source: &str) -> String {
 }
 
 fn normalize_page_js_config(config: PageJsConfig) -> PageJsConfig {
-    let mut seen = HashSet::new();
-    let blocks = config
-        .blocks
-        .into_iter()
-        .filter_map(|block| {
-            let id = block.id.trim().to_string();
-            if id.is_empty() || !seen.insert(id.clone()) {
-                None
-            } else {
-                Some(NativeBlockRuntimeEntry { id })
-            }
-        })
-        .collect();
-
-    PageJsConfig {
-        version: Some(2),
-        blocks,
-        motion: Some(config.motion.unwrap_or_default()),
-    }
+    let motion = config.motion.filter(|motion| !motion.is_empty());
+    PageJsConfig { motion }
 }
 
 fn reconcile_page_js_motion(
@@ -449,9 +432,7 @@ fn reconcile_page_js_motion(
     });
 
     PageJsConfig {
-        version: Some(2),
-        blocks: config.blocks.clone(),
-        motion: Some(motion),
+        motion: (!motion.is_empty()).then_some(motion),
     }
 }
 
@@ -550,46 +531,57 @@ mod tests {
     #[test]
     fn filters_motion_items_targeting_removed_data_anim_ids() {
         let page_js_config = PageJsConfig {
-            version: Some(2),
-            blocks: vec![NativeBlockRuntimeEntry {
-                id: "accordion".to_string(),
-            }],
             motion: Some(
                 MotionDocument::from_value(json!({
-                    "schemaVersion": 1,
-                    "animeVersion": "4.4.1",
-                    "activeItemId": "old",
-                    "items": [
+                    "schemaVersion": 2,
+                    "animeVersion": crate::js::MotionRuntimeContract::current().anime_version,
+                    "interactions": [
                         {
                             "id": "active",
-                            "type": "animation",
-                            "target": { "dataAnim": "hero", "selector": "[data-anim=\"hero\"]" },
-                            "properties": [{
-                                "id": "opacity-active",
-                                "property": "opacity",
-                                "category": "css",
-                                "value": { "mode": "fromTo", "from": 0, "to": 1 }
+                            "name": "Active",
+                            "trigger": { "type": "load" },
+                            "triggerTarget": { "kind": "element", "dataAnim": "hero" },
+                            "actions": [{
+                                "type": "animate",
+                                "id": "active-action",
+                                "name": "Active",
+                                "target": { "kind": "element", "dataAnim": "hero" },
+                                "properties": [{
+                                    "id": "opacity-active",
+                                    "name": "opacity",
+                                    "category": "style",
+                                    "from": { "kind": "number", "value": "0" },
+                                    "to": { "kind": "number", "value": "1" }
+                                }]
                             }]
                         },
                         {
                             "id": "old",
-                            "type": "animation",
-                            "target": { "selector": "[data-anim='removed']" },
-                            "properties": [{
-                                "id": "opacity-old",
-                                "property": "opacity",
-                                "category": "css",
-                                "value": { "mode": "fromTo", "from": 0, "to": 1 }
+                            "name": "Old",
+                            "trigger": { "type": "load" },
+                            "triggerTarget": { "kind": "selector", "selector": "[data-anim='removed']" },
+                            "actions": [{
+                                "type": "animate",
+                                "id": "old-action",
+                                "name": "Old",
+                                "target": { "kind": "selector", "selector": "[data-anim='removed']" },
+                                "properties": [{
+                                    "id": "opacity-old",
+                                    "name": "opacity",
+                                    "category": "style",
+                                    "from": { "kind": "number", "value": "0" },
+                                    "to": { "kind": "number", "value": "1" }
+                                }]
                             }]
-                        },
-                        {
-                            "id": "manual",
-                            "type": "custom",
-                            "target": { "selector": ".manual" }
                         }
-                    ]
+                    ],
+                    "customCode": [{
+                        "id": "manual",
+                        "name": "Manual",
+                        "code": "window.__manual=true"
+                    }]
                 }))
-                .expect("legacy migration"),
+                .expect("strict Motion document"),
             ),
         };
 
@@ -617,7 +609,6 @@ mod tests {
             vec!["manual"]
         );
         assert!(plan.page_js_changed);
-        assert_eq!(plan.page_js_config.blocks[0].id, "accordion");
     }
 
     #[test]

@@ -15,14 +15,18 @@ use tera::Context;
 use zola_site::{sass, BuildMode, Site, SITE_CONTENT};
 
 use crate::{
+    js::{
+        generate_motion_preview_payload, js_relative_path, parse_motion_source,
+        template_path_from_motion_source,
+    },
     kernel::{
         project_workspace::WorkspaceProjectionSnapshot, write_authority::PendingProjectAuthority,
     },
     preview::{
         inject::{
             bind_canvas_identity_to_editor_html, bind_canvas_identity_to_initial_preview_html,
-            prepare_design_safe_html_with_resources, prepare_initial_preview_html_with_resources,
-            PreviewResourceVersions,
+            prepare_design_safe_html_with_motion_payload,
+            prepare_initial_preview_html_with_motion_payload, PreviewResourceVersions,
         },
         preprocess::{
             create_persistent_preview_artifact_root, persistent_project_workspace_session_root,
@@ -297,11 +301,14 @@ impl PersistentZolaPreviewEngine {
                 .iter()
                 .map(|entry| (entry.url.clone(), entry.content_hash.clone())),
         );
-        let mut prepared = prepare_design_safe_html_with_resources(
+        let motion_payloads = motion_preview_payload_catalog(model)?;
+        let motion_payload = rendered_motion_preview_payload(&annotated, &motion_payloads)?;
+        let mut prepared = prepare_design_safe_html_with_motion_payload(
             &annotated,
             &generation.preview_revision,
             &route,
             &resource_versions,
+            motion_payload,
         )?;
         bind_canvas_identity_to_editor_html(
             &mut prepared,
@@ -900,13 +907,8 @@ fn render_template_workbench_document(
 
     let route =
         context_route.unwrap_or_else(|| template_workbench_route(&plan.active_template.source_id));
-    if is_complete_html_document(&rendered)
-        && !matches!(
-            plan.render_mode,
-            TemplateWorkbenchRenderMode::IncludedTemplate
-                | TemplateWorkbenchRenderMode::MacroScenario
-        )
-    {
+    if classify_workbench_rendered_html(&rendered) == WorkbenchRenderedShape::FullDocument {
+        validate_complete_workbench_document(&rendered)?;
         return Ok((rendered, route));
     }
 
@@ -1274,9 +1276,64 @@ fn canonical_document_for_route<'a>(
     content.get(&key).map(String::as_str)
 }
 
-fn is_complete_html_document(html: &str) -> bool {
-    let normalized = html.trim_start().to_ascii_lowercase();
-    normalized.starts_with("<!doctype html") || normalized.starts_with("<html")
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkbenchRenderedShape {
+    FullDocument,
+    Fragment,
+}
+
+fn classify_workbench_rendered_html(mut html: &str) -> WorkbenchRenderedShape {
+    if let Some(without_bom) = html.strip_prefix('\u{feff}') {
+        html = without_bom;
+    }
+    loop {
+        html = html.trim_start_matches(char::is_whitespace);
+        let Some(comment) = html.strip_prefix("<!--") else {
+            break;
+        };
+        let Some(comment_end) = comment.find("-->") else {
+            break;
+        };
+        html = &comment[comment_end + "-->".len()..];
+    }
+
+    if html
+        .get(.."<!doctype".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<!doctype"))
+        || html
+            .get(.."<html".len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("<html"))
+    {
+        WorkbenchRenderedShape::FullDocument
+    } else {
+        WorkbenchRenderedShape::Fragment
+    }
+}
+
+fn validate_complete_workbench_document(html: &str) -> Result<(), String> {
+    let document = parse(html.to_string());
+    document
+        .select_first("html")
+        .map_err(|_| "Documentul complet Workbench nu are rădăcină html.".to_string())?;
+    document
+        .select_first("head")
+        .map_err(|_| "Documentul complet Workbench nu are head normalizat.".to_string())?;
+    document
+        .select_first("body")
+        .map_err(|_| "Documentul complet Workbench nu are body normalizat.".to_string())?;
+    let body_owned_head_node = document
+        .select(
+            "body link[rel~='stylesheet'], body link[rel~='preload'], body base, body title, body meta[charset], body meta[name], body meta[property], body meta[http-equiv]",
+        )
+        .map_err(|_| "Validatorul structurii documentului Workbench este invalid.".to_string())?
+        .next();
+    if body_owned_head_node.is_some() {
+        return Err(
+            "Documentul complet Workbench conține o resursă head în body și a fost refuzat."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn mount_workbench_fragment(
@@ -1285,6 +1342,12 @@ fn mount_workbench_fragment(
     source_id: &str,
     source_file: &str,
 ) -> Result<String, String> {
+    if classify_workbench_rendered_html(fragment) == WorkbenchRenderedShape::FullDocument {
+        return Err(
+            "Context de template a refuzat montarea unui document HTML complet ca fragment."
+                .to_string(),
+        );
+    }
     let shell = canonical.unwrap_or(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head><body></body></html>",
     );
@@ -1522,6 +1585,7 @@ fn prepare_rendered_content(
     preview_revision: &str,
     document_route: &str,
     resource_versions: &PreviewResourceVersions,
+    motion_preview_payload: Option<&str>,
 ) -> Result<RenderedPreviewContent, String> {
     let content_type = match extension {
         Some("xml") => Some("text/xml; charset=utf-8"),
@@ -1535,11 +1599,12 @@ fn prepare_rendered_content(
             content_type: content_type.to_string(),
         }),
         None => Ok(RenderedPreviewContent::InitialHtml(
-            prepare_initial_preview_html_with_resources(
+            prepare_initial_preview_html_with_motion_payload(
                 body,
                 preview_revision,
                 document_route,
                 resource_versions,
+                motion_preview_payload,
             )?,
         )),
     }
@@ -1554,6 +1619,7 @@ fn prepare_generation_content(
     let mut entries = rendered.into_iter().collect::<Vec<_>>();
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     let canvas_annotator = CanvasGraph::document_annotator(model);
+    let motion_payloads = motion_preview_payload_catalog(model)?;
     parallel_preview_map(&entries, |path, body| {
         let document_route = canvas_route_for_content_key(path);
         let extension = Path::new(path).extension().and_then(|value| value.to_str());
@@ -1562,14 +1628,70 @@ fn prepare_generation_content(
         } else {
             canvas_annotator.annotate(&document_route, body)?
         };
+        let motion_preview_payload = if matches!(extension, Some("xml" | "json" | "txt")) {
+            None
+        } else {
+            rendered_motion_preview_payload(&prepared_body, &motion_payloads)?
+        };
         prepare_rendered_content(
             extension,
             &prepared_body,
             preview_revision,
             &document_route,
             resource_versions,
+            motion_preview_payload,
         )
     })
+}
+
+fn motion_preview_payload_catalog(model: &ProjectModel) -> Result<HashMap<String, String>, String> {
+    let mut catalog = HashMap::new();
+    for file in &model.files {
+        let Some(template_path) = template_path_from_motion_source(&file.relative_path) else {
+            continue;
+        };
+        let config = parse_motion_source(&file.contents)
+            .map_err(|error| format!("{}: {error}", file.relative_path))?;
+        let Some(payload) = generate_motion_preview_payload(&config) else {
+            continue;
+        };
+        let project_path = js_relative_path(&template_path);
+        let public_path = format!(
+            "/{}",
+            project_path
+                .strip_prefix("static/")
+                .unwrap_or(&project_path)
+        );
+        if catalog.insert(public_path.clone(), payload).is_some() {
+            return Err(format!(
+                "Motion Preview a detectat o coliziune între template-uri pentru {public_path}."
+            ));
+        }
+    }
+    Ok(catalog)
+}
+
+fn rendered_motion_preview_payload<'a>(
+    rendered_html: &str,
+    catalog: &'a HashMap<String, String>,
+) -> Result<Option<&'a str>, String> {
+    let mut matches = catalog
+        .iter()
+        .filter(|(public_path, _)| {
+            crate::zola_links::template_contains_asset_path(
+                rendered_html,
+                public_path.trim_start_matches('/'),
+            )
+        })
+        .map(|(_, payload)| payload.as_str());
+    let selected = matches.next();
+    if selected.is_some() && matches.next().is_some() {
+        return Err(
+            "Motion Preview a detectat mai multe runtime-uri de pagină în același document randat."
+                .to_string(),
+        );
+    }
+    Ok(selected)
 }
 
 fn bind_canvas_identity_to_generation_content(
@@ -1762,6 +1884,51 @@ mod tests {
         assert!(index_html.contains("<main class=\"layout\">"));
         assert!(index_html.contains("<article class=\"card\">Acasă</article>"));
 
+        let base_plan = crate::project_model::template_workbench::resolve_template_workbench_plan(
+            &model,
+            &crate::project_model::template_workbench::TemplateWorkbenchPlanInput {
+                template_path: "templates/base.html".to_string(),
+                preferred_page_path: None,
+                preferred_route: None,
+            },
+        )
+        .unwrap();
+        let (base_html, base_route) =
+            render_template_workbench_document(&site, &canonical, &model, &base_plan).unwrap();
+        assert_eq!(
+            base_plan.render_mode,
+            TemplateWorkbenchRenderMode::IncludedTemplate
+        );
+        assert_eq!(base_route, "/");
+        assert!(!base_html.contains("data-pana-workbench-active-file"));
+        let base_document = parse(base_html.clone());
+        assert!(base_document
+            .select_first("head link[rel~='stylesheet']")
+            .is_ok());
+        assert!(base_document
+            .select_first("head link[rel~='preload'][as='font']")
+            .is_ok());
+        assert_eq!(
+            base_document
+                .select("body link[rel~='stylesheet'], body link[rel~='preload']")
+                .unwrap()
+                .count(),
+            0
+        );
+        let prepared_base =
+            crate::preview::inject::prepare_design_safe_html(&base_html, "base-1").unwrap();
+        let prepared_base_document = parse(prepared_base.editor);
+        assert!(prepared_base_document
+            .select_first("head link[rel~='preload'][as='font']")
+            .is_ok());
+        assert_eq!(
+            prepared_base_document
+                .select("body link[rel~='stylesheet'], body link[rel~='preload']")
+                .unwrap()
+                .count(),
+            0
+        );
+
         let partial_plan =
             crate::project_model::template_workbench::resolve_template_workbench_plan(
                 &model,
@@ -1942,6 +2109,39 @@ mod tests {
         assert!(!html.contains("data-pana-workbench-mount"));
     }
 
+    #[test]
+    fn workbench_render_shape_is_content_driven_and_ignores_safe_prefixes() {
+        assert_eq!(
+            classify_workbench_rendered_html(
+                "\u{feff}  <!-- generated -->\n<!DOCTYPE html><html><head></head><body></body></html>",
+            ),
+            WorkbenchRenderedShape::FullDocument
+        );
+        assert_eq!(
+            classify_workbench_rendered_html(
+                "\n<!-- source --> <HTML lang=\"ro\"><head></head><body></body></HTML>",
+            ),
+            WorkbenchRenderedShape::FullDocument
+        );
+        assert_eq!(
+            classify_workbench_rendered_html("<section>Fragment</section>"),
+            WorkbenchRenderedShape::Fragment
+        );
+    }
+
+    #[test]
+    fn workbench_fragment_mount_refuses_a_complete_html_document() {
+        let error = mount_workbench_fragment(
+            None,
+            "<!doctype html><html><head><link rel=\"preload\" href=\"/font.woff2\" as=\"font\"></head><body></body></html>",
+            "sg_complete_document",
+            "templates/document.html",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("document HTML complet"), "{error}");
+    }
+
     fn stage_and_confirm<R: Runtime>(
         engine: &mut PersistentZolaPreviewEngine,
         app: &AppHandle<R>,
@@ -2002,7 +2202,14 @@ mod tests {
     fn zola_memory_content_types_match_official_serve_defaults() {
         let resources = PreviewResourceVersions::default();
         assert!(matches!(
-            prepare_rendered_content(Some("xml"), "<xml/>", "r1", "/feed.xml", &resources)
+            prepare_rendered_content(
+                Some("xml"),
+                "<xml/>",
+                "r1",
+                "/feed.xml",
+                &resources,
+                None,
+            )
                 .unwrap(),
             RenderedPreviewContent::Text { content_type, .. } if content_type.starts_with("text/xml")
         ));
@@ -2013,6 +2220,7 @@ mod tests {
                 "r1",
                 "/",
                 &resources,
+                None,
             )
             .unwrap(),
             RenderedPreviewContent::InitialHtml(_)
@@ -2462,7 +2670,7 @@ template = "index.html"
         .unwrap();
         fs::write(
             root.join("templates/base.html"),
-            r#"<!doctype html><html lang="ro"><head><meta charset="utf-8"><link rel="stylesheet" href="/site.css"><script src="/site.js"></script></head><body>{% block body %}{% endblock %}</body></html>"#,
+            r#"<!doctype html><html lang="ro"><head><meta charset="utf-8"><link rel="stylesheet" href="/site.css"><link rel="preload" href="/font.woff2" as="font" type="font/woff2" crossorigin><script src="/site.js"></script></head><body>{% block body %}{% endblock %}</body></html>"#,
         )
         .unwrap();
         fs::write(

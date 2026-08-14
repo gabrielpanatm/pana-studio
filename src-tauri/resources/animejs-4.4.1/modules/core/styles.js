@@ -1,0 +1,6 @@
+/**
+ * Anime.js - core - ESM
+ * @version v4.4.1
+ * @license MIT
+ * @copyright 2026 - Julian Garnier
+ */import{tweenTypes as l,isDomSymbol as T,transformsSymbol as C,emptyString as g,shortTransforms as b}from"./consts.js";import{forEachChildren as h,toLowerCase as A,isNil as d,isSvg as v}from"./helpers.js";import{buildTransformString as y}from"./transforms.js";const S={},R=(e,n,s)=>{if(s===l.TRANSFORM){const t=b.get(e);return t||e}else if(s===l.CSS||s===l.ATTRIBUTE&&v(n)&&e in n.style){const t=S[e];if(t)return t;{const r=e&&A(e);return S[e]=r,r}}else return e},u=(e,n=!1)=>{if(e._hasChildren)h(e,s=>u(s,n),!0);else{const s=e;s.pause(),h(s,t=>{const r=t.property,i=t.target,m=t._tweenType,f=t._inlineValue,a=d(f)||f===g;if(m===l.OBJECT)!n&&!a&&(i[r]=f);else if(i[T])if(m===l.ATTRIBUTE)n||(a?i.removeAttribute(r):i.setAttribute(r,f));else{const o=i.style;if(m===l.TRANSFORM){const c=i[C];a?delete c[r]:c[r]=f,t._renderTransforms&&(Object.keys(c).length?o.transform=y(c):o.removeProperty("transform"))}else a?o.removeProperty(A(r)):o[r]=f}i[T]&&s._tail===t&&s.targets.forEach(o=>{o.getAttribute&&o.getAttribute("style")===g&&o.removeAttribute("style")})})}return e},E=e=>u(e,!0);export{E as cleanInlineStyles,u as revertValues,R as sanitizePropertyName};

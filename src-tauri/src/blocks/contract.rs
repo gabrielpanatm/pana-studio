@@ -1,18 +1,15 @@
 use std::collections::{BTreeSet, HashSet};
 
 use serde::{Deserialize, Serialize};
+use tauri_utils::html::{parse, NodeRef};
 
-use crate::{
-    css::page::{
-        page_css_href, page_scss_relative_path, plan_page_stylesheet_link_source,
-        remove_page_stylesheet_link,
-    },
-    js::{NativeBlockRuntimeEntry, PageJsConfig},
+use crate::css::page::{
+    page_css_href, page_scss_relative_path, plan_page_stylesheet_link_source,
+    remove_page_stylesheet_link,
 };
 
 use super::native::{
     known_native_block_ids, native_block_by_id, native_block_instance_id, native_block_preview_css,
-    NativeBlockKind,
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -21,8 +18,8 @@ pub struct NativeBlockContractRequest {
     pub template_path: String,
     pub template_source: String,
     pub stylesheet_source: Option<String>,
-    pub page_js_config: Option<PageJsConfig>,
     pub ensure_block_id: Option<String>,
+    #[serde(skip)]
     pub cachebust_assets: Option<bool>,
 }
 
@@ -42,8 +39,6 @@ pub struct NativeBlockContractPlan {
     pub active_block_ids: Vec<String>,
     pub template: NativeBlockContractTextPlan,
     pub stylesheet: NativeBlockContractTextPlan,
-    pub page_js_config: PageJsConfig,
-    pub page_js_changed: bool,
     pub preview_css: String,
     pub diagnostics: Vec<String>,
 }
@@ -64,15 +59,11 @@ pub fn plan_native_block_contract(request: NativeBlockContractRequest) -> Native
     let active_block_ids = active_ids_in_registry_order(&active_set);
     let styled_set = active_set
         .iter()
-        .filter(|id| native_block_by_id(id).is_some_and(|block| !block.scss.trim().is_empty()))
+        .filter(|id| {
+            native_block_by_id(id).is_some_and(|block| !block.functional_scss.trim().is_empty())
+        })
         .cloned()
         .collect::<BTreeSet<_>>();
-    let runtime_set = active_set
-        .iter()
-        .filter(|id| native_block_by_id(id).is_some_and(|block| block.kind == NativeBlockKind::Js))
-        .cloned()
-        .collect::<BTreeSet<_>>();
-
     let stylesheet_source = request.stylesheet_source.unwrap_or_default();
     let had_managed_block_styles = has_any_block_style_contract(&stylesheet_source);
     let next_stylesheet = reconcile_block_style_source(&stylesheet_source, &styled_set);
@@ -92,8 +83,6 @@ pub fn plan_native_block_contract(request: NativeBlockContractRequest) -> Native
         )
     };
 
-    let current_page_js = normalize_page_js_config(request.page_js_config.unwrap_or_default());
-    let next_page_js = reconcile_page_js_blocks(&current_page_js, &runtime_set);
     let preview_css = native_block_preview_css(active_block_ids.iter().map(String::as_str));
 
     NativeBlockContractPlan {
@@ -109,8 +98,6 @@ pub fn plan_native_block_contract(request: NativeBlockContractRequest) -> Native
             changed: next_stylesheet != stylesheet_source,
             contents: next_stylesheet,
         },
-        page_js_changed: next_page_js != current_page_js,
-        page_js_config: next_page_js,
         preview_css,
         diagnostics,
     }
@@ -135,25 +122,28 @@ fn active_ids_in_registry_order(active: &BTreeSet<String>) -> Vec<String> {
         .collect()
 }
 
-fn block_ids_in_template_source(source: &str, diagnostics: &mut Vec<String>) -> BTreeSet<String> {
+pub(crate) fn block_ids_in_template_source(
+    source: &str,
+    diagnostics: &mut Vec<String>,
+) -> BTreeSet<String> {
     let mut active = BTreeSet::new();
     let known = known_block_id_set();
-    for attribute_name in ["data-pana-block", "data-pana-component"] {
-        let mut cursor = 0;
-        while let Some(relative_attr) = source[cursor..].find(attribute_name) {
-            let attr_pos = cursor + relative_attr;
-            cursor = attr_pos + attribute_name.len();
-            let Some((value, end)) = read_quoted_attribute_value(source, cursor) else {
-                diagnostics.push(format!("Atribut {attribute_name} fără valoare citibilă."));
-                continue;
-            };
-            cursor = end;
+    collect_block_ids(&parse(source.to_string()), &known, &mut active, diagnostics);
+    active
+}
+
+fn collect_block_ids(
+    node: &NodeRef,
+    known: &HashSet<&'static str>,
+    active: &mut BTreeSet<String>,
+    diagnostics: &mut Vec<String>,
+) {
+    if let Some(element) = node.as_element() {
+        if let Some(value) = element.attributes.borrow().get("data-pana-block") {
             let id = value.trim();
             if id.is_empty() {
-                diagnostics.push(format!("Atribut {attribute_name} gol ignorat."));
-                continue;
-            }
-            if known.contains(id) {
+                diagnostics.push("Atribut data-pana-block gol ignorat.".to_string());
+            } else if known.contains(id) {
                 active.insert(id.to_string());
             } else {
                 diagnostics.push(format!(
@@ -162,27 +152,9 @@ fn block_ids_in_template_source(source: &str, diagnostics: &mut Vec<String>) -> 
             }
         }
     }
-
-    active
-}
-
-fn read_quoted_attribute_value(source: &str, after_name: usize) -> Option<(String, usize)> {
-    let mut cursor = skip_ascii_whitespace(source, after_name);
-    if source[cursor..].chars().next()? != '=' {
-        return None;
+    for child in node.children() {
+        collect_block_ids(&child, known, active, diagnostics);
     }
-    cursor += 1;
-    cursor = skip_ascii_whitespace(source, cursor);
-    let quote = source[cursor..].chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let value_start = cursor + quote.len_utf8();
-    let value_end = source[value_start..].find(quote)? + value_start;
-    Some((
-        source[value_start..value_end].to_string(),
-        value_end + quote.len_utf8(),
-    ))
 }
 
 fn reconcile_block_instance_source(source: &str, diagnostics: &mut Vec<String>) -> String {
@@ -208,13 +180,12 @@ fn reconcile_block_instance_tag(tag: &str, diagnostics: &mut Vec<String>) -> Str
         || tag.starts_with("</")
         || tag.starts_with("<!")
         || tag.starts_with("<?")
-        || (!tag.contains("data-pana-block") && !tag.contains("data-pana-component"))
+        || !tag.contains("data-pana-block")
     {
         return tag.to_string();
     }
 
-    let block_marker = find_tag_attribute_value(tag, "data-pana-block")
-        .or_else(|| find_tag_attribute_value(tag, "data-pana-component"));
+    let block_marker = find_tag_attribute_value(tag, "data-pana-block");
     let Some((block_id, _, _)) = block_marker else {
         return tag.to_string();
     };
@@ -365,25 +336,22 @@ fn block_style_marker(id: &str, edge: &str) -> String {
     format!("/* pana:block {id}:{edge} */")
 }
 
-fn legacy_block_style_marker(id: &str, edge: &str) -> String {
-    format!("/* pana:component {id}:{edge} */")
-}
-
 fn block_style_block(id: &str) -> Option<String> {
     let block = native_block_by_id(id)?;
+    let functional_scss = block.functional_scss.trim();
+    if functional_scss.is_empty() {
+        return None;
+    }
     Some(format!(
         "{}\n{}\n{}",
         block_style_marker(id, "start"),
-        block.scss.trim(),
+        functional_scss,
         block_style_marker(id, "end")
     ))
 }
 
 fn has_any_block_style_contract(source: &str) -> bool {
-    known_native_block_ids().any(|id| {
-        source.contains(&block_style_marker(id, "start"))
-            || source.contains(&legacy_block_style_marker(id, "start"))
-    })
+    known_native_block_ids().any(|id| source.contains(&block_style_marker(id, "start")))
 }
 
 fn reconcile_block_style_source(source: &str, active: &BTreeSet<String>) -> String {
@@ -396,6 +364,8 @@ fn reconcile_block_style_source(source: &str, active: &BTreeSet<String>) -> Stri
         if active.contains(id) {
             if let Some(block) = block_style_block(id) {
                 next = upsert_block_style_block(&next, id, &block);
+            } else {
+                next = remove_block_style_block(&next, id);
             }
         } else {
             next = remove_block_style_block(&next, id);
@@ -406,26 +376,12 @@ fn reconcile_block_style_source(source: &str, active: &BTreeSet<String>) -> Stri
 }
 
 fn locate_block_style_block(source: &str, id: &str) -> Option<(usize, usize)> {
-    for (start_marker, end_marker) in [
-        (
-            block_style_marker(id, "start"),
-            block_style_marker(id, "end"),
-        ),
-        (
-            legacy_block_style_marker(id, "start"),
-            legacy_block_style_marker(id, "end"),
-        ),
-    ] {
-        let Some(start) = source.find(&start_marker) else {
-            continue;
-        };
-        let Some(relative_end) = source[start..].find(&end_marker) else {
-            continue;
-        };
-        let end_marker_start = relative_end + start;
-        return Some((start, end_marker_start + end_marker.len()));
-    }
-    None
+    let start_marker = block_style_marker(id, "start");
+    let end_marker = block_style_marker(id, "end");
+    let start = source.find(&start_marker)?;
+    let relative_end = source[start..].find(&end_marker)?;
+    let end_marker_start = relative_end + start;
+    Some((start, end_marker_start + end_marker.len()))
 }
 
 fn locate_block_style_block_with_padding(source: &str, id: &str) -> Option<(usize, usize)> {
@@ -476,133 +432,57 @@ fn normalize_block_stylesheet(source: &str) -> String {
     }
 }
 
-fn normalize_page_js_config(config: PageJsConfig) -> PageJsConfig {
-    let mut seen = HashSet::new();
-    let blocks: Vec<NativeBlockRuntimeEntry> = config
-        .blocks
-        .into_iter()
-        .filter_map(|block| {
-            let id = block.id.trim().to_string();
-            if id.is_empty() || !seen.insert(id.clone()) {
-                None
-            } else {
-                Some(NativeBlockRuntimeEntry { id })
-            }
-        })
-        .collect();
-
-    if blocks.is_empty() && config.motion.is_none() {
-        return PageJsConfig::default();
-    }
-
-    PageJsConfig {
-        version: Some(config.version.unwrap_or(1)),
-        blocks,
-        motion: config.motion,
-    }
-}
-
-fn reconcile_page_js_blocks(config: &PageJsConfig, active: &BTreeSet<String>) -> PageJsConfig {
-    let known = known_block_id_set();
-    let mut blocks: Vec<NativeBlockRuntimeEntry> = config
-        .blocks
-        .iter()
-        .filter(|block| !known.contains(block.id.as_str()))
-        .cloned()
-        .collect();
-    blocks.extend(
-        active
-            .iter()
-            .map(|id| NativeBlockRuntimeEntry { id: id.clone() }),
-    );
-
-    if blocks.is_empty() && config.motion.is_none() {
-        return PageJsConfig::default();
-    }
-
-    PageJsConfig {
-        version: Some(config.version.unwrap_or(1)),
-        blocks,
-        motion: config.motion.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blocks::NativeBlockRuntimePlan;
 
-    fn request(
-        template_source: &str,
-        stylesheet_source: &str,
-        page_js_config: PageJsConfig,
-    ) -> NativeBlockContractRequest {
+    fn request(template_source: &str, stylesheet_source: &str) -> NativeBlockContractRequest {
         NativeBlockContractRequest {
             template_path: "templates/index.html".to_string(),
             template_source: template_source.to_string(),
             stylesheet_source: Some(stylesheet_source.to_string()),
-            page_js_config: Some(page_js_config),
             ensure_block_id: None,
             cachebust_assets: Some(false),
         }
     }
 
     #[test]
-    fn plans_block_styles_js_and_template_link_from_template_source() {
+    fn plans_only_functional_block_styles_js_and_template_link() {
         let plan = plan_native_block_contract(request(
             r#"{% extends "base.html" %}
 {% block content %}
-<span data-pana-component="counter">0</span>
+<div data-pana-block="dialog" data-anim="ps-dialog-test"></div>
 {% endblock content %}
 "#,
             "",
-            PageJsConfig::default(),
         ));
 
         assert_eq!(plan.stylesheet_path, "sass/pagini/index.scss");
         assert_eq!(plan.stylesheet_href, "/pagini/index.css");
-        assert_eq!(plan.active_block_ids, vec!["counter".to_string()]);
+        assert_eq!(plan.active_block_ids, vec!["dialog".to_string()]);
         assert!(plan.template.changed);
         assert!(plan.template.contents.contains("{% block css_pagina %}"));
         assert!(plan.stylesheet.changed);
-        assert!(plan
-            .stylesheet
-            .contents
-            .contains("pana:block counter:start"));
-        assert_eq!(plan.page_js_config.blocks[0].id, "counter");
-        assert!(plan.page_js_changed);
-        assert!(plan.preview_css.contains(".counter"));
+        assert!(plan.stylesheet.contents.contains("pana:block dialog:start"));
+        let runtime = NativeBlockRuntimePlan::from_template_source(&plan.template.contents);
+        assert_eq!(runtime.provider_ids(), &["dialog"]);
+        assert!(plan.preview_css.contains(".dialog__overlay"));
+        assert!(!plan.preview_css.contains("--pana-block-"));
     }
 
     #[test]
-    fn removes_stale_block_styles_and_preserves_unknown_js_entries() {
-        let stale_counter = block_style_block("counter").unwrap();
-        let page_js_config = PageJsConfig {
-            version: Some(1),
-            blocks: vec![
-                NativeBlockRuntimeEntry {
-                    id: "counter".to_string(),
-                },
-                NativeBlockRuntimeEntry {
-                    id: "custom-widget".to_string(),
-                },
-            ],
-            motion: None,
-        };
+    fn removes_stale_block_styles_without_persisting_runtime_entries() {
+        let stale_dialog = block_style_block("dialog").unwrap();
         let plan = plan_native_block_contract(request(
             r#"{% block content %}<p>Fără bloc.</p>{% endblock content %}"#,
-            &format!("{stale_counter}\n\n.manual {{ color: red; }}\n"),
-            page_js_config,
+            &format!("{stale_dialog}\n\n.manual {{ color: red; }}\n"),
         ));
 
         assert!(plan.stylesheet.changed);
-        assert!(!plan
-            .stylesheet
-            .contents
-            .contains("pana:component counter:start"));
+        assert!(!plan.stylesheet.contents.contains("pana:block dialog:start"));
         assert!(plan.stylesheet.contents.contains(".manual"));
-        assert_eq!(plan.page_js_config.blocks.len(), 1);
-        assert_eq!(plan.page_js_config.blocks[0].id, "custom-widget");
-        assert!(plan.page_js_changed);
+        assert!(NativeBlockRuntimePlan::from_template_source(&plan.template.contents).is_empty());
         assert!(!plan.template.changed);
     }
 
@@ -611,18 +491,15 @@ mod tests {
         let mut req = request(
             r#"{% block content %}<main></main>{% endblock content %}"#,
             "",
-            PageJsConfig::default(),
         );
         req.ensure_block_id = Some("accordion".to_string());
 
         let plan = plan_native_block_contract(req);
 
         assert_eq!(plan.active_block_ids, vec!["accordion".to_string()]);
-        assert!(plan
-            .stylesheet
-            .contents
-            .contains("pana:block accordion:start"));
-        assert_eq!(plan.page_js_config.blocks[0].id, "accordion");
+        assert!(!plan.stylesheet.changed);
+        assert!(plan.stylesheet.contents.is_empty());
+        assert!(!plan.template.changed);
     }
 
     #[test]
@@ -635,30 +512,106 @@ mod tests {
                 "{% endblock content %}",
             ),
             "",
-            PageJsConfig::default(),
         ));
 
         assert_eq!(plan.active_block_ids, vec!["icon".to_string()]);
         assert!(!plan.template.changed);
         assert!(!plan.stylesheet.changed);
         assert!(plan.stylesheet.contents.is_empty());
-        assert!(!plan.page_js_changed);
-        assert!(plan.page_js_config.blocks.is_empty());
+        assert!(NativeBlockRuntimePlan::from_template_source(&plan.template.contents).is_empty());
         assert!(plan.preview_css.is_empty());
         assert!(!plan.template.contents.contains("/pagini/index.css"));
     }
 
     #[test]
-    fn normalizes_legacy_block_instance_ids_from_rust_contract() {
-        let plan = plan_native_block_contract(request(
+    fn runtime_reconciliation_deduplicates_instances_and_removes_the_last_provider() {
+        let inserted = plan_native_block_contract(request(
             r#"{% block content %}
-<div data-pana-component="tabs" data-anim="ps-tabs-fresh" data-pana-instance="tabs-old">
-  <button data-pana-tabs-tab>Tab</button>
-</div>
-<span data-pana-component="counter" data-anim="ps-counter-missing">0</span>
+<section data-pana-block="accordion"></section>
+<section data-pana-block="accordion"></section>
+<div data-pana-block="slider"></div>
 {% endblock content %}"#,
             "",
-            PageJsConfig::default(),
+        ));
+
+        assert_eq!(
+            NativeBlockRuntimePlan::from_template_source(&inserted.template.contents)
+                .provider_ids(),
+            &["accordion", "slider"]
+        );
+
+        let accordion_deleted = plan_native_block_contract(request(
+            r#"{% block content %}<div data-pana-block="slider"></div>{% endblock content %}"#,
+            "",
+        ));
+        assert_eq!(
+            NativeBlockRuntimePlan::from_template_source(&accordion_deleted.template.contents)
+                .provider_ids(),
+            &["slider"]
+        );
+
+        let last_provider_deleted = plan_native_block_contract(request(
+            r#"{% block content %}<p>Fără bloc funcțional.</p>{% endblock content %}"#,
+            "",
+        ));
+        assert!(NativeBlockRuntimePlan::from_template_source(
+            &last_provider_deleted.template.contents
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn deleting_the_last_provider_keeps_motion_without_any_block_runtime() {
+        let motion = crate::js::MotionDocument::from_value(serde_json::json!({
+            "schemaVersion": 2,
+            "animeVersion": crate::js::MotionRuntimeContract::current().anime_version,
+            "interactions": [{
+                "id": "fade",
+                "name": "Fade",
+                "trigger": { "type": "load" },
+                "triggerTarget": { "kind": "element", "dataAnim": "hero" },
+                "actions": [{
+                    "type": "animate",
+                    "id": "fade-action",
+                    "name": "Fade",
+                    "target": { "kind": "element", "dataAnim": "hero" },
+                    "properties": [{
+                        "id": "opacity",
+                        "name": "opacity",
+                        "category": "style",
+                        "from": { "kind": "number", "value": "0" },
+                        "to": { "kind": "number", "value": "1" }
+                    }]
+                }]
+            }]
+        }))
+        .expect("valid Motion fixture");
+        let plan = plan_native_block_contract(request(
+            r#"{% block content %}<h1 data-anim="hero">Titlu</h1>{% endblock content %}"#,
+            "",
+        ));
+
+        let config = crate::js::PageJsConfig {
+            motion: Some(motion),
+        };
+        let runtime = crate::js::PageRuntimePlan::from_sources(&plan.template.contents, &config);
+        let generated = crate::js::generate_page_js(&runtime);
+        assert!(generated.contains("/js/vendor/animejs-4.4.1/timeline/index.js"));
+        assert!(!generated.contains("PanaMotionRuntime"));
+        assert!(!generated.contains("PanaBlockRuntime"));
+        assert!(!generated.contains("PANA BLOCK PROVIDER:"));
+    }
+
+    #[test]
+    fn normalizes_canonical_block_instance_ids_from_rust_contract() {
+        let plan = plan_native_block_contract(request(
+            r#"{% block content %}
+<div data-pana-block="tabs" data-anim="ps-tabs-fresh" data-pana-instance="tabs-old">
+  <button data-pana-tabs-tab>Tab</button>
+</div>
+<span data-pana-block="counter" data-anim="ps-counter-missing">0</span>
+{% endblock content %}"#,
+            "",
         ));
 
         assert!(plan.template.changed);

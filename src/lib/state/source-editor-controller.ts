@@ -1,7 +1,9 @@
 import type { CodeEditorContextMenuRequest, CodeEditorController } from "$lib/editor/controller";
 import {
   codeSelectionRangeForSourceRange,
+  type CodeSelectionRange,
 } from "$lib/editor/source-ranges";
+import type { CodeSelectionPresentation } from "$lib/editor/codemirror";
 import { projectRelativeZolaPath, scannedCacheKey } from "$lib/project/files";
 import {
   queueFileBufferDraftChangeSetForPath,
@@ -14,7 +16,7 @@ import {
 import type { SelectionSnapshot, SourceLanguage } from "$lib/types";
 import type { GlobalStatusKind } from "$lib/status/global-status";
 import { t } from "$lib/i18n/runtime.svelte";
-import { selectionCodeTarget } from "$lib/kernel/selection-read-model";
+import { primarySelectionEntry, selectionCodeTarget } from "$lib/kernel/selection-read-model";
 
 export type SourceEditorControllerHost = {
   codeEditorHost: HTMLDivElement | undefined;
@@ -144,13 +146,18 @@ export function updateMarkdownSource(
 
 export function syncCodeSelectionHighlight(host: SourceEditorControllerHost, reveal = false) {
   if (!host.codeEditorController) return;
+  const projection = codeSelectionProjectionForCoordinator(host);
   host.codeEditorController.setSelectedRange(
-    codeSelectionRangeForCoordinator(host) ?? null,
+    projection?.range ?? null,
     reveal,
+    projection?.presentation ?? "range",
   );
 }
 
-function codeSelectionRangeForCoordinator(host: SourceEditorControllerHost) {
+function codeSelectionProjectionForCoordinator(host: SourceEditorControllerHost): {
+  range: CodeSelectionRange;
+  presentation: CodeSelectionPresentation;
+} | null {
   const projection = selectionCodeTarget(host.selectionSnapshot);
   if (
     !projection?.range
@@ -159,7 +166,18 @@ function codeSelectionRangeForCoordinator(host: SourceEditorControllerHost) {
   if (projectRelativeZolaPath(projection.file ?? "") !== host.currentSourceRelativePath) {
     return null;
   }
-  return codeSelectionRangeForSourceRange(host.source, projection.range);
+  const focus = host.selectionSnapshot?.focus;
+  const primary = primarySelectionEntry(host.selectionSnapshot);
+  const presentation: CodeSelectionPresentation =
+    focus?.kind === "cssRule" || focus?.kind === "cssProperty"
+      ? "cssRule"
+      : primary?.subject.kind === "htmlElement" || primary?.subject.kind === "runtimeElement"
+        ? "htmlElement"
+        : "range";
+  return {
+    range: codeSelectionRangeForSourceRange(host.source, projection.range),
+    presentation,
+  };
 }
 
 export function withSyncingCode(host: SourceEditorControllerHost, fn: () => void) {

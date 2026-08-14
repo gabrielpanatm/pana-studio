@@ -531,8 +531,7 @@ fn replace_hash_references(source: &str, ids: &HashMap<String, String>) -> Strin
 
 fn update_block_instances(source: &str, block_ids: &mut BTreeSet<String>) -> String {
     rewrite_opening_tags(source, |tag| {
-        let block_id = tag_attribute_value(tag, "data-pana-block")
-            .or_else(|| tag_attribute_value(tag, "data-pana-component"));
+        let block_id = tag_attribute_value(tag, "data-pana-block");
         let Some(block_id) = block_id else {
             return tag.to_string();
         };

@@ -118,7 +118,6 @@ pub(crate) fn apply_page_asset_contract_impl(
         &expected_project_root,
         &expected_session_id,
         &template_path,
-        false,
         |sources| {
             plan_contract(PageAssetContractRequest {
                 template_path: sources.template_path.clone(),

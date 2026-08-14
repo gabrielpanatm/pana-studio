@@ -1,8 +1,14 @@
+mod bundled;
 mod delivery;
 mod graph;
 mod local_import;
+mod metadata;
 mod roles;
 
+pub use bundled::{
+    bundled_font_catalog, bundled_font_preview, prepare_bundled_font_install,
+    BundledFontCatalogFamily, BundledFontPreview,
+};
 pub use delivery::{
     annotate_font_preloads, font_delivery_diagnostics, prepare_font_display_update,
     prepare_font_preload_update, select_font_preload_template, FontDeliveryDiagnostic,
@@ -10,9 +16,11 @@ pub use delivery::{
 };
 pub use graph::build_font_face_graph;
 pub use local_import::{
-    prepare_local_font_import, FontLicenseMetadata, FontVariationAxis, LocalFontImportFamilyPlan,
-    LocalFontImportPlan, LocalFontImportPrepared, LOCAL_FONT_IMPORT_SCHEMA_VERSION,
+    prepare_local_font_import, LocalFontImportFamilyPlan, LocalFontImportPlan,
+    LocalFontImportPrepared, LOCAL_FONT_IMPORT_SCHEMA_VERSION,
 };
+pub(super) use metadata::{parse_font_metadata, ROMANIAN_GLYPHS};
+pub use metadata::{FontLicenseMetadata, FontVariationAxis, FontWeightRange};
 pub use roles::{prepare_font_role_assignment, read_font_roles, FontRoleAssignment, FontRoleId};
 
 use serde::{Deserialize, Serialize};
@@ -27,7 +35,6 @@ use crate::{kernel::file_buffer_store::hash_bytes, zola_theme::ZolaThemeResolver
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 
 const GOOGLE_FONTS_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-pub(super) const ROMANIAN_GLYPHS: [char; 10] = ['ă', 'â', 'î', 'ș', 'ț', 'Ă', 'Â', 'Î', 'Ș', 'Ț'];
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -195,16 +202,10 @@ pub struct LocalFontFile {
     pub preload: FontPreloadRegistration,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FontWeightRange {
-    pub start: u16,
-    pub end: u16,
-}
-
 #[derive(Clone, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase")]
 pub enum FontOrigin {
+    Bundled,
     Local,
     Theme,
     External,
@@ -469,7 +470,7 @@ pub fn plan_google_font_family_download(
             })?
             .bytes()
             .map_err(|error| format!("Nu am putut citi fontul {}: {error}", face.url))?;
-        let parsed_metadata = local_import::parse_font_metadata(&bytes).ok();
+        let parsed_metadata = parse_font_metadata(&bytes).ok();
         let project_relative = format!("static/fonturi/{family_slug}/{file_name}");
         let public_url = format!("/fonturi/{family_slug}/{file_name}");
         files.push(LocalFontFile {
@@ -1397,27 +1398,40 @@ fn google_font_face_css(
     extension: &str,
     weight_range: Option<FontWeightRange>,
 ) -> String {
+    render_font_face_css(
+        family,
+        face.style.as_deref().unwrap_or("normal"),
+        face.weight,
+        weight_range,
+        public_url,
+        face.format
+            .as_deref()
+            .unwrap_or_else(|| font_format_label(extension)),
+        face.unicode_range.as_deref(),
+    )
+}
+
+pub(super) fn render_font_face_css(
+    family: &str,
+    style: &str,
+    weight: Option<u16>,
+    weight_range: Option<FontWeightRange>,
+    public_url: &str,
+    format: &str,
+    unicode_range: Option<&str>,
+) -> String {
     let mut lines = vec![
         "@font-face {".to_string(),
         format!("  font-family: '{}';", css_string_escape(family)),
-        format!(
-            "  font-style: {};",
-            face.style.as_deref().unwrap_or("normal")
-        ),
+        format!("  font-style: {style};"),
         format!(
             "  font-weight: {};",
-            font_weight_css_value(face.weight, weight_range)
+            font_weight_css_value(weight, weight_range)
         ),
         "  font-display: swap;".to_string(),
-        format!(
-            "  src: url('{}') format('{}');",
-            public_url,
-            face.format
-                .as_deref()
-                .unwrap_or_else(|| font_format_label(extension))
-        ),
+        format!("  src: url('{public_url}') format('{format}');"),
     ];
-    if let Some(unicode_range) = face.unicode_range.as_deref() {
+    if let Some(unicode_range) = unicode_range {
         lines.push(format!("  unicode-range: {};", unicode_range));
     }
     lines.push("}".to_string());
@@ -1476,7 +1490,7 @@ pub(super) fn local_font_file_from_bytes(
     extension: &str,
     bytes: &[u8],
 ) -> LocalFontFile {
-    match local_import::parse_font_metadata(bytes) {
+    match parse_font_metadata(bytes) {
         Ok(metadata) => LocalFontFile {
             file: relative_zola_path.to_string(),
             file_name: file_name.to_string(),

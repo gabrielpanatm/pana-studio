@@ -95,6 +95,22 @@ function receipt(input, overrides = {}) {
   };
 }
 
+function fileBufferTextReceipt(relativePath, text) {
+  return {
+    projectRoot: "/project-a",
+    runtimeSessionId: "session-a:runtime-1",
+    workspaceRevision: 0,
+    payload: {
+      relativePath,
+      text,
+      dirty: false,
+      hash: `fixture-${relativePath}-${text.length}`,
+      bytes: new TextEncoder().encode(text).byteLength,
+      revision: 1,
+    },
+  };
+}
+
 function workbenchHost(activePath = "templates/partials/header.html") {
   const statuses = [];
   const refreshes = [];
@@ -399,9 +415,9 @@ test("opening a style source preserves the mounted Template Workbench preview", 
     throw new Error("Preview navigation must not run for source-only files");
   };
   mockIPC((command, payload) => {
-    assert.equal(command, "read_project_file");
+    assert.equal(command, "read_file_buffer_text");
     assert.equal(payload.relativePath, style.relativePath);
-    return "$culoare: red;\n";
+    return fileBufferTextReceipt(style.relativePath, "$culoare: red;\n");
   });
 
   await loadScannedProjectFile(host, style, { skipDraftFlush: true, strict: true });
@@ -421,9 +437,12 @@ test("page source is committed before a failing Preview transition", async () =>
   host.exitTemplateWorkbench = async () => {
     throw new Error("Canvas route unavailable");
   };
-  mockIPC((command) => {
-    assert.equal(command, "read_project_file");
-    return "+++\ntitle = 'Acasă'\n+++\n";
+  mockIPC((command, payload) => {
+    assert.equal(command, "read_file_buffer_text");
+    return fileBufferTextReceipt(
+      payload.relativePath,
+      "+++\ntitle = 'Acasă'\n+++\n",
+    );
   });
 
   await assert.rejects(

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::deploy::DeploySettings;
 use crate::system_preferences::{SystemContrast, SystemPreferencesSnapshot};
 
 pub const APPLICATION_SETTINGS_SCHEMA_VERSION: u32 = 3;
@@ -133,24 +132,39 @@ pub struct ApplicationSettingsPatchInput {
     pub patch: ApplicationSettingsPatch,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectAppConfig {
-    pub project_path: String,
-    #[serde(default)]
-    pub cachebust_assets: bool,
-    #[serde(default)]
-    pub deploy: DeploySettings,
-}
+pub const PROJECT_SETTINGS_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectAppConfigInput {
-    #[serde(default)]
+pub struct ProjectSettingsSnapshot {
+    pub schema_version: u32,
+    pub workspace_revision: u64,
     pub cachebust_assets: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSettingsInput {
+    pub expected_workspace_revision: u64,
+    #[serde(default)]
+    pub cachebust_assets: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectConfigurationSnapshot {
+    pub project_settings: ProjectSettingsSnapshot,
+    pub zola_settings: ZolaProjectSettings,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectConfigurationInput {
+    pub project_settings: ProjectSettingsInput,
+    pub zola_settings: ZolaProjectSettings,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZolaProjectSettings {
     pub config_path: String,

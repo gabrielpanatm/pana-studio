@@ -3,19 +3,17 @@ import { test } from "node:test";
 
 import { resolveUiBlockSourceInstanceForSelection } from "../src/lib/blocks/registry.ts";
 
-function sourceInstance(id, providerId, rootSourceNodeId, markerKind = "canonical") {
+function sourceInstance(id, providerId, rootSourceNodeId) {
   return {
     id,
     providerId,
     rootSourceNodeId,
-    markerKind,
   };
 }
 
 function selection(overrides = {}) {
   return {
     providerId: "counter",
-    markerKind: "canonical",
     rootSelector: "main > span.counter",
     rootTag: "span",
     sourceInstanceIds: [],
@@ -54,20 +52,14 @@ test("pentru blocuri imbricate alege ultima instanță compatibilă", () => {
   );
 });
 
-test("nu leagă selecția de alt provider sau alt tip de marcaj", () => {
+test("nu leagă selecția de alt provider", () => {
   const tabs = sourceInstance("block-tabs", "tabs", "source-tabs");
-  const legacyCounter = sourceInstance(
-    "block-counter-legacy",
-    "counter",
-    "source-counter",
-    "legacy",
-  );
-  const graph = { sourceInstances: [tabs, legacyCounter] };
+  const graph = { sourceInstances: [tabs] };
 
   assert.equal(
     resolveUiBlockSourceInstanceForSelection(
       graph,
-      selection({ sourceInstanceIds: [tabs.id, legacyCounter.id] }),
+      selection({ sourceInstanceIds: [tabs.id] }),
     ),
     null,
   );

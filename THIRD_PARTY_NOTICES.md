@@ -29,13 +29,33 @@ revizie, astfel încât motorul nu poate fi actualizat implicit.
 
 ## Anime.js 4.4.1
 
-Pană Studio distribuie bundle-ul UMD minificat Anime.js folosit pentru resursele
-de animație generate în proiectele utilizatorului.
+Pană Studio integrează bundle-ul UMD minificat Anime.js exclusiv în Preview-ul
+Motion intern. În proiectele utilizatorului materializează numai închiderea de
+dependențe a modulelor ESM oficiale necesare animațiilor configurate, fără npm,
+bundler sau CDN.
 
 - proiect upstream: <https://github.com/juliangarnier/anime>;
 - versiune: `4.4.1`;
 - licență: MIT;
-- textul licenței: `src-tauri/resources/licenses/ANIMEJS-MIT.txt`.
+- textul licenței: `src-tauri/resources/licenses/ANIMEJS-MIT.txt`;
+- sursele ESM publicate includ și copia `LICENSE.md` din distribuția upstream.
+
+## Biblioteca offline de fonturi
+
+Pană Studio include 36 de familii din Google Fonts ca fișiere WOFF2 variabile
+pentru subseturile Latin și Latin Extended. Catalogul, URL-urile exacte ale
+surselor, amprentele SHA-256 și data inventarului (`2026-08-14`) sunt păstrate
+în `src-tauri/resources/font-library/catalog.json`.
+
+- 35 de familii sunt distribuite sub SIL Open Font License 1.1;
+- Roboto Slab este distribuit sub Apache License 2.0;
+- textul exact al licenței fiecărei familii se află lângă fișierele sale în
+  `src-tauri/resources/font-library/<familie>/LICENSE.txt`;
+- instalarea unei familii copiază în proiect numai fișierele selectate și
+  licența corespunzătoare; utilizarea nu depinde de Google Fonts sau de CDN.
+
+Google Fonts și numele familiilor aparțin titularilor lor. Includerea lor nu
+implică afilierea sau aprobarea Pană Studio de către Google.
 
 ## Dependențe JavaScript și Rust
 

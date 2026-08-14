@@ -74,13 +74,15 @@ test("interfața Fonturi caută catalogul Rust și selectează explicit variante
 test("importul local este multiplu, planificat și aplicat prin aceeași autoritate Rust", () => {
   const command = source("../src-tauri/src/commands/fonts.rs");
   const localImport = source("../src-tauri/src/fonts/local_import.rs");
+  const fontMetadata = source("../src-tauri/src/fonts/metadata.rs");
   const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
   const io = source("../src/lib/project/io.ts");
 
-  assert.match(localImport, /FontData<'_>/);
-  assert.match(localImport, /NameTable::TYPOGRAPHIC_FAMILY_NAME/);
-  assert.match(localImport, /tag::OS_2/);
-  assert.match(localImport, /tag::FVAR/);
+  assert.match(localImport, /parse_font_metadata/);
+  assert.match(fontMetadata, /FontData<'_>/);
+  assert.match(fontMetadata, /NameTable::TYPOGRAPHIC_FAMILY_NAME/);
+  assert.match(fontMetadata, /tag::OS_2/);
+  assert.match(fontMetadata, /tag::FVAR/);
   assert.match(localImport, /symlink/);
   assert.match(localImport, /static\/fonturi\/\{family_slug\}/);
   assert.match(command, /plan_local_font_import/);
@@ -92,6 +94,53 @@ test("importul local este multiplu, planificat și aplicat prin aceeași autorit
   assert.match(io, /"apply_local_font_import"/);
   assert.match(workspace, /t\("design-from-computer"\)/);
   assert.match(workspace, /t\("design-confirm-import"\)/);
+});
+
+test("biblioteca inclusă este offline, validată la build și instalată prin contractul unic", () => {
+  const command = source("../src-tauri/src/commands/fonts.rs");
+  const bundled = source("../src-tauri/src/fonts/bundled.rs");
+  const buildValidation = source("../src-tauri/build/font_library.rs");
+  const workspace = source("../src/lib/components/creation/DesignSystemWorkspace.svelte");
+  const io = source("../src/lib/project/io.ts");
+  const registry = source("../src-tauri/src/tauri_command_registry.rs");
+  const tauriConfig = source("../src-tauri/tauri.conf.json");
+  const catalog = JSON.parse(source("../src-tauri/resources/font-library/catalog.json"));
+
+  assert.equal(catalog.families.length, 36);
+  for (const family of catalog.families) {
+    assert.match(family.id, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.ok(family.files.length >= 2);
+    assert.ok(family.files.every((file) => file.file.endsWith(".woff2")));
+    assert.ok(family.files.every((file) => file.sourceUrl.startsWith("https://")));
+    const styles = new Set(family.files.map((file) => file.file.includes("-italic-") ? "italic" : "normal"));
+    for (const style of styles) {
+      const subsets = new Set(family.files
+        .filter((file) => (file.file.includes("-italic-") ? "italic" : "normal") === style)
+        .map((file) => file.subset));
+      assert.deepEqual([...subsets].sort(), ["latin", "latin-ext"]);
+    }
+  }
+  assert.ok(catalog.families.flatMap((family) => family.files)
+    .reduce((total, file) => total + file.sizeBytes, 0) <= 5_500 * 1024);
+
+  assert.match(buildValidation, /parse_font_metadata/);
+  assert.match(buildValidation, /ROMANIAN_GLYPHS/);
+  assert.match(buildValidation, /sha256_hex/);
+  assert.match(buildValidation, /collect_relative_files/);
+  assert.match(buildValidation, /include_bytes!/);
+  assert.match(bundled, /static\/fonturi\/\{\}/);
+  assert.match(bundled, /\/fonturi\/\{\}\/\{\}/);
+  assert.match(command, /commit_prepared_project_font_install/);
+  assert.match(command, /project_workspace\.font_install\.bundled/);
+  assert.match(command, /get_bundled_font_preview/);
+  assert.match(io, /"get_bundled_font_catalog"/);
+  assert.match(io, /"install_bundled_font_family"/);
+  assert.match(registry, /get_bundled_font_catalog/);
+  assert.match(registry, /install_bundled_font_family/);
+  assert.match(workspace, /type FontCreateSource = "google" \| "bundled" \| "local"/);
+  assert.match(workspace, /loadBundledFontPreview/);
+  assert.match(workspace, /bundledFontCategory/);
+  assert.doesNotMatch(tauriConfig, /font-library/);
 });
 
 test("rolurile semantice sunt citite și mutate în Rust, separat de instalarea fontului", () => {

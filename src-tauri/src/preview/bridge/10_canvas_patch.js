@@ -555,7 +555,7 @@
           || !optionId
           || !optionAttribute
           || selected.getAttribute("data-pana-block") !== providerId
-          || ["data-pana-block", "data-pana-component", "data-pana-instance"].indexOf(optionAttribute) >= 0
+          || ["data-pana-block", "data-pana-instance"].indexOf(optionAttribute) >= 0
           || optionAttribute.indexOf("on") === 0
         ) {
           throw new Error("CanvasPatch a refuzat contractul proprietății de bloc.");

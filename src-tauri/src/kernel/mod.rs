@@ -21,6 +21,7 @@ pub mod listing_items;
 pub mod motion_graph;
 pub mod observability;
 pub mod preview_projection;
+pub mod project_env_store;
 pub mod project_path;
 pub mod project_session;
 pub mod project_state;

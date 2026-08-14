@@ -425,7 +425,6 @@ mod tests {
                 data_dir: root.join("data"),
                 cache_dir: root.join("cache"),
                 log_dir: root.join("logs"),
-                projects_config_dir: root.join("config/projects"),
                 mcp_dir: root.join("config/mcp"),
                 sessions_dir: root.join("data/sessions"),
                 kernel_dir: root.join("data/kernel"),

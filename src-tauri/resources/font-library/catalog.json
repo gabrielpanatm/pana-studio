@@ -1,0 +1,1572 @@
+{
+  "schemaVersion": 1,
+  "provider": "Google Fonts",
+  "catalogUrl": "https://fonts.google.com/metadata/fonts",
+  "retrievedAt": "2026-08-14",
+  "families": [
+    {
+      "id": "inter",
+      "family": "Inter",
+      "category": "sans-serif",
+      "lastModified": "2025-09-10",
+      "specimenUrl": "https://fonts.google.com/specimen/Inter",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Inter%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "inter/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "inter/inter-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/inter/v20/UcC53FwrK3iLTcvneQg7Ca725JhhKnNqk6L3UUMJng.woff2",
+          "sha256": "71254244ccb1ec21e14db3480fef6f6826d1136dc4aca1c7d3ca7ce31294fcce",
+          "sizeBytes": 91900
+        },
+        {
+          "file": "inter/inter-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/inter/v20/UcC53FwrK3iLTcvneQg7Ca725JhhKnNqk6L5UUM.woff2",
+          "sha256": "7291b5970da2237441273c03b424a504b70b18f09791473fab99687dcc314720",
+          "sizeBytes": 51832
+        },
+        {
+          "file": "inter/inter-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa25L7SUc.woff2",
+          "sha256": "34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956",
+          "sizeBytes": 85068
+        },
+        {
+          "file": "inter/inter-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2",
+          "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62",
+          "sizeBytes": 48256
+        }
+      ]
+    },
+    {
+      "id": "roboto",
+      "family": "Roboto",
+      "category": "sans-serif",
+      "lastModified": "2026-02-19",
+      "specimenUrl": "https://fonts.google.com/specimen/Roboto",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Roboto%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "roboto/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "roboto/roboto-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/roboto/v51/KFO5CnqEu92Fr1Mu53ZEC9_Vu3r1gIhOszmkCHkaWzU.woff2",
+          "sha256": "7f21d061a9de1ea78a858938ff3b8e677869656b10bad470fc6039f8f3daf329",
+          "sizeBytes": 31820
+        },
+        {
+          "file": "roboto/roboto-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/roboto/v51/KFO5CnqEu92Fr1Mu53ZEC9_Vu3r1gIhOszmkBnka.woff2",
+          "sha256": "14f23757c6b41b4b6c0b967ca3fa74ff47a868728158373461c4e6e4b6368f19",
+          "sizeBytes": 47208
+        },
+        {
+          "file": "roboto/roboto-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/roboto/v51/KFO7CnqEu92Fr1ME7kSn66aGLdTylUAMa3KUBGEe.woff2",
+          "sha256": "cedb374b05a35034cf96db185db4eeb8f8ce49e1a56197673702ff11b5533d6e",
+          "sizeBytes": 29392
+        },
+        {
+          "file": "roboto/roboto-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/roboto/v51/KFO7CnqEu92Fr1ME7kSn66aGLdTylUAMa3yUBA.woff2",
+          "sha256": "1404ca348bd75ef836f4dd8b6f2cc719458642d1237c368296b2fc652dca47dc",
+          "sizeBytes": 43136
+        }
+      ]
+    },
+    {
+      "id": "open-sans",
+      "family": "Open Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-16",
+      "specimenUrl": "https://fonts.google.com/specimen/Open+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Open+Sans%3Aital%2Cwght%400%2C300..800%3B1%2C300..800&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "open-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/opensans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "open-sans/open-sans-italic-300-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/opensans/v44/memtYaGs126MiZpBA-UFUIcVXSCEkx2cmqvXlWqWt06F15M.woff2",
+          "sha256": "a6fa0e8ac2a665c121a19c2e2434fb286e3afdef7b9288739a73c7cb6849108c",
+          "sizeBytes": 37752
+        },
+        {
+          "file": "open-sans/open-sans-italic-300-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/opensans/v44/memtYaGs126MiZpBA-UFUIcVXSCEkx2cmqvXlWqWuU6F.woff2",
+          "sha256": "186836b74ceac07b2764c07c0379420e3014efb30fe918461c235e0ef6cbc4a2",
+          "sizeBytes": 50216
+        },
+        {
+          "file": "open-sans/open-sans-normal-300-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/opensans/v44/memvYaGs126MiZpBA-UvWbX2vVnXBbObj2OVTSGmu1aB.woff2",
+          "sha256": "d5bab8e28732fe3d10dcef4f77b9c248605bbb2a87d289a2539251ceafab536a",
+          "sizeBytes": 35156
+        },
+        {
+          "file": "open-sans/open-sans-normal-300-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/opensans/v44/memvYaGs126MiZpBA-UvWbX2vVnXBbObj2OVTS-muw.woff2",
+          "sha256": "d8e4fe0452aa2076429a9bb5d8757d00a994dd95986cf950e9a1a371b9a072a0",
+          "sizeBytes": 48320
+        }
+      ]
+    },
+    {
+      "id": "source-sans-3",
+      "family": "Source Sans 3",
+      "category": "sans-serif",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Source+Sans+3",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Source+Sans+3%3Aital%2Cwght%400%2C200..900%3B1%2C200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "source-sans-3/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/sourcesans3/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "source-sans-3/source-sans-3-italic-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcesans3/v19/nwpMtKy2OAdR1K-IwhWudF-R3woqaeLY1HY.woff2",
+          "sha256": "6fe10a66ec416f77a26309b645471d032ad8175063bb605b886e9b7e57efaaa8",
+          "sizeBytes": 59496
+        },
+        {
+          "file": "source-sans-3/source-sans-3-italic-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcesans3/v19/nwpMtKy2OAdR1K-IwhWudF-R3woqZ-LY.woff2",
+          "sha256": "9a15dafc2c2b2414aaa9d6c30830d9aab4361329d8495b1574633603b994b411",
+          "sizeBytes": 28532
+        },
+        {
+          "file": "source-sans-3/source-sans-3-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcesans3/v19/nwpStKy2OAdR1K-IwhWudF-R3wEaZfrc.woff2",
+          "sha256": "a85a7459bdb3cdc1136751e151a506bae653fc29ada3ca86237477df6f1b59e6",
+          "sizeBytes": 60088
+        },
+        {
+          "file": "source-sans-3/source-sans-3-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcesans3/v19/nwpStKy2OAdR1K-IwhWudF-R3w8aZQ.woff2",
+          "sha256": "7a19a7027e125257d310c6dbd78ae3a30b5ea1e3794d60b12bb28227a003bfda",
+          "sizeBytes": 28740
+        }
+      ]
+    },
+    {
+      "id": "manrope",
+      "family": "Manrope",
+      "category": "sans-serif",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Manrope",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Manrope%3Awght%40200..800&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "manrope/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/manrope/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "manrope/manrope-normal-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/manrope/v20/xn7gYHE41ni1AdIRggmxSuXd.woff2",
+          "sha256": "3911b66d9f2e005a4b989223405d0e5032619c668597ba467cc76a23c8fffcfb",
+          "sizeBytes": 15120
+        },
+        {
+          "file": "manrope/manrope-normal-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/manrope/v20/xn7gYHE41ni1AdIRggexSg.woff2",
+          "sha256": "a30ddcd349703aff7464c34bef3fffdff405ee50c113440d7c8693c02d210972",
+          "sizeBytes": 24836
+        }
+      ]
+    },
+    {
+      "id": "montserrat",
+      "family": "Montserrat",
+      "category": "sans-serif",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Montserrat",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Montserrat%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "montserrat/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "montserrat/montserrat-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/montserrat/v31/JTUQjIg1_i6t8kCHKm459WxRxy7mw9c.woff2",
+          "sha256": "9f7c3dc0c1fdbc8b09d53d1beb4aca048a5aff376ac5423878e03e83e89a7fe8",
+          "sizeBytes": 74892
+        },
+        {
+          "file": "montserrat/montserrat-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/montserrat/v31/JTUQjIg1_i6t8kCHKm459WxRyS7m.woff2",
+          "sha256": "0eb22e3d769a66a92dbd82e3aefa5740e5bc21afa4485f62f92b22656d49182a",
+          "sizeBytes": 39632
+        },
+        {
+          "file": "montserrat/montserrat-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/montserrat/v31/JTUSjIg1_i6t8kCHKm459Wdhyzbi.woff2",
+          "sha256": "54d9a78b7ff60b689ad9f3017ffac8547b5d871afec733f6c1c3ae36577ee504",
+          "sizeBytes": 70688
+        },
+        {
+          "file": "montserrat/montserrat-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/montserrat/v31/JTUSjIg1_i6t8kCHKm459Wlhyw.woff2",
+          "sha256": "06b16db7a969135d48d38c49183be7fb88d4452e2a3011957c7851941f4e4879",
+          "sizeBytes": 37956
+        }
+      ]
+    },
+    {
+      "id": "dm-sans",
+      "family": "DM Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/DM+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=DM+Sans%3Aital%2Cwght%400%2C100..1000%3B1%2C100..1000&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "dm-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmsans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "dm-sans/dm-sans-italic-100-1000-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/dmsans/v17/rP2Wp2ywxg089UriCZaSExd86J3t9jz86MvyyKK58VXh.woff2",
+          "sha256": "6e646d2022808fb4532e77d38a9348e4dcf832796be2acc43a79052b60900db2",
+          "sizeBytes": 20808
+        },
+        {
+          "file": "dm-sans/dm-sans-italic-100-1000-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/dmsans/v17/rP2Wp2ywxg089UriCZaSExd86J3t9jz86MvyyKy58Q.woff2",
+          "sha256": "f1a235db5bcb8730707844188d35201ecdf63e56c5dcce97bab24a9c7066091d",
+          "sizeBytes": 39712
+        },
+        {
+          "file": "dm-sans/dm-sans-normal-100-1000-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/dmsans/v17/rP2Yp2ywxg089UriI5-g4vlH9VoD8Cmcqbu6-K6h9Q.woff2",
+          "sha256": "a5d38fe99f930275684999b462c7123faa063d9e44e73b4b241723d884aa0f49",
+          "sizeBytes": 18228
+        },
+        {
+          "file": "dm-sans/dm-sans-normal-100-1000-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/dmsans/v17/rP2Yp2ywxg089UriI5-g4vlH9VoD8Cmcqbu0-K4.woff2",
+          "sha256": "9fea608a947e67020c33cad9a6fe3d60c54119dfb8cff87768a8117a15ed7543",
+          "sizeBytes": 36932
+        }
+      ]
+    },
+    {
+      "id": "figtree",
+      "family": "Figtree",
+      "category": "sans-serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Figtree",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Figtree%3Aital%2Cwght%400%2C300..900%3B1%2C300..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "figtree/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/figtree/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "figtree/figtree-italic-300-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/figtree/v9/_Xmu-HUzqDCFdgfMm4GNAa5o_ik.woff2",
+          "sha256": "a0cc105b3241fe952fd58ba226633f8ba733b16fd5419affbda6c8cc5c627a0b",
+          "sizeBytes": 10376
+        },
+        {
+          "file": "figtree/figtree-italic-300-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/figtree/v9/_Xmu-HUzqDCFdgfMm4GND65o.woff2",
+          "sha256": "7242fa62d13d46172816b266f03c027999faa3755a52c2124bc2c440f6f4b983",
+          "sizeBytes": 20928
+        },
+        {
+          "file": "figtree/figtree-normal-300-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/figtree/v9/_Xms-HUzqDCFdgfMm4q9DbZs.woff2",
+          "sha256": "bf7828e2c258cffcfa50a048ee388a36b95bc16b452e8d36fa797635dbe15965",
+          "sizeBytes": 10280
+        },
+        {
+          "file": "figtree/figtree-normal-300-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/figtree/v9/_Xms-HUzqDCFdgfMm4S9DQ.woff2",
+          "sha256": "4ba7d3d096695818fe0686be4f1e82c6b05134e18a22260336130335027462dd",
+          "sizeBytes": 20156
+        }
+      ]
+    },
+    {
+      "id": "plus-jakarta-sans",
+      "family": "Plus Jakarta Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-10",
+      "specimenUrl": "https://fonts.google.com/specimen/Plus+Jakarta+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans%3Aital%2Cwght%400%2C200..800%3B1%2C200..800&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "plus-jakarta-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/plusjakartasans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "plus-jakarta-sans/plus-jakarta-sans-italic-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/plusjakartasans/v12/LDIuaomQNQcsA88c7O9yZ4KMCoOg4Koz4yCqhMva.woff2",
+          "sha256": "7524d4b5f829201192882f775b90d78dbd9f9b3014ea729cfb7a47f5261ec7cb",
+          "sizeBytes": 23224
+        },
+        {
+          "file": "plus-jakarta-sans/plus-jakarta-sans-italic-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/plusjakartasans/v12/LDIuaomQNQcsA88c7O9yZ4KMCoOg4Koz4y6qhA.woff2",
+          "sha256": "bb113d8f5be89636a9a31ffa0966762126546b98be171d6fa81115abb2cd5352",
+          "sizeBytes": 29600
+        },
+        {
+          "file": "plus-jakarta-sans/plus-jakarta-sans-normal-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko40yyygA.woff2",
+          "sha256": "38e3b8fd8045048eb311d90170a4429ed2c8f405852dc3d91b5af8452758703f",
+          "sizeBytes": 21728
+        },
+        {
+          "file": "plus-jakarta-sans/plus-jakarta-sans-normal-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/plusjakartasans/v12/LDIoaomQNQcsA88c7O9yZ4KMCoOg4Ko20yw.woff2",
+          "sha256": "153fc85b70298beeb1d61a5f723331649e7f23bb77302a66e61cb3e2fbdb5e79",
+          "sizeBytes": 27348
+        }
+      ]
+    },
+    {
+      "id": "work-sans",
+      "family": "Work Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Work+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Work+Sans%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "work-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/worksans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "work-sans/work-sans-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/worksans/v24/QGYqz_wNahGAdqQ43Rh_eZDlv_1w4A.woff2",
+          "sha256": "7ad4dd06ed7836bad7fef7c5cb75a93229d549c8db9671aff1aa798dc1682a70",
+          "sizeBytes": 32280
+        },
+        {
+          "file": "work-sans/work-sans-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/worksans/v24/QGYqz_wNahGAdqQ43Rh_eZDrv_0.woff2",
+          "sha256": "73468c2b5cc7c31456ee0c297ac87b2bfb7eb626bc79688dc3a320151fddcd2f",
+          "sizeBytes": 48180
+        },
+        {
+          "file": "work-sans/work-sans-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/worksans/v24/QGYsz_wNahGAdqQ43Rh_cqDpp_k.woff2",
+          "sha256": "2aa17fc7b072e46652e84bbe3dbba9ec57cdea320d89e8c951ed7cf3218c300b",
+          "sizeBytes": 35716
+        },
+        {
+          "file": "work-sans/work-sans-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/worksans/v24/QGYsz_wNahGAdqQ43Rh_fKDp.woff2",
+          "sha256": "1dd49afc07fb2231b2ff686cbf007725fb2742271bb1f28ebd98f22a0d817343",
+          "sizeBytes": 50316
+        }
+      ]
+    },
+    {
+      "id": "space-grotesk",
+      "family": "Space Grotesk",
+      "category": "sans-serif",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Space+Grotesk",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Space+Grotesk%3Awght%40300..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "space-grotesk/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacegrotesk/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "space-grotesk/space-grotesk-normal-300-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPb94C-s0.woff2",
+          "sha256": "952dddb45d2f96f71cbf3b7f510b24379afc3c89ea02fcf89d377b45d62c0166",
+          "sizeBytes": 18940
+        },
+        {
+          "file": "space-grotesk/space-grotesk-normal-300-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/spacegrotesk/v22/V8mDoQDjQSkFtoMM3T6r8E7mPbF4Cw.woff2",
+          "sha256": "0640890476fc1198ab4de571fb658de443c4d85b66466ec09534a8737ab1ce9d",
+          "sizeBytes": 22288
+        }
+      ]
+    },
+    {
+      "id": "atkinson-hyperlegible-next",
+      "family": "Atkinson Hyperlegible Next",
+      "category": "sans-serif",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Atkinson+Hyperlegible+Next",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next%3Aital%2Cwght%400%2C200..800%3B1%2C200..800&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "atkinson-hyperlegible-next/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/atkinsonhyperlegiblenext/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "atkinson-hyperlegible-next/atkinson-hyperlegible-next-italic-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/atkinsonhyperlegiblenext/v7/NaPPcYPdHfdVxJw0IfIP0lvYFqijb-UxCtm5_wdGseiMr3a-oXZ-.woff2",
+          "sha256": "c0c8da569118e5b2c17032c4f1d0e293271e478fb50d869aefd08fcffdf2042b",
+          "sizeBytes": 20132
+        },
+        {
+          "file": "atkinson-hyperlegible-next/atkinson-hyperlegible-next-italic-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/atkinsonhyperlegiblenext/v7/NaPPcYPdHfdVxJw0IfIP0lvYFqijb-UxCtm5_wdGseiMr3i-oQ.woff2",
+          "sha256": "4a5037bfaf6680f40147407407ec09fa42925774bde809a579283d27f9f08106",
+          "sizeBytes": 37644
+        },
+        {
+          "file": "atkinson-hyperlegible-next/atkinson-hyperlegible-next-normal-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/atkinsonhyperlegiblenext/v7/NaPNcYPdHfdVxJw0IfIP0lvYFqijb-UxCtm5_wdGseiHn3qmpQ.woff2",
+          "sha256": "7dae0c6c66af1aec82e096186aeb1f0e6fa36ab8061ed65422f2b7daf4dd93f3",
+          "sizeBytes": 19092
+        },
+        {
+          "file": "atkinson-hyperlegible-next/atkinson-hyperlegible-next-normal-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/atkinsonhyperlegiblenext/v7/NaPNcYPdHfdVxJw0IfIP0lvYFqijb-UxCtm5_wdGseiJn3o.woff2",
+          "sha256": "18b2a1a39a2fa298b0ba5390aca68462669826c90925656f1c1f6796e0e1bbaf",
+          "sizeBytes": 33996
+        }
+      ]
+    },
+    {
+      "id": "public-sans",
+      "family": "Public Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-16",
+      "specimenUrl": "https://fonts.google.com/specimen/Public+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Public+Sans%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "public-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/publicsans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "public-sans/public-sans-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/publicsans/v21/ijwTs572Xtc6ZYQws9YVwnNDTJLax9k0.woff2",
+          "sha256": "a071e35bbfc9c62756e0beb2475bff387d456dbfb2ec7e0d4e90cadeb543b54a",
+          "sizeBytes": 19312
+        },
+        {
+          "file": "public-sans/public-sans-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/publicsans/v21/ijwTs572Xtc6ZYQws9YVwnNDTJzaxw.woff2",
+          "sha256": "16dc93252adb78785ae56a6465494f73b604b39817760ea92bd4046521bb5a35",
+          "sizeBytes": 28292
+        },
+        {
+          "file": "public-sans/public-sans-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/publicsans/v21/ijwRs572Xtc6ZYQws9YVwnNIfJ7Cww.woff2",
+          "sha256": "3a00a32f0242b723dcea79935747d6d27dd93675d03ef23f470dfe274e79586a",
+          "sizeBytes": 18472
+        },
+        {
+          "file": "public-sans/public-sans-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/publicsans/v21/ijwRs572Xtc6ZYQws9YVwnNGfJ4.woff2",
+          "sha256": "5ed4d31c988e73b258894244f209069ebe77dc7e564861954b21198b6de90d68",
+          "sizeBytes": 26832
+        }
+      ]
+    },
+    {
+      "id": "nunito-sans",
+      "family": "Nunito Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-16",
+      "specimenUrl": "https://fonts.google.com/specimen/Nunito+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Nunito+Sans%3Aital%2Cwght%400%2C200..1000%3B1%2C200..1000&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "nunito-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/nunitosans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "nunito-sans/nunito-sans-italic-200-1000-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/nunitosans/v19/pe0RMImSLYBIv1o4X1M8cce4OdVisMz5nZRqy6cmmmU3t2FQWEAEOvV9wNvrwlNstMKW3Y6K5WMwd-daLY50.woff2",
+          "sha256": "f3093f72aabbc08b8f00f185aef1b9503519a227c3d75a057dc7a3c47d7c6151",
+          "sizeBytes": 30344
+        },
+        {
+          "file": "nunito-sans/nunito-sans-italic-200-1000-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/nunitosans/v19/pe0RMImSLYBIv1o4X1M8cce4OdVisMz5nZRqy6cmmmU3t2FQWEAEOvV9wNvrwlNstMKW3Y6K5WMwd-laLQ.woff2",
+          "sha256": "8904d953726b43ded1a16bfd43398325d2382dd50780c10f18d048e0e73f84a8",
+          "sizeBytes": 33080
+        },
+        {
+          "file": "nunito-sans/nunito-sans-normal-200-1000-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/nunitosans/v19/pe0TMImSLYBIv1o4X1M8ce2xCx3yop4tQpF_MeTm0lfGWVpNn64CL7U8upHZIbMV51Q42ptCp7t7R-tCKQ.woff2",
+          "sha256": "c648ee5bfda70d44b9fb628f4114d1cc4f984d050cbb4881052237ede3638a2e",
+          "sizeBytes": 27908
+        },
+        {
+          "file": "nunito-sans/nunito-sans-normal-200-1000-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/nunitosans/v19/pe0TMImSLYBIv1o4X1M8ce2xCx3yop4tQpF_MeTm0lfGWVpNn64CL7U8upHZIbMV51Q42ptCp7t1R-s.woff2",
+          "sha256": "29e3890496844a9ea81975c52771c587c872b4eb317026422d1995b88d21b57d",
+          "sizeBytes": 31076
+        }
+      ]
+    },
+    {
+      "id": "ibm-plex-sans",
+      "family": "IBM Plex Sans",
+      "category": "sans-serif",
+      "lastModified": "2025-09-08",
+      "specimenUrl": "https://fonts.google.com/specimen/IBM+Plex+Sans",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans%3Aital%2Cwght%400%2C100..700%3B1%2C100..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "ibm-plex-sans/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsans/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "ibm-plex-sans/ibm-plex-sans-italic-100-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYrYALZg.woff2",
+          "sha256": "bf44b77cc751203b2f0ce95c048a9d8f984313f84b58106c7c4410ca50314016",
+          "sizeBytes": 33900
+        },
+        {
+          "file": "ibm-plex-sans/ibm-plex-sans-italic-100-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXxKVElMYYaJe8bpLHnCwDKhdTEG46kmUZQCX598fQbGYTYAA.woff2",
+          "sha256": "4363757d2695c7633f98472855849f7c30528eba869d7968ee35b58c87cf14c1",
+          "sizeBytes": 50184
+        },
+        {
+          "file": "ibm-plex-sans/ibm-plex-sans-normal-100-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxQKYbABA.woff2",
+          "sha256": "d160e20920ae4d6556518d352d3af27a74e9b0de3d8fe17b1c1044fc75aa2f81",
+          "sizeBytes": 30964
+        },
+        {
+          "file": "ibm-plex-sans/ibm-plex-sans-normal-100-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxeKYY.woff2",
+          "sha256": "e2291e842cf5af167122a22881a740c7f2dda7716f1e8cd76680264f4a859470",
+          "sizeBytes": 45712
+        }
+      ]
+    },
+    {
+      "id": "geist",
+      "family": "Geist",
+      "category": "sans-serif",
+      "lastModified": "2026-05-13",
+      "specimenUrl": "https://fonts.google.com/specimen/Geist",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Geist%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "geist/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/geist/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "geist/geist-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/geist/v5/gyB8hwUxId8gMEwZKFmHP7Tc.woff2",
+          "sha256": "56dc9ac98e3fc45e7ee487d03ee205b35858c672f2e15053eabbb119c0bc1e74",
+          "sizeBytes": 17892
+        },
+        {
+          "file": "geist/geist-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/geist/v5/gyB8hwUxId8gMEwZKFeHPw.woff2",
+          "sha256": "9b10496762af92659f3b05d2b084b0c8f962c3ecdf637aa764e3b7fd17f5acaf",
+          "sizeBytes": 31008
+        },
+        {
+          "file": "geist/geist-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwSGFWfOw.woff2",
+          "sha256": "824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f",
+          "sizeBytes": 16512
+        },
+        {
+          "file": "geist/geist-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/geist/v5/gyByhwUxId8gMEwcGFU.woff2",
+          "sha256": "19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1",
+          "sizeBytes": 29400
+        }
+      ]
+    },
+    {
+      "id": "source-serif-4",
+      "family": "Source Serif 4",
+      "category": "serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Source+Serif+4",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Source+Serif+4%3Aital%2Cwght%400%2C200..900%3B1%2C200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "source-serif-4/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/sourceserif4/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "source-serif-4/source-serif-4-italic-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourceserif4/v14/vEFH2_tTDB4M7-auWDN0ahZJW1ge6NmXpVAHV83Bfb_US0r0aX2AzA.woff2",
+          "sha256": "515639854d3566c43860d2005770645c590df8b43a0144c70fe2566c33015ede",
+          "sizeBytes": 44260
+        },
+        {
+          "file": "source-serif-4/source-serif-4-italic-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourceserif4/v14/vEFH2_tTDB4M7-auWDN0ahZJW1ge6NmXpVAHV83Bfb_US0r6aX0.woff2",
+          "sha256": "663e7ef3037a56dce81dfc33f68c1e6445995ffd8887991b3c0b68a7689c9da5",
+          "sizeBytes": 51516
+        },
+        {
+          "file": "source-serif-4/source-serif-4-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourceserif4/v14/vEFF2_tTDB4M7-auWDN0ahZJW3IX2ih5nk3AucvUHf6kA3r4cXk.woff2",
+          "sha256": "41529a5b38008d9ea01e28ec18693a714a3216669ee477d83a5b9db999369625",
+          "sizeBytes": 42040
+        },
+        {
+          "file": "source-serif-4/source-serif-4-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourceserif4/v14/vEFF2_tTDB4M7-auWDN0ahZJW3IX2ih5nk3AucvUHf6kDXr4.woff2",
+          "sha256": "c1df4596be5029233ed2afbb8b2f6ea20784b3fb1aa5d6b5c6519ccd85eb3dfb",
+          "sizeBytes": 50824
+        }
+      ]
+    },
+    {
+      "id": "literata",
+      "family": "Literata",
+      "category": "serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Literata",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Literata%3Aital%2Cwght%400%2C200..900%3B1%2C200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "literata/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/literata/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "literata/literata-italic-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/literata/v40/or3yQ6P12-iJxAIgLYT1PLs1Zd0nfUwAbeGVKq5a5ClqOw.woff2",
+          "sha256": "ba0e6a12e2f0a1f5d455c23c47068b71f9898c571dcb92dab385294ebdae3e74",
+          "sizeBytes": 43256
+        },
+        {
+          "file": "literata/literata-italic-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/literata/v40/or3yQ6P12-iJxAIgLYT1PLs1Zd0nfUwAbeGVKq5U5Ck.woff2",
+          "sha256": "ab198d6616c7cc966f26a4a5b28a3977dc47439640f09d9b3361226bd465c404",
+          "sizeBytes": 53728
+        },
+        {
+          "file": "literata/literata-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/literata/v40/or38Q6P12-iJxAIgLa78DkrbXsDgk0oVDaDlYp5W_C0.woff2",
+          "sha256": "46792f7cd10b28fb512161caeaaa11b049feb2221ccaa72bb4d4ccc286199155",
+          "sizeBytes": 42656
+        },
+        {
+          "file": "literata/literata-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/literata/v40/or38Q6P12-iJxAIgLa78DkrbXsDgk0oVDaDlbJ5W.woff2",
+          "sha256": "9adbeac5b167fe5ad6c49d9e29aa0c76e2f1bb3b46bf4ebf12a9eca7d3525384",
+          "sizeBytes": 52496
+        }
+      ]
+    },
+    {
+      "id": "lora",
+      "family": "Lora",
+      "category": "serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Lora",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Lora%3Aital%2Cwght%400%2C400..700%3B1%2C400..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "lora/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/lora/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "lora/lora-italic-400-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/lora/v37/0QIhMX1D_JOuMw_LL_tLp_A.woff2",
+          "sha256": "45f989df83f3a9f40007d2ecdea98bff248c8767a1a0bbe60e94fb37b605ecee",
+          "sizeBytes": 21128
+        },
+        {
+          "file": "lora/lora-italic-400-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/lora/v37/0QIhMX1D_JOuMw_LIftL.woff2",
+          "sha256": "d824d807d4d832d12c87932d0b8ec1314dcfd502157a56dee6bb04cf8a3768ae",
+          "sizeBytes": 40772
+        },
+        {
+          "file": "lora/lora-normal-400-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/lora/v37/0QIvMX1D_JOuMwT7I-NP.woff2",
+          "sha256": "2a2d9c22c9863086a23f5013fede1428585321812b25f2662542c39d02967c5e",
+          "sizeBytes": 20088
+        },
+        {
+          "file": "lora/lora-normal-400-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/lora/v37/0QIvMX1D_JOuMwr7Iw.woff2",
+          "sha256": "ddb8c66035104e233fc024669183aad3738b6daa16deee2ebb1241bd0f98ace1",
+          "sizeBytes": 37788
+        }
+      ]
+    },
+    {
+      "id": "crimson-pro",
+      "family": "Crimson Pro",
+      "category": "serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Crimson+Pro",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Crimson+Pro%3Aital%2Cwght%400%2C200..900%3B1%2C200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "crimson-pro/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/crimsonpro/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "crimson-pro/crimson-pro-italic-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/crimsonpro/v28/q5uBsoa5M_tv7IihmnkabARekY1wDfKi.woff2",
+          "sha256": "01df7b443a6f81915a65df47439121da8307f8a574fadd7cde57c77d0b68c77b",
+          "sizeBytes": 39808
+        },
+        {
+          "file": "crimson-pro/crimson-pro-italic-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/crimsonpro/v28/q5uBsoa5M_tv7IihmnkabARekYNwDQ.woff2",
+          "sha256": "b3faa8f9ce36db53253e11fb107d77b983150c5c21dc8fcf3906234530ab69f2",
+          "sizeBytes": 51432
+        },
+        {
+          "file": "crimson-pro/crimson-pro-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/crimsonpro/v28/q5uDsoa5M_tv7IihmnkabARVoYFoCQ.woff2",
+          "sha256": "ac89a08a6e022ad4f3af961eb95474b7d8531c67ff88b40194bb3569d2d64e1d",
+          "sizeBytes": 37988
+        },
+        {
+          "file": "crimson-pro/crimson-pro-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/crimsonpro/v28/q5uDsoa5M_tv7IihmnkabARboYE.woff2",
+          "sha256": "20ce4189b9e41b3439a2a36dd63deff44b6d91182532202cb96b65521b4a3c23",
+          "sizeBytes": 48200
+        }
+      ]
+    },
+    {
+      "id": "fraunces",
+      "family": "Fraunces",
+      "category": "serif",
+      "lastModified": "2025-09-10",
+      "specimenUrl": "https://fonts.google.com/specimen/Fraunces",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Fraunces%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "fraunces/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "fraunces/fraunces-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/fraunces/v38/6NUs8FyLNQOQZAnv9ZwNjucMHVn85Ni7emAe9lKqZTnbB-gzTK0K1ChJdt9vIVYX9G37lvd9mvMiQvTm.woff2",
+          "sha256": "877bcc2fd1be299c950d0971578336818ca5818e1e956f12e0d8c6736436ca45",
+          "sizeBytes": 40528
+        },
+        {
+          "file": "fraunces/fraunces-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/fraunces/v38/6NUs8FyLNQOQZAnv9ZwNjucMHVn85Ni7emAe9lKqZTnbB-gzTK0K1ChJdt9vIVYX9G37lvd9mv0iQg.woff2",
+          "sha256": "bceec2ef4d549efbc8df0194a8d5280b6a64c3e399244dffccd9ea1bd9ad6db7",
+          "sizeBytes": 45656
+        },
+        {
+          "file": "fraunces/fraunces-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/fraunces/v38/6NUu8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk_WBq8U_9v0c2Wa0K7iN7hzFUPJH58nib14c1qv86Rg.woff2",
+          "sha256": "a21ecfbf41fbc393e24ef9b7e38532a27e8da5e0a074aa7d66802d1b5ccec2f0",
+          "sizeBytes": 33584
+        },
+        {
+          "file": "fraunces/fraunces-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/fraunces/v38/6NUu8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk_WBq8U_9v0c2Wa0K7iN7hzFUPJH58nib14c7qv8.woff2",
+          "sha256": "7f9d191d999336d3b9790afa72e1358e50a13b06d4f289341e92a311967a80f9",
+          "sizeBytes": 36620
+        }
+      ]
+    },
+    {
+      "id": "newsreader",
+      "family": "Newsreader",
+      "category": "serif",
+      "lastModified": "2025-09-08",
+      "specimenUrl": "https://fonts.google.com/specimen/Newsreader",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Newsreader%3Aital%2Cwght%400%2C200..800%3B1%2C200..800&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "newsreader/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/newsreader/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "newsreader/newsreader-italic-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/newsreader/v26/cY9XfjOCX1hbuyalUrK439vogqC9yFZCYg7oRZaLFYgzbBZD.woff2",
+          "sha256": "d8c263970d52e0b94b3d5d4250d5962fe39f8f3b6fa9ad13b406d73ff3f4b036",
+          "sizeBytes": 39684
+        },
+        {
+          "file": "newsreader/newsreader-italic-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/newsreader/v26/cY9XfjOCX1hbuyalUrK439vogqC9yFZCYg7oRZaLFYYzbA.woff2",
+          "sha256": "48bc8861b9b2ca9300747cad4fd6a3b4ac3028d364df00bd1b72097baa75e509",
+          "sizeBytes": 64520
+        },
+        {
+          "file": "newsreader/newsreader-normal-200-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/newsreader/v26/cY9VfjOCX1hbuyalUrK49dLac06G1ZGsZBtoBAbDJYQraA.woff2",
+          "sha256": "ac6fa9ed533278f4c8fd3ae44a1fc78c7df736040237ab86fc1160d020af0af2",
+          "sizeBytes": 36244
+        },
+        {
+          "file": "newsreader/newsreader-normal-200-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/newsreader/v26/cY9VfjOCX1hbuyalUrK49dLac06G1ZGsZBtoBAbNJYQ.woff2",
+          "sha256": "62981321d9a3cc7a61a73792729043703fd6112da86e8ec848bb57f088578757",
+          "sizeBytes": 58084
+        }
+      ]
+    },
+    {
+      "id": "playfair-display",
+      "family": "Playfair Display",
+      "category": "serif",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Playfair+Display",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Playfair+Display%3Aital%2Cwght%400%2C400..900%3B1%2C400..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "playfair-display/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "playfair-display/playfair-display-italic-400-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/playfairdisplay/v40/nuFkD-vYSZviVYUb_rj3ij__anPXDTnojEk72xU.woff2",
+          "sha256": "b9dff4aec6d8ef27af595330c808c455fcc3ff46881642aa6028ed4e27a96f89",
+          "sizeBytes": 23380
+        },
+        {
+          "file": "playfair-display/playfair-display-italic-400-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/playfairdisplay/v40/nuFkD-vYSZviVYUb_rj3ij__anPXDTnogkk7.woff2",
+          "sha256": "54af24bd0f911f0fd7399d5445ea2023ff501d6a69f2d728f1213072f977ab14",
+          "sizeBytes": 38804
+        },
+        {
+          "file": "playfair-display/playfair-display-normal-400-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/playfairdisplay/v40/nuFiD-vYSZviVYUb_rj3ij__anPXDTLYgFE_.woff2",
+          "sha256": "42898ad49a6b23f32b109243e1df596edf831015ed685f429e4dafbb181d599d",
+          "sizeBytes": 21140
+        },
+        {
+          "file": "playfair-display/playfair-display-normal-400-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/playfairdisplay/v40/nuFiD-vYSZviVYUb_rj3ij__anPXDTzYgA.woff2",
+          "sha256": "e0c764a8e9e1cce92163c55bac4b2ad6cd4cf8c696ce2289ab5c41565e65b7e2",
+          "sizeBytes": 38404
+        }
+      ]
+    },
+    {
+      "id": "merriweather",
+      "family": "Merriweather",
+      "category": "serif",
+      "lastModified": "2025-09-02",
+      "specimenUrl": "https://fonts.google.com/specimen/Merriweather",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Merriweather%3Aital%2Cwght%400%2C300..900%3B1%2C300..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "merriweather/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/merriweather/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "merriweather/merriweather-italic-300-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/merriweather/v33/u-4c0qyriQwlOrhSvowK_l5-eTxCVx0ZbwLvKH2Gk9hLmp0v5yA-xXPqCzLvF-WdrGGj.woff2",
+          "sha256": "f11472cb2bef38bdb05eb91911e9672e8e45dd80756cb87a7f316ac9ec910e1f",
+          "sizeBytes": 78260
+        },
+        {
+          "file": "merriweather/merriweather-italic-300-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/merriweather/v33/u-4c0qyriQwlOrhSvowK_l5-eTxCVx0ZbwLvKH2Gk9hLmp0v5yA-xXPqCzLvF-udrA.woff2",
+          "sha256": "caa1da88ecea68d5d4b79881792675c76e691f5141ae3fef85bd472920436053",
+          "sizeBytes": 100572
+        },
+        {
+          "file": "merriweather/merriweather-normal-300-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/merriweather/v33/u-4e0qyriQwlOrhSvowK_l5UcA6zuSYEqOzpPe3HOZJ5eX1WtLaQwmYiSeqkJ-mFqA.woff2",
+          "sha256": "8ca0880997847953a13964d6769b6712c57aa2dc2f881f4e6e805719791daed8",
+          "sizeBytes": 74960
+        },
+        {
+          "file": "merriweather/merriweather-normal-300-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/merriweather/v33/u-4e0qyriQwlOrhSvowK_l5UcA6zuSYEqOzpPe3HOZJ5eX1WtLaQwmYiSeqqJ-k.woff2",
+          "sha256": "4fbe8dd9c23b1fd62a988bb8a69b8e692d810f773d9ef6ebca2ba2760c7b11ee",
+          "sizeBytes": 97548
+        }
+      ]
+    },
+    {
+      "id": "libre-baskerville",
+      "family": "Libre Baskerville",
+      "category": "serif",
+      "lastModified": "2025-11-20",
+      "specimenUrl": "https://fonts.google.com/specimen/Libre+Baskerville",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Libre+Baskerville%3Aital%2Cwght%400%2C400..700%3B1%2C400..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "libre-baskerville/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/librebaskerville/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "libre-baskerville/libre-baskerville-italic-400-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/librebaskerville/v24/kmKhZrc3Hgbbcjq75U4uslyuy4kn0qNcWx8QDP2V.woff2",
+          "sha256": "890c2ae602dfc42b941667f13dcb5ddb196a31e8d7aa76cea20f2afaa7531eff",
+          "sizeBytes": 35228
+        },
+        {
+          "file": "libre-baskerville/libre-baskerville-italic-400-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/librebaskerville/v24/kmKhZrc3Hgbbcjq75U4uslyuy4kn0qNcWxEQDA.woff2",
+          "sha256": "1203eb6186789060d1376ca7ab20734b179e241c85ddc2d84502c818afb63210",
+          "sizeBytes": 31244
+        },
+        {
+          "file": "libre-baskerville/libre-baskerville-normal-400-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/librebaskerville/v24/kmKnZrc3Hgbbcjq75U4uslyuy4kn0qNXaxMICA.woff2",
+          "sha256": "8f7537ce3a6c1c0d0e93a9530432df13953312d378713a059e9a6cf0d0cde8b9",
+          "sizeBytes": 35468
+        },
+        {
+          "file": "libre-baskerville/libre-baskerville-normal-400-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/librebaskerville/v24/kmKnZrc3Hgbbcjq75U4uslyuy4kn0qNZaxM.woff2",
+          "sha256": "22219fb90e3b9bd28debd1825fe8d9a0154a0e31f8b3fa601ac1a0a5aa5e6d1b",
+          "sizeBytes": 33872
+        }
+      ]
+    },
+    {
+      "id": "roboto-slab",
+      "family": "Roboto Slab",
+      "category": "slab-serif",
+      "lastModified": "2025-09-08",
+      "specimenUrl": "https://fonts.google.com/specimen/Roboto+Slab",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Roboto+Slab%3Awght%40100..900&display=swap",
+      "license": {
+        "identifier": "APACHE2",
+        "file": "roboto-slab/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/apache/robotoslab/LICENSE.txt"
+      },
+      "files": [
+        {
+          "file": "roboto-slab/roboto-slab-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/robotoslab/v36/BngMUXZYTXPIvIBgJJSb6ufD5qW54A.woff2",
+          "sha256": "8ed24f94c25ecf99a50b806ef6ca02988cf8c1d443228ddbd6a8ac99c99df81e",
+          "sizeBytes": 21188
+        },
+        {
+          "file": "roboto-slab/roboto-slab-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/robotoslab/v36/BngMUXZYTXPIvIBgJJSb6ufN5qU.woff2",
+          "sha256": "50cf7d32c18e1001749b51f1565ef745bc0687b0297b2b13465ed577cc20a8ff",
+          "sizeBytes": 34236
+        }
+      ]
+    },
+    {
+      "id": "jetbrains-mono",
+      "family": "JetBrains Mono",
+      "category": "monospace",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/JetBrains+Mono",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=JetBrains+Mono%3Aital%2Cwght%400%2C100..800%3B1%2C100..800&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "jetbrains-mono/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "jetbrains-mono/jetbrains-mono-italic-100-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-Cw2nSHrV.woff2",
+          "sha256": "60652c78382d7e5021ce4c3ed8985fc41d8f3d1b1a3bedcec2a44ed8979fe5eb",
+          "sizeBytes": 16520
+        },
+        {
+          "file": "jetbrains-mono/jetbrains-mono-italic-100-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbX2o-flEEny0FZhsfKu5WU4xD-CwOnSA.woff2",
+          "sha256": "a8afa085e9ca5e53434e2ee918ba6b65c7dd4dda56509976b36591478c99d62e",
+          "sizeBytes": 42964
+        },
+        {
+          "file": "jetbrains-mono/jetbrains-mono-normal-100-800-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD1OwG_TA.woff2",
+          "sha256": "79bfdab9ba467e26eea4122e6f2567e188dd8a09a8c730d501fc487c4ab99c6e",
+          "sizeBytes": 15196
+        },
+        {
+          "file": "jetbrains-mono/jetbrains-mono-normal-100-800-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/jetbrainsmono/v24/tDbV2o-flEEny0FZhsfKu5WU4xD7OwE.woff2",
+          "sha256": "18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e",
+          "sizeBytes": 40404
+        }
+      ]
+    },
+    {
+      "id": "source-code-pro",
+      "family": "Source Code Pro",
+      "category": "monospace",
+      "lastModified": "2025-09-08",
+      "specimenUrl": "https://fonts.google.com/specimen/Source+Code+Pro",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Source+Code+Pro%3Aital%2Cwght%400%2C200..900%3B1%2C200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "source-code-pro/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/sourcecodepro/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "source-code-pro/source-code-pro-italic-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcecodepro/v31/HI_QiYsKILxRpg3hIP6sJ7fM7PqlONvalMIXxw.woff2",
+          "sha256": "da6214a7b9f9eca88a7ae3b7b6fec00db41741774d8a38e6a899bd8e85968411",
+          "sizeBytes": 34012
+        },
+        {
+          "file": "source-code-pro/source-code-pro-italic-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcecodepro/v31/HI_QiYsKILxRpg3hIP6sJ7fM7PqlONvUlMI.woff2",
+          "sha256": "97f01332aeda642a2f298030203dd4dd72802c0288ab2705d33daf691278e563",
+          "sizeBytes": 22448
+        },
+        {
+          "file": "source-code-pro/source-code-pro-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcecodepro/v31/HI_SiYsKILxRpg3hIP6sJ7fM7PqlM-vWjMY.woff2",
+          "sha256": "ab316ee7e4a28a149fe9f74a3e9173c3d14a11bb7d4df898dd2fe10da7b7fe24",
+          "sizeBytes": 33568
+        },
+        {
+          "file": "source-code-pro/source-code-pro-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/sourcecodepro/v31/HI_SiYsKILxRpg3hIP6sJ7fM7PqlPevW.woff2",
+          "sha256": "8b774aaa5137a38ef40f4ac9d36db9a5eee152b2f66589dfdc82ff007fc87135",
+          "sizeBytes": 22044
+        }
+      ]
+    },
+    {
+      "id": "roboto-mono",
+      "family": "Roboto Mono",
+      "category": "monospace",
+      "lastModified": "2026-05-05",
+      "specimenUrl": "https://fonts.google.com/specimen/Roboto+Mono",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Roboto+Mono%3Aital%2Cwght%400%2C100..700%3B1%2C100..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "roboto-mono/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/robotomono/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "roboto-mono/roboto-mono-italic-100-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x7DF4xlVMF-BfR8bXMIjhOm3OWWoKC.woff2",
+          "sha256": "f206990c959d138c477ec5a669f3a9703017799480a2531a4ba006be7ef3a332",
+          "sizeBytes": 24408
+        },
+        {
+          "file": "roboto-mono/roboto-mono-italic-100-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x7DF4xlVMF-BfR8bXMIjhOm32WWg.woff2",
+          "sha256": "ae82dafb6340b538592b30dc18a367f56de3840b20669767adc011966405f6cf",
+          "sizeBytes": 35328
+        },
+        {
+          "file": "roboto-mono/roboto-mono-normal-100-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhFq3-OXg.woff2",
+          "sha256": "4cc0d52e0fa37c28084e0cbce3589a8ab32dd21e6ea619489c5f7c6e8c43b922",
+          "sizeBytes": 22916
+        },
+        {
+          "file": "roboto-mono/roboto-mono-normal-100-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/robotomono/v31/L0x5DF4xlVMF-BfR8bXMIjhLq38.woff2",
+          "sha256": "b81cd55177300649be8f95b3b747d721ce607e8ed2856e25bd0c630cfd631faf",
+          "sizeBytes": 32796
+        }
+      ]
+    },
+    {
+      "id": "inconsolata",
+      "family": "Inconsolata",
+      "category": "monospace",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Inconsolata",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Inconsolata%3Awght%40200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "inconsolata/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/inconsolata/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "inconsolata/inconsolata-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/inconsolata/v37/QlddNThLqRwH-OJ1UHjlKENVzkWGVkL3GZQmAwLyx615Mjs.woff2",
+          "sha256": "8ca8881c29e485da4cfd38974399d070fe8fe934d626f774a32a59898117a676",
+          "sizeBytes": 31184
+        },
+        {
+          "file": "inconsolata/inconsolata-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/inconsolata/v37/QlddNThLqRwH-OJ1UHjlKENVzkWGVkL3GZQmAwLyya15.woff2",
+          "sha256": "4914e68b98699a8f3d5d552fe60fd7a1c2cb631a0f66f0a148392f161d3155ab",
+          "sizeBytes": 34084
+        }
+      ]
+    },
+    {
+      "id": "geist-mono",
+      "family": "Geist Mono",
+      "category": "monospace",
+      "lastModified": "2026-06-08",
+      "specimenUrl": "https://fonts.google.com/specimen/Geist+Mono",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Geist+Mono%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "geist-mono/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/geistmono/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "geist-mono/geist-mono-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/geistmono/v6/or3lQ6H-1_WfwkMZI_qYFrItlhvjvks.woff2",
+          "sha256": "cde10355ce14bb325e89af19c7609fac1fe90ea741f03a278cb3a11b02fe7f1a",
+          "sizeBytes": 16440
+        },
+        {
+          "file": "geist-mono/geist-mono-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/geistmono/v6/or3lQ6H-1_WfwkMZI_qYFrItmBvj.woff2",
+          "sha256": "7842d88c32207514dd03ddb9abc6c84b032d6fef58af1177e0b23f6554c80c75",
+          "sizeBytes": 25516
+        },
+        {
+          "file": "geist-mono/geist-mono-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrkdmgPn.woff2",
+          "sha256": "1a189eb997c3e2ece68373e387afaec9e8617424186c4b1ab3cff7c54ba6223b",
+          "sizeBytes": 14696
+        },
+        {
+          "file": "geist-mono/geist-mono-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrcdmg.woff2",
+          "sha256": "684ad5b531f81d43c1e8c7038262d5db7cdc1f68006e04d6c7769efa8d33c8cc",
+          "sizeBytes": 23128
+        }
+      ]
+    },
+    {
+      "id": "oswald",
+      "family": "Oswald",
+      "category": "display",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Oswald",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Oswald%3Awght%40200..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "oswald/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "oswald/oswald-normal-200-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/oswald/v57/TK3iWkUHHAIjg752Fz8Ghe4.woff2",
+          "sha256": "7989ccc7770f5aeffa67e088bcd3b294d42fae2f8b0eca3c3c51b953d1f735cc",
+          "sizeBytes": 23952
+        },
+        {
+          "file": "oswald/oswald-normal-200-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/oswald/v57/TK3iWkUHHAIjg752GT8G.woff2",
+          "sha256": "bd73278ee0c50041b91b4c03d1229e35b501637f46b6409e7da2d3a758446ea5",
+          "sizeBytes": 28488
+        }
+      ]
+    },
+    {
+      "id": "raleway",
+      "family": "Raleway",
+      "category": "display",
+      "lastModified": "2025-09-10",
+      "specimenUrl": "https://fonts.google.com/specimen/Raleway",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Raleway%3Aital%2Cwght%400%2C100..900%3B1%2C100..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "raleway/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/raleway/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "raleway/raleway-italic-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/raleway/v37/1Ptsg8zYS_SKggPNyCg4Q4FqPfE.woff2",
+          "sha256": "263c505d5216c4431265e258c83785ba7c96d9d31ba2759f2e761c45de08e42d",
+          "sizeBytes": 33476
+        },
+        {
+          "file": "raleway/raleway-italic-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/raleway/v37/1Ptsg8zYS_SKggPNyCg4TYFq.woff2",
+          "sha256": "8c08eb8b1fdd16dcdd6270e42a8b24fcf7ddc7e63d4363a55c174d110f90005f",
+          "sizeBytes": 50244
+        },
+        {
+          "file": "raleway/raleway-normal-100-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/raleway/v37/1Ptug8zYS_SKggPNyCMIT5lu.woff2",
+          "sha256": "2d603982caea60f15b741581c9e7bd88d1a7680fc52978137f9bc67c2dec61e0",
+          "sizeBytes": 31480
+        },
+        {
+          "file": "raleway/raleway-normal-100-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/raleway/v37/1Ptug8zYS_SKggPNyC0ITw.woff2",
+          "sha256": "b1bef1f03a77a36fc257c5525e32a1dd621bb6f935b743a419da7ed0b18dc8f5",
+          "sizeBytes": 48264
+        }
+      ]
+    },
+    {
+      "id": "comfortaa",
+      "family": "Comfortaa",
+      "category": "display",
+      "lastModified": "2025-09-08",
+      "specimenUrl": "https://fonts.google.com/specimen/Comfortaa",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Comfortaa%3Awght%40300..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "comfortaa/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/comfortaa/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "comfortaa/comfortaa-normal-300-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/comfortaa/v47/1Ptsg8LJRfWJmhDAuUs4Q4FqPfE.woff2",
+          "sha256": "1afa0e5e08c2e1acac2e9bac891e2f4f439e92d296528fc6e87b843a2e3c652a",
+          "sizeBytes": 24576
+        },
+        {
+          "file": "comfortaa/comfortaa-normal-300-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/comfortaa/v47/1Ptsg8LJRfWJmhDAuUs4TYFq.woff2",
+          "sha256": "408f20ae9895ceefa460a383d76497a91abc469e3d00b49f080efc7f4b12c60e",
+          "sizeBytes": 30872
+        }
+      ]
+    },
+    {
+      "id": "unbounded",
+      "family": "Unbounded",
+      "category": "display",
+      "lastModified": "2025-09-11",
+      "specimenUrl": "https://fonts.google.com/specimen/Unbounded",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Unbounded%3Awght%40200..900&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "unbounded/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "unbounded/unbounded-normal-200-900-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/unbounded/v12/Yq6W-LOTXCb04q32xlpwtcZfrxE.woff2",
+          "sha256": "845e1c9fe2e9a7bfbedfeb447fbeba4bc1b5ecd6246277910ccdaad35a7a532c",
+          "sizeBytes": 118348
+        },
+        {
+          "file": "unbounded/unbounded-normal-200-900-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/unbounded/v12/Yq6W-LOTXCb04q32xlpwu8Zf.woff2",
+          "sha256": "22f9b928aa3928a896340422b54d690fbb5875c30eae4c106f029c61f2289fd6",
+          "sizeBytes": 50904
+        }
+      ]
+    },
+    {
+      "id": "caveat",
+      "family": "Caveat",
+      "category": "handwriting",
+      "lastModified": "2025-09-04",
+      "specimenUrl": "https://fonts.google.com/specimen/Caveat",
+      "cssUrl": "https://fonts.googleapis.com/css2?family=Caveat%3Awght%40400..700&display=swap",
+      "license": {
+        "identifier": "OFL",
+        "file": "caveat/LICENSE.txt",
+        "sourceUrl": "https://raw.githubusercontent.com/google/fonts/main/ofl/caveat/OFL.txt"
+      },
+      "files": [
+        {
+          "file": "caveat/caveat-normal-400-700-latin-ext.woff2",
+          "subset": "latin-ext",
+          "unicodeRange": "U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF",
+          "sourceUrl": "https://fonts.gstatic.com/s/caveat/v23/Wnz6HAc5bAfYB2Q7aDYYmg8.woff2",
+          "sha256": "f626b95c1efa95cf6b7c9b043d3bbe8862b6abbe5f55a082102f33f7de2fd4f9",
+          "sizeBytes": 29472
+        },
+        {
+          "file": "caveat/caveat-normal-400-700-latin.woff2",
+          "subset": "latin",
+          "unicodeRange": "U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD",
+          "sourceUrl": "https://fonts.gstatic.com/s/caveat/v23/Wnz6HAc5bAfYB2Q7ZjYY.woff2",
+          "sha256": "891951df5e8b5b0f0bc760d31375405e795c666b5add70437de12d4a6482b33f",
+          "sizeBytes": 74932
+        }
+      ]
+    }
+  ]
+}

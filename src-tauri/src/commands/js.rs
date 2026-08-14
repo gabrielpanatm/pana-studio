@@ -4,8 +4,8 @@ use tauri::{AppHandle, State};
 use crate::{
     js::{
         self, require_page_js_draft_session_identity, require_page_js_file_buffer_identity,
-        PageJsCommandReceipt, PageJsConfig, PageJsDraftStageInput, PageJsDraftStageReceipt,
-        PageJsDraftStoreSnapshot, PageJsRequestIdentity,
+        MotionRuntimeContract, PageJsCommandReceipt, PageJsConfig, PageJsDraftStageInput,
+        PageJsDraftStageReceipt, PageJsDraftStoreSnapshot, PageJsRequestIdentity,
     },
     kernel::{
         file_buffer_store::FileBufferStore,
@@ -77,6 +77,7 @@ fn with_bound_page_js_file_buffer<T>(
 #[serde(rename_all = "camelCase")]
 pub struct PageJsWorkspaceState {
     pub template_path: String,
+    pub motion_runtime: MotionRuntimeContract,
     pub accepted: PageJsConfig,
     pub current: PageJsConfig,
     pub dirty: bool,
@@ -151,7 +152,7 @@ pub fn get_page_js(
             if let Some(draft) = drafts.drafts.get(template_path) {
                 return Ok(draft.current.clone());
             }
-            js::read_page_js_config(project_root, store, template_path)
+            js::read_page_motion_config(project_root, store, template_path)
         },
     )
 }
@@ -174,15 +175,17 @@ pub fn get_page_js_workspace_state(
             if let Some(draft) = drafts.drafts.get(&template_path) {
                 return Ok(PageJsWorkspaceState {
                     template_path,
+                    motion_runtime: MotionRuntimeContract::current(),
                     accepted: draft.base.clone(),
                     current: draft.current.clone(),
                     dirty: true,
                     entry_revision: Some(draft.revision),
                 });
             }
-            let accepted = js::read_page_js_config(project_root, store, &template_path)?;
+            let accepted = js::read_page_motion_config(project_root, store, &template_path)?;
             Ok(PageJsWorkspaceState {
                 template_path,
+                motion_runtime: MotionRuntimeContract::current(),
                 current: accepted.clone(),
                 accepted,
                 dirty: false,
@@ -220,6 +223,8 @@ pub fn stage_page_js_draft(
     let workspace = workspace
         .as_mut()
         .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru Page JS.".to_string())?;
+    input.cachebust_assets =
+        crate::commands::config::cachebust_assets_from_store(&workspace.documents)?;
     require_page_js_draft_session_identity(
         &current_root,
         &workspace.session,
@@ -397,7 +402,7 @@ pub fn apply_motion_mutation(
     let accepted = draft
         .map(|entry| entry.base.clone())
         .or_else(|| workspace.accepted_page_js_config(&template_path).cloned())
-        .unwrap_or(js::read_page_js_config(
+        .unwrap_or(js::read_page_motion_config(
             project_root,
             &workspace.documents,
             &template_path,
@@ -420,7 +425,9 @@ pub fn apply_motion_mutation(
         expected_session_id: input.expected_session_id,
         base_config: accepted,
         current_config: mutation.config.clone(),
-        cachebust_assets: false,
+        cachebust_assets: crate::commands::config::cachebust_assets_from_store(
+            &workspace.documents,
+        )?,
         source: Some("motion.v2".to_string()),
         coalesce_key,
         transaction_id: mutation
@@ -492,6 +499,29 @@ mod motion_command_tests {
                 interaction_id: "hero".to_string(),
             }),
             None
+        );
+    }
+
+    #[test]
+    fn page_js_workspace_projects_the_current_motion_runtime_contract() {
+        let state = PageJsWorkspaceState {
+            template_path: "templates/index.html".to_string(),
+            motion_runtime: MotionRuntimeContract::current(),
+            accepted: PageJsConfig::default(),
+            current: PageJsConfig::default(),
+            dirty: false,
+            entry_revision: None,
+        };
+        let value = serde_json::to_value(state).expect("serialize Page JS workspace");
+        let current = MotionRuntimeContract::current();
+
+        assert_eq!(
+            value["motionRuntime"]["schemaVersion"],
+            current.schema_version
+        );
+        assert_eq!(
+            value["motionRuntime"]["animeVersion"],
+            current.anime_version
         );
     }
 }

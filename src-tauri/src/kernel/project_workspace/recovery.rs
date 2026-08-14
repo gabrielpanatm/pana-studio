@@ -485,6 +485,7 @@ fn recovery_payload_from_workspace(
         &workspace.session.project_root,
     )?;
     workspace.accepted_disk.require_complete()?;
+    validate_workspace_recovery_paths(workspace)?;
     Ok(ProjectWorkspaceRecoveryPayload {
         schema_version: PROJECT_WORKSPACE_RECOVERY_SCHEMA_VERSION,
         project_root: workspace.session.project_root.clone(),
@@ -531,6 +532,8 @@ fn serialize_recovery_journal_transaction(
     base: &ProjectWorkspace,
     current: &ProjectWorkspace,
 ) -> Result<String, String> {
+    validate_workspace_recovery_paths(base)?;
+    validate_workspace_recovery_paths(current)?;
     current
         .accepted_disk
         .require_identity(&current.runtime_session_id(), &current.session.project_root)?;
@@ -1471,7 +1474,44 @@ fn validate_recovery_path(project_root: &Path, relative_path: &str) -> Result<()
             "ProjectWorkspace recovery conține path necanonic: {relative_path}."
         ));
     }
+    if Path::new(relative_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some(".env")
+    {
+        return Err(
+            "ProjectWorkspace recovery a refuzat .env; credentialele nu sunt recuperabile."
+                .to_string(),
+        );
+    }
     resolve_project_write_path(project_root, relative_path)?;
+    Ok(())
+}
+
+fn validate_workspace_recovery_paths(workspace: &ProjectWorkspace) -> Result<(), String> {
+    let project_root = Path::new(&workspace.session.project_root);
+    for path in workspace
+        .documents
+        .files
+        .keys()
+        .map(String::as_str)
+        .chain(
+            workspace
+                .accepted_binary_resource_hashes
+                .keys()
+                .map(String::as_str),
+        )
+        .chain(workspace.binary_resources.keys().map(String::as_str))
+        .chain(
+            workspace
+                .deleted_binary_resources
+                .iter()
+                .map(String::as_str),
+        )
+        .chain(workspace.history.recovery_paths())
+    {
+        validate_recovery_path(project_root, path)?;
+    }
     Ok(())
 }
 
@@ -1481,7 +1521,7 @@ mod tests {
 
     use crate::{
         app_home::{ensure_app_home, TEST_APP_ENV_LOCK},
-        js::PageJsDraftStore,
+        js::{MotionCustomCode, MotionDocument, PageJsDraftStore},
         kernel::{
             file_buffer_store::{
                 hash_bytes, hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStore,
@@ -1505,6 +1545,15 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn recovery_paths_reject_root_and_nested_env_files() {
+        let root = Path::new("/tmp/panastudio-recovery-env-boundary");
+        for path in [".env", "config/.env"] {
+            let error = validate_recovery_path(root, path).unwrap_err();
+            assert!(error.contains("credentialele nu sunt recuperabile"));
+        }
+    }
 
     #[test]
     fn recreated_project_path_requires_explicit_recovery_decision_and_preserves_drafts() {
@@ -2121,6 +2170,114 @@ mod tests {
             Some("<main>one</main>\n")
         );
         assert!(restored.documents.text_for("templates/two.html").is_none());
+
+        clear_project_workspace_recovery(app.handle(), &session.project_root).unwrap();
+        drop(app);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn motion_draft_recovery_regenerates_portable_source_and_runtime_without_disk_writes() {
+        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "pana-project-workspace-motion-recovery-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("zola.toml"), "base_url = '/'\n").unwrap();
+        let project = project.canonicalize().unwrap();
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        ensure_app_home(app.handle()).unwrap();
+        let session_dir = root.join("session");
+        fs::create_dir_all(&session_dir).unwrap();
+        let session = test_session(&project, &session_dir);
+        let mut live = workspace(&project, &session);
+        persist_project_workspace_recovery(app.handle(), &live).unwrap();
+
+        commit_project_workspace_session_mutation(app.handle(), &mut live, |candidate| {
+            candidate.stage_resource_texts(
+                &identity(candidate),
+                WorkspaceMutationMetadata {
+                    label: "Create Motion template".to_string(),
+                    source: "test.motion_recovery".to_string(),
+                    coalesce_key: None,
+                    transaction_id: Some("motion-template".to_string()),
+                },
+                vec![super::super::WorkspaceResourceMutation {
+                    relative_path: "templates/index.html".to_string(),
+                    contents: "<main data-anim=\"hero\">Hero</main>\n".to_string(),
+                    create_only: true,
+                }],
+                70,
+            )
+        })
+        .unwrap();
+        commit_project_workspace_session_mutation(app.handle(), &mut live, |candidate| {
+            candidate.stage_page_js(
+                &identity(candidate),
+                WorkspaceMutationMetadata {
+                    label: "Create Motion".to_string(),
+                    source: "test.motion_recovery".to_string(),
+                    coalesce_key: None,
+                    transaction_id: Some("motion-draft".to_string()),
+                },
+                PageJsDraftStageInput {
+                    template_path: "templates/index.html".to_string(),
+                    expected_project_root: candidate.session.project_root.clone(),
+                    expected_session_id: candidate.runtime_session_id(),
+                    base_config: PageJsConfig::default(),
+                    current_config: PageJsConfig {
+                        motion: Some(MotionDocument {
+                            custom_code: vec![MotionCustomCode {
+                                id: "recovered-motion".to_string(),
+                                name: "Recovered Motion".to_string(),
+                                enabled: true,
+                                code: "window.__recoveredMotion=true".to_string(),
+                            }],
+                            ..MotionDocument::default()
+                        }),
+                    },
+                    cachebust_assets: false,
+                    source: Some("test.motion_recovery".to_string()),
+                    coalesce_key: None,
+                    transaction_id: Some("motion-draft".to_string()),
+                },
+                71,
+            )
+        })
+        .unwrap();
+
+        let mut restored = workspace(&project, &session);
+        assert_eq!(
+            restore_project_workspace_recovery(app.handle(), &mut restored).unwrap(),
+            ProjectWorkspaceRecoveryStatus::Restored
+        );
+        assert_eq!(restored.revision, 2);
+        assert_eq!(restored.page_js.dirty_count(), 1);
+        let projection = restored.capture_projection_snapshot().unwrap();
+        assert!(projection
+            .source_texts
+            .get(".panastudio/motion/templates/index.json")
+            .is_some_and(|source| source.contains("recovered-motion")));
+        assert!(projection
+            .source_texts
+            .get("static/js/pana-index.js")
+            .is_some_and(|source| source.contains("/js/vendor/animejs-4.4.1/index.js")));
+        assert!(projection
+            .source_texts
+            .contains_key("static/js/vendor/animejs-4.4.1/index.js"));
+        assert!(!projection
+            .source_texts
+            .contains_key("static/js/pana-motion-runtime.js"));
+        assert!(!project
+            .join(".panastudio/motion/templates/index.json")
+            .exists());
+        assert!(!project.join("static/js/pana-index.js").exists());
 
         clear_project_workspace_recovery(app.handle(), &session.project_root).unwrap();
         drop(app);

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-bundled-font-preview"
+description = "Enables the get_bundled_font_preview command without any pre-configured scope."
+commands.allow = ["get_bundled_font_preview"]
+
+[[permission]]
+identifier = "deny-get-bundled-font-preview"
+description = "Denies the get_bundled_font_preview command without any pre-configured scope."
+commands.deny = ["get_bundled_font_preview"]

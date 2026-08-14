@@ -43,8 +43,8 @@ pub use reader::{
 pub use retention::{KernelLogArchiveSnapshot, KernelLogRetentionSnapshot};
 
 use retention::{
-    default_kernel_log_retention_policy, rotate_kernel_log_if_needed, KernelLogRetentionPolicy,
-    KernelLogRotationReceipt,
+    clear_kernel_log_retention, default_kernel_log_retention_policy, rotate_kernel_log_if_needed,
+    KernelLogRetentionPolicy, KernelLogRotationReceipt,
 };
 
 pub type KernelLogAttributes = BTreeMap<String, Value>;
@@ -210,6 +210,33 @@ pub fn append_events<R: Runtime>(
         events,
         &default_kernel_log_retention_policy(),
     )
+}
+
+/// Clears only the bounded observability log and its declared archives.
+/// The stable lock remains in place and future events recreate the active log.
+pub fn clear_kernel_observability_logs<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<(usize, u64, Vec<String>), String> {
+    let path = kernel_log_path(app)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Nu am putut determina boundary-ul logului de kernel.".to_string())?;
+    let runtime = app
+        .try_state::<WriteAuthorityRuntime>()
+        .ok_or_else(|| "Observability nu are WriteAuthorityRuntime instalat.".to_string())?;
+    let _write_guard = OBSERVABILITY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let lock_path = parent.join(KERNEL_LOG_LOCK_FILE);
+    let _stable_lock = capability_lock_observability_file(
+        Some(runtime.inner()),
+        &lock_path,
+        parent,
+        "observability/kernel-log-stable-lock",
+        CapabilityMaintenanceLockMode::Exclusive,
+    )
+    .map_err(|error| error.into_terminal_diagnostic())?;
+    clear_kernel_log_retention(Some(runtime.inner()), &path)
 }
 
 #[cfg(test)]

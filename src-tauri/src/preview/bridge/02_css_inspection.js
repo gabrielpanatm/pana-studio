@@ -307,15 +307,12 @@
   }
 
   function blockContextForElement(element) {
-    var root = element.closest("[data-pana-block],[data-pana-component]");
+    var root = element.closest("[data-pana-block]");
     if (!root) return null;
-    var canonical = root.getAttribute("data-pana-block");
-    var legacy = root.getAttribute("data-pana-component");
-    var providerId = (canonical || legacy || "").trim();
+    var providerId = (root.getAttribute("data-pana-block") || "").trim();
     if (!providerId) return null;
     return {
       providerId: providerId,
-      markerKind: canonical ? "canonical" : "legacy",
       rootSelector: createDomPathSelector(root),
       rootTag: root.tagName.toLowerCase(),
     };

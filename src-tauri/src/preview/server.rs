@@ -16,8 +16,8 @@ use percent_encoding::percent_decode_str;
 use relative_path::RelativePathBuf;
 
 use crate::preview::inject::{
-    build_prepared_design_safe_response, PreparedDesignSafeHtml, PreparedInitialPreviewHtml,
-    PreviewHtmlSurface,
+    build_prepared_design_safe_response, internal_motion_preview_asset, PreparedDesignSafeHtml,
+    PreparedInitialPreviewHtml, PreviewHtmlSurface,
 };
 use crate::preview::{
     alternate_zola_directory_content_key, CanvasProjectionIdentity, CanvasProjectionPhase,
@@ -540,6 +540,23 @@ fn serve_request(
     let exact_revision_identity =
         requested_revision.as_deref() == Some(generation.preview_revision.as_str());
 
+    if let Some((content_type, body)) = internal_motion_preview_asset(decoded.as_ref()) {
+        if !exact_revision_identity {
+            return Ok(plain_response(
+                "HTTP/1.1 409 Conflict",
+                "text/plain; charset=utf-8",
+                b"Motion Preview revision mismatch",
+                head_only,
+            ));
+        }
+        return Ok(plain_response(
+            "HTTP/1.1 200 OK",
+            content_type,
+            body,
+            head_only,
+        ));
+    }
+
     if decoded.starts_with("/__pana_workbench/") {
         let workbench = generation
             .workbench_content
@@ -844,7 +861,6 @@ fn is_internal_query(part: &&str) -> bool {
             | "__pana_canvas_transaction"
             | "__pana_reload"
             | "__pana_interactive_restart"
-            | "__pana_motion_mode"
     )
 }
 
@@ -1040,6 +1056,59 @@ mod tests {
     }
 
     #[test]
+    fn staged_asset_with_unicode_path_is_served_by_exact_preview_revision() {
+        let unique = format!(
+            "pana-preview-staged-asset-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let assets_root = std::env::temp_dir().join(unique);
+        let image_directory = assets_root.join("images");
+        fs::create_dir_all(&image_directory).unwrap();
+        fs::write(
+            image_directory.join("Captură de ecran.png"),
+            b"pana-image-bytes",
+        )
+        .unwrap();
+
+        let active: ActivePreviewStore =
+            Arc::new(RwLock::new(PreviewGenerationRegistry::default()));
+        active
+            .write()
+            .unwrap()
+            .stage(Arc::new(ActivePreviewGeneration {
+                project_root: "/project".to_string(),
+                runtime_session_id: "runtime".to_string(),
+                workspace_revision: 18,
+                preview_revision: "preview-staged-image".to_string(),
+                canvas_transaction: CanvasProjectionTransaction::test_fixture(
+                    18,
+                    "preview-staged-image",
+                ),
+                content: HashMap::new(),
+                workbench_content: Arc::new(RwLock::new(HashMap::new())),
+                assets_root: assets_root.clone(),
+                inherited_assets: None,
+            }));
+
+        let unversioned = request_preview(&active, "/images/Captur%C4%83%20de%20ecran.png");
+        assert!(unversioned.starts_with("HTTP/1.1 503 Service Unavailable"));
+
+        let exact = request_preview(
+            &active,
+            "/images/Captur%C4%83%20de%20ecran.png?__pana_preview_revision=preview-staged-image",
+        );
+        assert!(exact.starts_with("HTTP/1.1 200 OK"));
+        assert!(exact.contains("Content-Type: image/png"));
+        assert!(exact.ends_with("pana-image-bytes"));
+
+        fs::remove_dir_all(&assets_root).unwrap();
+    }
+
+    #[test]
     fn internal_queries_never_reach_project_routes() {
         assert_eq!(
             public_request_target(
@@ -1056,11 +1125,11 @@ mod tests {
             PreviewHtmlSurface::Interactive
         );
         assert_eq!(
-            request_surface("/?__pana_view=motion&__pana_motion_mode=preview"),
+            request_surface("/?__pana_view=motion"),
             PreviewHtmlSurface::Motion
         );
         assert_eq!(
-            public_request_target("/?article=1&__pana_view=motion&__pana_motion_mode=preview"),
+            public_request_target("/?article=1&__pana_view=motion"),
             "/?article=1"
         );
         assert_eq!(

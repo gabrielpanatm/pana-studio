@@ -1726,7 +1726,7 @@ mod tests {
 {{ cards::missing() }}
 {{ missing::render() }}
 {% endfor %}
-<div data-pana-component="tabs"></div>
+<div data-pana-block="tabs"></div>
 "#
                     .to_string(),
                 ),

@@ -39,6 +39,7 @@
     installedFontAxes = [],
     scannedAssets = [],
     loadingClassRules = false,
+    projectionTransitioning = false,
     selectorSuffix = "",
     customSuffix = "",
     usingCustom = false,
@@ -62,6 +63,7 @@
     installedFontAxes?: InstalledFontVariationAxis[];
     scannedAssets?: ProjectFile[];
     loadingClassRules?: boolean;
+    projectionTransitioning?: boolean;
     selectorSuffix?: string;
     customSuffix?: string;
     usingCustom?: boolean;
@@ -73,17 +75,22 @@
 
   let customEditorOpen = $state(false);
   const customEditorVisible = $derived(usingCustom || customEditorOpen);
-  const hasElementSelection = $derived(
+  const hasCssSubject = $derived(
     selectionSummary?.state === "resolved"
       && (
         selectionSummary.subjectKind === "htmlElement"
         || selectionSummary.subjectKind === "runtimeElement"
+        || selectionSummary.subjectKind === "cssRule"
       ),
   );
 </script>
 
-{#if hasElementSelection && selectedClass}
-  <section class="css-pane">
+{#if hasCssSubject && selectedClass}
+  <section
+    class="css-pane"
+    aria-busy={loadingClassRules || projectionTransitioning}
+    inert={projectionTransitioning}
+  >
     <div class="css-context">
       <div class="group-header">
         <h3>{t("inspector-css-rules")}</h3>
@@ -146,15 +153,12 @@
         })}
       </p>
     {:else}
-      {#if pageCssTarget}
-        <p class="hint css-target-note">
-          {t("inspector-css-target-file", { file: pageCssTarget.file })}
-          {#if pageCssTarget.targetKind === "reusable"}
-            {#if pageCssTarget.consumerFiles.length > 0}
-              {t("inspector-css-reusable-consumers", { files: pageCssTarget.consumerFiles.join(", ") })}
-            {:else}
-              {t("inspector-css-reusable-preview-only")}
-            {/if}
+      {#if pageCssTarget?.targetKind === "reusable"}
+        <p class="hint css-delivery-note">
+          {#if pageCssTarget.consumerFiles.length > 0}
+            {t("inspector-css-reusable-consumers", { files: pageCssTarget.consumerFiles.join(", ") })}
+          {:else}
+            {t("inspector-css-reusable-preview-only")}
           {/if}
         </p>
       {/if}
@@ -190,7 +194,7 @@
       />
     {/if}
   </section>
-{:else if !hasElementSelection}
+{:else if !hasCssSubject}
   <InspectorEmptyState kind="css" title="CSS" description={t("inspector-css-select-element")} />
 {:else if selectionSummary?.classes.length}
   <InspectorEmptyState kind="css" title="CSS" description={t("inspector-css-select-class")} />
@@ -204,7 +208,7 @@
     line-height: 1.45;
   }
 
-  .css-target-note {
+  .css-delivery-note {
     overflow-wrap: anywhere;
   }
 

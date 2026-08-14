@@ -184,6 +184,14 @@ workbench-character-count =
         [few] { $count } caractere
        *[other] { $count } de caractere
     }
+workbench-line-count =
+    { $count ->
+        [one] { $count } rând
+        [few] { $count } rânduri
+       *[other] { $count } de rânduri
+    }
+workbench-source-status = Informații despre fișierul sursă
+workbench-source-size = Dimensiune UTF-8: { $size }
 workbench-interactive-preparing = Previzualizarea interactivă se pregătește…
 workbench-interactive-unavailable = Previzualizarea interactivă este indisponibilă.
 workbench-interactive-invalid-url = Previzualizarea interactivă a refuzat un URL fără revizie canonică.

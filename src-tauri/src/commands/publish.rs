@@ -5,10 +5,9 @@ use std::{
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, State};
+use tauri::State;
 
 use crate::{
-    commands::config::read_project_app_config_for_bootstrap,
     deploy::{
         configuration_snapshot, run_zola_editor_check, DeployConfigurationSnapshot,
         DeployCredentialKind, DeployCredentialStatus, DeployProviderKind,
@@ -57,7 +56,6 @@ struct PublishAuthorityContext {
 #[tauri::command]
 pub fn run_publish_preflight(
     request: Option<PublishPreflightRequest>,
-    app: AppHandle,
     state: State<AppState>,
 ) -> Result<PublishPreflightReceipt, String> {
     let request = request.unwrap_or_default();
@@ -68,7 +66,7 @@ pub fn run_publish_preflight(
         .map_err(|_| "Publish Preflight nu a putut bloca autoritatea de publicare.".to_string())?;
     state.clear_publish_authorization()?;
     let context = capture_publish_authority_context(&state)?;
-    let configuration = read_deploy_snapshot(&app, &context.root)?;
+    let configuration = read_deploy_snapshot(&state, &context.root)?;
     let settings_fingerprint = deploy_settings_fingerprint(&configuration)?;
     let disk_coherent = context.observed_disk == context.accepted_disk.manifest;
     let observed_disk_fingerprint = project_disk_fingerprint(&context.observed_disk)?;
@@ -141,7 +139,6 @@ pub fn run_publish_preflight(
         gates,
     })?;
     publish_preflight_receipt_if_current(
-        &app,
         &state,
         &context,
         &configuration,
@@ -153,7 +150,6 @@ pub fn run_publish_preflight(
 
 #[tauri::command]
 pub fn current_publish_preflight_receipt(
-    app: AppHandle,
     state: State<AppState>,
 ) -> Result<Option<PublishPreflightReceipt>, String> {
     let receipt = state
@@ -164,7 +160,7 @@ pub fn current_publish_preflight_receipt(
     let Some(receipt) = receipt else {
         return Ok(None);
     };
-    if publish_preflight_receipt_is_current(&app, &state, &receipt).is_err() {
+    if publish_preflight_receipt_is_current(&state, &receipt).is_err() {
         invalidate_publish_authorization(&state)?;
         return Ok(None);
     }
@@ -173,7 +169,6 @@ pub fn current_publish_preflight_receipt(
 
 #[tauri::command]
 pub fn current_publish_build_receipt(
-    app: AppHandle,
     state: State<AppState>,
 ) -> Result<Option<PublishBuildReceipt>, String> {
     let receipt = state
@@ -184,7 +179,7 @@ pub fn current_publish_build_receipt(
     let Some(receipt) = receipt else {
         return Ok(None);
     };
-    if publish_build_receipt_is_current(&app, &state, &receipt).is_err() {
+    if publish_build_receipt_is_current(&state, &receipt).is_err() {
         clear_publish_build_receipt(&state)?;
         return Ok(None);
     }
@@ -192,7 +187,6 @@ pub fn current_publish_build_receipt(
 }
 
 pub(crate) fn require_current_publish_preflight(
-    app: &AppHandle,
     state: &AppState,
     expected_token: &str,
 ) -> Result<PublishPreflightReceipt, String> {
@@ -212,12 +206,11 @@ pub(crate) fn require_current_publish_preflight(
             "Publish Preflight nu este ready; buildul pentru publicare este blocat.".to_string(),
         );
     }
-    publish_preflight_receipt_is_current(app, state, &receipt)?;
+    publish_preflight_receipt_is_current(state, &receipt)?;
     Ok(receipt)
 }
 
 pub(crate) fn require_current_publish_build(
-    app: &AppHandle,
     state: &AppState,
     expected_build_token: &str,
     expected_artifact_id: &str,
@@ -237,7 +230,7 @@ pub(crate) fn require_current_publish_build(
             "Dovada buildului nu corespunde tokenului, artifactului sau țintei cerute.".to_string(),
         );
     }
-    publish_build_receipt_is_current(app, state, &receipt)?;
+    publish_build_receipt_is_current(state, &receipt)?;
     Ok(receipt)
 }
 
@@ -246,12 +239,11 @@ pub(crate) fn invalidate_publish_authorization(state: &AppState) -> Result<(), S
 }
 
 pub(crate) fn store_publish_build_receipt_if_current(
-    app: &AppHandle,
     state: &AppState,
     receipt: PublishBuildReceipt,
 ) -> Result<(), String> {
     let root = current_project_root(state)?;
-    let configuration = read_deploy_snapshot(app, &root)?;
+    let configuration = read_deploy_snapshot(state, &root)?;
     let workspace = state
         .project_workspace
         .lock()
@@ -366,7 +358,6 @@ fn capture_publish_authority_context(state: &AppState) -> Result<PublishAuthorit
 }
 
 fn publish_preflight_receipt_if_current(
-    app: &AppHandle,
     state: &AppState,
     expected: &PublishAuthorityContext,
     expected_configuration: &DeployConfigurationSnapshot,
@@ -381,7 +372,7 @@ fn publish_preflight_receipt_if_current(
     if observed_disk != expected.observed_disk {
         return Err("Discul proiectului s-a schimbat în timpul Publish Preflight.".to_string());
     }
-    let current_configuration = read_deploy_snapshot(app, &root)?;
+    let current_configuration = read_deploy_snapshot(state, &root)?;
     if current_configuration != *expected_configuration
         || deploy_settings_fingerprint(&current_configuration)? != expected_settings_fingerprint
     {
@@ -411,7 +402,6 @@ fn publish_preflight_receipt_if_current(
 }
 
 fn publish_preflight_receipt_is_current(
-    app: &AppHandle,
     state: &AppState,
     receipt: &PublishPreflightReceipt,
 ) -> Result<(), String> {
@@ -453,7 +443,7 @@ fn publish_preflight_receipt_is_current(
     {
         return Err("Publish Preflight receipt este stale pentru discul proiectului.".to_string());
     }
-    let configuration = read_deploy_snapshot(app, &root)?;
+    let configuration = read_deploy_snapshot(state, &root)?;
     if configuration.settings.revision != receipt.deploy_settings_revision
         || deploy_settings_fingerprint(&configuration)? != receipt.deploy_settings_fingerprint
         || active_target_identity(&configuration) != receipt.active_target
@@ -466,11 +456,10 @@ fn publish_preflight_receipt_is_current(
 }
 
 fn publish_build_receipt_is_current(
-    app: &AppHandle,
     state: &AppState,
     receipt: &PublishBuildReceipt,
 ) -> Result<(), String> {
-    let preflight = require_current_publish_preflight(app, state, &receipt.preflight_token)?;
+    let preflight = require_current_publish_preflight(state, &receipt.preflight_token)?;
     if !publish_build_matches_preflight(receipt, &preflight) {
         return Err("PublishBuildReceipt nu mai corespunde Publish Preflight curent.".to_string());
     }
@@ -510,11 +499,22 @@ fn publish_build_matches_preflight(
 }
 
 fn read_deploy_snapshot(
-    app: &AppHandle,
+    state: &AppState,
     root: &std::path::Path,
 ) -> Result<DeployConfigurationSnapshot, String> {
-    let config = read_project_app_config_for_bootstrap(app, root)?;
-    configuration_snapshot(app, root, config.deploy)
+    if current_project_root(state)? != root {
+        return Err("Configurația deploy aparține altui ProjectRoot.".to_string());
+    }
+    let slot = state
+        .project_workspace
+        .lock()
+        .map_err(|_| "Nu am putut bloca ProjectWorkspace pentru deploy.".to_string())?;
+    let workspace = slot
+        .as_ref()
+        .ok_or_else(|| "ProjectWorkspace nu este inițializat pentru deploy.".to_string())?;
+    let settings =
+        crate::deploy::read_deploy_settings_from_store(&workspace.documents, workspace.revision)?;
+    configuration_snapshot(root, settings)
 }
 
 fn current_project_root(state: &AppState) -> Result<PathBuf, String> {
@@ -553,7 +553,7 @@ fn active_target_identity(
     Some(PublishPreflightTargetIdentity {
         target_id: target.id.clone(),
         provider: target.provider_kind().as_str().to_string(),
-        credential_ref: target.credential_ref.clone(),
+        credential_env_prefix: target.credential_env_prefix.clone(),
         credential_kind: credential_kind_name(status.kind).to_string(),
         credential_configured: status.configured,
     })
@@ -573,7 +573,7 @@ fn active_credential_status(
         .iter()
         .find(|target| target.id == target_id)?;
     configuration.credential_statuses.iter().find(|status| {
-        status.credential_ref == target.credential_ref
+        status.credential_env_prefix == target.credential_env_prefix
             && credential_kind_supports_provider(status.kind, target.provider_kind())
     })
 }
@@ -982,7 +982,7 @@ fn deploy_credential_gate(configuration: &DeployConfigurationSnapshot) -> Publis
             "publish-preflight-evidence-credential-reference",
             Some(format!(
                 "{} ({})",
-                target.credential_ref, target.credential_kind
+                target.credential_env_prefix, target.credential_kind
             )),
         ));
     }
@@ -1188,11 +1188,10 @@ mod tests {
     #[test]
     fn target_and_credential_gates_are_local_and_typed() {
         let no_target = DeployConfigurationSnapshot {
-            schema_version: 1,
+            schema_version: crate::deploy::DEPLOY_CONFIGURATION_SCHEMA_VERSION,
             settings: DeploySettings::default(),
             credential_statuses: Vec::new(),
             target_capabilities: Vec::new(),
-            legacy_bunny_fallback: false,
         };
         assert_eq!(
             deploy_target_gate(&no_target).outcome,
@@ -1202,7 +1201,7 @@ mod tests {
         let target = DeployTarget {
             id: "production".to_string(),
             name: "Production".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::Bunny(BunnyTargetConfig {
                 storage_zone: "pana-studio".to_string(),
@@ -1212,7 +1211,7 @@ mod tests {
             }),
         };
         let mut configuration = DeployConfigurationSnapshot {
-            schema_version: 1,
+            schema_version: crate::deploy::DEPLOY_CONFIGURATION_SCHEMA_VERSION,
             settings: DeploySettings {
                 schema_version: 1,
                 revision: 3,
@@ -1220,13 +1219,13 @@ mod tests {
                 targets: vec![target],
             },
             credential_statuses: vec![DeployCredentialStatus {
-                schema_version: 1,
-                credential_ref: "production-credentials".to_string(),
+                schema_version: crate::deploy::DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
+                credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
                 kind: DeployCredentialKind::Bunny,
                 configured: false,
+                missing_fields: vec!["STORAGE_KEY".to_string(), "CDN_API_KEY".to_string()],
             }],
             target_capabilities: Vec::new(),
-            legacy_bunny_fallback: false,
         };
         assert_eq!(
             deploy_target_gate(&configuration).outcome,
@@ -1248,10 +1247,10 @@ mod tests {
             PublishPreflightGateOutcome::Passed
         );
 
-        let shared_ref_s3 = DeployTarget {
+        let staging_s3 = DeployTarget {
             id: "staging".to_string(),
             name: "Staging".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_STAGING".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::S3(S3TargetConfig {
                 bucket: "staging".to_string(),
@@ -1263,15 +1262,16 @@ mod tests {
                 cache_control: None,
             }),
         };
-        configuration.settings.targets.push(shared_ref_s3);
+        configuration.settings.targets.push(staging_s3);
         configuration.settings.active_target_id = Some("staging".to_string());
         configuration
             .credential_statuses
             .push(DeployCredentialStatus {
-                schema_version: 1,
-                credential_ref: "production-credentials".to_string(),
+                schema_version: crate::deploy::DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
+                credential_env_prefix: "PANA_DEPLOY_STAGING".to_string(),
                 kind: DeployCredentialKind::S3,
                 configured: false,
+                missing_fields: vec!["ACCESS_KEY_ID".to_string()],
             });
         assert_eq!(
             deploy_credential_gate(&configuration).outcome,
@@ -1351,7 +1351,7 @@ mod tests {
             active_target: Some(PublishPreflightTargetIdentity {
                 target_id: "production".to_string(),
                 provider: "bunny".to_string(),
-                credential_ref: "production-credentials".to_string(),
+                credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
                 credential_kind: "bunny".to_string(),
                 credential_configured: true,
             }),

@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use percent_encoding::percent_decode_str;
@@ -6,7 +10,6 @@ use sha2::{Digest, Sha256};
 use tauri_utils::html::{parse, serialize_node, NodeRef};
 
 use crate::{
-    blocks::NATIVE_BLOCK_RUNTIME_SCRIPT,
     preview::CanvasProjectionIdentity,
     project_model::html_editor_schema::{
         has_active_script_scheme, is_forbidden_attribute_name, is_forbidden_element,
@@ -39,6 +42,9 @@ const BRIDGE_SCRIPT: &str = concat!(
     include_str!("bridge/13_boot.js"),
 );
 const INTERACTIVE_RUNTIME_SCRIPT: &str = include_str!("interactive_runtime.js");
+pub(crate) const INTERNAL_ANIME_PREVIEW_PATH: &str = "/__pana_internal/anime.js";
+pub(crate) const INTERNAL_MOTION_PREVIEW_PATH: &str = "/__pana_internal/motion-preview.js";
+static MOTION_PREVIEW_RUNTIME: OnceLock<String> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PreviewHtmlSurface {
@@ -64,6 +70,7 @@ pub(crate) struct PreparedInitialPreviewHtml {
     preview_revision: String,
     document_route: String,
     resource_versions: PreviewResourceVersions,
+    motion_preview_payload: Option<String>,
 }
 
 /// Identitățile resurselor sunt produse autoritativ de manifestul Rust al
@@ -104,6 +111,7 @@ impl PreparedInitialPreviewHtml {
                 &self.preview_revision,
                 &self.document_route,
                 &self.resource_versions,
+                self.motion_preview_payload.as_deref(),
             )
             .map(Cow::Owned),
             PreviewHtmlSurface::Interactive => prepare_interactive_document(
@@ -281,11 +289,28 @@ pub(crate) fn prepare_design_safe_html(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_design_safe_html_with_resources(
     html: &str,
     preview_revision: &str,
     document_route: &str,
     resource_versions: &PreviewResourceVersions,
+) -> Result<PreparedDesignSafeHtml, String> {
+    prepare_design_safe_html_with_motion_payload(
+        html,
+        preview_revision,
+        document_route,
+        resource_versions,
+        None,
+    )
+}
+
+pub(crate) fn prepare_design_safe_html_with_motion_payload(
+    html: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+    motion_preview_payload: Option<&str>,
 ) -> Result<PreparedDesignSafeHtml, String> {
     if html.len() > MAX_PREVIEW_HTML_BYTES {
         return Err(format!(
@@ -311,7 +336,13 @@ pub(crate) fn prepare_design_safe_html_with_resources(
             document_route,
             resource_versions,
         )?,
-        motion: prepare_motion_document(html, preview_revision, document_route, resource_versions)?,
+        motion: prepare_motion_document(
+            html,
+            preview_revision,
+            document_route,
+            resource_versions,
+            motion_preview_payload,
+        )?,
         interactive: prepare_interactive_document(
             html,
             preview_revision,
@@ -338,11 +369,28 @@ pub(crate) fn prepare_initial_preview_html(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_initial_preview_html_with_resources(
     html: &str,
     preview_revision: &str,
     document_route: &str,
     resource_versions: &PreviewResourceVersions,
+) -> Result<PreparedInitialPreviewHtml, String> {
+    prepare_initial_preview_html_with_motion_payload(
+        html,
+        preview_revision,
+        document_route,
+        resource_versions,
+        None,
+    )
+}
+
+pub(crate) fn prepare_initial_preview_html_with_motion_payload(
+    html: &str,
+    preview_revision: &str,
+    document_route: &str,
+    resource_versions: &PreviewResourceVersions,
+    motion_preview_payload: Option<&str>,
 ) -> Result<PreparedInitialPreviewHtml, String> {
     require_preview_html_input(html, preview_revision)?;
     Ok(PreparedInitialPreviewHtml {
@@ -364,6 +412,7 @@ pub(crate) fn prepare_initial_preview_html_with_resources(
         preview_revision: preview_revision.to_string(),
         document_route: document_route.to_string(),
         resource_versions: resource_versions.clone(),
+        motion_preview_payload: motion_preview_payload.map(str::to_string),
     })
 }
 
@@ -385,17 +434,9 @@ fn prepare_motion_document(
     preview_revision: &str,
     document_route: &str,
     resource_versions: &PreviewResourceVersions,
+    motion_preview_payload: Option<&str>,
 ) -> Result<String, String> {
     let source_document = parse(html.to_string());
-    let script_sources = source_document
-        .select("script[src]")
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(|script| script.attributes.borrow().get("src").map(str::to_string))
-        .filter(|source| is_motion_runtime_script(source))
-        .collect::<Vec<_>>();
-
     sanitize_document_tree(&source_document);
     revision_local_resource_urls(
         &source_document,
@@ -412,49 +453,42 @@ fn prepare_motion_document(
     html.attributes
         .borrow_mut()
         .insert("data-pana-motion-preview", "true".to_string());
-    append_motion_scripts(
-        &source_document,
-        &script_sources,
-        preview_revision,
-        document_route,
-        resource_versions,
-    )?;
-    append_interactive_runtime(&source_document, false)?;
+    if let Some(payload) = motion_preview_payload {
+        append_motion_preview_runtime(&source_document, payload, preview_revision)?;
+    }
+    append_interactive_runtime(&source_document)?;
     String::from_utf8(serialize_node(&source_document)).map_err(|error| {
         format!("Documentul Previzualizare Motion nu a putut fi serializat: {error}")
     })
 }
 
-fn is_motion_runtime_script(source: &str) -> bool {
-    let path = source.trim().split('?').next().unwrap_or_default();
-    if !path.starts_with("/js/")
-        || !path
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_'))
-    {
-        return false;
-    }
-    path == "/js/anime.min.js"
-        || (path.starts_with("/js/pana-")
-            && path.ends_with(".js")
-            && !path.trim_start_matches("/js/").contains('/'))
-}
-
-fn append_motion_scripts(
+fn append_motion_preview_runtime(
     document: &NodeRef,
-    sources: &[String],
+    payload: &str,
     preview_revision: &str,
-    document_route: &str,
-    resource_versions: &PreviewResourceVersions,
 ) -> Result<(), String> {
+    let encoded_payload = BASE64_STANDARD.encode(payload.as_bytes());
+    let head = document
+        .select_first("head")
+        .map_err(|_| "Documentul Previzualizare Motion nu are un element head.".to_string())?;
+    let metadata_document = parse(format!(
+        "<!doctype html><html><head><meta name=\"pana-motion-preview-config\" content=\"{encoded_payload}\"></head><body></body></html>"
+    ));
+    let metadata = metadata_document
+        .select_first("meta[name='pana-motion-preview-config']")
+        .map_err(|_| "Configurația internă Motion Preview nu a putut fi construită.".to_string())?
+        .as_node()
+        .clone();
+    metadata.detach();
+    head.as_node().append(metadata);
+
     let body = document
         .select_first("body")
         .map_err(|_| "Documentul Previzualizare Motion nu are un element body.".to_string())?;
-    for source in sources {
-        let revised =
-            revise_resource_url(source, preview_revision, document_route, resource_versions);
+    for source in [INTERNAL_ANIME_PREVIEW_PATH, INTERNAL_MOTION_PREVIEW_PATH] {
+        let revised = format!("{source}?__pana_preview_revision={preview_revision}");
         let script_document = parse(format!(
-            "<!doctype html><html><body><script src=\"{revised}\" defer></script></body></html>"
+            "<!doctype html><html><body><script src=\"{revised}\"></script></body></html>"
         ));
         let script = script_document
             .select_first("script")
@@ -465,6 +499,22 @@ fn append_motion_scripts(
         body.as_node().append(script);
     }
     Ok(())
+}
+
+pub(crate) fn internal_motion_preview_asset(path: &str) -> Option<(&'static str, &'static [u8])> {
+    match path {
+        INTERNAL_ANIME_PREVIEW_PATH => Some((
+            "application/javascript; charset=utf-8",
+            crate::kernel::generated_assets::ANIME_JS_RUNTIME_CONTRACT.bytes,
+        )),
+        INTERNAL_MOTION_PREVIEW_PATH => Some((
+            "application/javascript; charset=utf-8",
+            MOTION_PREVIEW_RUNTIME
+                .get_or_init(crate::js::generate_motion_preview_runtime)
+                .as_bytes(),
+        )),
+        _ => None,
+    }
 }
 
 fn prepare_interactive_document(
@@ -487,7 +537,7 @@ fn prepare_interactive_document(
     html.attributes
         .borrow_mut()
         .insert("data-pana-preview-revision", preview_revision.to_string());
-    append_interactive_runtime(&document, true)?;
+    append_interactive_runtime(&document)?;
     String::from_utf8(serialize_node(&document)).map_err(|error| {
         format!("Documentul Previzualizare interactivă nu a putut fi serializat: {error}")
     })
@@ -512,21 +562,10 @@ fn remove_authored_content_security_policy(document: &NodeRef) {
     }
 }
 
-fn append_interactive_runtime(
-    document: &NodeRef,
-    include_block_runtime: bool,
-) -> Result<(), String> {
+fn append_interactive_runtime(document: &NodeRef) -> Result<(), String> {
     let runtime_document = parse(format!(
-        "<!doctype html><html><body><script id=\"pana-block-runtime\">{NATIVE_BLOCK_RUNTIME_SCRIPT}</script><script id=\"pana-interactive-runtime\">{INTERACTIVE_RUNTIME_SCRIPT}</script></body></html>"
+        "<!doctype html><html><body><script id=\"pana-interactive-runtime\">{INTERACTIVE_RUNTIME_SCRIPT}</script></body></html>"
     ));
-    let block_runtime = runtime_document
-        .select_first("script#pana-block-runtime")
-        .map_err(|_| "Runtime-ul canonic al blocurilor nu a putut fi construit.".to_string())?
-        .as_node()
-        .clone();
-    if block_runtime.text_contents() != NATIVE_BLOCK_RUNTIME_SCRIPT {
-        return Err("Parserul HTML a modificat runtime-ul canonic al blocurilor.".to_string());
-    }
     let runtime = runtime_document
         .select_first("script#pana-interactive-runtime")
         .map_err(|_| "Runtime-ul Previzualizare interactivă nu a putut fi construit.".to_string())?
@@ -535,14 +574,10 @@ fn append_interactive_runtime(
     if runtime.text_contents() != INTERACTIVE_RUNTIME_SCRIPT {
         return Err("Parserul HTML a modificat runtime-ul Previzualizare interactivă.".to_string());
     }
-    block_runtime.detach();
     runtime.detach();
     let body = document
         .select_first("body")
         .map_err(|_| "Documentul Previzualizare interactivă nu are body normalizat.".to_string())?;
-    if include_block_runtime {
-        body.as_node().append(block_runtime);
-    }
     body.as_node().append(runtime);
     Ok(())
 }
@@ -883,9 +918,10 @@ mod tests {
     use super::{
         bind_canvas_identity_to_editor_html, bridge_csp_hash, build_prepared_design_safe_response,
         interactive_runtime_csp_hash, prepare_design_safe_html,
-        prepare_design_safe_html_with_resources, prepare_initial_preview_html, PreviewHtmlSurface,
-        PreviewResourceVersions, BRIDGE_SCRIPT, CANVAS_AGENT_SCRIPT, INTERACTIVE_RUNTIME_SCRIPT,
-        MAX_PREVIEW_HTML_BYTES, TEST_PREVIEW_PROXY_PORT,
+        prepare_design_safe_html_with_motion_payload, prepare_design_safe_html_with_resources,
+        prepare_initial_preview_html, PreviewHtmlSurface, PreviewResourceVersions, BRIDGE_SCRIPT,
+        CANVAS_AGENT_SCRIPT, INTERACTIVE_RUNTIME_SCRIPT, MAX_PREVIEW_HTML_BYTES,
+        TEST_PREVIEW_PROXY_PORT,
     };
 
     fn response_headers(response: &[u8]) -> &str {
@@ -1180,6 +1216,8 @@ mod tests {
             .interactive
             .contains("/page.js?__pana_preview_revision=interactive-7"));
         assert!(prepared.interactive.contains(INTERACTIVE_RUNTIME_SCRIPT));
+        assert!(!prepared.interactive.contains("pana-block-runtime"));
+        assert!(!prepared.interactive.contains("PANA BLOCK RUNTIME CORE"));
         assert_eq!(
             interactive_document
                 .select("meta[http-equiv]")
@@ -1206,7 +1244,7 @@ mod tests {
     }
 
     #[test]
-    fn motion_surface_keeps_only_generated_motion_scripts_and_bridge() {
+    fn motion_surface_uses_only_internal_runtime_and_canonical_payload() {
         let source = r#"<!doctype html><html><head>
             <script>while(true){}</script>
             <script src="/manual.js"></script>
@@ -1215,7 +1253,14 @@ mod tests {
         </head><body onload="window.authored=true">
             <a href="javascript:alert(1)">Run</a>
         </body></html>"#;
-        let prepared = prepare_design_safe_html(source, "motion-9").unwrap();
+        let prepared = prepare_design_safe_html_with_motion_payload(
+            source,
+            "motion-9",
+            "/",
+            &PreviewResourceVersions::default(),
+            Some(r#"{"interactions":[]}"#),
+        )
+        .unwrap();
         let document = parse(prepared.motion.clone());
         let scripts = document
             .select("script")
@@ -1229,9 +1274,22 @@ mod tests {
         assert_eq!(
             sources,
             vec![
-                "/js/anime.min.js?__pana_preview_revision=motion-9",
-                "/js/pana-index.js?__pana_preview_revision=motion-9",
+                "/__pana_internal/anime.js?__pana_preview_revision=motion-9",
+                "/__pana_internal/motion-preview.js?__pana_preview_revision=motion-9",
             ]
+        );
+        let config = document
+            .select_first("meta[name='pana-motion-preview-config']")
+            .expect("internal Motion config");
+        let encoded = config
+            .attributes
+            .borrow()
+            .get("content")
+            .expect("base64 payload")
+            .to_string();
+        assert_eq!(
+            BASE64_STANDARD.decode(encoded).unwrap(),
+            br#"{"interactions":[]}"#
         );
         assert_eq!(
             scripts.last().unwrap().as_node().text_contents(),
@@ -1239,6 +1297,8 @@ mod tests {
         );
         assert!(!prepared.motion.contains("while(true)"));
         assert!(!prepared.motion.contains("/manual.js"));
+        assert!(!prepared.motion.contains("/js/pana-index.js"));
+        assert!(!prepared.motion.contains("/js/anime.min.js"));
         assert!(!prepared.motion.contains("onload="));
         assert!(!prepared.motion.contains("javascript:"));
         assert!(!prepared.motion.contains("pana-block-runtime"));

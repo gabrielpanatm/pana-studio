@@ -72,6 +72,10 @@ test("Interactive realm has no Tauri/file bridge and never uses allow-same-origi
     new URL("../src-tauri/src/blocks/runtime.js", import.meta.url),
     "utf8",
   );
+  const accordionRuntime = readFileSync(
+    new URL("../src-tauri/src/blocks/runtime/accordion.js", import.meta.url),
+    "utf8",
+  );
   const surface = readFileSync(
     new URL("../src/lib/components/preview/InteractivePreviewSurface.svelte", import.meta.url),
     "utf8",
@@ -82,6 +86,8 @@ test("Interactive realm has no Tauri/file bridge and never uses allow-same-origi
   assert.match(blockRuntime, /PanaBlockRuntime/);
   assert.match(blockRuntime, /mount/);
   assert.match(blockRuntime, /dispose/);
+  assert.doesNotMatch(blockRuntime, /register\("accordion"/);
+  assert.match(accordionRuntime, /register\("accordion"/);
   assert.match(surface, /sandbox="allow-scripts"/);
   assert.doesNotMatch(surface, /allow-same-origin|allow-forms|allow-popups|allow-top-navigation/);
   assert.match(surface, /t\("workbench-interactive-revision-failed"\)/);

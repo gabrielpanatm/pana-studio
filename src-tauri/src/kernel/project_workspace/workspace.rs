@@ -7,13 +7,14 @@ use crate::{
     js::{PageJsConfig, PageJsDraftStageInput, PageJsDraftStore},
     kernel::{
         file_buffer_store::{
-            hash_bytes, hash_text, FileBufferDraft, FileBufferEntry, FileBufferMutationExpectation,
-            FileBufferStore,
+            hash_bytes, hash_text, FileBufferChangeSetInput, FileBufferChangeSetResult,
+            FileBufferDraft, FileBufferEntry, FileBufferMutationExpectation, FileBufferStore,
+            FileBufferTextSnapshot,
         },
         project_path::normalize_project_relative_path,
         project_session::ProjectSessionSnapshot,
     },
-    project::AcceptedProjectDiskManifest,
+    project::{project_disk_manifest_changed_paths, AcceptedProjectDiskManifest},
     project_model::model::ProjectModel,
 };
 
@@ -243,6 +244,45 @@ impl ProjectWorkspace {
         Ok(())
     }
 
+    /// Accepts the exact post-write manifest produced by ProjectEnvStore.
+    /// `.env` remains outside documents, history and recovery payload bytes;
+    /// only its AcceptedDisk metadata advances.
+    pub fn accept_sensitive_env_disk_state(
+        &mut self,
+        accepted_disk: AcceptedProjectDiskManifest,
+    ) -> Result<(), String> {
+        let runtime_session_id = self.runtime_session_id();
+        accepted_disk.require_identity(&runtime_session_id, &self.session.project_root)?;
+        accepted_disk.require_complete()?;
+        let changed = project_disk_manifest_changed_paths(
+            &self.accepted_disk.manifest,
+            &accepted_disk.manifest,
+        )?;
+        if changed.iter().any(|path| path != ".env") {
+            return Err(format!(
+                "ProjectEnvStore a refuzat manifestul: s-au schimbat și resurse nesensibile ({changed:?})."
+            ));
+        }
+        if self.documents.files.contains_key(".env")
+            || self.accepted_documents.contains_key(".env")
+            || self
+                .binary_resources
+                .keys()
+                .chain(self.deleted_binary_resources.iter())
+                .any(|path| {
+                    Path::new(path).file_name().and_then(|name| name.to_str()) == Some(".env")
+                })
+        {
+            return Err(
+                "ProjectEnvStore a detectat bytes .env în ProjectWorkspace și a blocat acceptarea."
+                    .to_string(),
+            );
+        }
+        self.accepted_disk = accepted_disk;
+        self.history.break_coalescing_group();
+        Ok(())
+    }
+
     pub fn capture_projection_snapshot(&self) -> Result<WorkspaceProjectionSnapshot, String> {
         let materialized = super::save::materialize_workspace_for_projection(self)?;
         let workspace_transaction_id = self.last_projection_transaction_id.clone();
@@ -280,6 +320,134 @@ impl ProjectWorkspace {
             changed_paths,
             accepted_disk: self.accepted_disk.clone(),
         })
+    }
+
+    /// Reads the complete text namespace for the current workspace revision.
+    ///
+    /// Page JS and managed runtimes are materialized from their semantic
+    /// configuration before Save, so they may legitimately be absent from the
+    /// primary FileBufferStore while still being real Workbench documents.
+    pub fn projected_text_snapshot(
+        &self,
+        relative_path: &str,
+    ) -> Result<Option<FileBufferTextSnapshot>, String> {
+        if let Some(snapshot) = self.documents.text_snapshot(relative_path) {
+            return Ok(Some(snapshot));
+        }
+        Ok(super::save::materialize_workspace_for_projection(self)?
+            .documents
+            .text_snapshot(relative_path))
+    }
+
+    /// Applies a code-editor change set to either a tracked source document or
+    /// a text document materialized by the current ProjectWorkspace revision.
+    /// The first real edit adopts a materialized document as a normal project
+    /// resource in the same History transaction; merely opening it is read-only
+    /// with respect to workspace state.
+    pub fn apply_projected_document_changeset(
+        &mut self,
+        identity: &ProjectWorkspaceIdentity,
+        metadata: WorkspaceMutationMetadata,
+        input: FileBufferChangeSetInput,
+        now_ms: u128,
+    ) -> Result<FileBufferChangeSetResult, String> {
+        self.require_identity(identity)?;
+        let relative_path = input.relative_path.trim().to_string();
+        if self.documents.files.contains_key(&relative_path) {
+            return self.apply_document_changeset(identity, metadata, input, now_ms);
+        }
+
+        let mut materialized = super::save::materialize_workspace_for_projection(self)?.documents;
+        let projected = materialized
+            .text_snapshot(&relative_path)
+            .ok_or_else(|| format!("ProjectWorkspace nu urmărește documentul {relative_path}."))?;
+        let mut result = materialized.apply_changeset(input, now_ms)?;
+        if !result.applied {
+            return Ok(result);
+        }
+        let next_text = materialized.text_for(&relative_path).ok_or_else(|| {
+            format!("ProjectWorkspace a pierdut documentul proiectat {relative_path}.")
+        })?;
+        let receipt = self.stage_resource_texts(
+            identity,
+            metadata,
+            vec![WorkspaceResourceMutation {
+                relative_path: relative_path.clone(),
+                contents: next_text,
+                create_only: false,
+            }],
+            now_ms,
+        )?;
+        let file =
+            receipt.files.into_iter().next().ok_or_else(|| {
+                format!("ProjectWorkspace nu a adoptat documentul {relative_path}.")
+            })?;
+        result.previous_revision = projected.revision;
+        result.previous_hash = projected.hash;
+        result.revision = file.revision;
+        result.current_hash = file.current_hash.clone();
+        result.file = file;
+        Ok(result)
+    }
+
+    pub fn stage_projected_document_text(
+        &mut self,
+        identity: &ProjectWorkspaceIdentity,
+        metadata: WorkspaceMutationMetadata,
+        relative_path: &str,
+        contents: String,
+        expectation: &FileBufferMutationExpectation,
+        now_ms: u128,
+    ) -> Result<crate::kernel::file_buffer_store::FileBufferFileSnapshot, String> {
+        self.require_identity(identity)?;
+        if self.documents.files.contains_key(relative_path) {
+            return self
+                .stage_document_texts(
+                    identity,
+                    metadata,
+                    vec![WorkspaceDocumentMutation {
+                        relative_path: relative_path.to_string(),
+                        contents,
+                    }],
+                    now_ms,
+                )?
+                .files
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    format!("ProjectWorkspace nu a returnat documentul {relative_path}.")
+                });
+        }
+
+        let mut materialized = super::save::materialize_workspace_for_projection(self)?.documents;
+        let validated = materialized.set_draft_if_current(
+            relative_path,
+            contents.clone(),
+            expectation,
+            now_ms,
+        )?;
+        if materialized.text_for(relative_path).as_deref()
+            == self
+                .projected_text_snapshot(relative_path)?
+                .as_ref()
+                .map(|item| item.text.as_str())
+        {
+            return Ok(validated);
+        }
+        self.stage_resource_texts(
+            identity,
+            metadata,
+            vec![WorkspaceResourceMutation {
+                relative_path: relative_path.to_string(),
+                contents,
+                create_only: false,
+            }],
+            now_ms,
+        )?
+        .files
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("ProjectWorkspace nu a adoptat documentul {relative_path}."))
     }
 
     pub fn publish_project_model(
@@ -527,6 +695,7 @@ impl ProjectWorkspace {
 
         for change in changes {
             let normalized = normalize_project_relative_path(&change.relative_path)?;
+            self.require_editable_source_path(&normalized)?;
             if normalized != change.relative_path || !seen.insert(normalized.clone()) {
                 return Err(format!(
                     "ProjectWorkspace Restore a refuzat path-ul binar necanonic sau duplicat: {}.",
@@ -539,7 +708,15 @@ impl ProjectWorkspace {
                 ));
             }
             let accepted_exists = accepted_paths.contains(normalized.as_str());
-            if accepted_exists != change.before.is_some() {
+            let staged_before_matches = !accepted_exists
+                && change.after.is_none()
+                && next_resources.get(&normalized).is_some_and(|resource| {
+                    change
+                        .before
+                        .as_ref()
+                        .is_some_and(|before| hash_bytes(before) == hash_bytes(&resource.bytes))
+                });
+            if !staged_before_matches && accepted_exists != change.before.is_some() {
                 return Err(format!(
                     "ProjectWorkspace Restore nu poate demonstra baseline-ul binar pentru {normalized}."
                 ));
@@ -1317,6 +1494,16 @@ impl ProjectWorkspace {
 
     fn require_editable_source_path(&self, relative_path: &str) -> Result<(), String> {
         let normalized = normalize_project_relative_path(relative_path)?;
+        if Path::new(&normalized)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(".env")
+        {
+            return Err(
+                "ProjectWorkspace a refuzat .env: credentialele sunt administrate exclusiv de ProjectEnvStore."
+                    .to_string(),
+            );
+        }
         let project_root = Path::new(&self.session.project_root);
         let zola_root = Path::new(&self.session.zola_root);
         let Some(output_root) = crate::deploy::resolve_artifact_root(project_root, zola_root).ok()
@@ -1800,11 +1987,11 @@ mod tests {
     };
 
     use crate::{
-        js::{NativeBlockRuntimeEntry, PageJsConfig},
+        js::{MotionCustomCode, MotionDocument, PageJsConfig},
         kernel::{
             file_buffer_store::{
-                hash_text, FileBufferBaseline, FileBufferEntry, FileBufferStoreLimits,
-                TextBufferLanguage, TextBufferRole,
+                hash_text, FileBufferBaseline, FileBufferChangeCoordinateSpace, FileBufferEntry,
+                FileBufferStoreLimits, FileBufferTextChange, TextBufferLanguage, TextBufferRole,
             },
             preview_projection::{CanvasPatchAnchor, CanvasPatchOperation},
             project_session::{ProjectRootFingerprint, ProjectSessionScanSummary},
@@ -1813,6 +2000,28 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn sensitive_env_files_cannot_enter_workspace_history() {
+        let root = unique_test_dir();
+        let mut workspace = workspace(&root, &[]);
+        let error = workspace
+            .stage_resource_texts(
+                &identity(&workspace),
+                metadata("forbidden env", None),
+                vec![WorkspaceResourceMutation {
+                    relative_path: ".env".to_string(),
+                    contents: "PANA_DEPLOY_TEST__TOKEN=secret\n".to_string(),
+                    create_only: true,
+                }],
+                10,
+            )
+            .unwrap_err();
+        assert!(error.contains("ProjectEnvStore"));
+        assert!(workspace.documents.files.is_empty());
+        assert_eq!(workspace.history.undo_len(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn document_mutation_and_undo_redo_never_touch_disk() {
@@ -1998,9 +2207,15 @@ mod tests {
                     expected_session_id: session_id,
                     base_config: PageJsConfig::default(),
                     current_config: PageJsConfig {
-                        version: Some(1),
-                        blocks: vec![NativeBlockRuntimeEntry { id: "tabs".into() }],
-                        motion: None,
+                        motion: Some(MotionDocument {
+                            custom_code: vec![MotionCustomCode {
+                                id: "custom-1".into(),
+                                name: "Custom".into(),
+                                enabled: true,
+                                code: "window.__panaTest=true".into(),
+                            }],
+                            ..MotionDocument::default()
+                        }),
                     },
                     cachebust_assets: false,
                     source: Some("inspector.js".into()),
@@ -2012,11 +2227,111 @@ mod tests {
             .unwrap();
         assert_eq!(staged.revision_after, 1);
         assert_eq!(workspace.page_js.dirty_count(), 1);
+        let projection = workspace.capture_projection_snapshot().unwrap();
+        assert!(projection
+            .source_texts
+            .contains_key(".panastudio/motion/templates/index.json"));
+        assert!(projection
+            .source_texts
+            .contains_key("static/js/pana-index.js"));
+        assert!(projection
+            .source_texts
+            .contains_key("static/js/vendor/animejs-4.4.1/index.js"));
+        assert!(!projection
+            .source_texts
+            .contains_key("static/js/pana-motion-runtime.js"));
+        assert!(!projection
+            .source_texts
+            .contains_key("static/js/anime.min.js"));
+        assert!(!root
+            .join(".panastudio/motion/templates/index.json")
+            .exists());
+        assert!(!root.join("static/js/pana-index.js").exists());
 
         workspace.undo(&identity(&workspace), 21).unwrap();
         assert_eq!(workspace.page_js.dirty_count(), 0);
+        let projection = workspace.capture_projection_snapshot().unwrap();
+        assert!(!projection
+            .source_texts
+            .contains_key(".panastudio/motion/templates/index.json"));
+        assert!(!projection
+            .source_texts
+            .contains_key("static/js/pana-index.js"));
         workspace.redo(&identity(&workspace), 22).unwrap();
         assert_eq!(workspace.page_js.dirty_count(), 1);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn materialized_page_js_is_readable_and_first_edit_adopts_it_with_history() {
+        let root = unique_test_dir();
+        let mut workspace = workspace(
+            &root,
+            &[(
+                "templates/index.html",
+                "<main data-pana-block=\"accordion\"></main>",
+            )],
+        );
+        let projected = workspace
+            .projected_text_snapshot("static/js/pana-index.js")
+            .unwrap()
+            .expect("materialized page runtime");
+        assert!(!workspace
+            .documents
+            .files
+            .contains_key("static/js/pana-index.js"));
+
+        let end = projected.text.encode_utf16().count();
+        let result = workspace
+            .apply_projected_document_changeset(
+                &identity(&workspace),
+                metadata("Editare Page JS", Some("code_editor.changeset")),
+                FileBufferChangeSetInput {
+                    relative_path: "static/js/pana-index.js".to_string(),
+                    base_revision: Some(projected.revision),
+                    base_hash: Some(projected.hash),
+                    coordinate_space: FileBufferChangeCoordinateSpace::Utf16,
+                    source: Some("codemirror".to_string()),
+                    changes: vec![FileBufferTextChange {
+                        from: end,
+                        to: end,
+                        insert: "\nwindow.userCode = true;\n".to_string(),
+                    }],
+                },
+                20,
+            )
+            .unwrap();
+
+        assert!(result.applied);
+        assert!(workspace
+            .documents
+            .text_for("static/js/pana-index.js")
+            .unwrap()
+            .contains("window.userCode = true"));
+        workspace.undo(&identity(&workspace), 21).unwrap();
+        assert!(!workspace
+            .documents
+            .files
+            .contains_key("static/js/pana-index.js"));
+        assert!(!workspace
+            .projected_text_snapshot("static/js/pana-index.js")
+            .unwrap()
+            .unwrap()
+            .text
+            .contains("window.userCode = true"));
+        workspace.redo(&identity(&workspace), 22).unwrap();
+        assert!(workspace
+            .documents
+            .text_for("static/js/pana-index.js")
+            .unwrap()
+            .contains("window.userCode = true"));
+        let materialized = super::super::save::materialize_workspace_for_projection(&workspace)
+            .expect("manual Page JS survives materialization");
+        assert!(materialized
+            .documents
+            .text_for("static/js/pana-index.js")
+            .unwrap()
+            .contains("window.userCode = true"));
         fs::remove_dir_all(root).ok();
     }
 
@@ -2198,6 +2513,56 @@ mod tests {
         );
         assert!(workspace.is_dirty());
         assert!(!disk_path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_binary_resource_can_be_deleted_without_a_disk_baseline() {
+        let root = unique_test_dir();
+        fs::create_dir_all(root.join("static/images")).unwrap();
+        let relative_path = "static/images/new-logo.png";
+        let bytes = vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4];
+        let mut workspace = workspace(&root, &[]);
+        workspace
+            .stage_binary_resource_creates(
+                &identity(&workspace),
+                metadata("Import image", None),
+                vec![WorkspaceBinaryResource::new(relative_path, bytes.clone())],
+                33,
+            )
+            .unwrap();
+
+        let receipt = workspace
+            .stage_project_bundle_changes(
+                &identity(&workspace),
+                metadata("Delete staged image", None),
+                Vec::new(),
+                Vec::new(),
+                vec![WorkspaceBinaryRestoreChange {
+                    relative_path: relative_path.to_string(),
+                    before: Some(bytes.clone()),
+                    after: None,
+                }],
+                34,
+            )
+            .unwrap();
+
+        assert!(receipt.changed);
+        assert!(!workspace.is_dirty());
+        assert!(workspace.staged_binary_resource(relative_path).is_none());
+        assert!(workspace.deleted_binary_resources().next().is_none());
+        assert!(!root.join(relative_path).exists());
+
+        workspace.undo(&identity(&workspace), 35).unwrap();
+        assert_eq!(
+            workspace.staged_binary_resource(relative_path),
+            Some(bytes.as_slice())
+        );
+        assert!(workspace.is_dirty());
+
+        workspace.redo(&identity(&workspace), 36).unwrap();
+        assert!(workspace.staged_binary_resource(relative_path).is_none());
+        assert!(!workspace.is_dirty());
         fs::remove_dir_all(root).unwrap();
     }
 

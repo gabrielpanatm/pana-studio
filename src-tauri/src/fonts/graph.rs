@@ -1113,6 +1113,7 @@ fn asset_order(left: &FontAsset, right: &FontAsset) -> std::cmp::Ordering {
 
 fn origin_rank(origin: &FontOrigin) -> u8 {
     match origin {
+        FontOrigin::Bundled => 0,
         FontOrigin::Local => 0,
         FontOrigin::Theme => 1,
         FontOrigin::External => 2,
@@ -1121,6 +1122,7 @@ fn origin_rank(origin: &FontOrigin) -> u8 {
 
 fn origin_key(origin: &FontOrigin) -> &'static str {
     match origin {
+        FontOrigin::Bundled => "bundled",
         FontOrigin::Local => "local",
         FontOrigin::Theme => "theme",
         FontOrigin::External => "external",

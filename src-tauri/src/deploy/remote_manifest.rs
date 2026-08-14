@@ -359,7 +359,7 @@ mod tests {
         DeployTarget {
             id: "production".to_string(),
             name: "Production".to_string(),
-            credential_ref: "production-credentials".to_string(),
+            credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
             provider: DeployTargetProvider::Bunny(BunnyTargetConfig {
                 storage_zone: "site".to_string(),

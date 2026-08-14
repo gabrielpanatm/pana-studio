@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::kernel::write_authority::{ApplicationAuthorityPaths, WriteAuthorityRuntime};
 
-const APP_HOME_SCHEMA_VERSION: u32 = 1;
+const APP_HOME_SCHEMA_VERSION: u32 = 2;
 
 #[cfg(test)]
 pub(crate) static TEST_APP_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -20,7 +20,6 @@ pub struct AppHomeSnapshot {
     pub cache_dir: String,
     pub log_dir: String,
     pub temp_dir: String,
-    pub projects_config_dir: String,
     pub mcp_dir: String,
     pub sessions_dir: String,
     pub kernel_dir: String,
@@ -88,7 +87,6 @@ pub fn app_home_snapshot<R: Runtime>(app: &AppHandle<R>) -> Result<AppHomeSnapsh
     Ok(AppHomeSnapshot {
         schema_version: APP_HOME_SCHEMA_VERSION,
         identifier,
-        projects_config_dir: path_to_string(config_dir.join("projects")),
         mcp_dir: path_to_string(config_dir.join("mcp")),
         sessions_dir: path_to_string(data_dir.join("sessions")),
         kernel_dir: path_to_string(data_dir.join("kernel")),
@@ -112,7 +110,6 @@ fn application_authority_paths(snapshot: &AppHomeSnapshot) -> ApplicationAuthori
         data_dir: PathBuf::from(&snapshot.data_dir),
         cache_dir: PathBuf::from(&snapshot.cache_dir),
         log_dir: PathBuf::from(&snapshot.log_dir),
-        projects_config_dir: PathBuf::from(&snapshot.projects_config_dir),
         mcp_dir: PathBuf::from(&snapshot.mcp_dir),
         sessions_dir: PathBuf::from(&snapshot.sessions_dir),
         kernel_dir: PathBuf::from(&snapshot.kernel_dir),
@@ -136,7 +133,6 @@ fn snapshot_from_authority_paths(
         cache_dir: path_to_string(paths.cache_dir),
         log_dir: path_to_string(paths.log_dir),
         temp_dir: path_to_string(temp_dir),
-        projects_config_dir: path_to_string(paths.projects_config_dir),
         mcp_dir: path_to_string(paths.mcp_dir),
         sessions_dir: path_to_string(paths.sessions_dir),
         kernel_dir: path_to_string(paths.kernel_dir),
@@ -149,27 +145,6 @@ fn snapshot_from_authority_paths(
 
 pub fn app_config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(app_config_dir(app)?.join("config.json"))
-}
-
-pub fn projects_config_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    Ok(app_config_dir(app)?.join("projects"))
-}
-
-pub fn project_app_config_path<R: Runtime>(
-    app: &AppHandle<R>,
-    project_path: &str,
-) -> Result<PathBuf, String> {
-    Ok(projects_config_dir(app)?.join(format!("{:016x}.json", stable_path_hash(project_path))))
-}
-
-pub fn project_deploy_secrets_path<R: Runtime>(
-    app: &AppHandle<R>,
-    project_path: &str,
-) -> Result<PathBuf, String> {
-    Ok(projects_config_dir(app)?.join(format!(
-        "{:016x}.deploy-secrets.json",
-        stable_path_hash(project_path)
-    )))
 }
 
 pub fn mcp_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {

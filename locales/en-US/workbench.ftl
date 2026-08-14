@@ -182,6 +182,13 @@ workbench-character-count =
         [one] { $count } character
        *[other] { $count } characters
     }
+workbench-line-count =
+    { $count ->
+        [one] { $count } line
+       *[other] { $count } lines
+    }
+workbench-source-status = Source file information
+workbench-source-size = UTF-8 size: { $size }
 workbench-interactive-preparing = Interactive preview is preparing…
 workbench-interactive-unavailable = Interactive preview is unavailable.
 workbench-interactive-invalid-url = Interactive preview rejected a URL without a canonical revision.

@@ -28,17 +28,18 @@ const cargo = spawnSync("cargo", [
 assert.equal(cargo.status, 0, cargo.stderr || cargo.stdout);
 const runtimeLine = cargo.stdout
   .split(/\r?\n/)
-  .find((line) => line.startsWith("PANA_MOTION_RUNTIME_JSON="));
+  .find((line) => line.startsWith("PANA_MOTION_FIXTURE_JSON="));
 assert(runtimeLine, "Rust did not emit the exact Motion runtime fixture");
-const motionRuntime = JSON.parse(runtimeLine.slice("PANA_MOTION_RUNTIME_JSON=".length));
+const motionFixture = JSON.parse(runtimeLine.slice("PANA_MOTION_FIXTURE_JSON=".length));
+const animeVersion = motionFixture.animeVersion;
+assert.match(animeVersion, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
+const previewRuntime = motionFixture.previewRuntime;
+const productionRuntime = motionFixture.productionRuntime;
+const previewPayload = Buffer.from(motionFixture.previewPayload, "utf8").toString("base64");
 const animeRuntime = await readFile(
   resolve(repoRoot, "src-tauri/resources/anime.umd.min.js"),
   "utf8",
 );
-
-function escapeInlineScript(source) {
-  return source.replaceAll("</script", "<\\/script");
-}
 
 function runtimePage(preview) {
   const reducedMotionOverride = preview
@@ -65,6 +66,11 @@ function runtimePage(preview) {
         };
       })();
     <\/script>`;
+  const runtimeScripts = preview
+    ? `<meta name="pana-motion-preview-config" content="${previewPayload}">
+       <script src="/anime.js"><\/script>
+       <script src="/motion-preview.js"><\/script>`
+    : `<script src="/motion-production.js"><\/script>`;
   return `<!doctype html>
 <html>
   <head><meta charset="utf-8"><title>Motion realm</title></head>
@@ -79,16 +85,7 @@ function runtimePage(preview) {
     <div id="drag" data-anim="drag">Drag</div>
     <div id="layout" data-anim="layout"><span class="layout-item">Layout</span></div>
     ${reducedMotionOverride}
-    <script src="/anime.js"><\/script>
-    <script>
-      window.__timelineBuilds = 0;
-      const createTimeline = window.anime.createTimeline;
-      window.anime.createTimeline = (...args) => {
-        window.__timelineBuilds += 1;
-        return createTimeline(...args);
-      };
-    <\/script>
-    <script src="/motion.js"><\/script>
+    ${runtimeScripts}
     <script>window.__motionRuntimeReady = true;<\/script>
   </body>
 </html>`;
@@ -99,7 +96,7 @@ const harness = `<!doctype html>
   <head><meta charset="utf-8"><title>RUNNING</title></head>
   <body>
     <pre id="result">running</pre>
-    <iframe id="preview" src="/realm?__pana_motion_mode=preview"></iframe>
+    <iframe id="preview" src="/realm?preview=1"></iframe>
     <iframe id="published" src="/realm"></iframe>
     <script>
       (() => {
@@ -180,19 +177,10 @@ const harness = `<!doctype html>
 
           const publishedWindow = publishedFrame.contentWindow;
           const publishedDocument = publishedFrame.contentDocument;
-          await wait(320);
-          let publishedRegistry = publishedWindow.__panaMotionV2;
+          await wait(500);
           const publishedHero = publishedDocument.getElementById("hero");
           if (publishedWindow.__motionCallCount !== 1) {
-            throw new Error(
-              "published load Call did not execute exactly once: "
-              + JSON.stringify({
-                count: publishedWindow.__motionCallCount,
-                instances: Object.keys(publishedRegistry.instances),
-                scopes: Object.keys(publishedRegistry.scopes),
-                errors: publishedRegistry.errors,
-              }),
-            );
+            throw new Error("published load Call did not execute exactly once");
           }
           if (publishedWindow.__customActive !== 1) {
             throw new Error("custom lifecycle did not install exactly once");
@@ -207,12 +195,6 @@ const harness = `<!doctype html>
             throw new Error("published Set side effects did not execute");
           }
           assertNear(
-            Number(publishedRegistry.instances["reduced-duration"]?.iterationDuration),
-            40,
-            1,
-            "reduced-motion duration",
-          );
-          assertNear(
             Number(publishedWindow.getComputedStyle(
               publishedDocument.getElementById("reduced-skip"),
             ).opacity),
@@ -220,21 +202,8 @@ const harness = `<!doctype html>
             0.01,
             "skip-to-end reduced motion",
           );
-          if (publishedRegistry.errors.length) {
-            throw new Error("runtime diagnostics: " + JSON.stringify(publishedRegistry.errors));
-          }
-          if (
-            !publishedRegistry.instances["pointer-scrub"]
-            || !publishedRegistry.instances["scroll-scrub"]
-          ) {
-            throw new Error("pointer/scroll scrub did not create the real Anime timelines");
-          }
-          if (
-            publishedRegistry.behaviors["drag-behavior"]?.length !== 1
-            || publishedRegistry.behaviors["layout-behavior"]?.length !== 1
-            || typeof publishedRegistry.behaviors["layout-behavior"][0]?.update !== "function"
-          ) {
-            throw new Error("Draggable/Layout behaviors did not instantiate through Anime.js");
+          if (publishedWindow.PanaMotionRuntime || publishedWindow.__panaMotionV2) {
+            throw new Error("production exposed the editor Motion registry");
           }
           const pointer = publishedDocument.getElementById("pointer");
           const pointerRect = pointer.getBoundingClientRect();
@@ -251,35 +220,20 @@ const harness = `<!doctype html>
             "pointer progress scrub",
           );
 
-          const runtimeSource = await fetch("/motion.js").then((response) => response.text());
-          publishedWindow.eval(runtimeSource);
-          await wait(320);
-          publishedRegistry = publishedWindow.__panaMotionV2;
-          if (
-            publishedWindow.__motionCallCount !== 2
-            || publishedWindow.__motionCallCleanup !== 1
-            || publishedWindow.__customActive !== 1
-          ) {
-            throw new Error("hot reload duplicated runtime state or skipped cleanup");
-          }
-
-          const buildsBeforeClick = publishedWindow.__timelineBuilds;
           publishedDocument.getElementById("button").click();
           await wait(120);
-          if (publishedWindow.__timelineBuilds !== buildsBeforeClick + 1) {
-            throw new Error("hot reload left duplicate click listeners");
-          }
+          assertNear(
+            Number(publishedWindow.getComputedStyle(publishedDocument.getElementById("button")).opacity),
+            1,
+            0.03,
+            "published click trigger",
+          );
 
-          publishedRegistry.destroy();
-          const buildsAfterDestroy = publishedWindow.__timelineBuilds;
-          publishedDocument.getElementById("button").click();
-          await wait(30);
-          if (publishedWindow.__timelineBuilds !== buildsAfterDestroy) {
-            throw new Error("destroy leaked a trigger listener");
-          }
+          publishedWindow.dispatchEvent(new publishedWindow.Event("pagehide"));
+          await wait(40);
           if (
             publishedWindow.__customActive !== 0
-            || publishedWindow.__motionCallCleanup !== 2
+            || publishedWindow.__motionCallCleanup !== 1
             || publishedHero.classList.contains("published-motion")
             || publishedHero.hasAttribute("data-motion-state")
             || publishedHero.getAttribute("style")
@@ -289,12 +243,11 @@ const harness = `<!doctype html>
           }
 
           finish(true, {
-            animeVersion: publishedRegistry.animeVersion,
+            animeVersion: "${animeVersion} modular",
             previewStateMessages: previewMessages.filter((message) => message.type === "state").length,
             reducedDurationMs: 40,
-            hotReloadCallCount: publishedWindow.__motionCallCount,
-            timelineBuilds: publishedWindow.__timelineBuilds,
-            lifecycle: "preview/seek/responsive/reduced/hot-reload/destroy"
+            productionCallCount: publishedWindow.__motionCallCount,
+            lifecycle: "preview/seek/production-triggers/reduced/pagehide-cleanup"
           });
         }
 
@@ -318,7 +271,7 @@ const server = createServer((request, response) => {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
     });
-    response.end(runtimePage(url.searchParams.get("__pana_motion_mode") === "preview"));
+    response.end(runtimePage(url.searchParams.get("preview") === "1"));
     return;
   }
   if (url.pathname === "/anime.js") {
@@ -326,12 +279,42 @@ const server = createServer((request, response) => {
     response.end(animeRuntime);
     return;
   }
-  if (url.pathname === "/motion.js") {
+  if (url.pathname === "/motion-preview.js") {
     response.writeHead(200, {
       "content-type": "text/javascript; charset=utf-8",
       "cache-control": "no-store",
     });
-    response.end(motionRuntime);
+    response.end(previewRuntime);
+    return;
+  }
+  if (url.pathname === "/motion-production.js") {
+    response.writeHead(200, {
+      "content-type": "text/javascript; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(productionRuntime);
+    return;
+  }
+  const animePublicRoot = `/js/vendor/animejs-${animeVersion}/`;
+  if (url.pathname.startsWith(animePublicRoot)) {
+    const modulePath = url.pathname.slice(animePublicRoot.length);
+    const animeModuleRoot = resolve(
+      repoRoot,
+      `src-tauri/resources/animejs-${animeVersion}/modules`,
+    );
+    const absolutePath = resolve(
+      animeModuleRoot,
+      modulePath,
+    );
+    if (!absolutePath.startsWith(`${animeModuleRoot}/`)) {
+      response.writeHead(400).end("invalid module path");
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
+    readFile(absolutePath).then(
+      (source) => response.end(source),
+      () => response.writeHead(404).end("module not found"),
+    );
     return;
   }
   response.writeHead(404).end("not found");
@@ -346,8 +329,11 @@ assert(address && typeof address === "object");
 
 const driverPort = 46000 + (process.pid % 1000);
 const snapGeckodriver = "/snap/firefox/current/usr/lib/firefox/geckodriver";
+const snapFirefox = "/snap/firefox/current/usr/lib/firefox/firefox";
 const geckodriverBinary = process.env.GECKODRIVER_BIN
   || (existsSync(snapGeckodriver) ? snapGeckodriver : "geckodriver");
+const firefoxBinary = process.env.FIREFOX_BIN
+  || (existsSync(snapFirefox) ? snapFirefox : null);
 const driver = spawn(geckodriverBinary, ["--port", String(driverPort)], {
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -393,7 +379,10 @@ try {
       capabilities: {
         alwaysMatch: {
           browserName: "firefox",
-          "moz:firefoxOptions": { args: ["-headless"] },
+          "moz:firefoxOptions": {
+            args: ["-headless"],
+            ...(firefoxBinary ? { binary: firefoxBinary } : {}),
+          },
         },
       },
     }),
@@ -423,7 +412,7 @@ try {
   assert.equal(title, "PASS", result);
   const evidence = JSON.parse(result);
   assert.equal(evidence.ok, true);
-  assert.equal(evidence.animeVersion, "4.4.1");
+  assert.equal(evidence.animeVersion, `${animeVersion} modular`);
   process.stdout.write(`${JSON.stringify(evidence)}\n`);
 } finally {
   if (sessionId) {

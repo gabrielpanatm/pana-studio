@@ -1529,6 +1529,7 @@ fn owner_label(owner: WriteOwner) -> &'static str {
         WriteOwner::Kernel => "kernel",
         WriteOwner::ProjectSession => "project_session",
         WriteOwner::ProjectWorkspace => "project_workspace",
+        WriteOwner::ProjectEnvStore => "project_env_store",
         WriteOwner::Workbench => "workbench",
         WriteOwner::ScratchState => "scratch_state",
         WriteOwner::AppConfig => "app_config",
@@ -1536,6 +1537,7 @@ fn owner_label(owner: WriteOwner) -> &'static str {
         WriteOwner::CodexMcp => "codex_mcp",
         WriteOwner::ProjectInitializer => "project_initializer",
         WriteOwner::Preview => "preview",
+        WriteOwner::StorageMaintenance => "storage_maintenance",
     }
 }
 
@@ -1561,11 +1563,13 @@ fn copy_replace_policy(owner: WriteOwner) -> Result<CapabilityReplacePolicy, Str
         WriteOwner::Kernel
         | WriteOwner::ProjectSession
         | WriteOwner::ProjectWorkspace
+        | WriteOwner::ProjectEnvStore
         | WriteOwner::Workbench
         | WriteOwner::ScratchState
         | WriteOwner::AppConfig
         | WriteOwner::McpContext
-        | WriteOwner::CodexMcp => Err(format!(
+        | WriteOwner::CodexMcp
+        | WriteOwner::StorageMaintenance => Err(format!(
             "WriteAuthority Copy refuză ownerul {owner:?}; numai ProjectInitializer și Preview au contract copy."
         )),
     }

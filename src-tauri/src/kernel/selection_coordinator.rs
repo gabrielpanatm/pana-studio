@@ -26,6 +26,7 @@ pub enum SelectionSubjectKind {
     TeraBoundary,
     MarkdownBoundary,
     RuntimeElement,
+    CssRule,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -203,6 +204,15 @@ pub enum SelectionIntent {
         #[serde(default)]
         viewport: Option<String>,
     },
+    #[serde(skip_deserializing)]
+    SelectCssSourceRule {
+        file: String,
+        selector: String,
+        #[serde(default)]
+        viewport: Option<String>,
+        #[serde(default, skip_deserializing)]
+        range: Option<SourceRange>,
+    },
     SetFocus {
         focus: SelectionFocus,
         #[serde(default)]
@@ -259,18 +269,10 @@ pub struct InspectorSelectionSummaryDiagnostic {
     pub message: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum InspectorSelectionBlockMarkerKind {
-    Canonical,
-    Legacy,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InspectorSelectionBlockContext {
     pub provider_id: String,
-    pub marker_kind: InspectorSelectionBlockMarkerKind,
     pub root_tag: String,
 }
 
@@ -778,6 +780,25 @@ impl SelectionCoordinatorRuntime {
                     offset,
                 )?;
             }
+            SelectionIntent::SelectCssSourceRule {
+                file,
+                selector,
+                viewport,
+                range,
+            } => {
+                select_css_source_rule(
+                    &mut state,
+                    snapshot,
+                    active_document_path,
+                    source_graph,
+                    SelectionFocus::CssRule {
+                        file,
+                        selector,
+                        viewport,
+                        range,
+                    },
+                )?;
+            }
             SelectionIntent::SetFocus {
                 focus,
                 expected_selection_revision,
@@ -786,6 +807,7 @@ impl SelectionCoordinatorRuntime {
                     &mut state,
                     snapshot,
                     active_document_path,
+                    source_graph,
                     focus,
                     expected_selection_revision,
                 )?;
@@ -794,7 +816,7 @@ impl SelectionCoordinatorRuntime {
                 clear_selection(&mut state, snapshot, active_document_path)?;
             }
             SelectionIntent::Rebase => {
-                rebase_selection(&mut state, snapshot, active_document_path)?;
+                rebase_selection(&mut state, snapshot, active_document_path, source_graph)?;
             }
             SelectionIntent::SetHover {
                 editor_node_id,
@@ -1169,6 +1191,7 @@ fn set_focus(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
     active_document_path: Option<&str>,
+    source_graph: Option<&SourceGraph>,
     focus: SelectionFocus,
     expected_selection_revision: Option<u64>,
 ) -> Result<(), String> {
@@ -1187,13 +1210,46 @@ fn set_focus(
             ));
         }
     }
+    let current_is_css_source = state
+        .selection
+        .as_ref()
+        .and_then(primary_selection_entry)
+        .is_some_and(|entry| entry.subject.kind == SelectionSubjectKind::CssRule);
+    let focus_is_css = matches!(
+        &focus,
+        SelectionFocus::CssRule { .. } | SelectionFocus::CssProperty { .. }
+    );
+
+    if focus_is_css && current_is_css_source {
+        return select_css_source_rule(state, snapshot, active_document_path, source_graph, focus);
+    }
+
+    if matches!(&focus, SelectionFocus::Element) && current_is_css_source {
+        let revision = next_selection_revision(state)?;
+        state.selection = Some(empty_selection(
+            revision,
+            snapshot,
+            active_document_path,
+            SelectionFocus::Element,
+        ));
+        state.inspector_facts = None;
+        return Ok(());
+    }
+
+    let has_no_primary_subject = state
+        .selection
+        .as_ref()
+        .is_none_or(|selection| primary_selection_entry(selection).is_none());
+    if focus_is_css && has_no_primary_subject {
+        return Err(
+            "Focusul CSS din Inspector necesită o regulă selectată în Code sau un element selectat în Preview."
+                .to_string(),
+        );
+    }
     if !matches!(&focus, SelectionFocus::Element)
-        && state
-            .selection
-            .as_ref()
-            .is_none_or(|selection| primary_selection_entry(selection).is_none())
+        && (current_is_css_source || has_no_primary_subject)
     {
-        return Err("Focusul CSS/JS necesită mai întâi un subiect semantic selectat.".to_string());
+        return Err("Focusul JS necesită mai întâi un element semantic selectat.".to_string());
     }
     let revision = next_selection_revision(state)?;
     let current = state.selection.clone().unwrap_or_else(|| {
@@ -1224,6 +1280,34 @@ fn set_focus(
     Ok(())
 }
 
+fn select_css_source_rule(
+    state: &mut SelectionCoordinatorState,
+    snapshot: &EditorNavigationSnapshot,
+    active_document_path: Option<&str>,
+    source_graph: Option<&SourceGraph>,
+    focus: SelectionFocus,
+) -> Result<(), String> {
+    let source_graph = source_graph.ok_or_else(|| {
+        "Selecția CSS sursă necesită Source Graph-ul ProjectModel curent.".to_string()
+    })?;
+    let entry = selection_entry_from_css_focus(source_graph, &focus)?;
+    let member_id = entry.member_id.clone();
+    let revision = next_selection_revision(state)?;
+    state.selection = Some(selection_from_members(
+        revision,
+        snapshot,
+        active_document_path,
+        vec![entry],
+        Some(member_id.clone()),
+        Some(member_id),
+        focus,
+        Vec::new(),
+    ));
+    state.inspector_facts = None;
+    state.hover = None;
+    Ok(())
+}
+
 fn clear_selection(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
@@ -1245,10 +1329,34 @@ fn rebase_selection(
     state: &mut SelectionCoordinatorState,
     snapshot: &EditorNavigationSnapshot,
     active_document_path: Option<&str>,
+    source_graph: Option<&SourceGraph>,
 ) -> Result<(), String> {
     let Some(current) = state.selection.clone() else {
         return ensure_session(state, snapshot, active_document_path);
     };
+    if primary_selection_entry(&current)
+        .is_some_and(|entry| entry.subject.kind == SelectionSubjectKind::CssRule)
+    {
+        let source_graph = source_graph.ok_or_else(|| {
+            "Rebazarea selecției CSS sursă necesită Source Graph-ul curent.".to_string()
+        })?;
+        let entry = selection_entry_from_css_focus(source_graph, &current.focus)?;
+        let member_id = entry.member_id.clone();
+        let revision = next_selection_revision(state)?;
+        state.selection = Some(selection_from_members(
+            revision,
+            snapshot,
+            active_document_path,
+            vec![entry],
+            Some(member_id.clone()),
+            Some(member_id),
+            current.focus,
+            Vec::new(),
+        ));
+        state.inspector_facts = None;
+        state.hover = None;
+        return Ok(());
+    }
     if current.members.is_empty() {
         let revision = next_selection_revision(state)?;
         state.selection = Some(empty_selection(
@@ -1818,6 +1926,73 @@ fn selection_entry_from_source_node(
         diagnostics: vec![diagnostic.to_string()],
         source_html_attributes: None,
     }
+}
+
+fn selection_entry_from_css_focus(
+    source_graph: &SourceGraph,
+    focus: &SelectionFocus,
+) -> Result<SelectionEntry, String> {
+    let (file, selector, range) = match focus {
+        SelectionFocus::CssRule {
+            file,
+            selector,
+            range,
+            ..
+        }
+        | SelectionFocus::CssProperty {
+            file,
+            selector,
+            range,
+            ..
+        } => (file.trim(), selector.trim(), range.clone()),
+        _ => return Err("Selecția CSS sursă a primit un focus incompatibil.".to_string()),
+    };
+    let normalized_file = normalized_path(file);
+    let source = source_graph
+        .styles
+        .iter()
+        .find(|style| normalized_path(&style.file) == normalized_file)
+        .and_then(|style| source_graph.node_by_id(&style.node_id))
+        .filter(|source| source.kind == SourceNodeKind::Style)
+        .ok_or_else(|| {
+            format!("SelectionCoordinator nu găsește fișierul CSS/SCSS {file} în Source Graph.")
+        })?;
+
+    let mut entry = selection_entry_from_source_node(
+        source,
+        SelectionResolution::Resolved,
+        "Selector CSS selectat direct în sursă.",
+    );
+    entry.subject = SelectionSubject {
+        kind: SelectionSubjectKind::CssRule,
+        tag: None,
+        label: selector.to_string(),
+    };
+    entry.anchor.range = range.clone();
+    entry.provenance.definition = Some(EditorSourceReference {
+        source_node_id: Some(source.id.clone()),
+        source_kind: Some(SourceNodeKind::Style),
+        file: source.file.clone(),
+        range,
+        label: selector.to_string(),
+        origin: match &source.origin {
+            SourceOrigin::Local => EditorNavigationOrigin::Project,
+            SourceOrigin::Theme => EditorNavigationOrigin::Theme,
+        },
+        theme_name: source.theme_name.clone(),
+        can_open_in_code: true,
+    });
+    entry.capabilities.can_select = true;
+    entry.capabilities.can_inspect = true;
+    entry.capabilities.can_open_in_code = true;
+    entry.diagnostics.clear();
+    entry.member_id = css_rule_member_id(&source.id, selector);
+    Ok(entry)
+}
+
+fn css_rule_member_id(style_source_node_id: &str, selector: &str) -> String {
+    let selector_hash = blake3::hash(selector.as_bytes()).to_hex();
+    format!("css-rule:{style_source_node_id}:{}", &selector_hash[..16])
 }
 
 fn empty_selection(
@@ -2514,6 +2689,18 @@ fn inspector_summary(
             reason = None;
         }
         SelectionResolution::Resolved
+            if subject.is_some_and(|subject| subject.kind == SelectionSubjectKind::CssRule) =>
+        {
+            state_value = InspectorSelectionSummaryState::Resolved;
+            reason = None;
+            selector = match &selection.focus {
+                SelectionFocus::CssRule { selector, .. }
+                | SelectionFocus::CssProperty { selector, .. } => Some(selector.trim().to_string()),
+                _ => subject.map(|subject| subject.label.clone()),
+            };
+            classes = active_css_class(&selection.focus).into_iter().collect();
+        }
+        SelectionResolution::Resolved
             if primary
                 .and_then(|entry| entry.anchor.render_instance_id.as_ref())
                 .is_none() =>
@@ -2608,7 +2795,11 @@ fn coordinator_snapshot(
 
 #[cfg(test)]
 mod tests {
-    use std::{hint::black_box, time::Instant};
+    use std::{
+        fs,
+        hint::black_box,
+        time::{Instant, SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
     use crate::{
@@ -2616,6 +2807,7 @@ mod tests {
             editor_navigation_snapshot_for_test, EditorNavigationOrigin, EditorNavigationSurface,
             EditorSourceReference, EditorSourceResolution,
         },
+        project_model::test_support::ProjectModelTestFixture,
         source_graph::model::SourceNodeKind,
     };
 
@@ -2832,6 +3024,101 @@ mod tests {
     }
 
     #[test]
+    fn css_source_focus_is_resolved_without_a_preselected_canvas_element() {
+        let fixture_root = std::env::temp_dir().join(format!(
+            "pana-css-source-selection-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        let mut fixture = ProjectModelTestFixture::standard_zola(
+            &fixture_root,
+            "<main class=\"hero\">Acasă</main>\n",
+        )
+        .unwrap();
+        fixture.source(
+            "sass/pagini/index.scss",
+            ".hero { color: red; }\n.card { display: grid; }\n",
+        );
+        let source_graph = fixture.build_source_graph().unwrap();
+        let runtime = SelectionCoordinatorRuntime::default();
+        let snapshot = snapshot("tx-css-source", Vec::new());
+
+        let selected = runtime
+            .apply(
+                &snapshot,
+                Some("sass/pagini/index.scss"),
+                Some(&source_graph),
+                SelectionIntent::SelectCssSourceRule {
+                    file: "sass/pagini/index.scss".to_string(),
+                    selector: ".hero".to_string(),
+                    viewport: None,
+                    range: Some(range(0, 5)),
+                },
+            )
+            .unwrap();
+
+        let primary = primary_selection_entry(&selected.selection).unwrap();
+        assert_eq!(primary.subject.kind, SelectionSubjectKind::CssRule);
+        assert_eq!(primary.subject.label, ".hero");
+        assert_eq!(
+            primary.anchor.file.as_deref(),
+            Some("sass/pagini/index.scss")
+        );
+        assert!(primary.anchor.render_instance_id.is_none());
+        assert_eq!(
+            aggregate_selection_resolution(&selected.selection.members),
+            SelectionResolution::Resolved,
+        );
+        assert_eq!(
+            selected.inspector_summary.state,
+            InspectorSelectionSummaryState::Resolved,
+        );
+        assert_eq!(
+            selected.inspector_summary.subject_kind,
+            Some(SelectionSubjectKind::CssRule),
+        );
+        assert_eq!(
+            selected.inspector_summary.selector.as_deref(),
+            Some(".hero"),
+        );
+        assert_eq!(selected.inspector_summary.classes, vec!["hero".to_string()]);
+
+        let mutation = mutation_identity(
+            &selected.selection,
+            selected.selection.canvas_identity.workspace_revision,
+        );
+        runtime
+            .with_stable_semantic_mutation_target(
+                &snapshot.identity.runtime_session_id,
+                &mutation,
+                || Ok(()),
+            )
+            .unwrap();
+
+        let previous_member_id = selected.selection.primary_member_id.clone();
+        let card = runtime
+            .apply(
+                &snapshot,
+                Some("sass/pagini/index.scss"),
+                Some(&source_graph),
+                SelectionIntent::SelectCssSourceRule {
+                    file: "sass/pagini/index.scss".to_string(),
+                    selector: ".card".to_string(),
+                    viewport: None,
+                    range: Some(range(23, 28)),
+                },
+            )
+            .unwrap();
+        assert_ne!(card.selection.primary_member_id, previous_member_id);
+        assert_eq!(card.inspector_summary.classes, vec!["card".to_string()]);
+
+        fs::remove_dir_all(fixture_root).unwrap();
+    }
+
+    #[test]
     fn opaque_publication_set_is_ordered_primary_bound_and_session_exact() {
         let runtime = SelectionCoordinatorRuntime::default();
         let snapshot = snapshot(
@@ -2913,7 +3200,7 @@ mod tests {
                 },
             )
             .unwrap_err();
-        assert!(error.contains("subiect semantic"));
+        assert!(error.contains("regulă selectată în Code sau un element selectat în Preview"));
     }
 
     #[test]
@@ -3110,7 +3397,6 @@ mod tests {
                     ],
                     block_context: Some(InspectorSelectionBlockContext {
                         provider_id: "hero".to_string(),
-                        marker_kind: InspectorSelectionBlockMarkerKind::Canonical,
                         root_tag: "section".to_string(),
                     }),
                 },

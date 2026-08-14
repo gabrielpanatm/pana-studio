@@ -394,6 +394,7 @@ pub fn apply_selection_intent(
     if !matches!(
         &input.intent,
         SelectionIntent::SelectSourcePosition { .. }
+            | SelectionIntent::SelectCssSourceRule { .. }
             | SelectionIntent::SetFocus { .. }
             | SelectionIntent::Rebase
     ) {
@@ -571,14 +572,11 @@ fn selection_intent_from_project_model(
                             "SelectionCoordinator nu găsește un selector CSS/SCSS la poziția din cod."
                                 .to_string()
                         })?;
-                    Ok(SelectionIntent::SetFocus {
-                        focus: crate::kernel::selection_coordinator::SelectionFocus::CssRule {
-                            file: source.relative_path.clone(),
-                            selector: target.selector,
-                            viewport,
-                            range: Some(target.range),
-                        },
-                        expected_selection_revision: None,
+                    Ok(SelectionIntent::SelectCssSourceRule {
+                        file: source.relative_path.clone(),
+                        selector: target.selector,
+                        viewport,
+                        range: Some(target.range),
                     })
                 }
                 ProjectModelFileKind::Script => Ok(SelectionIntent::SetFocus {
@@ -594,6 +592,33 @@ fn selection_intent_from_project_model(
                     viewport,
                 }),
             }
+        }
+        SelectionIntent::SelectCssSourceRule {
+            file,
+            selector,
+            viewport,
+            ..
+        } => {
+            let source = project_model_file(model, &file).ok_or_else(|| {
+                format!("SelectionCoordinator nu găsește fișierul CSS/SCSS {file} în ProjectModel.")
+            })?;
+            if source.kind != ProjectModelFileKind::Style {
+                return Err(format!(
+                    "SelectionCoordinator a refuzat ținta CSS deoarece {file} nu este un fișier de stil."
+                ));
+            }
+            let target = selector_source_target(&source.contents, &selector).ok_or_else(|| {
+                format!(
+                    "SelectionCoordinator nu găsește selectorul {selector} în {}.",
+                    source.relative_path
+                )
+            })?;
+            Ok(SelectionIntent::SelectCssSourceRule {
+                file: source.relative_path.clone(),
+                selector: target.selector,
+                viewport,
+                range: Some(target.range),
+            })
         }
         SelectionIntent::SetFocus {
             focus,

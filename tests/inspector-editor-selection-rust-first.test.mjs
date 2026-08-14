@@ -72,9 +72,32 @@ test("editor selection availability comes from the Rust summary", () => {
 
   assert.match(inspectorFiles.html, /selectionSummary\?\.elementId/);
   assert.match(inspectorFiles.html, /selectionSummary\?\.classes/);
-  assert.match(inspectorFiles.css, /\{#if hasElementSelection && selectedClass\}/);
+  assert.match(inspectorFiles.css, /\{#if hasCssSubject && selectedClass\}/);
+  assert.match(inspectorFiles.css, /selectionSummary\.subjectKind === "cssRule"/);
   assert.match(inspectorFiles.css, /selectionSummary\?\.classes\.length/);
   assert.match(inspectorFiles.js, /dataAnim\?: string \| null/);
+});
+
+test("a CSS rule selected in Code is a first-class Rust source subject", () => {
+  const types = source("../src/lib/types.ts");
+  const rust = source("../src-tauri/src/kernel/selection_coordinator.rs");
+  const navigation = source("../src-tauri/src/commands/editor_navigation.rs");
+  const pane = inspectorFiles.css;
+
+  assert.match(types, /SelectionSubjectKind[\s\S]*\| "cssRule"/);
+  assert.match(rust, /SelectionSubjectKind::CssRule/);
+  assert.match(rust, /selection_entry_from_css_focus\(source_graph, &focus\)/);
+  assert.match(rust, /SourceNodeKind::Style/);
+  assert.match(rust, /css_rule_member_id/);
+  assert.match(rust, /SelectCssSourceRule/);
+  assert.match(navigation, /ProjectModelFileKind::Style[\s\S]*SelectionIntent::SelectCssSourceRule/);
+  assert.match(navigation, /selector_source_target_at_offset/);
+  assert.match(
+    rust,
+    /subject\.kind == SelectionSubjectKind::CssRule[\s\S]*InspectorSelectionSummaryState::Resolved/,
+  );
+  assert.match(pane, /selectionSummary\.subjectKind === "cssRule"/);
+  assert.doesNotMatch(rust, /Focusul CSS\/JS necesită mai întâi un subiect semantic selectat/);
 });
 
 test("HTML physical facts remain narrow and cannot become selection authority", () => {
@@ -112,7 +135,6 @@ test("AppState exposes only exact Rust-accepted inspector projections", () => {
   assert.match(adapters, /summary\.selectionRevision !== coordinated\.snapshot\.selectionRevision/);
   assert.match(adapters, /summary\.renderInstanceId !== coordinated\.renderInstanceId/);
   assert.match(adapters, /bounded\.providerId !== physical\.providerId/);
-  assert.match(adapters, /bounded\.markerKind !== physical\.markerKind/);
   assert.match(adapters, /bounded\.rootTag !== physical\.rootTag/);
   assert.doesNotMatch(
     Object.values(inspectorFiles).join("\n"),

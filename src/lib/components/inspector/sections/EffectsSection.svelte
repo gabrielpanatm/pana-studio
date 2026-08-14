@@ -83,10 +83,7 @@
 
   // ── Asset helpers ─────────────────────────────────────────────────────────
 
-  const ext = (a: InspectorProjectFile) => a.relativePath.split(".").pop()?.toLowerCase() ?? "";
-  const imageAssets = $derived(scannedAssets.filter(
-    (a) => a.kind === "IMAGE" || ["svg","webp","avif","png","jpg","jpeg","gif"].includes(ext(a))
-  ));
+  const imageAssets = $derived(scannedAssets.filter((asset) => asset.kind === "IMAGE"));
 
   function maskImageValue(raw: string) {
     const stripped = raw.trim().replace(/^url\(["']?/, "").replace(/["']?\)$/, "");

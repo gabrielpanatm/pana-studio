@@ -24,6 +24,8 @@
     assignFontRole,
     chooseFontFiles,
     downloadGoogleFontFamily,
+    getBundledFontCatalog,
+    getBundledFontPreview,
     getFontManager,
     getFontPreviewAsset,
     planFontFamilyRemoval,
@@ -31,6 +33,7 @@
     readDesignTokenCatalog,
     readThemeStyleCatalog,
     searchGoogleFonts,
+    installBundledFontFamily,
     removeFontFamily,
     setFontDisplay,
     setFontPreload,
@@ -46,6 +49,7 @@
   import type {
     DesignTokenCatalogSnapshot,
     DesignTokenSnapshot,
+    BundledFontCatalogFamily,
     FileBufferRequestIdentity,
     FontFaceGraph,
     FontDeliveryDiagnostic,
@@ -70,7 +74,7 @@
 
   type DesignView = "global-styles" | "tokens" | "classes" | "styles" | "fonts";
   type DetailMode = "info" | "create" | "edit";
-  type FontCreateSource = "google" | "local";
+  type FontCreateSource = "google" | "bundled" | "local";
 
   let activeView = $state<DesignView>("global-styles");
   let category = $state("all");
@@ -106,6 +110,17 @@
   let googleFontLoading = $state(false);
   let googleFontError = $state("");
   let googleFontSearchSequence = 0;
+  let bundledFontCatalog = $state<BundledFontCatalogFamily[]>([]);
+  let bundledFontLoading = $state(false);
+  let bundledFontError = $state("");
+  let bundledFontQuery = $state("");
+  let bundledFontCategory = $state("all");
+  let selectedBundledFontId = $state("");
+  let bundledFontCatalogSequence = 0;
+  let bundledFontPreviewSequence = 0;
+  let bundledFontPreviewLoading = $state(false);
+  let bundledFontPreviewError = $state("");
+  let bundledFontPreviewStyle: HTMLStyleElement | null = null;
   let fontCreateSource = $state<FontCreateSource>("google");
   let localFontPaths = $state<string[]>([]);
   let localFontPlan = $state<LocalFontImportPlan | null>(null);
@@ -181,6 +196,19 @@
   const selectedGoogleFont = $derived(
     googleFontResults.find((family) => family.family === formName) ?? null,
   );
+  const bundledFontCategories = $derived(
+    [...new Set(bundledFontCatalog.map((family) => family.category))].sort(),
+  );
+  const visibleBundledFonts = $derived.by(() => {
+    const search = bundledFontQuery.trim().toLocaleLowerCase(l10n.locale);
+    return bundledFontCatalog.filter((family) => (
+      (bundledFontCategory === "all" || family.category === bundledFontCategory)
+      && (!search || `${family.family} ${family.category}`.toLocaleLowerCase(l10n.locale).includes(search))
+    ));
+  });
+  const selectedBundledFont = $derived(
+    bundledFontCatalog.find((family) => family.id === selectedBundledFontId) ?? null,
+  );
   const selectedFontPreviewFile = $derived.by(() => {
     if (!selectedFont) return null;
     return [...selectedFont.files].sort((left, right) => {
@@ -213,6 +241,7 @@
         && !localFontPlanning
       );
     }
+    if (fontCreateSource === "bundled") return Boolean(selectedBundledFont);
     return Boolean(formName.trim() && formGoogleStyles.length > 0);
   });
   $effect(() => {
@@ -252,7 +281,10 @@
     void loadSelectedFontPreview(file, workspaceRevision);
   });
 
-  onDestroy(() => clearFontPreview());
+  onDestroy(() => {
+    clearFontPreview();
+    clearBundledFontPreview();
+  });
 
   function categoryLabel(token: DesignTokenSnapshot) {
     return designTokenCatalog?.categories.find((entry) => entry.id === token.categoryId)?.label
@@ -424,6 +456,41 @@
     }
   }
 
+  function clearBundledFontPreview() {
+    bundledFontPreviewSequence += 1;
+    bundledFontPreviewLoading = false;
+    bundledFontPreviewError = "";
+    bundledFontPreviewStyle?.remove();
+    bundledFontPreviewStyle = null;
+  }
+
+  async function loadBundledFontPreview(family: BundledFontCatalogFamily) {
+    const requestId = ++bundledFontPreviewSequence;
+    bundledFontPreviewLoading = true;
+    bundledFontPreviewError = "";
+    bundledFontPreviewStyle?.remove();
+    bundledFontPreviewStyle = null;
+    try {
+      const preview = await getBundledFontPreview(family.id, "normal");
+      if (
+        requestId !== bundledFontPreviewSequence
+        || selectedBundledFontId !== family.id
+      ) return;
+      const style = document.createElement("style");
+      style.dataset.panaBundledFontPreview = preview.faces.map((face) => face.contentHash).join(":");
+      style.textContent = preview.faces.map((face) => (
+        `@font-face { font-family: "Pana Studio Bundled Font Preview"; src: url("${face.dataUrl}") format("${face.format}"); font-weight: ${face.weightRange.start} ${face.weightRange.end}; font-style: ${face.style}; font-display: swap; unicode-range: ${face.unicodeRange}; }`
+      )).join("\n");
+      document.head.append(style);
+      bundledFontPreviewStyle = style;
+    } catch (cause) {
+      if (requestId !== bundledFontPreviewSequence) return;
+      bundledFontPreviewError = errorMessage(cause);
+    } finally {
+      if (requestId === bundledFontPreviewSequence) bundledFontPreviewLoading = false;
+    }
+  }
+
   function resetPanel() {
     detailMode = "info";
     formName = "";
@@ -439,6 +506,13 @@
     googleFontLoading = false;
     googleFontError = "";
     googleFontSearchSequence += 1;
+    bundledFontQuery = "";
+    bundledFontCategory = "all";
+    selectedBundledFontId = "";
+    bundledFontCatalogSequence += 1;
+    bundledFontLoading = false;
+    bundledFontError = "";
+    clearBundledFontPreview();
     fontCreateSource = "google";
     localFontPaths = [];
     localFontPlan = null;
@@ -510,16 +584,43 @@
     }
   }
 
+  async function loadBundledFontCatalog() {
+    if (bundledFontCatalog.length > 0 || bundledFontLoading) return;
+    const requestId = ++bundledFontCatalogSequence;
+    bundledFontLoading = true;
+    bundledFontError = "";
+    try {
+      const catalog = await getBundledFontCatalog();
+      if (requestId !== bundledFontCatalogSequence) return;
+      bundledFontCatalog = catalog;
+    } catch (cause) {
+      if (requestId !== bundledFontCatalogSequence) return;
+      bundledFontError = errorMessage(cause);
+    } finally {
+      if (requestId === bundledFontCatalogSequence) bundledFontLoading = false;
+    }
+  }
+
+  function selectBundledFont(font: BundledFontCatalogFamily) {
+    if (mutating) return;
+    selectedBundledFontId = font.id;
+    formName = font.family;
+    void loadBundledFontPreview(font);
+  }
+
   function selectFontCreateSource(source: FontCreateSource) {
     if (mutating || localFontPlanning || fontCreateSource === source) return;
     fontCreateSource = source;
     formError = "";
+    if (source !== "bundled") clearBundledFontPreview();
     if (source === "google" && googleFontResults.length === 0) {
       void searchGoogleFontCatalog("");
+    } else if (source === "bundled") {
+      void loadBundledFontCatalog();
     }
   }
 
-  const fontCreateSources: FontCreateSource[] = ["google", "local"];
+  const fontCreateSources: FontCreateSource[] = ["google", "bundled", "local"];
 
   function handleFontSourceKeydown(event: KeyboardEvent, source: FontCreateSource) {
     const index = fontCreateSources.indexOf(source);
@@ -699,6 +800,28 @@
             settlement.warnings.length > 0
               ? t("design-local-files-warning", { count: receipt.plan.files.length })
               : t("design-local-files-success", { count: receipt.plan.files.length }),
+            "unsaved",
+          );
+          resetPanel();
+          return;
+        }
+        if (fontCreateSource === "bundled") {
+          if (!selectedBundledFont) throw new Error(t("design-bundled-font-required"));
+          const receipt = await installBundledFontFamily(
+            selectedBundledFont.id,
+            workspaceIdentity(),
+          );
+          const settlement = await settleProjectWorkspaceMutation(
+            app,
+            workspaceMutationAuthorityReceipt(receipt.mutation, receipt.workspace),
+            { warningLabel: t("design-operation-bundled-font-install") },
+          );
+          await reloadFontManager();
+          selectedFontKey = receipt.family.id;
+          app.setGlobalStatus(
+            settlement.warnings.length > 0
+              ? t("design-bundled-font-warning", { family: receipt.family.family })
+              : t("design-bundled-font-success", { family: receipt.family.family }),
             "unsaved",
           );
           resetPanel();
@@ -1161,7 +1284,9 @@
             >
               {family.delivery === "system"
                 ? t("design-delivery-system")
-                : family.origin === "local"
+                : family.origin === "bundled"
+                  ? t("design-origin-bundled")
+                  : family.origin === "local"
                   ? t("design-origin-local")
                   : family.origin === "theme"
                     ? t("design-origin-theme")
@@ -1216,6 +1341,18 @@
                 onclick={() => selectFontCreateSource("google")}
                 onkeydown={(event) => handleFontSourceKeydown(event, "google")}
               ><IconBrandGoogle size={14} /> Google Fonts</button>
+              <button
+                id="font-source-tab-bundled"
+                class="ui-tab"
+                type="button"
+                role="tab"
+                aria-selected={fontCreateSource === "bundled"}
+                class:active={fontCreateSource === "bundled"}
+                tabindex={fontCreateSource === "bundled" ? 0 : -1}
+                disabled={mutating || localFontPlanning}
+                onclick={() => selectFontCreateSource("bundled")}
+                onkeydown={(event) => handleFontSourceKeydown(event, "bundled")}
+              ><IconTypography size={14} /> {t("design-included-library")}</button>
               <button
                 id="font-source-tab-local"
                 class="ui-tab"
@@ -1353,6 +1490,79 @@
                 </label>
               </div>
             {/if}
+            {:else if fontCreateSource === "bundled"}
+              <div class="google-source">
+                <span class="google-source-title"><IconTypography size={15} stroke={1.9} /> {t("design-bundled-catalog")}</span>
+                <p>{t("design-bundled-description")}</p>
+              </div>
+              <div class="bundled-font-filters">
+                <input
+                  bind:value={bundledFontQuery}
+                  disabled={mutating || bundledFontLoading}
+                  aria-label={t("design-search-family")}
+                  placeholder={t("design-search-family")}
+                />
+                <select
+                  bind:value={bundledFontCategory}
+                  disabled={mutating || bundledFontLoading}
+                  aria-label={t("design-font-category")}
+                >
+                  <option value="all">{t("design-all-categories")}</option>
+                  {#each bundledFontCategories as fontCategory (fontCategory)}
+                    <option value={fontCategory}>{fontCategory}</option>
+                  {/each}
+                </select>
+              </div>
+              {#if bundledFontError}
+                <p class="form-error" role="alert"><IconAlertTriangle size={14} /> {bundledFontError}</p>
+              {:else if bundledFontLoading}
+                <div class="google-state">{t("design-loading-bundled-catalog")}</div>
+              {:else}
+                <div class="google-results" aria-label={t("design-bundled-families-label")}
+                >
+                  {#each visibleBundledFonts as font (font.id)}
+                    <button
+                      type="button"
+                      class="ui-entity-selectable"
+                      data-ui-selected={selectedBundledFontId === font.id ? "true" : undefined}
+                      aria-pressed={selectedBundledFontId === font.id}
+                      onclick={() => selectBundledFont(font)}
+                    >
+                      <span
+                        class="google-font-sample"
+                        class:bundled-font-preview={selectedBundledFontId === font.id && !bundledFontPreviewLoading && !bundledFontPreviewError}
+                      >Ag</span>
+                      <span>
+                        <strong>{font.family}</strong>
+                        <small>{font.category} · {font.weightRange.start}–{font.weightRange.end} · {Math.max(1, Math.round(font.sizeBytes / 1024))} KB</small>
+                      </span>
+                      {#if selectedBundledFontId === font.id}
+                        <IconCircleCheck size={16} stroke={2} />
+                      {/if}
+                    </button>
+                  {:else}
+                    <div class="google-state">{t("design-empty-bundled-search")}</div>
+                  {/each}
+                </div>
+              {/if}
+              {#if selectedBundledFont}
+                <div class="font-install-options bundled-font-details">
+                  <span>{t("design-bundled-preview")}</span>
+                  <strong class="bundled-font-preview-text">
+                    {t("design-bundled-preview-text")}
+                  </strong>
+                  <small>
+                    {bundledFontPreviewLoading
+                      ? t("design-bundled-preview-loading")
+                      : bundledFontPreviewError || t("design-bundled-preview-ready")}
+                  </small>
+                  <span>{t("design-bundled-contract")}</span>
+                  <small>
+                    WOFF2 · Latin + Latin Extended · wght {selectedBundledFont.weightRange.start}–{selectedBundledFont.weightRange.end} ·
+                    {selectedBundledFont.styles.join(" + ")} · {selectedBundledFont.license.description ?? "—"}
+                  </small>
+                </div>
+              {/if}
             {:else}
               <div class="google-source">
                 <span class="google-source-title"><IconFolderOpen size={15} stroke={1.9} /> {t("design-local-files")}</span>
@@ -1520,8 +1730,10 @@
           <p class="font-preview-error"><IconAlertTriangle size={13} /> {t("design-font-preview-error", { message: fontPreviewError })}</p>
         {/if}
         <dl class="info-grid">
-          <div><dt>{t("design-origin")}</dt><dd>{selectedFont.origin === "local"
-            ? t("design-origin-local")
+          <div><dt>{t("design-origin")}</dt><dd>{selectedFont.origin === "bundled"
+            ? t("design-origin-bundled")
+            : selectedFont.origin === "local"
+              ? t("design-origin-local")
             : selectedFont.origin === "theme"
               ? selectedFont.themeName ?? t("design-origin-theme")
               : t("design-origin-external")}</dd></div>
@@ -1757,7 +1969,7 @@
   .resource-form > label { display: grid; gap: 5px; color: var(--wb-text-muted); font-size: 12px; font-weight: 700; }
   .resource-form > label > input:not([type="checkbox"]) { width: 100%; height: 34px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--text-strong); background: var(--wb-surface-document); font-size: 12px; }
   .resource-form > label > input:not([type="checkbox"]):focus { border-color: var(--wb-accent); }
-  .font-source-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .font-source-switch { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .font-source-switch .ui-tab { width: 100%; min-width: 0; }
   .google-source { display: grid; gap: 4px; padding: 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
   .google-source-title { display: flex; align-items: center; gap: 6px; color: var(--wb-accent-strong); font-size: 12px; font-weight: 800; }
@@ -1775,6 +1987,11 @@
   .google-results small { color: var(--wb-text-muted); font-size: 11px; font-weight: 500; }
   .google-results :global(svg) { color: var(--wb-accent-strong); }
   .google-font-sample { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 6px; color: var(--wb-accent-strong); background: var(--wb-accent-soft); font-size: 16px; font-weight: 650; }
+  .google-font-sample.bundled-font-preview, .bundled-font-preview-text { font-family: "Pana Studio Bundled Font Preview", system-ui, sans-serif; }
+  .bundled-font-filters { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 6px; }
+  .bundled-font-filters input, .bundled-font-filters select { min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--wb-border-subtle); border-radius: 6px; color: var(--text-strong); background: var(--wb-surface-document); font-size: 12px; }
+  .bundled-font-details > small { color: var(--wb-text-muted); font-size: 11px; line-height: 1.45; }
+  .bundled-font-preview-text { overflow: hidden; color: var(--text-strong); font-size: 24px; font-weight: 400; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
   .google-state { display: grid; min-height: 58px; padding: 10px; place-items: center; color: var(--wb-text-muted); font-size: 12px; text-align: center; }
   .font-install-options { display: grid; gap: 7px; padding: 9px; border: 1px solid var(--wb-border-subtle); border-radius: 7px; background: var(--wb-surface-document); }
   .font-install-options > span { color: var(--wb-text-muted); font-size: 12px; font-weight: 700; }

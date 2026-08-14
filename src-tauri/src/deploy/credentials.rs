@@ -1,29 +1,15 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, path::Path};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
 
-use crate::{
-    app_home::{project_deploy_secrets_path, projects_config_dir},
-    kernel::write_authority::{
-        WriteAuthority, WriteCategory, WriteIntent, WriteOperationKind, WriteOwner, WritePolicy,
-        WriteTarget,
-    },
-};
+use crate::kernel::project_env_store::{validate_env_prefix, ProjectEnvStore};
 
-use super::{
-    env::{env_require, read_env_from_root},
-    model::{
-        BunnyTargetConfig, DeployCleanupPolicy, DeployProviderKind, DeploySettings, DeployTarget,
-        DeployTargetProvider,
-    },
-};
+use super::model::{DeployProviderKind, DeploySettings, DeployTarget};
 
-pub const DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION: u32 = 1;
-pub const DEPLOY_CONFIGURATION_SCHEMA_VERSION: u32 = 1;
-const DEPLOY_SECRET_STORE_SCHEMA_VERSION: u32 = 1;
+pub const DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION: u32 = 2;
+pub const DEPLOY_CONFIGURATION_SCHEMA_VERSION: u32 = 2;
 const MAX_SECRET_BYTES: usize = 1024 * 1024;
-pub(crate) const LEGACY_BUNNY_CREDENTIAL_REF: &str = "legacy-bunny-env";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,9 +42,10 @@ impl DeployCredentialKind {
 #[serde(rename_all = "camelCase")]
 pub struct DeployCredentialStatus {
     pub schema_version: u32,
-    pub credential_ref: String,
+    pub credential_env_prefix: String,
     pub kind: DeployCredentialKind,
     pub configured: bool,
+    pub missing_fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -76,16 +63,14 @@ pub struct DeployConfigurationSnapshot {
     pub settings: DeploySettings,
     pub credential_statuses: Vec<DeployCredentialStatus>,
     pub target_capabilities: Vec<DeployTargetCapabilitySnapshot>,
-    pub legacy_bunny_fallback: bool,
 }
 
-pub fn configuration_snapshot<R: Runtime>(
-    app: &AppHandle<R>,
+pub fn configuration_snapshot(
     project_root: &Path,
     settings: DeploySettings,
 ) -> Result<DeployConfigurationSnapshot, String> {
     settings.validate()?;
-    let credential_statuses = credential_statuses(app, project_root, &settings.targets)?;
+    let credential_statuses = credential_statuses(project_root, &settings.targets)?;
     let target_capabilities = settings
         .targets
         .iter()
@@ -95,23 +80,18 @@ pub fn configuration_snapshot<R: Runtime>(
             capabilities: target.capabilities(),
         })
         .collect();
-    let legacy_bunny_fallback = settings
-        .targets
-        .iter()
-        .any(|target| target.credential_ref == LEGACY_BUNNY_CREDENTIAL_REF);
     Ok(DeployConfigurationSnapshot {
         schema_version: DEPLOY_CONFIGURATION_SCHEMA_VERSION,
         settings,
         credential_statuses,
         target_capabilities,
-        legacy_bunny_fallback,
     })
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeployCredentialWriteInput {
-    pub credential_ref: String,
+    pub credential_env_prefix: String,
     #[serde(flatten)]
     pub secret: DeployCredentialSecretInput,
 }
@@ -152,95 +132,115 @@ pub enum DeployCredentialSecretInput {
     },
 }
 
+pub(crate) struct PreparedCredentialWrite {
+    pub(crate) credential_env_prefix: String,
+    pub(crate) kind: DeployCredentialKind,
+    pub(crate) values: BTreeMap<String, String>,
+}
+
+pub(crate) fn prepare_credential_write(
+    target: &DeployTarget,
+    input: DeployCredentialWriteInput,
+) -> Result<PreparedCredentialWrite, String> {
+    target.validate()?;
+    validate_env_prefix(&input.credential_env_prefix)?;
+    if input.credential_env_prefix != target.credential_env_prefix {
+        return Err("Prefixul ENV nu corespunde țintei deploy.".to_string());
+    }
+    let (kind, values) = input.secret.into_env_values()?;
+    if !kind.supports_provider(target.provider_kind()) {
+        return Err("Tipul credentialelor nu corespunde providerului țintei.".to_string());
+    }
+    Ok(PreparedCredentialWrite {
+        credential_env_prefix: input.credential_env_prefix,
+        kind,
+        values,
+    })
+}
+
 impl DeployCredentialSecretInput {
-    fn validate(&self) -> Result<(), String> {
-        match self {
+    fn into_env_values(self) -> Result<(DeployCredentialKind, BTreeMap<String, String>), String> {
+        let mut values = BTreeMap::new();
+        let kind = match self {
             Self::Bunny {
                 storage_key,
                 cdn_api_key,
             } => {
-                validate_secret("Bunny Storage key", storage_key, 16 * 1024)?;
-                validate_secret("Bunny CDN API key", cdn_api_key, 16 * 1024)
+                validate_secret("Bunny Storage key", &storage_key, 16 * 1024)?;
+                validate_secret("Bunny CDN API key", &cdn_api_key, 16 * 1024)?;
+                values.insert("CDN_API_KEY".to_string(), cdn_api_key);
+                values.insert("STORAGE_KEY".to_string(), storage_key);
+                DeployCredentialKind::Bunny
             }
-            Self::Ftp { username, password } | Self::SftpPassword { username, password } => {
-                validate_username(username)?;
-                validate_secret("Parola", password, 64 * 1024)
+            Self::Ftp { username, password } => {
+                validate_username(&username)?;
+                validate_secret("Parola FTP", &password, 64 * 1024)?;
+                values.insert("PASSWORD".to_string(), password);
+                values.insert("USERNAME".to_string(), username);
+                DeployCredentialKind::Ftp
+            }
+            Self::SftpPassword { username, password } => {
+                validate_username(&username)?;
+                validate_secret("Parola SFTP", &password, 64 * 1024)?;
+                values.insert("AUTH_MODE".to_string(), "password".to_string());
+                values.insert("PASSWORD".to_string(), password);
+                values.insert("USERNAME".to_string(), username);
+                DeployCredentialKind::SftpPassword
             }
             Self::SftpPrivateKey {
                 username,
                 private_key_pem,
                 passphrase,
             } => {
-                validate_username(username)?;
-                validate_secret("Cheia privată SFTP", private_key_pem, MAX_SECRET_BYTES)?;
+                validate_username(&username)?;
+                validate_secret("Cheia privată SFTP", &private_key_pem, MAX_SECRET_BYTES)?;
                 if !private_key_pem.contains("-----BEGIN") {
                     return Err(
                         "Cheia privată SFTP nu are un header PEM/OpenSSH valid.".to_string()
                     );
                 }
-                if let Some(passphrase) = passphrase {
+                if let Some(passphrase) = passphrase.as_deref() {
                     validate_optional_secret("Passphrase-ul SFTP", passphrase, 64 * 1024)?;
                 }
-                Ok(())
+                values.insert("AUTH_MODE".to_string(), "private_key".to_string());
+                values.insert(
+                    "PRIVATE_KEY_BASE64".to_string(),
+                    STANDARD.encode(private_key_pem.as_bytes()),
+                );
+                if let Some(passphrase) = passphrase.filter(|value| !value.is_empty()) {
+                    values.insert("PASSPHRASE".to_string(), passphrase);
+                }
+                values.insert("USERNAME".to_string(), username);
+                DeployCredentialKind::SftpPrivateKey
             }
             Self::S3 {
                 access_key_id,
                 secret_access_key,
                 session_token,
             } => {
-                validate_secret("Access key ID S3", access_key_id, 16 * 1024)?;
-                validate_secret("Secret access key S3", secret_access_key, 64 * 1024)?;
-                if let Some(session_token) = session_token {
+                validate_secret("Access key ID S3", &access_key_id, 16 * 1024)?;
+                validate_secret("Secret access key S3", &secret_access_key, 64 * 1024)?;
+                if let Some(session_token) = session_token.as_deref() {
                     validate_optional_secret("Session token S3", session_token, 256 * 1024)?;
                 }
-                Ok(())
+                values.insert("ACCESS_KEY_ID".to_string(), access_key_id);
+                values.insert("SECRET_ACCESS_KEY".to_string(), secret_access_key);
+                if let Some(session_token) = session_token.filter(|value| !value.is_empty()) {
+                    values.insert("SESSION_TOKEN".to_string(), session_token);
+                }
+                DeployCredentialKind::S3
             }
             Self::CloudflarePages { api_token } => {
-                validate_secret("Token-ul Cloudflare API", api_token, 64 * 1024)
+                validate_secret("Token-ul Cloudflare API", &api_token, 64 * 1024)?;
+                values.insert("API_TOKEN".to_string(), api_token);
+                DeployCredentialKind::CloudflarePages
             }
-        }
-    }
-
-    fn into_stored(self) -> StoredDeployCredential {
-        match self {
-            Self::Bunny {
-                storage_key,
-                cdn_api_key,
-            } => StoredDeployCredential::Bunny {
-                storage_key,
-                cdn_api_key,
-            },
-            Self::Ftp { username, password } => StoredDeployCredential::Ftp { username, password },
-            Self::SftpPassword { username, password } => {
-                StoredDeployCredential::SftpPassword { username, password }
-            }
-            Self::SftpPrivateKey {
-                username,
-                private_key_pem,
-                passphrase,
-            } => StoredDeployCredential::SftpPrivateKey {
-                username,
-                private_key_pem,
-                passphrase,
-            },
-            Self::S3 {
-                access_key_id,
-                secret_access_key,
-                session_token,
-            } => StoredDeployCredential::S3 {
-                access_key_id,
-                secret_access_key,
-                session_token,
-            },
-            Self::CloudflarePages { api_token } => {
-                StoredDeployCredential::CloudflarePages { api_token }
-            }
-        }
+        };
+        Ok((kind, values))
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone)]
 pub(crate) enum StoredDeployCredential {
     Bunny {
         storage_key: String,
@@ -257,13 +257,11 @@ pub(crate) enum StoredDeployCredential {
     SftpPrivateKey {
         username: String,
         private_key_pem: String,
-        #[serde(default)]
         passphrase: Option<String>,
     },
     S3 {
         access_key_id: String,
         secret_access_key: String,
-        #[serde(default)]
         session_token: Option<String>,
     },
     CloudflarePages {
@@ -271,274 +269,135 @@ pub(crate) enum StoredDeployCredential {
     },
 }
 
-impl StoredDeployCredential {
-    pub(crate) fn kind(&self) -> DeployCredentialKind {
-        match self {
-            Self::Bunny { .. } => DeployCredentialKind::Bunny,
-            Self::Ftp { .. } => DeployCredentialKind::Ftp,
-            Self::SftpPassword { .. } => DeployCredentialKind::SftpPassword,
-            Self::SftpPrivateKey { .. } => DeployCredentialKind::SftpPrivateKey,
-            Self::S3 { .. } => DeployCredentialKind::S3,
-            Self::CloudflarePages { .. } => DeployCredentialKind::CloudflarePages,
-        }
-    }
-}
-
-#[derive(Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DeploySecretStore {
-    #[serde(default = "secret_store_schema_version")]
-    schema_version: u32,
-    #[serde(default)]
-    credentials: BTreeMap<String, StoredDeployCredential>,
-}
-
-pub(crate) fn resolve_credential<R: Runtime>(
-    app: &AppHandle<R>,
+pub(crate) fn resolve_credential(
     project_root: &Path,
     target: &DeployTarget,
 ) -> Result<StoredDeployCredential, String> {
     target.validate()?;
-    let project_path = canonical_project_path(project_root)?;
-    let store = read_secret_store(app, &project_path)?;
-    let credential = match store.credentials.get(&target.credential_ref).cloned() {
-        Some(credential) => credential,
-        None if target.credential_ref == LEGACY_BUNNY_CREDENTIAL_REF
-            && target.provider_kind() == DeployProviderKind::Bunny =>
-        {
-            legacy_bunny_credential(project_root)?
-        }
-        None => {
-            return Err(format!(
-                "Credentialele '{}' nu sunt configurate pentru ținta '{}'.",
-                target.credential_ref, target.name
-            ))
-        }
+    let env = ProjectEnvStore::read_namespace(project_root, &target.credential_env_prefix)?;
+    let credential = match target.provider_kind() {
+        DeployProviderKind::Bunny => StoredDeployCredential::Bunny {
+            storage_key: require(&env, "STORAGE_KEY", target)?,
+            cdn_api_key: require(&env, "CDN_API_KEY", target)?,
+        },
+        DeployProviderKind::Ftp => StoredDeployCredential::Ftp {
+            username: require(&env, "USERNAME", target)?,
+            password: require(&env, "PASSWORD", target)?,
+        },
+        DeployProviderKind::Sftp => match env.get("AUTH_MODE").map(String::as_str) {
+            Some("private_key") => {
+                let encoded = require(&env, "PRIVATE_KEY_BASE64", target)?;
+                let bytes = STANDARD.decode(encoded).map_err(|_| {
+                    format!(
+                        "Cheia privată SFTP pentru '{}' nu este Base64 valid.",
+                        target.name
+                    )
+                })?;
+                let private_key_pem = String::from_utf8(bytes).map_err(|_| {
+                    format!("Cheia privată SFTP pentru '{}' nu este UTF-8.", target.name)
+                })?;
+                StoredDeployCredential::SftpPrivateKey {
+                    username: require(&env, "USERNAME", target)?,
+                    private_key_pem,
+                    passphrase: env.get("PASSPHRASE").cloned(),
+                }
+            }
+            Some("password") => StoredDeployCredential::SftpPassword {
+                username: require(&env, "USERNAME", target)?,
+                password: require(&env, "PASSWORD", target)?,
+            },
+            _ => {
+                return Err(format!(
+                    "Credentialele SFTP pentru '{}' cer AUTH_MODE=password sau private_key.",
+                    target.name
+                ))
+            }
+        },
+        DeployProviderKind::S3 => StoredDeployCredential::S3 {
+            access_key_id: require(&env, "ACCESS_KEY_ID", target)?,
+            secret_access_key: require(&env, "SECRET_ACCESS_KEY", target)?,
+            session_token: env.get("SESSION_TOKEN").cloned(),
+        },
+        DeployProviderKind::CloudflarePages => StoredDeployCredential::CloudflarePages {
+            api_token: require(&env, "API_TOKEN", target)?,
+        },
     };
-    if !credential.kind().supports_provider(target.provider_kind()) {
-        return Err(format!(
-            "Credentialele '{}' nu corespund providerului {}.",
-            target.credential_ref,
-            target.provider_kind().as_str()
-        ));
-    }
     Ok(credential)
 }
 
-pub fn settings_with_legacy_bunny_fallback(
-    project_root: &Path,
-    settings: DeploySettings,
-) -> DeploySettings {
-    if !settings.targets.is_empty() {
-        return settings;
-    }
-    let Ok(env) = read_env_from_root(project_root) else {
-        return settings;
-    };
-    let Some(storage_zone) = env
-        .get("BUNNY_STORAGE_ZONE")
-        .filter(|value| !value.is_empty())
-        .cloned()
-    else {
-        return settings;
-    };
-    let Some(pull_zone_id) = env
-        .get("BUNNY_PULL_ZONE_ID")
-        .filter(|value| !value.is_empty())
-        .cloned()
-    else {
-        return settings;
-    };
-    if env.get("BUNNY_STORAGE_KEY").is_none_or(String::is_empty)
-        || env.get("BUNNY_CDN_API_KEY").is_none_or(String::is_empty)
-    {
-        return settings;
-    }
-    let target = DeployTarget {
-        id: "legacy-bunny".to_string(),
-        name: "Bunny (.env legacy)".to_string(),
-        credential_ref: LEGACY_BUNNY_CREDENTIAL_REF.to_string(),
-        cleanup_policy: DeployCleanupPolicy::ManagedOnly,
-        provider: DeployTargetProvider::Bunny(BunnyTargetConfig {
-            storage_zone,
-            storage_region: env
-                .get("BUNNY_STORAGE_REGION")
-                .filter(|value| !value.is_empty())
-                .cloned()
-                .unwrap_or_else(|| "de".to_string()),
-            pull_zone_id,
-            remote_prefix: String::new(),
-        }),
-    };
-    if target.validate().is_err() {
-        return settings;
-    }
-    DeploySettings {
-        active_target_id: Some(target.id.clone()),
-        targets: vec![target],
-        ..DeploySettings::default()
-    }
-}
-
-pub fn credential_statuses<R: Runtime>(
-    app: &AppHandle<R>,
+pub fn credential_statuses(
     project_root: &Path,
     targets: &[DeployTarget],
 ) -> Result<Vec<DeployCredentialStatus>, String> {
-    let project_path = canonical_project_path(project_root)?;
-    let store = read_secret_store(app, &project_path)?;
-    Ok(targets
+    targets
         .iter()
-        .map(|target| {
-            let stored = store.credentials.get(&target.credential_ref);
-            let legacy = stored.is_none()
-                && target.credential_ref == LEGACY_BUNNY_CREDENTIAL_REF
-                && target.provider_kind() == DeployProviderKind::Bunny
-                && legacy_bunny_credential(project_root).is_ok();
-            DeployCredentialStatus {
-                schema_version: DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
-                credential_ref: target.credential_ref.clone(),
-                kind: stored.map_or_else(
-                    || default_credential_kind(target.provider_kind()),
-                    StoredDeployCredential::kind,
-                ),
-                configured: stored.is_some_and(|credential| {
-                    credential.kind().supports_provider(target.provider_kind())
-                }) || legacy,
-            }
-        })
-        .collect())
+        .map(|target| credential_status(project_root, target))
+        .collect()
 }
 
-pub fn save_credential<R: Runtime>(
-    app: &AppHandle<R>,
+pub(crate) fn credential_status(
     project_root: &Path,
     target: &DeployTarget,
-    input: DeployCredentialWriteInput,
 ) -> Result<DeployCredentialStatus, String> {
     target.validate()?;
-    validate_credential_ref(&input.credential_ref)?;
-    if input.credential_ref != target.credential_ref {
-        return Err("Referința credentialelor nu corespunde țintei deploy.".to_string());
-    }
-    input.secret.validate()?;
-    let credential = input.secret.into_stored();
-    if !credential.kind().supports_provider(target.provider_kind()) {
-        return Err("Tipul credentialelor nu corespunde providerului țintei.".to_string());
-    }
-    let project_path = canonical_project_path(project_root)?;
-    let mut store = read_secret_store(app, &project_path)?;
-    let kind = credential.kind();
-    store
-        .credentials
-        .insert(input.credential_ref.clone(), credential);
-    write_secret_store(app, &project_path, &store)?;
-    Ok(DeployCredentialStatus {
-        schema_version: DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
-        credential_ref: input.credential_ref,
-        kind,
-        configured: true,
-    })
-}
-
-pub fn delete_credential<R: Runtime>(
-    app: &AppHandle<R>,
-    project_root: &Path,
-    credential_ref: &str,
-) -> Result<bool, String> {
-    validate_credential_ref(credential_ref)?;
-    let project_path = canonical_project_path(project_root)?;
-    let mut store = read_secret_store(app, &project_path)?;
-    let removed = store.credentials.remove(credential_ref).is_some();
-    if removed {
-        write_secret_store(app, &project_path, &store)?;
-    }
-    Ok(removed)
-}
-
-fn legacy_bunny_credential(project_root: &Path) -> Result<StoredDeployCredential, String> {
-    let env = read_env_from_root(project_root)?;
-    Ok(StoredDeployCredential::Bunny {
-        storage_key: env_require(&env, "BUNNY_STORAGE_KEY")?,
-        cdn_api_key: env_require(&env, "BUNNY_CDN_API_KEY")?,
-    })
-}
-
-fn read_secret_store<R: Runtime>(
-    app: &AppHandle<R>,
-    project_path: &str,
-) -> Result<DeploySecretStore, String> {
-    let path = project_deploy_secrets_path(app, project_path)?;
-    let source = match fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(DeploySecretStore {
-                schema_version: DEPLOY_SECRET_STORE_SCHEMA_VERSION,
-                ..DeploySecretStore::default()
-            })
+    let env = ProjectEnvStore::read_namespace(project_root, &target.credential_env_prefix)?;
+    let (kind, required): (DeployCredentialKind, &[&str]) = match target.provider_kind() {
+        DeployProviderKind::Bunny => (DeployCredentialKind::Bunny, &["STORAGE_KEY", "CDN_API_KEY"]),
+        DeployProviderKind::Ftp => (DeployCredentialKind::Ftp, &["USERNAME", "PASSWORD"]),
+        DeployProviderKind::Sftp
+            if env.get("AUTH_MODE").map(String::as_str) == Some("private_key") =>
+        {
+            (
+                DeployCredentialKind::SftpPrivateKey,
+                &["AUTH_MODE", "USERNAME", "PRIVATE_KEY_BASE64"],
+            )
         }
-        Err(error) => {
-            return Err(format!(
-                "Magazia internă de credentiale deploy nu poate fi citită: {error}."
-            ))
+        DeployProviderKind::Sftp => (
+            DeployCredentialKind::SftpPassword,
+            &["AUTH_MODE", "USERNAME", "PASSWORD"],
+        ),
+        DeployProviderKind::S3 => (
+            DeployCredentialKind::S3,
+            &["ACCESS_KEY_ID", "SECRET_ACCESS_KEY"],
+        ),
+        DeployProviderKind::CloudflarePages => {
+            (DeployCredentialKind::CloudflarePages, &["API_TOKEN"])
         }
     };
-    let store: DeploySecretStore = serde_json::from_str(&source)
-        .map_err(|_| "Magazia internă de credentiale deploy este invalidă.".to_string())?;
-    if store.schema_version != DEPLOY_SECRET_STORE_SCHEMA_VERSION {
-        return Err(format!(
-            "Schema magaziei de credentiale este {}, așteptat {}.",
-            store.schema_version, DEPLOY_SECRET_STORE_SCHEMA_VERSION
-        ));
-    }
-    Ok(store)
+    let missing_fields = required
+        .iter()
+        .filter(|suffix| env.get(**suffix).is_none_or(String::is_empty))
+        .map(|suffix| (*suffix).to_string())
+        .collect::<Vec<_>>();
+    let configured = missing_fields.is_empty()
+        && (target.provider_kind() != DeployProviderKind::Sftp
+            || matches!(
+                env.get("AUTH_MODE").map(String::as_str),
+                Some("password" | "private_key")
+            ));
+    Ok(DeployCredentialStatus {
+        schema_version: DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
+        credential_env_prefix: target.credential_env_prefix.clone(),
+        kind,
+        configured,
+        missing_fields,
+    })
 }
 
-fn write_secret_store<R: Runtime>(
-    app: &AppHandle<R>,
-    project_path: &str,
-    store: &DeploySecretStore,
-) -> Result<(), String> {
-    let path = project_deploy_secrets_path(app, project_path)?;
-    let boundary = projects_config_dir(app)?;
-    let public_label = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| format!("config/projects/{name}"))
-        .unwrap_or_else(|| "config/projects/deploy-secrets.json".to_string());
-    let mut contents = serde_json::to_string_pretty(store)
-        .map_err(|_| "Magazia de credentiale deploy nu poate fi serializată.".to_string())?;
-    contents.push('\n');
-    let intent = WriteIntent::new(
-        WriteCategory::InternalAppWrite,
-        WriteOwner::AppConfig,
-        WriteOperationKind::WriteText,
-        WriteTarget::new(path, boundary, public_label),
-        WritePolicy::internal_atomic(),
-        "Scriere credentiale deploy separate de configurația publică",
-    );
-    WriteAuthority::new(app)
-        .write_text(intent, &contents)
-        .map_err(|error| error.into_terminal_diagnostic())?;
-    Ok(())
-}
-
-fn canonical_project_path(project_root: &Path) -> Result<String, String> {
-    fs::canonicalize(project_root)
-        .map(|path| path.to_string_lossy().to_string())
-        .map_err(|error| format!("ProjectRoot nu poate fi capturat pentru credentiale: {error}."))
-}
-
-fn validate_credential_ref(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.len() > 128
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        return Err("Referința credentialelor deploy este invalidă.".to_string());
-    }
-    Ok(())
+fn require(
+    env: &BTreeMap<String, String>,
+    suffix: &str,
+    target: &DeployTarget,
+) -> Result<String, String> {
+    env.get(suffix)
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "Lipsește {}__{} pentru ținta '{}'.",
+                target.credential_env_prefix, suffix, target.name
+            )
+        })
 }
 
 fn validate_username(value: &str) -> Result<(), String> {
@@ -563,228 +422,372 @@ fn validate_optional_secret(label: &str, value: &str, max_bytes: usize) -> Resul
     Ok(())
 }
 
-fn secret_store_schema_version() -> u32 {
-    DEPLOY_SECRET_STORE_SCHEMA_VERSION
-}
-
-fn default_credential_kind(provider: DeployProviderKind) -> DeployCredentialKind {
-    match provider {
-        DeployProviderKind::Bunny => DeployCredentialKind::Bunny,
-        DeployProviderKind::Ftp => DeployCredentialKind::Ftp,
-        DeployProviderKind::Sftp => DeployCredentialKind::SftpPassword,
-        DeployProviderKind::S3 => DeployCredentialKind::S3,
-        DeployProviderKind::CloudflarePages => DeployCredentialKind::CloudflarePages,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deploy::model::{
+        BunnyTargetConfig, CloudflarePagesTargetConfig, DeployCleanupPolicy, DeploySettings,
+        DeployTargetProvider, FtpSecurityMode, FtpTargetConfig, S3TargetConfig, SftpTargetConfig,
+    };
     use std::{
-        env,
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use tauri::Manager;
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-    use crate::{
-        app_home::{ensure_app_home, project_deploy_secrets_path, TEST_APP_ENV_LOCK},
-        kernel::write_authority::WriteAuthorityRuntime,
-    };
-
-    #[test]
-    fn credential_store_roundtrip_uses_the_declared_write_authority_path() {
-        let _lock = TEST_APP_ENV_LOCK.lock().unwrap();
-        let root = temp_dir("store-roundtrip");
-        let _env_guard = TestEnvGuard::from_root(&root.join("app-home"));
-        let project = root.join("project");
-        fs::create_dir_all(&project).unwrap();
-
-        let app = tauri::test::mock_builder()
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .expect("mock app");
-        ensure_app_home(app.handle()).expect("app home");
-        app.state::<WriteAuthorityRuntime>()
-            .boot_recovery()
-            .expect("write recovery bootstrap");
-
-        let target = DeployTarget {
-            id: "production".to_string(),
-            name: "Production".to_string(),
-            credential_ref: "production-credentials".to_string(),
+    fn target(id: &str, prefix: &str, provider: DeployTargetProvider) -> DeployTarget {
+        DeployTarget {
+            id: id.to_string(),
+            name: id.to_string(),
+            credential_env_prefix: prefix.to_string(),
             cleanup_policy: DeployCleanupPolicy::ManagedOnly,
-            provider: DeployTargetProvider::Bunny(BunnyTargetConfig {
+            provider,
+        }
+    }
+
+    fn bunny_target(prefix: &str) -> DeployTarget {
+        target(
+            "production",
+            prefix,
+            DeployTargetProvider::Bunny(BunnyTargetConfig {
                 storage_zone: "site".to_string(),
                 storage_region: "de".to_string(),
                 pull_zone_id: "42".to_string(),
-                remote_prefix: "pana-tests/manual".to_string(),
+                remote_prefix: String::new(),
             }),
-        };
-        let status = save_credential(
-            app.handle(),
-            &project,
-            &target,
+        )
+    }
+
+    fn ftp_target(prefix: &str) -> DeployTarget {
+        target(
+            "ftp",
+            prefix,
+            DeployTargetProvider::Ftp(FtpTargetConfig {
+                host: "ftp.example.com".to_string(),
+                port: 21,
+                remote_root: "/public_html".to_string(),
+                security: FtpSecurityMode::FtpsExplicit,
+                allow_insecure_ftp: false,
+            }),
+        )
+    }
+
+    fn sftp_target(id: &str, prefix: &str) -> DeployTarget {
+        target(
+            id,
+            prefix,
+            DeployTargetProvider::Sftp(SftpTargetConfig {
+                host: "sftp.example.com".to_string(),
+                port: 22,
+                remote_root: "/site".to_string(),
+                expected_host_key_sha256: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                    .to_string(),
+            }),
+        )
+    }
+
+    fn s3_target(prefix: &str) -> DeployTarget {
+        target(
+            "s3",
+            prefix,
+            DeployTargetProvider::S3(S3TargetConfig {
+                bucket: "site".to_string(),
+                prefix: "production".to_string(),
+                region: "eu-central-1".to_string(),
+                endpoint: None,
+                force_path_style: false,
+                allow_insecure_endpoint: false,
+                cache_control: Some("public, max-age=3600".to_string()),
+            }),
+        )
+    }
+
+    fn cloudflare_target(prefix: &str) -> DeployTarget {
+        target(
+            "pages",
+            prefix,
+            DeployTargetProvider::CloudflarePages(CloudflarePagesTargetConfig {
+                account_id: "0123456789abcdef".to_string(),
+                project_name: "pana-site".to_string(),
+                branch: Some("main".to_string()),
+            }),
+        )
+    }
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "panastudio-deploy-credentials-{label}-{}-{stamp}",
+            TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    #[test]
+    fn write_input_becomes_only_namespaced_env_fields() {
+        let prepared = prepare_credential_write(
+            &bunny_target("PANA_DEPLOY_PRODUCTION"),
             DeployCredentialWriteInput {
-                credential_ref: target.credential_ref.clone(),
+                credential_env_prefix: "PANA_DEPLOY_PRODUCTION".to_string(),
                 secret: DeployCredentialSecretInput::Bunny {
                     storage_key: "storage-secret".to_string(),
                     cdn_api_key: "cdn-secret".to_string(),
                 },
             },
         )
-        .expect("credential save through WriteAuthority");
-        assert!(status.configured);
-
-        let canonical_project = fs::canonicalize(&project).unwrap();
-        let store_path =
-            project_deploy_secrets_path(app.handle(), &canonical_project.to_string_lossy())
-                .unwrap();
-        assert!(store_path.exists());
-        assert!(store_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".deploy-secrets.json")));
-
-        match resolve_credential(app.handle(), &project, &target).unwrap() {
-            StoredDeployCredential::Bunny {
-                storage_key,
-                cdn_api_key,
-            } => {
-                assert_eq!(storage_key, "storage-secret");
-                assert_eq!(cdn_api_key, "cdn-secret");
-            }
-            _ => panic!("credential kind changed during roundtrip"),
-        }
-
-        assert!(delete_credential(app.handle(), &project, &target.credential_ref).unwrap());
-        assert!(
-            read_secret_store(app.handle(), &canonical_project.to_string_lossy())
-                .unwrap()
-                .credentials
-                .is_empty()
-        );
-
-        drop(app);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn credential_input_accepts_secret_material_but_status_never_serializes_it() {
-        let source = r#"{
-          "credentialRef":"production",
-          "kind":"s3",
-          "accessKeyId":"access-value",
-          "secretAccessKey":"secret-value",
-          "sessionToken":"session-value"
-        }"#;
-        let input: DeployCredentialWriteInput = serde_json::from_str(source).unwrap();
-        input.secret.validate().unwrap();
-        let status = DeployCredentialStatus {
-            schema_version: DEPLOY_CREDENTIAL_STATUS_SCHEMA_VERSION,
-            credential_ref: input.credential_ref,
-            kind: DeployCredentialKind::S3,
-            configured: true,
-        };
-        let public = serde_json::to_string(&status).unwrap();
-        for forbidden in ["access-value", "secret-value", "session-value"] {
-            assert!(!public.contains(forbidden));
-        }
-    }
-
-    #[test]
-    fn credential_kind_must_match_provider() {
-        assert!(DeployCredentialKind::S3.supports_provider(DeployProviderKind::S3));
-        assert!(!DeployCredentialKind::S3.supports_provider(DeployProviderKind::Ftp));
-        assert!(DeployCredentialKind::SftpPrivateKey.supports_provider(DeployProviderKind::Sftp));
-    }
-
-    #[test]
-    fn private_key_validation_rejects_arbitrary_text_and_nul_secrets() {
-        let key = DeployCredentialSecretInput::SftpPrivateKey {
-            username: "deploy".to_string(),
-            private_key_pem: "not-a-key".to_string(),
-            passphrase: None,
-        };
-        assert!(key.validate().is_err());
-        assert!(validate_secret("secret", "bad\0value", 100).is_err());
-    }
-
-    #[test]
-    fn stored_credentials_debug_is_intentionally_unavailable_and_public_type_is_redacted() {
-        fn assert_serialize<T: Serialize>() {}
-        assert_serialize::<DeployCredentialStatus>();
-        let fields = serde_json::to_value(DeployCredentialStatus {
-            schema_version: 1,
-            credential_ref: "ref".to_string(),
-            kind: DeployCredentialKind::Bunny,
-            configured: true,
-        })
         .unwrap();
-        assert_eq!(fields.as_object().unwrap().len(), 4);
+        assert_eq!(prepared.kind, DeployCredentialKind::Bunny);
+        assert_eq!(prepared.values.len(), 2);
+        assert_eq!(prepared.values["STORAGE_KEY"], "storage-secret");
     }
 
     #[test]
-    fn complete_legacy_bunny_env_becomes_a_typed_target_without_exposing_secrets() {
-        let root = temp_dir("legacy-bunny");
-        fs::write(
-            root.join(".env"),
-            "BUNNY_STORAGE_ZONE=site\nBUNNY_STORAGE_KEY=storage-secret\nBUNNY_STORAGE_REGION=ny\nBUNNY_PULL_ZONE_ID=42\nBUNNY_CDN_API_KEY=cdn-secret\n",
+    fn private_key_is_encoded_for_single_line_env_storage() {
+        let target = sftp_target("sftp", "PANA_DEPLOY_SFTP");
+        let prepared = prepare_credential_write(
+            &target,
+            DeployCredentialWriteInput {
+                credential_env_prefix: target.credential_env_prefix.clone(),
+                secret: DeployCredentialSecretInput::SftpPrivateKey {
+                    username: "deploy".to_string(),
+                    private_key_pem: "-----BEGIN KEY-----\nabc\n-----END KEY-----".to_string(),
+                    passphrase: None,
+                },
+            },
         )
         .unwrap();
-        let settings = settings_with_legacy_bunny_fallback(&root, DeploySettings::default());
-        settings.validate().unwrap();
-        assert_eq!(settings.active_target_id.as_deref(), Some("legacy-bunny"));
-        let public = serde_json::to_string(&settings).unwrap();
-        assert!(!public.contains("storage-secret"));
-        assert!(!public.contains("cdn-secret"));
-        assert!(public.contains(LEGACY_BUNNY_CREDENTIAL_REF));
+        assert!(!prepared.values["PRIVATE_KEY_BASE64"].contains('\n'));
+        assert_eq!(prepared.values["AUTH_MODE"], "private_key");
+    }
+
+    #[test]
+    fn every_provider_credential_has_an_exact_namespaced_contract() {
+        let cases = [
+            (
+                bunny_target("PANA_DEPLOY_BUNNY"),
+                DeployCredentialWriteInput {
+                    credential_env_prefix: "PANA_DEPLOY_BUNNY".to_string(),
+                    secret: DeployCredentialSecretInput::Bunny {
+                        storage_key: "bunny-storage".to_string(),
+                        cdn_api_key: "bunny-cdn".to_string(),
+                    },
+                },
+                DeployCredentialKind::Bunny,
+                vec!["CDN_API_KEY", "STORAGE_KEY"],
+            ),
+            (
+                ftp_target("PANA_DEPLOY_FTP"),
+                DeployCredentialWriteInput {
+                    credential_env_prefix: "PANA_DEPLOY_FTP".to_string(),
+                    secret: DeployCredentialSecretInput::Ftp {
+                        username: "ftp-user".to_string(),
+                        password: "ftp-password".to_string(),
+                    },
+                },
+                DeployCredentialKind::Ftp,
+                vec!["PASSWORD", "USERNAME"],
+            ),
+            (
+                sftp_target("sftp-password", "PANA_DEPLOY_SFTP_PASSWORD"),
+                DeployCredentialWriteInput {
+                    credential_env_prefix: "PANA_DEPLOY_SFTP_PASSWORD".to_string(),
+                    secret: DeployCredentialSecretInput::SftpPassword {
+                        username: "sftp-user".to_string(),
+                        password: "sftp-password".to_string(),
+                    },
+                },
+                DeployCredentialKind::SftpPassword,
+                vec!["AUTH_MODE", "PASSWORD", "USERNAME"],
+            ),
+            (
+                sftp_target("sftp-key", "PANA_DEPLOY_SFTP_KEY"),
+                DeployCredentialWriteInput {
+                    credential_env_prefix: "PANA_DEPLOY_SFTP_KEY".to_string(),
+                    secret: DeployCredentialSecretInput::SftpPrivateKey {
+                        username: "key-user".to_string(),
+                        private_key_pem: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----".to_string(),
+                        passphrase: Some("key-passphrase".to_string()),
+                    },
+                },
+                DeployCredentialKind::SftpPrivateKey,
+                vec!["AUTH_MODE", "PASSPHRASE", "PRIVATE_KEY_BASE64", "USERNAME"],
+            ),
+            (
+                s3_target("PANA_DEPLOY_S3"),
+                DeployCredentialWriteInput {
+                    credential_env_prefix: "PANA_DEPLOY_S3".to_string(),
+                    secret: DeployCredentialSecretInput::S3 {
+                        access_key_id: "s3-access".to_string(),
+                        secret_access_key: "s3-secret".to_string(),
+                        session_token: Some("s3-session".to_string()),
+                    },
+                },
+                DeployCredentialKind::S3,
+                vec!["ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN"],
+            ),
+            (
+                cloudflare_target("PANA_DEPLOY_CLOUDFLARE"),
+                DeployCredentialWriteInput {
+                    credential_env_prefix: "PANA_DEPLOY_CLOUDFLARE".to_string(),
+                    secret: DeployCredentialSecretInput::CloudflarePages {
+                        api_token: "cloudflare-token".to_string(),
+                    },
+                },
+                DeployCredentialKind::CloudflarePages,
+                vec!["API_TOKEN"],
+            ),
+        ];
+
+        for (target, input, expected_kind, expected_keys) in cases {
+            let prepared = prepare_credential_write(&target, input).unwrap();
+            assert_eq!(prepared.kind, expected_kind);
+            assert_eq!(
+                prepared
+                    .values
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                expected_keys
+            );
+        }
+    }
+
+    #[test]
+    fn multi_target_status_and_configuration_never_expose_secret_values() {
+        let root = unique_test_dir("status");
+        fs::create_dir_all(&root).unwrap();
+        let private_key =
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----";
+        let encoded_private_key = STANDARD.encode(private_key.as_bytes());
+        let source = format!(
+            concat!(
+                "PANA_DEPLOY_BUNNY__STORAGE_KEY=\"bunny-storage-secret\"\n",
+                "PANA_DEPLOY_BUNNY__CDN_API_KEY=\"bunny-cdn-secret\"\n",
+                "PANA_DEPLOY_FTP__USERNAME=\"ftp-user\"\n",
+                "PANA_DEPLOY_FTP__PASSWORD=\"ftp-password-secret\"\n",
+                "PANA_DEPLOY_SFTP_PASSWORD__AUTH_MODE=\"password\"\n",
+                "PANA_DEPLOY_SFTP_PASSWORD__USERNAME=\"sftp-user\"\n",
+                "PANA_DEPLOY_SFTP_PASSWORD__PASSWORD=\"sftp-password-secret\"\n",
+                "PANA_DEPLOY_SFTP_KEY__AUTH_MODE=\"private_key\"\n",
+                "PANA_DEPLOY_SFTP_KEY__USERNAME=\"key-user\"\n",
+                "PANA_DEPLOY_SFTP_KEY__PRIVATE_KEY_BASE64=\"{}\"\n",
+                "PANA_DEPLOY_SFTP_KEY__PASSPHRASE=\"key-passphrase-secret\"\n",
+                "PANA_DEPLOY_S3__ACCESS_KEY_ID=\"s3-access\"\n",
+                "PANA_DEPLOY_S3__SECRET_ACCESS_KEY=\"s3-secret-value\"\n",
+                "PANA_DEPLOY_S3__SESSION_TOKEN=\"s3-session-secret\"\n",
+                "PANA_DEPLOY_CLOUDFLARE__API_TOKEN=\"cloudflare-secret-token\"\n"
+            ),
+            encoded_private_key
+        );
+        fs::write(root.join(".env"), source).unwrap();
+
+        let targets = vec![
+            bunny_target("PANA_DEPLOY_BUNNY"),
+            ftp_target("PANA_DEPLOY_FTP"),
+            sftp_target("sftp-password", "PANA_DEPLOY_SFTP_PASSWORD"),
+            sftp_target("sftp-key", "PANA_DEPLOY_SFTP_KEY"),
+            s3_target("PANA_DEPLOY_S3"),
+            cloudflare_target("PANA_DEPLOY_CLOUDFLARE"),
+        ];
+        let settings = DeploySettings {
+            schema_version: super::super::model::DEPLOY_SETTINGS_SCHEMA_VERSION,
+            revision: 41,
+            active_target_id: Some("production".to_string()),
+            targets: targets.clone(),
+        };
+        let snapshot = configuration_snapshot(&root, settings).unwrap();
+        assert_eq!(snapshot.credential_statuses.len(), targets.len());
+        assert!(snapshot
+            .credential_statuses
+            .iter()
+            .all(|status| status.configured && status.missing_fields.is_empty()));
+
+        let json = serde_json::to_string(&snapshot).unwrap();
+        for secret in [
+            "bunny-storage-secret",
+            "bunny-cdn-secret",
+            "ftp-password-secret",
+            "sftp-password-secret",
+            "key-passphrase-secret",
+            "s3-secret-value",
+            "s3-session-secret",
+            "cloudflare-secret-token",
+            encoded_private_key.as_str(),
+        ] {
+            assert!(!json.contains(secret), "status leaked {secret}");
+        }
+
+        assert!(matches!(
+            resolve_credential(&root, &targets[0]).unwrap(),
+            StoredDeployCredential::Bunny { storage_key, cdn_api_key }
+                if storage_key == "bunny-storage-secret" && cdn_api_key == "bunny-cdn-secret"
+        ));
+        assert!(matches!(
+            resolve_credential(&root, &targets[1]).unwrap(),
+            StoredDeployCredential::Ftp { username, password }
+                if username == "ftp-user" && password == "ftp-password-secret"
+        ));
+        assert!(matches!(
+            resolve_credential(&root, &targets[2]).unwrap(),
+            StoredDeployCredential::SftpPassword { username, password }
+                if username == "sftp-user" && password == "sftp-password-secret"
+        ));
+        assert!(matches!(
+            resolve_credential(&root, &targets[3]).unwrap(),
+            StoredDeployCredential::SftpPrivateKey { username, private_key_pem, passphrase }
+                if username == "key-user"
+                    && private_key_pem == private_key
+                    && passphrase.as_deref() == Some("key-passphrase-secret")
+        ));
+        assert!(matches!(
+            resolve_credential(&root, &targets[4]).unwrap(),
+            StoredDeployCredential::S3 { access_key_id, secret_access_key, session_token }
+                if access_key_id == "s3-access"
+                    && secret_access_key == "s3-secret-value"
+                    && session_token.as_deref() == Some("s3-session-secret")
+        ));
+        assert!(matches!(
+            resolve_credential(&root, &targets[5]).unwrap(),
+            StoredDeployCredential::CloudflarePages { api_token }
+                if api_token == "cloudflare-secret-token"
+        ));
+
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn temp_dir(label: &str) -> std::path::PathBuf {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "pana-deploy-credentials-{label}-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
+    #[test]
+    fn credential_kind_and_prefix_must_match_the_target() {
+        let target = bunny_target("PANA_DEPLOY_PRODUCTION");
+        let wrong_prefix = prepare_credential_write(
+            &target,
+            DeployCredentialWriteInput {
+                credential_env_prefix: "PANA_DEPLOY_OTHER".to_string(),
+                secret: DeployCredentialSecretInput::Bunny {
+                    storage_key: "storage".to_string(),
+                    cdn_api_key: "cdn".to_string(),
+                },
+            },
+        )
+        .err()
+        .unwrap();
+        assert!(wrong_prefix.contains("nu corespunde"));
 
-    struct TestEnvGuard {
-        previous_values: Vec<(&'static str, Option<String>)>,
-    }
-
-    impl TestEnvGuard {
-        fn from_root(root: &Path) -> Self {
-            let bindings = [
-                ("XDG_CONFIG_HOME", root.join("config")),
-                ("XDG_DATA_HOME", root.join("data")),
-                ("XDG_CACHE_HOME", root.join("cache")),
-                ("XDG_STATE_HOME", root.join("state")),
-            ];
-            let previous_values = bindings
-                .iter()
-                .map(|(key, _)| (*key, env::var(key).ok()))
-                .collect::<Vec<_>>();
-            for (key, path) in bindings {
-                env::set_var(key, path);
-            }
-            Self { previous_values }
-        }
-    }
-
-    impl Drop for TestEnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.previous_values.drain(..) {
-                match value {
-                    Some(previous) => env::set_var(key, previous),
-                    None => env::remove_var(key),
-                }
-            }
-        }
+        let wrong_kind = prepare_credential_write(
+            &target,
+            DeployCredentialWriteInput {
+                credential_env_prefix: target.credential_env_prefix.clone(),
+                secret: DeployCredentialSecretInput::CloudflarePages {
+                    api_token: "token".to_string(),
+                },
+            },
+        )
+        .err()
+        .unwrap();
+        assert!(wrong_kind.contains("providerului"));
     }
 }

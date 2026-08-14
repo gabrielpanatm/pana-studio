@@ -15,13 +15,16 @@ pub fn language_for_relative_path(relative_path: &str) -> Option<TextBufferLangu
 }
 
 fn language_for_path(relative_path: &str, kind: &ProjectFileKind) -> Option<TextBufferLanguage> {
+    if file_name(relative_path).as_deref() == Some(".env") {
+        return None;
+    }
     match kind {
         ProjectFileKind::Html => return Some(TextBufferLanguage::Html),
         ProjectFileKind::Md => return Some(TextBufferLanguage::Markdown),
         ProjectFileKind::Css => return Some(TextBufferLanguage::Css),
         ProjectFileKind::Scss => return Some(TextBufferLanguage::Scss),
         ProjectFileKind::Js => return Some(TextBufferLanguage::JavaScript),
-        ProjectFileKind::Dir | ProjectFileKind::Image => return None,
+        ProjectFileKind::Dir | ProjectFileKind::Image | ProjectFileKind::Font => return None,
         ProjectFileKind::Other => {}
     }
 
@@ -31,9 +34,7 @@ fn language_for_path(relative_path: &str, kind: &ProjectFileKind) -> Option<Text
         Some("yaml" | "yml") => Some(TextBufferLanguage::Yaml),
         Some("txt" | "env" | "mdx" | "tera") => Some(TextBufferLanguage::Plain),
         _ => match file_name(relative_path).as_deref() {
-            Some(".env" | "AGENTS.md" | "README.md" | "readme.md") => {
-                Some(TextBufferLanguage::Plain)
-            }
+            Some("AGENTS.md" | "README.md" | "readme.md") => Some(TextBufferLanguage::Plain),
             _ => None,
         },
     }
@@ -53,8 +54,7 @@ fn role_for_asset(relative_path: &str, language: TextBufferLanguage) -> TextBuff
     if matches!(
         language,
         TextBufferLanguage::Toml | TextBufferLanguage::Json | TextBufferLanguage::Yaml
-    ) || matches!(file_name(relative_path).as_deref(), Some(".env"))
-    {
+    ) {
         return TextBufferRole::Config;
     }
     if relative_path.contains("/data/") || relative_path.starts_with("data/") {

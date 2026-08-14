@@ -1,5 +1,8 @@
 use crate::zola_links::{script_tag, template_contains_asset_path};
 
+const LEGACY_ANIME_RUNTIME_PUBLIC_PATH: &str = "js/anime.min.js";
+const LEGACY_MOTION_RUNTIME_PUBLIC_PATH: &str = "js/pana-motion-runtime.js";
+
 pub fn extract_extends(content: &str) -> Option<String> {
     for line in content.lines().take(10) {
         let trimmed = line.trim();
@@ -28,13 +31,8 @@ pub fn extract_extends(content: &str) -> Option<String> {
     None
 }
 
-pub fn page_scripts_html(js_slug: &str, has_anime: bool, cachebust: bool) -> String {
+pub fn page_scripts_html(js_slug: &str, _has_motion: bool, cachebust: bool) -> String {
     let mut scripts_html = String::new();
-    if has_anime {
-        scripts_html.push_str("  ");
-        scripts_html.push_str(&script_tag("js/anime.min.js", cachebust));
-        scripts_html.push('\n');
-    }
     scripts_html.push_str("  ");
     scripts_html.push_str(&script_tag(&format!("js/{}.js", js_slug), cachebust));
     scripts_html.push('\n');
@@ -68,28 +66,20 @@ pub fn ensure_page_scripts_block(content: &str, scripts_html: &str) -> String {
 pub fn ensure_script_tags(
     template: &str,
     js_slug: &str,
-    has_anime: bool,
+    _has_motion: bool,
     cachebust: bool,
 ) -> String {
-    let normalized_template = if has_anime {
-        template.to_string()
-    } else {
-        remove_script_tags_for_asset(template, "js/anime.min.js")
-    };
+    let without_anime = remove_script_tags_for_asset(template, LEGACY_ANIME_RUNTIME_PUBLIC_PATH);
+    let normalized_template =
+        remove_script_tags_for_asset(&without_anime, LEGACY_MOTION_RUNTIME_PUBLIC_PATH);
     let js_path = format!("js/{}.js", js_slug);
-    let has_anime_tag = template_contains_asset_path(&normalized_template, "js/anime.min.js");
     let has_js_tag = template_contains_asset_path(&normalized_template, &js_path);
 
-    if (!has_anime || has_anime_tag) && has_js_tag {
+    if has_js_tag {
         return normalized_template;
     }
 
     let mut insert = String::new();
-    if has_anime && !has_anime_tag {
-        insert.push_str("  ");
-        insert.push_str(&script_tag("js/anime.min.js", cachebust));
-        insert.push('\n');
-    }
     if !has_js_tag {
         insert.push_str("  ");
         insert.push_str(&script_tag(&js_path, cachebust));
@@ -117,21 +107,26 @@ pub fn remove_page_scripts_contract(content: &str, js_slug: &str) -> String {
     if let Some((_start, _end, inner_start, inner_end)) = locate_scripts_block(content) {
         let inner = &content[inner_start..inner_end];
         let without_page_js = remove_script_tags_for_asset(inner, &js_path);
-        let without_anime = remove_script_tags_for_asset(&without_page_js, "js/anime.min.js");
-        let remaining = without_anime.trim();
+        let without_anime =
+            remove_script_tags_for_asset(&without_page_js, LEGACY_ANIME_RUNTIME_PUBLIC_PATH);
+        let without_motion =
+            remove_script_tags_for_asset(&without_anime, LEGACY_MOTION_RUNTIME_PUBLIC_PATH);
+        let remaining = without_motion.trim();
         if remaining.is_empty() || remaining == "{{ super() }}" {
             return strip_scripts_block(content);
         }
         return format!(
             "{}{}{}",
             &content[..inner_start],
-            without_anime.trim_matches('\n'),
+            without_motion.trim_matches('\n'),
             &content[inner_end..],
         );
     }
 
     let without_page_js = remove_script_tags_for_asset(content, &js_path);
-    remove_script_tags_for_asset(&without_page_js, "js/anime.min.js")
+    let without_anime =
+        remove_script_tags_for_asset(&without_page_js, LEGACY_ANIME_RUNTIME_PUBLIC_PATH);
+    remove_script_tags_for_asset(&without_anime, LEGACY_MOTION_RUNTIME_PUBLIC_PATH)
 }
 
 fn strip_scripts_block(content: &str) -> String {
@@ -206,14 +201,16 @@ mod tests {
     #[test]
     fn builds_plain_page_script_tags() {
         let result = page_scripts_html("pana-index", true, false);
-        assert!(result.contains(r#"<script src="/js/anime.min.js" defer></script>"#));
+        assert!(!result.contains("anime.min.js"));
+        assert!(!result.contains("pana-motion-runtime.js"));
         assert!(result.contains(r#"<script src="/js/pana-index.js" defer></script>"#));
     }
 
     #[test]
     fn builds_cachebusted_page_script_tags() {
         let result = page_scripts_html("pana-index", true, true);
-        assert!(result.contains("{{ get_url(path='js/anime.min.js', cachebust=true) }}"));
+        assert!(!result.contains("anime.min.js"));
+        assert!(!result.contains("pana-motion-runtime.js"));
         assert!(result.contains("{{ get_url(path='js/pana-index.js', cachebust=true) }}"));
     }
 
@@ -245,10 +242,12 @@ mod tests {
     fn removes_anime_tag_when_page_js_no_longer_has_motion() {
         let source = r#"<body>
   <script src="/js/anime.min.js" defer></script>
+  <script src="/js/pana-motion-runtime.js" defer></script>
   <script src="/js/pana-index.js" defer></script>
 </body>"#;
         let result = ensure_script_tags(source, "pana-index", false, false);
         assert!(!result.contains("anime.min.js"));
+        assert!(!result.contains("pana-motion-runtime.js"));
         assert!(result.contains("pana-index.js"));
     }
 

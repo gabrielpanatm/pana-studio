@@ -495,7 +495,7 @@
   // ── Asset helpers ────────────────────────────────────────────────────────
 
   const ext = (a: ProjectFile) => a.relativePath.split(".").pop()?.toLowerCase() ?? "";
-  const imageAssets = $derived(scannedAssets.filter(a => a.kind === "IMAGE" || ["svg","webp","avif","png","jpg","jpeg","gif"].includes(ext(a))));
+  const imageAssets = $derived(scannedAssets.filter(a => a.kind === "IMAGE"));
   const processableImageAssets = $derived(imageAssets.filter(a => ["webp","avif","png","jpg","jpeg"].includes(ext(a))));
   const zolaSourceResolution = $derived(resolveZolaImageSource(currentZolaSourceUrl(), scannedAssets));
   const videoAssets = $derived(scannedAssets.filter(a => ["mp4","webm","ogv","mov"].includes(ext(a))));

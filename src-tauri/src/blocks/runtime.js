@@ -1,5 +1,6 @@
 (function () {
   "use strict";
+  /* PANA BLOCK RUNTIME CORE */
 
   if (window.PanaBlockRuntime) return;
 
@@ -19,7 +20,7 @@
 
   function blockSelector(id) {
     var escaped = String(id || "").replace(/["\\]/g, "\\$&");
-    return '[data-pana-block="' + escaped + '"],[data-pana-component="' + escaped + '"]';
+    return '[data-pana-block="' + escaped + '"]';
   }
 
   function rootsInside(scope, id) {
@@ -44,7 +45,6 @@
       "data-anim",
       "data-open",
       "data-pana-block",
-      "data-pana-component",
       "data-pana-instance",
       "data-pana-source-id",
       "data-pana-template-source-id",
@@ -94,7 +94,7 @@
     }
     var element = record.target;
     if (!element || element.nodeType !== 1) return false;
-    var blockId = element.getAttribute("data-pana-block") || element.getAttribute("data-pana-component");
+    var blockId = element.getAttribute("data-pana-block");
     return Boolean(blockId && definitions[blockId]);
   }
 
@@ -223,35 +223,20 @@
     var id = String(blockId || "").trim();
     if (!id || !definition || typeof definition !== "object") return false;
     definitions[id] = definition;
-    reconcile(document);
+    if (activeIds) reconcile(document);
     return true;
   }
 
   function installPageConfig(config) {
-    var entries = config && Array.isArray(config.blocks)
-      ? config.blocks
-      : config && Array.isArray(config.components)
-        ? config.components
-        : [];
+    var entries = config && Array.isArray(config.blocks) ? config.blocks : [];
     activeIds = Object.create(null);
     entries.forEach(function (entry) {
       var id = String(entry && entry.id || "").trim();
       if (id && definitions[id]) activeIds[id] = true;
     });
-    window.__panaMotionV2Config = config && config.motion ? config.motion : null;
-    var motion = window.__panaMotionV2Config;
     reconcile(document);
     lastPageConfigReceipt = {
-      blockCount: Object.keys(activeIds).length,
-      motionInteractionCount: motion && Array.isArray(motion.interactions)
-        ? motion.interactions.length
-        : 0,
-      motionBehaviorCount: motion && Array.isArray(motion.behaviors)
-        ? motion.behaviors.length
-        : 0,
-      motionCustomCodeCount: motion && Array.isArray(motion.customCode)
-        ? motion.customCode.length
-        : 0
+      blockCount: Object.keys(activeIds).length
     };
     report("page-config-installed", lastPageConfigReceipt);
   }
@@ -301,13 +286,6 @@
   document.addEventListener("pana:blocks:dispose", function (event) {
     dispose(event && event.detail && event.detail.root ? event.detail.root : document);
   });
-  // Compatibilitate pentru proiectele create înaintea separării Blocuri/Componente.
-  document.addEventListener("pana:components:init", function (event) {
-    reconcile(event && event.detail && event.detail.root ? event.detail.root : document);
-  });
-  document.addEventListener("pana:components:dispose", function (event) {
-    dispose(event && event.detail && event.detail.root ? event.detail.root : document);
-  });
   window.addEventListener("pagehide", shutdown, { once: true });
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", start, { once: true });
@@ -315,397 +293,4 @@
     start();
   }
 
-  function instanceToken(root, fallback) {
-    return root.getAttribute("data-pana-instance") || fallback;
-  }
-
-  register("counter", {
-    mount: function (element, makeBag) {
-      var bag = makeBag();
-      var observerHandle = null;
-      var animationFrame = 0;
-      var started = false;
-      function run() {
-        if (started) return;
-        started = true;
-        var target = parseInt(element.getAttribute("data-tinta") || "0", 10);
-        var duration = parseInt(element.getAttribute("data-durata") || "1800", 10);
-        var suffix = element.getAttribute("data-sufix") || "";
-        if (!isFinite(target)) target = 0;
-        if (!isFinite(duration) || duration < 1) duration = 1800;
-        var start = null;
-        function tick(timestamp) {
-          if (start === null) start = timestamp;
-          var progress = Math.min((timestamp - start) / duration, 1);
-          element.textContent = String(Math.floor(target * progress)) + suffix;
-          if (progress < 1) animationFrame = window.requestAnimationFrame(tick);
-          else element.textContent = String(target) + suffix;
-        }
-        animationFrame = window.requestAnimationFrame(tick);
-      }
-      if ("IntersectionObserver" in window) {
-        observerHandle = new IntersectionObserver(function (entries) {
-          entries.forEach(function (entry) {
-            if (!entry.isIntersecting) return;
-            run();
-            observerHandle.unobserve(entry.target);
-          });
-        }, { threshold: 0.3 });
-        observerHandle.observe(element);
-      } else {
-        run();
-      }
-      bag.add(function () {
-        if (observerHandle) observerHandle.disconnect();
-        if (animationFrame) window.cancelAnimationFrame(animationFrame);
-      });
-      return { state: { started: function () { return started; } }, dispose: bag.dispose };
-    }
-  });
-
-  register("accordion", {
-    mount: function (root, makeBag) {
-      var bag = makeBag();
-      var allowMultiple = root.getAttribute("data-multiple") === "true";
-      var token = instanceToken(root, "accordion");
-      var items = Array.prototype.slice.call(root.querySelectorAll("[data-pana-accordion-item]"));
-      function setOpen(item, trigger, panel, open) {
-        trigger.setAttribute("aria-expanded", open ? "true" : "false");
-        panel.hidden = !open;
-        if (open) item.setAttribute("data-open", "");
-        else item.removeAttribute("data-open");
-      }
-      items.forEach(function (item, index) {
-        var trigger = item.querySelector("[data-pana-accordion-trigger]");
-        var panel = item.querySelector("[data-pana-accordion-panel]");
-        if (!trigger || !panel) return;
-        trigger.id = trigger.id || token + "-trigger-" + index;
-        panel.id = panel.id || token + "-panel-" + index;
-        if (trigger.localName === "button" && !trigger.getAttribute("type")) trigger.setAttribute("type", "button");
-        trigger.setAttribute("aria-controls", panel.id);
-        panel.setAttribute("role", "region");
-        panel.setAttribute("aria-labelledby", trigger.id);
-        setOpen(item, trigger, panel, trigger.getAttribute("aria-expanded") === "true" || item.hasAttribute("data-open"));
-        bag.listen(trigger, "click", function () {
-          var shouldOpen = trigger.getAttribute("aria-expanded") !== "true";
-          if (shouldOpen && !allowMultiple) {
-            items.forEach(function (other) {
-              if (other === item) return;
-              var otherTrigger = other.querySelector("[data-pana-accordion-trigger]");
-              var otherPanel = other.querySelector("[data-pana-accordion-panel]");
-              if (otherTrigger && otherPanel) setOpen(other, otherTrigger, otherPanel, false);
-            });
-          }
-          setOpen(item, trigger, panel, shouldOpen);
-        });
-      });
-      return bag.dispose;
-    }
-  });
-
-  register("tabs", {
-    mount: function (root, makeBag) {
-      var bag = makeBag();
-      var token = instanceToken(root, "tabs");
-      var tabs = Array.prototype.slice.call(root.querySelectorAll("[data-pana-tabs-tab]"));
-      var panels = Array.prototype.slice.call(root.querySelectorAll("[data-pana-tabs-panel]"));
-      if (!tabs.length || !panels.length) return bag.dispose;
-      function activate(index, focus) {
-        tabs.forEach(function (tab, tabIndex) {
-          var active = tabIndex === index;
-          tab.setAttribute("aria-selected", active ? "true" : "false");
-          tab.setAttribute("tabindex", active ? "0" : "-1");
-          if (active && focus && tab.focus) tab.focus();
-        });
-        panels.forEach(function (panel, panelIndex) { panel.hidden = panelIndex !== index; });
-      }
-      var selected = parseInt(root.getAttribute("data-default-tab") || "0", 10);
-      if (!isFinite(selected) || selected < 0 || selected >= Math.min(tabs.length, panels.length)) {
-        selected = 0;
-      }
-      tabs.forEach(function (tab, index) {
-        var panel = panels[index];
-        if (!panel) return;
-        tab.id = tab.id || token + "-tab-" + index;
-        panel.id = panel.id || token + "-panel-" + index;
-        if (tab.localName === "button" && !tab.getAttribute("type")) tab.setAttribute("type", "button");
-        tab.setAttribute("role", "tab");
-        tab.setAttribute("aria-controls", panel.id);
-        panel.setAttribute("role", "tabpanel");
-        panel.setAttribute("aria-labelledby", tab.id);
-        bag.listen(tab, "click", function () { activate(index, false); });
-        bag.listen(tab, "keydown", function (event) {
-          if (["ArrowRight", "ArrowLeft", "Home", "End"].indexOf(event.key) < 0) return;
-          event.preventDefault();
-          var next = event.key === "Home" ? 0
-            : event.key === "End" ? tabs.length - 1
-              : event.key === "ArrowRight" ? (index + 1) % tabs.length
-                : (index - 1 + tabs.length) % tabs.length;
-          activate(next, true);
-        });
-      });
-      activate(selected, false);
-      return bag.dispose;
-    }
-  });
-
-  register("slider", {
-    mount: function (root, makeBag) {
-      var bag = makeBag();
-      var track = root.querySelector("[data-pana-slider-track]");
-      var slides = Array.prototype.slice.call(root.querySelectorAll("[data-pana-slider-slide]"));
-      var previous = root.querySelector("[data-pana-slider-previous]");
-      var next = root.querySelector("[data-pana-slider-next]");
-      var indicators = root.querySelector("[data-pana-slider-indicators]");
-      var autoplayButton = root.querySelector("[data-pana-slider-autoplay]");
-      if (!track || !slides.length || !previous || !next || !indicators || !autoplayButton) {
-        return bag.dispose;
-      }
-      if (!root.hasAttribute("tabindex")) root.setAttribute("tabindex", "0");
-      var loop = root.getAttribute("data-loop") !== "false";
-      var autoplayConfigured = root.getAttribute("data-autoplay") === "true";
-      var interval = parseInt(root.getAttribute("data-interval") || "5000", 10);
-      var pauseOnHover = root.getAttribute("data-pause-hover") !== "false";
-      var pauseOnFocus = root.getAttribute("data-pause-focus") !== "false";
-      var pauseOnInteraction = root.getAttribute("data-pause-interaction") !== "false";
-      var reducedMotion = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
-      var hovered = false;
-      var focused = false;
-      var userPaused = false;
-      var timer = 0;
-      var index = parseInt(root.getAttribute("data-initial-slide") || "0", 10);
-      if (!isFinite(interval) || interval < 1000) interval = 5000;
-      if (!isFinite(index) || index < 0 || index >= slides.length) index = 0;
-
-      indicators.textContent = "";
-      var indicatorButtons = slides.map(function (_, slideIndex) {
-        var button = document.createElement("button");
-        button.type = "button";
-        button.className = "slider__indicator";
-        button.setAttribute("aria-label", "Slide " + (slideIndex + 1));
-        bag.listen(button, "click", function () { manualGo(slideIndex); });
-        indicators.appendChild(button);
-        return button;
-      });
-
-      function rotationAllowed() {
-        return autoplayConfigured && slides.length > 1 && !userPaused &&
-          !(pauseOnHover && hovered) && !(pauseOnFocus && focused) &&
-          !document.hidden && !(reducedMotion && reducedMotion.matches);
-      }
-
-      function updateAutoplayControl() {
-        autoplayButton.hidden = !autoplayConfigured;
-        var running = rotationAllowed();
-        autoplayButton.textContent = running ? "Opreste" : "Porneste";
-        autoplayButton.setAttribute("aria-label", running ? "Opreste rotatia" : "Porneste rotatia");
-        autoplayButton.setAttribute("aria-pressed", userPaused ? "true" : "false");
-        track.setAttribute("aria-live", running ? "off" : "polite");
-      }
-
-      function cancelTimer() {
-        if (timer) window.clearTimeout(timer);
-        timer = 0;
-      }
-
-      function schedule() {
-        cancelTimer();
-        updateAutoplayControl();
-        if (!rotationAllowed()) return;
-        timer = window.setTimeout(function () {
-          timer = 0;
-          go(index + 1);
-        }, interval);
-      }
-
-      function go(nextIndex) {
-        if (loop) nextIndex = (nextIndex % slides.length + slides.length) % slides.length;
-        else nextIndex = Math.max(0, Math.min(slides.length - 1, nextIndex));
-        index = nextIndex;
-        track.style.setProperty("--pana-slider-index", String(index));
-        slides.forEach(function (slide, slideIndex) {
-          var active = slideIndex === index;
-          slide.hidden = !active;
-          slide.setAttribute("aria-hidden", active ? "false" : "true");
-          slide.setAttribute("aria-label", (slideIndex + 1) + " din " + slides.length);
-        });
-        indicatorButtons.forEach(function (button, buttonIndex) {
-          button.setAttribute("aria-current", buttonIndex === index ? "true" : "false");
-        });
-        previous.disabled = slides.length < 2 || (!loop && index === 0);
-        next.disabled = slides.length < 2 || (!loop && index === slides.length - 1);
-        schedule();
-      }
-
-      function manualGo(nextIndex) {
-        if (pauseOnInteraction) userPaused = true;
-        go(nextIndex);
-      }
-
-      bag.listen(previous, "click", function () { manualGo(index - 1); });
-      bag.listen(next, "click", function () { manualGo(index + 1); });
-      bag.listen(autoplayButton, "click", function () {
-        userPaused = !userPaused;
-        schedule();
-      });
-      bag.listen(root, "keydown", function (event) {
-        if (event.target !== root) return;
-        if (["ArrowLeft", "ArrowRight", "Home", "End"].indexOf(event.key) < 0) return;
-        event.preventDefault();
-        manualGo(event.key === "Home" ? 0 : event.key === "End" ? slides.length - 1
-          : event.key === "ArrowLeft" ? index - 1 : index + 1);
-      });
-      bag.listen(root, "mouseenter", function () { hovered = true; schedule(); });
-      bag.listen(root, "mouseleave", function () { hovered = false; schedule(); });
-      bag.listen(root, "focusin", function () { focused = true; schedule(); });
-      bag.listen(root, "focusout", function () {
-        bag.timer(function () {
-          focused = root.contains(document.activeElement);
-          schedule();
-        }, 0);
-      });
-      bag.listen(document, "visibilitychange", schedule);
-      if (reducedMotion) {
-        if (reducedMotion.addEventListener) bag.listen(reducedMotion, "change", schedule);
-        else if (reducedMotion.addListener) {
-          reducedMotion.addListener(schedule);
-          bag.add(function () { reducedMotion.removeListener(schedule); });
-        }
-      }
-      bag.add(cancelTimer);
-      go(index);
-      return bag.dispose;
-    }
-  });
-
-  function overlayDefinition(kind, delayedClose) {
-    var prefix = "data-pana-" + kind;
-    return {
-      mount: function (root, makeBag) {
-        var bag = makeBag();
-        var token = instanceToken(root, kind);
-        var openers = Array.prototype.slice.call(root.querySelectorAll("[" + prefix + "-open]"));
-        var closers = Array.prototype.slice.call(root.querySelectorAll("[" + prefix + "-close]"));
-        var overlay = root.querySelector("[" + prefix + "-overlay]");
-        var panel = root.querySelector("[" + prefix + "-panel]");
-        var title = root.querySelector("[" + prefix + "-title]");
-        var previousActive = null;
-        var previousOverflow = "";
-        var closeTimer = 0;
-        var openFrame = 0;
-        var closeOnBackdrop = root.getAttribute("data-close-outside") !== "false";
-        var closeOnEscape = root.getAttribute("data-close-escape") !== "false";
-        if (!overlay || !panel) return bag.dispose;
-        panel.id = panel.id || token + "-panel";
-        panel.setAttribute("role", "dialog");
-        panel.setAttribute("aria-modal", "true");
-        if (!panel.getAttribute("tabindex")) panel.setAttribute("tabindex", "-1");
-        if (title) {
-          title.id = title.id || token + "-title";
-          panel.setAttribute("aria-labelledby", title.id);
-        }
-        openers.forEach(function (opener) {
-          if (opener.localName === "button" && !opener.getAttribute("type")) opener.setAttribute("type", "button");
-          opener.setAttribute("aria-haspopup", "dialog");
-          opener.setAttribute("aria-controls", panel.id);
-        });
-        closers.forEach(function (closer) {
-          if (closer.localName === "button" && !closer.getAttribute("type")) closer.setAttribute("type", "button");
-        });
-        function expanded(open) {
-          openers.forEach(function (opener) { opener.setAttribute("aria-expanded", open ? "true" : "false"); });
-        }
-        function show(opener) {
-          if (closeTimer) window.clearTimeout(closeTimer);
-          previousActive = document.activeElement;
-          previousOverflow = document.body.style.overflow || "";
-          overlay.hidden = false;
-          document.body.style.overflow = "hidden";
-          expanded(true);
-          openFrame = window.requestAnimationFrame(function () {
-            root.setAttribute("data-open", "");
-            var focus = panel.querySelector("button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex='-1'])") || panel;
-            if (focus && focus.focus) focus.focus();
-          });
-        }
-        function hide(restoreFocus) {
-          if (openFrame) window.cancelAnimationFrame(openFrame);
-          root.removeAttribute("data-open");
-          document.body.style.overflow = previousOverflow;
-          expanded(false);
-          if (delayedClose) {
-            closeTimer = window.setTimeout(function () {
-              if (!root.hasAttribute("data-open")) overlay.hidden = true;
-            }, 240);
-          } else {
-            overlay.hidden = true;
-          }
-          if (restoreFocus !== false && previousActive && previousActive.focus && document.contains(previousActive)) {
-            previousActive.focus();
-          }
-        }
-        openers.forEach(function (opener) { bag.listen(opener, "click", function () { show(opener); }); });
-        closers.forEach(function (closer) { bag.listen(closer, "click", function () { hide(true); }); });
-        bag.listen(overlay, "click", function (event) {
-          if (closeOnBackdrop && event.target === overlay) hide(true);
-        });
-        bag.listen(overlay, "keydown", function (event) {
-          if (closeOnEscape && event.key === "Escape") hide(true);
-        });
-        bag.add(function () {
-          if (closeTimer) window.clearTimeout(closeTimer);
-          if (openFrame) window.cancelAnimationFrame(openFrame);
-          if (root.hasAttribute("data-open")) document.body.style.overflow = previousOverflow;
-        });
-        expanded(!overlay.hidden);
-        return bag.dispose;
-      }
-    };
-  }
-
-  register("dialog", overlayDefinition("dialog", false));
-  register("offcanvas", overlayDefinition("offcanvas", true));
-
-  register("nav-menu", {
-    mount: function (root, makeBag) {
-      var bag = makeBag();
-      var token = instanceToken(root, "nav-menu");
-      var toggle = root.querySelector("[data-pana-nav-menu-toggle]");
-      var list = root.querySelector("[data-pana-nav-menu-list]");
-      if (!toggle || !list) return bag.dispose;
-      var media = window.matchMedia ? window.matchMedia("(max-width: 720px)") : null;
-      var closeOnSelect = root.getAttribute("data-close-on-select") !== "false";
-      list.id = list.id || token + "-list";
-      toggle.setAttribute("aria-controls", list.id);
-      if (toggle.localName === "button" && !toggle.getAttribute("type")) toggle.setAttribute("type", "button");
-      function compact() { return media ? media.matches : false; }
-      function setOpen(open) {
-        if (open) root.setAttribute("data-open", "");
-        else root.removeAttribute("data-open");
-        toggle.setAttribute("aria-expanded", open ? "true" : "false");
-        list.hidden = compact() ? !open : false;
-      }
-      bag.listen(toggle, "click", function () { setOpen(!root.hasAttribute("data-open")); });
-      bag.listen(root, "keydown", function (event) {
-        if (event.key !== "Escape" || !root.hasAttribute("data-open")) return;
-        setOpen(false);
-        if (toggle.focus) toggle.focus();
-      });
-      Array.prototype.forEach.call(list.querySelectorAll("a[href]"), function (link) {
-        bag.listen(link, "click", function () {
-          if (closeOnSelect && compact()) setOpen(false);
-        });
-      });
-      if (media) {
-        var sync = function () { setOpen(root.hasAttribute("data-open")); };
-        if (media.addEventListener) bag.listen(media, "change", sync);
-        else if (media.addListener) {
-          media.addListener(sync);
-          bag.add(function () { media.removeListener(sync); });
-        }
-      }
-      setOpen(root.hasAttribute("data-open"));
-      return bag.dispose;
-    }
-  });
 })();

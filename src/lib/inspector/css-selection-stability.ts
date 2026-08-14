@@ -45,3 +45,20 @@ export function cssInspectorSubjectKey(
   const renderInstanceId = normalizedAnchor(primary.renderInstanceId);
   return renderInstanceId ? `render\u0000${renderInstanceId}` : "";
 }
+
+/**
+ * A CSS read may update the Inspector only while the Rust-owned selection
+ * revision that launched it is still current. This guard belongs
+ * at the async settlement boundary; it must not prevent a new CSS focus from
+ * starting while the Inspector projection is still catching up.
+ */
+export function cssInspectorReadIsCurrent(
+  expected: SelectionMutationIdentity,
+  current: SelectionMutationIdentity | null,
+): boolean {
+  return Boolean(
+    current
+    && current.selectionRevision === expected.selectionRevision
+    && cssInspectorSubjectKey(current) === cssInspectorSubjectKey(expected),
+  );
+}

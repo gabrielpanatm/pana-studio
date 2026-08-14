@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::{observability::now_ms, project_session::ProjectSessionSnapshot};
 
-use super::PageJsConfig;
+use super::{MotionDocument, PageJsConfig};
 
-pub const PAGE_JS_DRAFT_STORE_SCHEMA_VERSION: u32 = 2;
+pub const PAGE_JS_DRAFT_STORE_SCHEMA_VERSION: u32 = 3;
 pub const PAGE_JS_DRAFT_MAX_TEMPLATE_PATH_BYTES: usize = 1024;
 pub const PAGE_JS_DRAFT_MAX_SOURCE_BYTES: usize = 120;
 pub const PAGE_JS_DRAFT_MAX_COALESCE_KEY_BYTES: usize = 160;
@@ -85,7 +85,8 @@ pub struct PageJsDraftStageInput {
     pub expected_session_id: String,
     pub base_config: PageJsConfig,
     pub current_config: PageJsConfig,
-    // Kept in the staging contract for frontend compatibility and explicit Save policy.
+    /// Rust-derived project policy. IPC callers cannot provide this field.
+    #[serde(skip)]
     pub cachebust_assets: bool,
     pub source: Option<String>,
     pub coalesce_key: Option<String>,
@@ -169,8 +170,8 @@ impl PageJsDraftStore {
             template_path,
             expected_project_root,
             expected_session_id,
-            base_config,
-            current_config,
+            mut base_config,
+            mut current_config,
             cachebust_assets,
             source,
             coalesce_key,
@@ -178,6 +179,8 @@ impl PageJsDraftStore {
         } = input;
         self.require_identity(&expected_project_root, &expected_session_id)?;
         let template_path = normalize_template_path(&template_path)?;
+        normalize_and_validate_config("baseConfig", &mut base_config)?;
+        normalize_and_validate_config("currentConfig", &mut current_config)?;
         let source = normalize_source(source)?;
         let coalesce_key = normalize_optional_metadata(
             "coalesceKey",
@@ -361,6 +364,18 @@ impl PageJsDraftStore {
     }
 }
 
+fn normalize_and_validate_config(label: &str, config: &mut PageJsConfig) -> Result<(), String> {
+    if config.motion.as_ref().is_some_and(MotionDocument::is_empty) {
+        config.motion = None;
+    }
+    if let Some(motion) = config.motion.as_ref() {
+        motion
+            .validate()
+            .map_err(|error| format!("PageJsDraftStore a refuzat {label}: {error}"))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn validate_limits(limits: PageJsDraftStoreLimits) -> Result<(), String> {
     if limits.max_drafts == 0 || limits.max_config_bytes == 0 || limits.max_total_config_bytes == 0
@@ -455,8 +470,6 @@ fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::js::NativeBlockRuntimeEntry;
-
     use super::*;
 
     fn session_at(opened_at_ms: u128) -> ProjectSessionSnapshot {
@@ -490,10 +503,15 @@ mod tests {
     }
 
     fn dirty_config(id: &str) -> PageJsConfig {
+        let mut motion = crate::js::MotionDocument::default();
+        motion.custom_code.push(crate::js::MotionCustomCode {
+            id: id.to_string(),
+            name: id.to_string(),
+            enabled: true,
+            code: "window.__panaTest=true".to_string(),
+        });
         PageJsConfig {
-            version: Some(1),
-            blocks: vec![NativeBlockRuntimeEntry { id: id.to_string() }],
-            motion: None,
+            motion: Some(motion),
         }
     }
 
@@ -594,7 +612,16 @@ mod tests {
         assert!(!stale_clear.changed);
         assert!(stale_clear.dirty);
         assert_eq!(stale_clear.entry_revision, second.entry_revision);
-        assert_eq!(store.snapshot().drafts[0].current.blocks[0].id, "accordion");
+        assert_eq!(
+            store.snapshot().drafts[0]
+                .current
+                .motion
+                .as_ref()
+                .unwrap()
+                .custom_code[0]
+                .id,
+            "accordion"
+        );
 
         let current_clear = store
             .clear("templates/index.html", second.entry_revision)
@@ -615,7 +642,16 @@ mod tests {
         let snapshot = store.snapshot();
         assert_eq!(snapshot.dirty_count, 1);
         assert_eq!(snapshot.revision, 2);
-        assert_eq!(snapshot.drafts[0].current.blocks[0].id, "accordion");
+        assert_eq!(
+            snapshot.drafts[0]
+                .current
+                .motion
+                .as_ref()
+                .unwrap()
+                .custom_code[0]
+                .id,
+            "accordion"
+        );
     }
 
     #[test]

@@ -913,8 +913,19 @@ fn materialize_project<R: Runtime>(
     option_id: &str,
 ) -> Result<MaterializedProject, String> {
     if option_id == MINIMAL_OPTION_ID {
+        let settings_source = crate::commands::config::serialize_default_project_settings()?;
+        let deploy_source =
+            crate::deploy::serialize_deploy_settings(&crate::deploy::DeploySettings::default())?;
         let files = BTreeMap::from([
             (".gitignore".to_string(), BASE_GITIGNORE.as_bytes().to_vec()),
+            (
+                ".panastudio/settings.toml".to_string(),
+                settings_source.into_bytes(),
+            ),
+            (
+                ".panastudio/deploy.toml".to_string(),
+                deploy_source.into_bytes(),
+            ),
             (
                 "content/_index.md".to_string(),
                 MINIMAL_SECTION.as_bytes().to_vec(),
@@ -967,6 +978,17 @@ fn materialize_project<R: Runtime>(
 fn materialize_theme_pack(pack: &ThemePack) -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut files = BTreeMap::new();
     insert_materialized(&mut files, ".gitignore", BASE_GITIGNORE.as_bytes().to_vec())?;
+    insert_materialized(
+        &mut files,
+        ".panastudio/settings.toml",
+        crate::commands::config::serialize_default_project_settings()?.into_bytes(),
+    )?;
+    insert_materialized(
+        &mut files,
+        ".panastudio/deploy.toml",
+        crate::deploy::serialize_deploy_settings(&crate::deploy::DeploySettings::default())?
+            .into_bytes(),
+    )?;
     let config =
         crate::zola_theme::set_active_theme_in_source(BASE_ZOLA_CONFIG, &pack.manifest.id)?;
     insert_materialized(&mut files, "zola.toml", config.into_bytes())?;

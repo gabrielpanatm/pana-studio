@@ -1,6 +1,6 @@
 [package]
 name = "pana-studio"
-version = "0.1.6"
+version = "0.1.7"
 description = "Editor vizual desktop open-source pentru site-uri Zola"
 authors = ["Gabriel Pană"]
 license = "EUPL-1.2-or-later"
@@ -20,8 +20,10 @@ name = "pana_studio_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+allsorts = { version = "0.17", default-features = false, features = ["flate2_rust"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

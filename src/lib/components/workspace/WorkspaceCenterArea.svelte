@@ -226,9 +226,7 @@
   }
 
   async function showWorkbenchDocument(document: WorkbenchDocumentSnapshot) {
-    const file = app.scannedProject?.files.find(
-      (candidate) => candidate.relativePath === document.relativePath,
-    );
+    const file = await app.resolveWorkspaceProjectFile(document.relativePath);
     if (!file) {
       app.setGlobalStatus(
         t("workbench-document-missing", { path: document.relativePath }),
@@ -485,7 +483,6 @@
             currentSourcePath={app.currentSourcePath}
             source={app.source}
             sourceLanguage={app.sourceLanguage}
-            sourceLength={app.source.length}
           />
         </div>
       {/key}

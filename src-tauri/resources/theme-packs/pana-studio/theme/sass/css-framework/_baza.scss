@@ -8,23 +8,6 @@
 // ─── Fonturi — @font-face ───
 // Fișierele .woff2 sunt livrate de temă în static/fonturi/ (Zola).
 
-:root {
-  --pana-block-surface: #{$bg-body};
-  --pana-block-muted: #{$bg-muted};
-  --pana-block-text: #{$text-heading};
-  --pana-block-text-muted: #{$text-body};
-  --pana-block-text-inverse: #{$text-inverse};
-  --pana-block-border: #{$border-color};
-  --pana-block-border-strong: #{$border-strong};
-  --pana-block-accent: #{$color-primary};
-  --pana-block-action: #{$text-heading};
-  --pana-block-overlay: #{$color-black-60};
-  --pana-block-shadow-s: #{$shadow-s};
-  --pana-block-shadow-l: #{$shadow-xl};
-  --pana-block-shadow-start: #{$shadow-xl};
-  --pana-block-shadow-end: #{$shadow-xl};
-}
-
 @font-face {
   font-family: 'Primary';
   src: url('/fonturi/primary-regular.woff2') format('woff2');

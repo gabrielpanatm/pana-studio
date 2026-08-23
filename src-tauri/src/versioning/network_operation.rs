@@ -345,7 +345,7 @@ mod tests {
                     release_rx.recv().unwrap();
                     Ok(prepared)
                 },
-                |executed| Ok(executed),
+                Ok,
             )
             .unwrap()
         });

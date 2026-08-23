@@ -22,7 +22,7 @@ use crate::{
         CanvasProjectionPhase, CanvasProjectionPlan, PersistentPreviewCandidate,
         PersistentPreviewOwner, PersistentZolaPreviewEngine, PreviewPhaseReceipt,
         ProjectPreviewMutationKind, ProjectPreviewMutationReceipt, ProjectPreviewRequestIdentity,
-        ProjectPreviewStartReceipt,
+        ProjectPreviewStartReceipt, TemplateWorkbenchReuseQuery,
     },
     project::{is_zola_project, zola_project_root, ActiveProjectReadiness},
     project_model::{
@@ -943,15 +943,16 @@ pub async fn confirm_template_workbench_reuse(
             let engine = engine_slot.as_ref().ok_or_else(|| {
                 "Confirmarea Context de template cere un motor Preview activ.".to_string()
             })?;
-            let confirmation = engine.confirm_template_workbench_reuse(
-                task_input.expected_workspace_revision,
-                &task_input.template_path,
-                task_input.preferred_page_path.as_deref(),
-                task_input.preferred_route.as_deref(),
-                &task_input.reuse_token,
-                &task_input.expected_preview_revision,
-                &task_input.expected_canvas_transaction_id,
-            )?;
+            let confirmation =
+                engine.confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
+                    workspace_revision: task_input.expected_workspace_revision,
+                    template_path: &task_input.template_path,
+                    preferred_page_path: task_input.preferred_page_path.as_deref(),
+                    preferred_route: task_input.preferred_route.as_deref(),
+                    reuse_token: &task_input.reuse_token,
+                    expected_preview_revision: &task_input.expected_preview_revision,
+                    expected_canvas_transaction_id: &task_input.expected_canvas_transaction_id,
+                })?;
             let performance = TemplateWorkbenchReusePerformance {
                 total_us: elapsed_us(started),
                 operation_lock_wait_us,

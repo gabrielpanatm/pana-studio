@@ -113,6 +113,17 @@ pub(crate) struct TemplateWorkbenchReuseConfirmation {
     pub reuse_token: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TemplateWorkbenchReuseQuery<'a> {
+    pub workspace_revision: u64,
+    pub template_path: &'a str,
+    pub preferred_page_path: Option<&'a str>,
+    pub preferred_route: Option<&'a str>,
+    pub reuse_token: &'a str,
+    pub expected_preview_revision: &'a str,
+    pub expected_canvas_transaction_id: &'a str,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct TemplateWorkbenchPublicationTimings {
     pub total_us: u64,
@@ -235,20 +246,15 @@ impl PersistentZolaPreviewEngine {
     /// mismatch is a cache miss and must fall back to full publication.
     pub fn confirm_template_workbench_reuse(
         &self,
-        workspace_revision: u64,
-        template_path: &str,
-        preferred_page_path: Option<&str>,
-        preferred_route: Option<&str>,
-        reuse_token: &str,
-        expected_preview_revision: &str,
-        expected_canvas_transaction_id: &str,
+        query: TemplateWorkbenchReuseQuery<'_>,
     ) -> Result<Option<TemplateWorkbenchReuseConfirmation>, String> {
-        let Some(generation) = self.generation_for_workspace_revision(workspace_revision)? else {
+        let Some(generation) = self.generation_for_workspace_revision(query.workspace_revision)?
+        else {
             return Ok(None);
         };
-        if generation.preview_revision != expected_preview_revision
+        if generation.preview_revision != query.expected_preview_revision
             || generation.canvas_transaction.identity.transaction_id
-                != expected_canvas_transaction_id
+                != query.expected_canvas_transaction_id
         {
             return Ok(None);
         }
@@ -257,10 +263,10 @@ impl PersistentZolaPreviewEngine {
             .read()
             .map_err(|_| "Registrul Context de template este indisponibil.".to_string())?;
         let Some((route, projection)) = workbench_content.iter().find(|(_, projection)| {
-            projection.reuse_token == reuse_token
-                && projection.template_path == template_path
-                && projection.selected_page_path.as_deref() == preferred_page_path
-                && projection.selected_route.as_deref() == preferred_route
+            projection.reuse_token == query.reuse_token
+                && projection.template_path == query.template_path
+                && projection.selected_page_path.as_deref() == query.preferred_page_path
+                && projection.selected_route.as_deref() == query.preferred_route
         }) else {
             return Ok(None);
         };
@@ -274,7 +280,7 @@ impl PersistentZolaPreviewEngine {
         Ok(Some(TemplateWorkbenchReuseConfirmation {
             route: route.clone(),
             preview_url,
-            workspace_revision,
+            workspace_revision: query.workspace_revision,
             preview_revision: generation.preview_revision.clone(),
             canvas_transaction_id: generation
                 .canvas_transaction
@@ -2729,66 +2735,66 @@ Conținut draft vizibil în editor.
             .as_ref()
             .map(|context| context.url.as_str());
         let confirmed = engine
-            .confirm_template_workbench_reuse(
-                2,
-                &template_path,
-                selected_page_path,
-                selected_route,
-                &workbench.reuse_token,
-                &second_identity.preview_revision,
-                &second_identity.transaction_id,
-            )
+            .confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
+                workspace_revision: 2,
+                template_path: &template_path,
+                preferred_page_path: selected_page_path,
+                preferred_route: selected_route,
+                reuse_token: &workbench.reuse_token,
+                expected_preview_revision: &second_identity.preview_revision,
+                expected_canvas_transaction_id: &second_identity.transaction_id,
+            })
             .unwrap()
             .expect("exact Workbench generation must be reusable");
         assert_eq!(confirmed.route, workbench.route);
         assert_eq!(confirmed.preview_url, workbench.preview_url);
         assert_eq!(confirmed.reuse_token, workbench.reuse_token);
         assert!(engine
-            .confirm_template_workbench_reuse(
-                2,
-                &template_path,
-                Some("content/other.md"),
-                selected_route,
-                &workbench.reuse_token,
-                &second_identity.preview_revision,
-                &second_identity.transaction_id,
-            )
+            .confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
+                workspace_revision: 2,
+                template_path: &template_path,
+                preferred_page_path: Some("content/other.md"),
+                preferred_route: selected_route,
+                reuse_token: &workbench.reuse_token,
+                expected_preview_revision: &second_identity.preview_revision,
+                expected_canvas_transaction_id: &second_identity.transaction_id,
+            })
             .unwrap()
             .is_none());
         assert!(engine
-            .confirm_template_workbench_reuse(
-                2,
-                &template_path,
-                selected_page_path,
-                selected_route,
-                &workbench.reuse_token,
-                &second_identity.preview_revision,
-                "canvas-stale",
-            )
+            .confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
+                workspace_revision: 2,
+                template_path: &template_path,
+                preferred_page_path: selected_page_path,
+                preferred_route: selected_route,
+                reuse_token: &workbench.reuse_token,
+                expected_preview_revision: &second_identity.preview_revision,
+                expected_canvas_transaction_id: "canvas-stale",
+            })
             .unwrap()
             .is_none());
         assert!(engine
-            .confirm_template_workbench_reuse(
-                3,
-                &template_path,
-                selected_page_path,
-                selected_route,
-                &workbench.reuse_token,
-                &second_identity.preview_revision,
-                &second_identity.transaction_id,
-            )
+            .confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
+                workspace_revision: 3,
+                template_path: &template_path,
+                preferred_page_path: selected_page_path,
+                preferred_route: selected_route,
+                reuse_token: &workbench.reuse_token,
+                expected_preview_revision: &second_identity.preview_revision,
+                expected_canvas_transaction_id: &second_identity.transaction_id,
+            })
             .unwrap()
             .is_none());
         assert!(engine
-            .confirm_template_workbench_reuse(
-                2,
-                &template_path,
-                selected_page_path,
-                selected_route,
-                "sha256:foreign-session",
-                &second_identity.preview_revision,
-                &second_identity.transaction_id,
-            )
+            .confirm_template_workbench_reuse(TemplateWorkbenchReuseQuery {
+                workspace_revision: 2,
+                template_path: &template_path,
+                preferred_page_path: selected_page_path,
+                preferred_route: selected_route,
+                reuse_token: "sha256:foreign-session",
+                expected_preview_revision: &second_identity.preview_revision,
+                expected_canvas_transaction_id: &second_identity.transaction_id,
+            })
             .unwrap()
             .is_none());
         let second_generation = confirm_staged(&mut engine, &app_handle, second_identity.clone());

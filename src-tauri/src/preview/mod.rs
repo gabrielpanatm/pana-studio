@@ -18,6 +18,7 @@ pub(crate) use canvas::{CanvasBoundaryMarkerKind, CanvasDocumentGraph, CanvasNod
 pub use canvas::{CanvasProjectionIdentity, CanvasProjectionPhase, PreviewPhaseReceipt};
 pub(crate) use engine::{
     PersistentPreviewCandidate, PersistentPreviewOwner, PersistentZolaPreviewEngine,
+    TemplateWorkbenchReuseQuery,
 };
 pub use http::read_http_document;
 pub use process::{

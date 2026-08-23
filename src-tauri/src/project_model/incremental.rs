@@ -491,14 +491,14 @@ fn looks_like_rename(
             .iter()
             .any(|file| file.relative_path == ***path)
             && (projection.deleted_sources.contains(*path)
-                || !projection.source_texts.contains_key(*path))
+                || !projection.source_texts.contains_key(path))
     });
     let created = changed_paths.iter().filter(|path| {
         !previous
             .files
             .iter()
             .any(|file| file.relative_path == ***path)
-            && projection.source_texts.contains_key(*path)
+            && projection.source_texts.contains_key(path)
             && !projection.deleted_sources.contains(*path)
     });
     removed.count() == 1 && created.count() == 1

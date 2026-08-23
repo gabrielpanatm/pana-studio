@@ -734,7 +734,7 @@ fn require_disjoint_projection(projection: &WorkspaceProjectionSnapshot) -> Resu
         ));
     }
     if let Some(path) = projection.resource_bytes.keys().find(|path| {
-        projection.deleted_sources.contains(*path) || projection.source_texts.contains_key(*path)
+        projection.deleted_sources.contains(*path) || projection.source_texts.contains_key(path)
     }) {
         return Err(format!(
             "ProjectWorkspace a produs o proiecție ambiguă pentru {path}: resursă binară suprapusă peste text sau delete."

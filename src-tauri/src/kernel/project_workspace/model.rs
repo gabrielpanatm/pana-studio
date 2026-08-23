@@ -24,6 +24,8 @@ pub const PROJECT_WORKSPACE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub(crate) const PROJECT_WORKSPACE_MAX_BINARY_RESOURCE_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 
+type WorkspaceProjectionOwnedView<T> = Arc<OnceLock<Arc<HashMap<String, T>>>>;
+
 #[cfg(test)]
 thread_local! {
     static SOURCE_TEXT_DEEP_MATERIALIZATIONS: Cell<u64> = const { Cell::new(0) };
@@ -317,7 +319,7 @@ pub struct WorkspaceProjectionSourceTexts {
 enum WorkspaceProjectionSourceState {
     Materialized {
         documents: Arc<FileBufferStore>,
-        owned_view: Arc<OnceLock<Arc<HashMap<String, String>>>>,
+        owned_view: WorkspaceProjectionOwnedView<String>,
     },
     Owned(HashMap<String, String>),
 }
@@ -486,7 +488,7 @@ pub struct WorkspaceProjectionResourceBytes {
 enum WorkspaceProjectionResourceState {
     Materialized {
         resources: Arc<BTreeMap<String, Arc<WorkspaceBinaryResource>>>,
-        owned_view: Arc<OnceLock<Arc<HashMap<String, Vec<u8>>>>>,
+        owned_view: WorkspaceProjectionOwnedView<Vec<u8>>,
     },
     Owned(HashMap<String, Vec<u8>>),
 }

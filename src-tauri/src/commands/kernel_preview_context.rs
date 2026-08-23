@@ -11,6 +11,16 @@ use crate::{
     state::AppState,
 };
 
+type PreviewWorkspaceAuthoritySnapshot = (
+    PathBuf,
+    ProjectSessionSnapshot,
+    AcceptedProjectDiskManifest,
+    u64,
+    u64,
+    u64,
+    u64,
+);
+
 pub(super) struct PreviewWriteCommandContext {
     pub(super) root: PathBuf,
     pub(super) session: ProjectSessionSnapshot,
@@ -184,18 +194,7 @@ pub(super) fn with_preview_write_workspace_cas<R>(
 
 fn capture_preview_workspace_authority(
     state: &State<AppState>,
-) -> Result<
-    (
-        PathBuf,
-        ProjectSessionSnapshot,
-        AcceptedProjectDiskManifest,
-        u64,
-        u64,
-        u64,
-        u64,
-    ),
-    String,
-> {
+) -> Result<PreviewWorkspaceAuthoritySnapshot, String> {
     let root_lock_wait_started = Instant::now();
     let root = state
         .current_root

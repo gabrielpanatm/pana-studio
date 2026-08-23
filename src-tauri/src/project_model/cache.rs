@@ -181,8 +181,7 @@ pub(crate) fn publish_project_model_if_current(
     context: &ProjectModelBuildContext,
     model: Arc<ProjectModel>,
 ) -> Result<(), String> {
-    let result = publish_project_model_current(state, context, model);
-    result
+    publish_project_model_current(state, context, model)
 }
 
 /// Revalidates an immutable analysis context without publishing a model into

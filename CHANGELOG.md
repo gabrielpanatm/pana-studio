@@ -5,6 +5,43 @@ Proiectul folosește [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-08-23
+
+### Added
+
+- benchmark reproductibil Rust-first cu suite smoke, standard și soak, protocol
+  end-to-end, bugete aspiraționale, comparații de regresie și rapoarte persistente;
+- proiectul canonic INDEX ZERO, cu profile control, mare, densitate DOM, limita
+  funcțională de 991 de fișiere și refuzul fail-closed la 1.001 de fișiere;
+- gărzi automate pentru cicluri, reachability, proprietatea contractelor,
+  comenzile Tauri, modularitatea HTML și observabilitatea performanței;
+- măsurători distincte pentru selecția tabului, settlement-ul documentului,
+  schimbarea activităților și panourilor, Canvas, memorie și frame pacing.
+
+### Changed
+
+- limita proiectului este aliniată la 1.000 de fișiere rezidente, iar File
+  Explorer virtualizează arborii mari fără a trunchia proiectul la 500 de intrări;
+- activarea documentelor este latest-wins, proiectează tabul optimist și
+  reutilizează exact contextul canonic Template Workbench confirmat de Rust;
+- persistența proiecției Workbench este write-behind, iar flush-ul editărilor
+  sare cozile curate fără a elimina checkpoint-urile autoritative;
+- compoziția frontend, contractele de domeniu și comenzile Rust sunt împărțite
+  în module cu proprietari expliciți, fără gateway-uri sau fallback-uri legacy;
+- temele incluse au devenit proiecte starter complete și centralizate, cu un
+  contract unic pentru materializare și resurse.
+
+### Fixed
+
+- proiectele cu 991 de fișiere ajung la workspace și Canvas, în timp ce limita
+  de 1.001 rămâne refuzată integral și determinist;
+- verdictul Rust pentru drag-and-drop structural este proiectat în Canvas, iar
+  scenariile de editare, Undo și Redo nu mai sunt blocate de prima operație;
+- schimbarea documentelor actualizează tabul în câteva milisecunde și evită
+  refresh-uri Explorer, layout-uri sau persistări redundante;
+- `tauri dev` nu mai epuizează limita Linux de file watchers când rezultatele
+  benchmarkului și cache-urile WebKit/Mesa sunt păstrate în repository.
+
 ## [0.1.7] - 2026-08-14
 
 ### Added

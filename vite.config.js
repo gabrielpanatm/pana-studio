@@ -3,6 +3,7 @@ import { sveltekit } from "@sveltejs/kit/vite";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSourceLayerChunkMap } from "./scripts/source-layer-chunks.mjs";
+import { createViteDevWatchIgnored } from "./scripts/vite-dev-watch-boundary.mjs";
 import { svelteCssFirstGuard } from "./scripts/vite-svelte-css-first.mjs";
 
 const host = process.env.TAURI_DEV_HOST;
@@ -77,8 +78,8 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. keep Rust and generated benchmark runtime trees outside Vite's watcher
+      ignored: createViteDevWatchIgnored(projectRoot),
     },
   },
 }));
